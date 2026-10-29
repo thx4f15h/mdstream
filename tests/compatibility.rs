@@ -1,5 +1,26 @@
 use mdtui3::*;
 include!("fixtures/commonmark_autolinks.rs");
+include!("fixtures/commonmark_display.rs");
+
+#[test]
+fn pinned_commonmark_display_text_cases() {
+    assert_eq!(DISPLAY_CASES.len(), 24);
+    for &(number, markdown, expected) in DISPLAY_CASES {
+        let mut doc = Document::new();
+        doc.append(markdown).unwrap();
+        doc.finish();
+        let visible: String = doc
+            .display_runs_in(Span::new(0, markdown.len()))
+            .unwrap()
+            .filter(|r| !r.style.contains(Style::HIDDEN))
+            .map(|r| r.text)
+            .collect();
+        assert_eq!(visible.trim_end_matches('\n'), expected, "example {number}");
+    }
+    eprintln!(
+        "CommonMark 0.31.2: 24 selected display-text cases supported; HTML, attributes and full code fallback are not scored"
+    );
+}
 
 #[test]
 fn pinned_commonmark_autolinks_report_supported_and_deliberate_differences() {

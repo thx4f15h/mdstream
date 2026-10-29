@@ -23,6 +23,9 @@ mod budget;
 mod cache;
 mod checkpoints;
 mod destination;
+mod display;
+mod display_search;
+mod entity;
 mod frame;
 mod headings;
 mod inline;
@@ -40,6 +43,8 @@ pub use budget::{Budget, Completion, WorkLimit};
 pub use cache::{CacheValidity, DependencyKey, SourceSnapshot};
 pub use checkpoints::{CheckpointIndex, CheckpointToken};
 pub use destination::{MAX_DESTINATION_BYTES, MAX_LINK_SUFFIX_BYTES, MAX_LINK_TITLE_BYTES};
+pub use display::{DisplayCursor, DisplayRun, DisplayRuns, DisplayStep};
+pub use display_search::{DisplayMatch, DisplaySearch};
 pub use frame::{LayoutPass, LayoutSink};
 pub use headings::{Heading, HeadingIndex};
 pub use layout::{
@@ -126,6 +131,7 @@ pub struct Document {
     table_row: Option<table::RowParser>,
     references: References,
     annotations: Annotations,
+    display: display::DisplayIndex,
     inline: Inline,
     current: Option<BlockId>,
     fence: Option<Fence>,
@@ -509,6 +515,7 @@ impl Document {
         Effects {
             source: &self.source,
             annotations: &mut self.annotations,
+            display: &mut self.display,
             references: &mut self.references,
             links: &mut self.links,
             link_info: &mut self.link_info,

@@ -21,17 +21,7 @@ impl SourceSearch {
             return Err(LayoutError::InvalidRange);
         }
         let pattern = query.as_bytes().to_vec();
-        let mut failure = vec![0; pattern.len()];
-        let mut matched = 0;
-        for i in 1..pattern.len() {
-            while matched > 0 && pattern[i] != pattern[matched] {
-                matched = failure[matched - 1];
-            }
-            if pattern[i] == pattern[matched] {
-                matched += 1;
-            }
-            failure[i] = matched;
-        }
+        let failure = failure_table(&pattern);
         Ok(Self {
             document: document.id(),
             pattern,
@@ -80,6 +70,21 @@ impl SourceSearch {
         }
         Ok(Completion::EndOfDocument)
     }
+}
+
+pub(crate) fn failure_table(pattern: &[u8]) -> Vec<usize> {
+    let mut failure = vec![0; pattern.len()];
+    let mut matched = 0;
+    for i in 1..pattern.len() {
+        while matched > 0 && pattern[i] != pattern[matched] {
+            matched = failure[matched - 1];
+        }
+        if pattern[i] == pattern[matched] {
+            matched += 1;
+        }
+        failure[i] = matched;
+    }
+    failure
 }
 
 /// Independent task checkbox overrides; source and parser facts stay immutable.

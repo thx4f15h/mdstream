@@ -8,6 +8,7 @@ use crate::{
 pub(crate) struct Effects<'a> {
     pub source: &'a str,
     pub annotations: &'a mut Annotations,
+    pub display: &'a mut crate::display::DisplayIndex,
     pub references: &'a mut References,
     pub links: &'a mut Vec<LinkTarget>,
     pub link_info: &'a mut Vec<LinkInfo>,
@@ -122,6 +123,12 @@ struct Run {
 }
 
 #[derive(Clone, Copy)]
+struct Code {
+    open: Span,
+    all_spaces: bool,
+}
+
+#[derive(Clone, Copy)]
 struct Candidate {
     open: usize,
     close: usize,
@@ -160,7 +167,7 @@ pub(crate) struct Inline {
     stack: Vec<Delimiter>,
     last: [Option<usize>; 5],
     run: Option<Run>,
-    code: Option<Span>,
+    code: Option<Code>,
     bracket: Option<Bracket>,
     bang: Option<usize>,
     tail: Option<Tail>,
@@ -170,6 +177,7 @@ pub(crate) struct Inline {
     carriage: bool,
     line_break: Option<LineBreak>,
     autolink: Option<usize>,
+    entity: Option<usize>,
 }
 
 impl Inline {
@@ -204,9 +212,11 @@ impl Inline {
             }
             self.finish_run(Some(byte), effects);
         }
-        if self.code.is_some() {
+        if let Some(code) = &mut self.code {
             if byte == b'`' {
                 self.start_run(byte, pos);
+            } else {
+                code.all_spaces &= crate::display::code_space(byte);
             }
             return;
         }
@@ -246,6 +256,26 @@ impl Inline {
             }
             // Consume the rejecting byte normally, without replaying the prefix.
         }
+        if let Some(start) = self.entity.take() {
+            if byte == b';' {
+                effects.work.entity_bytes += (pos - start - 1) as u64;
+                if let Some(text) = crate::entity::decode(&effects.source[start + 1..pos]) {
+                    let span = Span::new(start, pos + 1);
+                    effects.display.entity(span, text);
+                    // Display text changed even if raw syntax/style is unchanged.
+                    effects.mark(span, Style::default(), None);
+                    effects.update.change(span, ChangeKind::Text);
+                }
+                return;
+            }
+            if pos - start <= crate::entity::MAX_ENTITY_BODY
+                && (byte.is_ascii_alphanumeric() || (byte == b'#' && pos == start + 1))
+            {
+                self.entity = Some(start);
+                return;
+            }
+            // Failed candidates remain literal; process just the rejecting byte.
+        }
         if self.carriage && byte != b'\n' {
             self.spaces = None;
             self.escape = None;
@@ -279,6 +309,7 @@ impl Inline {
         }
         let bang = self.bang.take();
         match byte {
+            b'&' => self.entity = Some(pos),
             b'<' => {
                 self.autolink = Some(pos);
                 self.bracket = None;
@@ -330,15 +361,26 @@ impl Inline {
         };
         effects.work.delimiter_steps += 1;
         if run.byte == b'`' {
-            if let Some(open) = self.code {
+            if let Some(code) = &mut self.code {
+                let open = code.open;
                 if open.len() == run.source.len() {
+                    let content = Span::new(open.end, run.source.start);
+                    effects
+                        .display
+                        .code(content, effects.source, code.all_spaces);
+                    effects.update.change(content, ChangeKind::Text);
                     effects.mark(Span::new(open.end, run.source.start), Style::CODE, None);
                     effects.hide(open);
                     effects.hide(run.source);
                     self.code = None;
+                } else {
+                    code.all_spaces = false;
                 }
             } else {
-                self.code = Some(run.source);
+                self.code = Some(Code {
+                    open: run.source,
+                    all_spaces: true,
+                });
             }
             return;
         }
@@ -478,5 +520,6 @@ impl Inline {
         self.carriage = false;
         self.line_break = None;
         self.autolink = None;
+        self.entity = None;
     }
 }

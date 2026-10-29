@@ -59,6 +59,7 @@ for tile in heights.viewport(100..124, 4, 32) {
 | Setext 将长段落改成标题 | O(log n)，块类型本身修改为 O(1) |
 | 定位源码所属块、片段 | O(log n) |
 | 读取可见片段的语义 runs | O(log n + V)，迭代器 O(log n) 临时空间；实际按区间节点遍历 |
+| 读取显示语义片段 | O(log n + V)，普通文本借用原文，实体/代码规范化保留原始区间 |
 | 查找下一个未隐藏的位置 | O(log n)，跨越任意长度隐藏区间 |
 | 高度修正、区间失效、区间置零、行号定位、前缀高度 | O(log T) |
 | 按行号获取一屏及 overscan | O((K + 1) log T)，输出空间 O(K) |
@@ -230,7 +231,67 @@ Update 携带文档身份及 `base_revision -> revision`。空追加、重复 EO
 
 `HeadingIndex` 提供 `current`、`parent`、`first_child`、`next_sibling`、`previous_sibling`、`section` / `section_end` 和严格同级前后查询，对应动作已接入 `Navigator`。跳级标题按最近更浅级别确定父节点，兄弟不等于同级。章节末尾可随追加增长，查询不读取标题文本。
 
-`SourceSearch` 是按字节预算推进的固定查询 KMP 任务，支持跨追加和重叠匹配；失败回退也计入预算。更换查询新建任务，历史搜索不会隐式同步完成。`Selection` 绑定文档身份及源码区间，`TaskState` 保存独立的复选框覆盖状态，二者都不修改追加源码。这些接口为后续 UI 提供基础；显示文本搜索和折叠联动另行实现。
+`SourceSearch` 是按字节预算推进的固定查询 KMP 任务，支持跨追加和重叠匹配；失败回退也计入预算。更换查询新建任务，历史搜索不会隐式同步完成。`Selection` 绑定文档身份及源码区间，`TaskState` 保存独立的复选框覆盖状态，二者都不修改追加源码。这些接口为后续 UI 提供基础；显示文本搜索见下文，折叠联动另行实现。
+
+## 显示文本与源码映射
+
+`runs` / `runs_in` 保留逐字对应源码的文本；需要实体解码和代码 span 空白规范化时使用 `display_runs` / `display_runs_in`。两种读取都返回隐藏标记，显示或复制可见文本时过滤 `Style::HIDDEN`。普通文字直接借用原文，实体只存至多 8 个 UTF-8 字节的替代值；代码 span 保存端点和流式空白摘要，不复制或在闭合时回扫正文。
+
+```rust
+use mdtui3::{Document, Span, Style};
+let mut doc = Document::new();
+doc.append("中 &amp; ` a\r\nb ` &#x1f642;")?;
+doc.finish();
+let display: String = doc.display_runs_in(Span::new(0, doc.source().len())).unwrap()
+    .filter(|run| !run.style.contains(Style::HIDDEN))
+    .map(|run| run.text)
+    .collect();
+assert_eq!(display, "中 & a b 🙂");
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`DisplayRun.source` 是本次读取实际消费的源码区间；`replacement: Some(original)` 指出替代文本的完整原始区间，点击或显示选区应映射到这个整体。没有 replacement 时可按 UTF-8 字节精确映射。`Selection::text` 继续复制原始源码；复制显示文本则串接显示片段。
+
+实体跨查询/tile 边界时只在包含 `&` 的片段输出替代文字，其余片段输出空串并保留完整映射。因此相邻查询拼接不会重复；若查询从实体中间开始，不会补发之前的文字，宿主可通过 replacement 找到实体入口。代码 CRLF 的空格归 LF，CR 片段输出空串，两者映射到同一原始 CRLF；裁掉的首尾空白也以空文本保留映射。实体解码结果不会重新参与 Markdown 解析。
+
+需要共享整帧预算时，创建 `display_cursor(请求区间)`，反复调用 `DisplayCursor::next(&doc, &mut budget)`，处理 `Run`、`BudgetExhausted` 和 `Complete`。游标在耗尽后保存源码位置；文档 revision 改变后返回 `StaleContinuation`，需按源码锚点重建。每步预先消费一次 query、一个 object 和至多 `TILE_BYTES + 2` 源码字节的检查窗口，包含最多两个相邻 CRLF 字节；返回片段较短时仍保守计入整个检查窗口。预算为 1 query、1 object、6 bytes 即可容纳任意一个 UTF-8 标量并保证前进，替代输出最多 8 字节。调用方的排版回调成本仍需另外约束。可运行流程见 `examples/display.rs`；现有 `LayoutSink::text(RenderRun)` 仍接收源码文本。
+
+命名引用支持固定的 2125 个 WHATWG 分号结尾名称（最长 31 字节），表在 `src/entity_names.rs`，附来源和输入 SHA-256；更新时用 `scripts/generate_entities.py` 读取另行下载的 [WHATWG 数据](https://html.spec.whatwg.org/entities.json)，构建和测试不联网。数字引用及代码 span 规范化依据 [CommonMark 0.31.2 字符引用](https://spec.commonmark.org/0.31.2/#entity-and-numeric-character-references)和[代码 span](https://spec.commonmark.org/0.31.2/#code-spans)：十进制 1..7 位、十六进制 1..6 位，必需分号；零值、代理码点及越界值替换为 U+FFFD。代码换行变为空格，首尾均为空格且并非全空格时各去掉一个；其它空白和内部连续空格保留。
+
+实体失败、超长或未完成时保留原文，只按正常语法处理拒绝候选的当前字节；不会回扫候选。反斜线转义、代码块/span、自动链接地址、链接目标/title、引用标签匹配及 fence info 不做实体解码。未闭合代码 span 沿用已有的无回退方言。晚确认通过 Text 变化和区间 revision 使旧显示缓存及布局过期，即使宿主关闭了样式影响尺寸的策略。
+
+## 显示文本搜索
+
+`DisplaySearch::new(&doc, query)` 创建绑定当前文档身份及 revision 的搜索任务。搜索对象是按源码顺序串接的非 `HIDDEN` 显示片段：实体已解码、闭合代码 span 空白已规范化，隐藏标记和链接目标不参与匹配。采用区分大小写的字面匹配，支持重叠命中和跨 run/tile 匹配；空查询返回 `InvalidRange`。不增加块/表格分隔符，不把普通软换行变为空格，不做 Unicode 归一化，也不包含终端绘制的边框、占位或将来的折叠状态。
+
+```rust
+use mdtui3::{Budget, Completion, DisplaySearch, Document, Span, WorkLimit};
+let mut doc = Document::new();
+doc.append("a**b**&amp;c")?;
+doc.finish();
+let mut search = DisplaySearch::new(&doc, "ab&c")?;
+let mut matches = Vec::new();
+loop {
+    let mut budget = Budget::new(WorkLimit {
+        bytes: 16, queries: 2, objects: 2, ..Default::default()
+    });
+    if search.advance(&doc, &mut budget, &mut matches)? == Completion::EndOfDocument {
+        break;
+    }
+    // UI 中在下一帧继续；也可在显式后台任务中继续推进。
+}
+assert_eq!(matches[0].display, 0..4);
+assert_eq!(matches[0].source, Span::new(0, doc.source().len()));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`DisplayMatch.display` 是该 revision 显示文本流的 UTF-8 字节范围，不是屏幕坐标。`source` 是包含全部贡献字节的最小源码包络：中间可能含隐藏语法，端点若来自实体或 CRLF 替代则包含整个原始替代区间。例如搜索 `&fjlig;` 中的 `f` 和 `j` 会得到不同显示范围、相同源码范围。高亮可使用显示范围精确区分，源码范围用于定位、选区或复制原文；部分实体命中不能仅靠源码范围区分。
+
+每次 `advance` 复用调用方的 Budget 和结果 Vec。读取沿用 `DisplayCursor` 的 query/object/源码检查字节计费；每次匹配比较及 KMP 失败回退再消费一个 byte，输出命中再消费一个 object。耗尽时保存未处理字节，后续不重读已完成前缀；每次提供 6 bytes、1 query、1 object 可持续前进，读取和匹配可能分属不同调用。`source_position()` 表示已读取位置，可能还有一个有界片段未匹配；`display_position()` 表示已消费显示字节数，可停在 UTF-8 标量内部。以 `EndOfDocument` 判断任务完成，重复调用不再输出命中。
+
+源码追加可能改变旧位置的显示语义。任何 revision 变化（包括首次 `finish`）都使任务及已返回的命中失效；`advance` 在消费预算和修改结果前返回 `StaleContinuation`，错误文档返回 `WrongDocument`。调用方须丢弃旧命中并按需新建任务，库不会自动回扫全文；空追加和重复 `finish` 不使任务失效。即使文档尚未结束，也可以完整搜索当前 revision。频繁重建任务的累计重搜成本由调用方调度，不能套用 `SourceSearch` 的跨追加增量保证。
+
+查询预处理时间及任务存储为 O(m)，m 为查询字节数；另有固定大小的片段缓冲，源码映射使用长度为 m 的环形缓冲。单 revision 的 KMP 比较总量 O(d)，d 为显示字节数；每次显示读取另有 O(log(n + 1) + 检查窗口) 的成本，窗口不超过 `TILE_BYTES + 2`，最坏累计搜索 O(n log(n + 1) + m)。输出空间由调用方管理，可逐批消费，不在任务中保存全文或全部命中。示例见 `examples/search.rs`。
 
 ## 明确支持的 Markdown 方言
 
@@ -244,6 +305,7 @@ Update 携带文档身份及 `base_revision -> revision`。空追加、重复 EO
 - 图片 `![alt](destination)` 及引用式图片，保留独立类型和 alt 信息，可由渲染器降级为链接。
 - CRLF 的 CR 隐藏，LF 保留。裸 CR 按原文处理。
 - 同块行内软换行、双空格/反斜线硬换行的结构化标记。
+- 显示语义读取支持实体/数字字符引用及已闭合代码 span 空白规范化，映射和上下文限制见上一节。
 
 取舍：
 
@@ -253,7 +315,7 @@ Update 携带文档身份及 `base_revision -> revision`。空追加、重复 EO
 - URL 和 title 各最多 4096 字节，左括号后的链接后缀候选最多 8256 字节（包括空白和闭合右括号）。支持平衡括号和转义定界，但返回的 destination/title 是原文；不提供多行目标/title、URL 解码或安全过滤。后缀失败时保留原文及已有 shortcut 引用，不回扫后缀中的其它语法。
 - 引用定义、Setext、分隔线、闭合 fence 必须在块分类前缀内完成。超长候选行按普通内容/代码处理；超长 opening fence 的 info 只保留已分类前缀，其余该行隐藏。超长标题末尾的 closing hashes 不再回看识别。
 - 自动链接候选最多 4096 字节，URI scheme 为 2..32 个 ASCII 字符；email 按 CommonMark 0.31.2 的 ASCII 地址规则。失败或 EOF 未完成的候选不重放内部行内语法；新自动链接中止未完成的外层方括号候选，保持链接源码有序且不重叠。返回原始 URI，不做 percent encoding。
-- 不处理 HTML、实体解码、GFM 裸 URL 自动链接、脚注、数学公式等额外语义。它们可能包含上述方言仍能识别的普通行内标记。HTML 不在当前需求范围。
+- 不处理 HTML、GFM 裸 URL 自动链接、脚注、数学公式等额外语义。它们可能包含上述方言仍能识别的普通行内标记。HTML 不在当前需求范围。
 - 支持只追加，不支持任意位置编辑、撤回已有源码或移除定义。文档销毁会释放 O(n) 状态，这是一次性清理成本。
 
 ## 源码入口
@@ -264,6 +326,8 @@ Update 携带文档身份及 `base_revision -> revision`。空追加、重复 EO
 | `src/block.rs` | 有界块分类 |
 | `src/inline.rs` | 单遍分隔符、代码和链接状态机 |
 | `src/destination.rs` | 链接/定义共享的有界目标及 title 状态机 |
+| `src/display.rs` / `src/entity.rs` | 显示片段、替代文本源码映射、预算游标及字符引用解码 |
+| `src/search.rs` / `src/display_search.rs` | 源码增量搜索、revision 绑定的显示文本搜索与命中映射、选区及任务状态 |
 | `src/annotations.rs` | 区间样式、隐藏聚合、最新 revision |
 | `src/references.rs` | 有长度上限的标签规范化和 BTreeMap 符号表 |
 | `src/layout.rs` | lazy 高度树、viewport、锚点和过期测量拒绝 |
@@ -287,11 +351,15 @@ nix develop -c cargo run -r --example stream
 nix develop -c cargo run -r --example structure
 nix develop -c cargo run -r --example scaling
 nix develop -c cargo run -r --example budget
+nix develop -c cargo run -r --example display
+nix develop -c cargo run -r --example search
 ```
 
 测试包含任意单切点和随机 UTF-8 分块、与朴素数组/有序映射对照的区间/高度/检查点随机测试、深层 opener、百万字 Setext 转换、百万字隐藏区间、十亿片段的稀疏高度索引、逐字符超长段落、延迟定义成本和 resize 节点复用。没有把 wall-clock 阈值当作正确性条件。`scaling` 示例输出时间及操作计数，便于在目标机器上复查。
 
 行内分块测试会特意跨过 `BLOCK_LOOKAHEAD`，避免短样例被整行缓冲后才解析。另有中间前缀一致性、TileKey 未变则语义不变、标题/链接索引与线性查询对照、目标/title 长度边界及百万字尾空格确认成本测试。自比较验证分块一致性，预期语义样例和朴素数据结构模型提供另外的判定依据，不能将这些测试视为完整规范合规率。
+
+`tests/display_search.rs` 使用完整显示文本上的朴素搜索及独立语义样例作对照，覆盖实体部分命中、CRLF 映射、跨隐藏标记/tile、长查询和重叠匹配、真实流式逐前缀/逐切点、固定种子生成输入、极小共享预算、旧 revision 拒绝及失败回退计数。百万字隐藏区间验证有限预算不会触发整篇读取。
 
 本 checkout 已安装 Rust skill 提供的本地 pre-commit：运行 `cargo fmt --all` 后只重新 stage 原本暂存的 Rust 文件。格式化可能改变提交中的行号；其它未暂存文件可能被格式化，但不会自动暂存。钩子不随 Git 分发，紧急情况下可用 `git commit --no-verify` 跳过。
 
@@ -302,3 +370,5 @@ nix develop -c cargo run -r --example budget
 2026-10-30 在 ark 上的 release 样本：524,286 字节密集标记产生 854,391 个语义节点；子索引改用 `Option<NonZeroUsize>` 后，节点大小由 88 降至 72 字节，对应 arena 容量由 92,274,688 降至 75,497,472 字节（约 18.2%）。写入访问数 8,010,100、固定视口查询访问数 13,022 均未改变，分配次数同为 20。缩小了节点常数，没有增加全树压缩过程。峰值 arena 容量等于当前容量，因为该 arena 不缩容；这不是整个进程峰值内存。语义/修订存储拆分与查询 scratch 复用尚未实施。
 
 标准样例固定为 [CommonMark 0.31.2 autolinks](https://spec.commonmark.org/0.31.2/#autolinks)，离线夹具保存在 `tests/fixtures/commonmark_autolinks.rs`，保留上游 CC BY-SA 4.0 归属信息。19 个样例中，18 个在源码文本/目标语义上符合；606 为刻意差异：失败候选内部的反斜线不重新解析。URI percent encoding 属输出层，因此对照时归一化目标编码。其它 CommonMark 章节与 GFM 全集未评分；现有容器展平、强调/代码回退和语法长度限制仍按上文方言约定，不以自比较分块测试充当完整规范合规率。
+
+显示语义另固定了 24 个 CommonMark 0.31.2 文本样例（25–30、35–37、39–40、328–340），离线夹具 `tests/fixtures/commonmark_display.rs` 同样保留归属信息，只对照移除 HTML 标签后的文字。HTML、属性解码、列表结构及完整代码回退未计入这组评分；不将局部样例通过表述为整个章节合规。`tests/display.rs` 另外验证源码映射、跨 tile/逐标量查询、逐前缀/逐切点一致性、百万字代码晚闭合、错误候选线性计数、预算推进和旧游标拒绝。

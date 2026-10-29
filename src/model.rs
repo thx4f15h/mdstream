@@ -179,6 +179,9 @@ pub struct Work {
     pub tree_visits: u64,
     pub table_bytes: u64,
     pub autolink_bytes: u64,
+    /// Bounded entity candidate bytes examined at semicolon; feed bytes are
+    /// already included in inline_bytes.
+    pub entity_bytes: u64,
 }
 
 /// Actual Vec arena capacity and allocation/reallocation calls. Allocator headers,

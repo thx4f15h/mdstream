@@ -11,6 +11,7 @@ struct Snapshot {
     headings: Vec<mdtui3::Heading>,
     tables: Vec<mdtui3::Table>,
     runs: Vec<(Span, Option<mdtui3::BlockId>, Style, Option<mdtui3::LinkId>)>,
+    display: Vec<(Span, Option<Span>, String)>,
 }
 
 fn snapshot(doc: &Document) -> Snapshot {
@@ -31,6 +32,11 @@ fn snapshot(doc: &Document) -> Snapshot {
             .runs_in(Span::new(0, doc.source().len()))
             .unwrap()
             .map(|r| (r.source, r.block, r.style, r.link))
+            .collect(),
+        display: doc
+            .display_runs_in(Span::new(0, doc.source().len()))
+            .unwrap()
+            .map(|r| (r.source, r.replacement, r.text.to_owned()))
             .collect(),
     }
 }
@@ -169,6 +175,8 @@ fn provisional_semantics_match_at_every_observed_prefix() {
         "title\n---\n",
         "[key]: <a b> \"说明\"\n",
         "`unfinished ",
+        "&amp; &#x1f642; &NotEqualTilde; &bad*ok*; ",
+        "` a\r\nb ` ",
     ];
     let mut state = 981_u64;
     for _ in 0..24 {
