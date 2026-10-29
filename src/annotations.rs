@@ -1,4 +1,5 @@
 use crate::{LinkId, Span, Style};
+use std::num::NonZeroUsize;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Mark {
@@ -27,10 +28,16 @@ impl Mark {
 
 #[derive(Default)]
 struct Node {
-    children: [Option<usize>; 2],
+    children: [Option<NonZeroUsize>; 2],
     tag: Mark,
     newest: u64,
     hidden: bool,
+}
+
+impl Node {
+    fn child(&self, side: usize) -> Option<usize> {
+        self.children[side].map(|index| index.get() - 1)
+    }
 }
 
 /// Dynamic binary segment tree over source bytes. Tags stay on their covering
@@ -41,6 +48,7 @@ pub(crate) struct Annotations {
     capacity: usize,
     serial: u64,
     pub visits: u64,
+    allocations: u64,
 }
 
 impl Default for Annotations {
@@ -51,6 +59,7 @@ impl Default for Annotations {
             capacity: 1,
             serial: 0,
             visits: 0,
+            allocations: 1,
         }
     }
 }
@@ -62,8 +71,8 @@ impl Annotations {
         }
         while self.capacity < span.end {
             let root = self.nodes.len();
-            self.nodes.push(Node {
-                children: [Some(self.root), None],
+            self.push_node(Node {
+                children: [NonZeroUsize::new(self.root + 1), None],
                 newest: self.nodes[self.root].newest,
                 ..Node::default()
             });
@@ -91,12 +100,12 @@ impl Annotations {
         let mid = lo + (hi - lo) / 2;
         for (side, start, end) in [(0, lo, mid), (1, mid, hi)] {
             if span.start < end && start < span.end {
-                let child = match self.nodes[id].children[side] {
+                let child = match self.nodes[id].child(side) {
                     Some(child) => child,
                     None => {
                         let child = self.nodes.len();
-                        self.nodes.push(Node::default());
-                        self.nodes[id].children[side] = Some(child);
+                        self.push_node(Node::default());
+                        self.nodes[id].children[side] = NonZeroUsize::new(child + 1);
                         child
                     }
                 };
@@ -106,7 +115,7 @@ impl Annotations {
         self.nodes[id].hidden |= self.nodes[id]
             .children
             .iter()
-            .all(|child| child.is_some_and(|child| self.nodes[child].hidden));
+            .all(|child| child.is_some_and(|child| self.nodes[child.get() - 1].hidden));
     }
 
     pub fn next_visible(&self, offset: usize, end: usize) -> Option<usize> {
@@ -137,7 +146,7 @@ impl Annotations {
         let mid = lo + (hi - lo) / 2;
         for (side, start, stop) in [(0, lo, mid), (1, mid, hi)] {
             if offset < stop && start < end {
-                let found = match self.nodes[id].children[side] {
+                let found = match self.nodes[id].child(side) {
                     Some(child) => self.find_visible(child, start, stop, offset, end),
                     None => Some(start.max(offset)),
                 };
@@ -161,7 +170,7 @@ impl Annotations {
             mark = mark.merge(node.tag);
             let mid = lo + (hi - lo) / 2;
             let side = usize::from(offset >= mid);
-            match node.children[side] {
+            match node.child(side) {
                 Some(child) => {
                     id = child;
                     if side == 0 {
@@ -190,11 +199,26 @@ impl Annotations {
         let mid = lo + (hi - lo) / 2;
         let mut revision = node.tag.revision;
         for (side, start, end) in [(0, lo, mid), (1, mid, hi)] {
-            if let Some(child) = node.children[side] {
+            if let Some(child) = node.child(side) {
                 revision = revision.max(self.query_revision(child, start, end, span));
             }
         }
         revision
+    }
+
+    pub fn arena_stats(&self) -> crate::ArenaStats {
+        crate::ArenaStats {
+            nodes: self.nodes.len(),
+            capacity_bytes: self.nodes.capacity() * std::mem::size_of::<Node>(),
+            allocation_calls: self.allocations,
+        }
+    }
+
+    fn push_node(&mut self, node: Node) {
+        if self.nodes.len() == self.nodes.capacity() {
+            self.allocations += 1;
+        }
+        self.nodes.push(node);
     }
 
     pub fn node_count(&self) -> usize {
@@ -258,7 +282,7 @@ impl Iterator for Segments<'_> {
                     {
                         if start < self.query.end && self.query.start < end {
                             self.stack.push(Frame {
-                                node: node.children[side],
+                                node: node.child(side),
                                 span: Span::new(start, end),
                                 inherited: mark,
                             });

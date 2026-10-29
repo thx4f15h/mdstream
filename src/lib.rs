@@ -17,26 +17,71 @@
 #![doc = include_str!("../README.md")]
 
 mod annotations;
+mod autolink;
 mod block;
+mod budget;
+mod cache;
 mod checkpoints;
 mod destination;
+mod frame;
 mod headings;
 mod inline;
 mod layout;
 mod model;
 mod navigation;
 mod references;
+mod search;
 mod table;
+mod utf8;
 
+pub use autolink::MAX_AUTOLINK_BYTES;
 pub use block::{BLOCK_LOOKAHEAD, MAX_FENCE_LENGTH};
-pub use checkpoints::CheckpointIndex;
+pub use budget::{Budget, Completion, WorkLimit};
+pub use cache::{CacheValidity, DependencyKey, SourceSnapshot};
+pub use checkpoints::{CheckpointIndex, CheckpointToken};
 pub use destination::{MAX_DESTINATION_BYTES, MAX_LINK_SUFFIX_BYTES, MAX_LINK_TITLE_BYTES};
+pub use frame::{LayoutPass, LayoutSink};
 pub use headings::{Heading, HeadingIndex};
-pub use layout::{Anchor, HeightIndex, LayoutError, Measurement, VisibleTile};
+pub use layout::{
+    Anchor, HeightIndex, HeightState, LayoutError, Measurement, ViewportCursor, ViewportPage,
+    VisibleTile,
+};
 pub use model::*;
 pub use navigation::{NavAction, Navigator, ScrollTarget};
 pub use references::MAX_LABEL_BYTES;
+pub use search::{Selection, SourceSearch, TaskState};
 pub use table::{Alignment, Column, Table, TableCell, TableRow};
+pub use utf8::Utf8Document;
+
+/// Validate both consumers before changing either. Replaying an update preserves
+/// measurements and checkpoints; missed updates require an explicit rebuild.
+pub fn apply_layout_update<S>(
+    document: &Document,
+    update: &Update,
+    heights: &mut HeightIndex,
+    checkpoints: &mut CheckpointIndex<S>,
+) -> Result<(), LayoutError> {
+    apply_layout_update_with_policy(
+        document,
+        update,
+        heights,
+        checkpoints,
+        LayoutPolicy::default(),
+    )
+}
+
+pub fn apply_layout_update_with_policy<S>(
+    document: &Document,
+    update: &Update,
+    heights: &mut HeightIndex,
+    checkpoints: &mut CheckpointIndex<S>,
+    policy: LayoutPolicy,
+) -> Result<(), LayoutError> {
+    heights.validate_update(document, update)?;
+    checkpoints.validate_update(document, update)?;
+    heights.apply_with_policy(document, update, policy)?;
+    checkpoints.apply_with_policy(document, update, policy)
+}
 
 use annotations::Annotations;
 use block::{Fence, Line};
@@ -69,6 +114,7 @@ struct StreamingLine {
 
 #[derive(Default)]
 pub struct Document {
+    id: DocumentId,
     source: String,
     tiles: Vec<Span>,
     blocks: Vec<Block>,
@@ -93,6 +139,9 @@ pub struct Document {
 impl Document {
     pub fn new() -> Self {
         Self::default()
+    }
+    pub fn id(&self) -> DocumentId {
+        self.id
     }
     pub fn source(&self) -> &str {
         &self.source
@@ -162,6 +211,10 @@ impl Document {
             ..self.work
         }
     }
+    pub fn annotation_arena_stats(&self) -> ArenaStats {
+        self.annotations.arena_stats()
+    }
+
     pub fn annotation_node_count(&self) -> usize {
         self.annotations.node_count()
     }
@@ -208,6 +261,26 @@ impl Document {
         self.annotations.next_visible(offset, self.source.len())
     }
 
+    /// First text OR drawable object. Unlike next_visible, this cannot skip an
+    /// empty-alt image. A query inside an object's source keeps that object alive.
+    pub fn next_drawable(&self, offset: usize) -> Option<usize> {
+        if !self.source.is_char_boundary(offset) || offset >= self.source.len() {
+            return None;
+        }
+        let text = self.next_visible(offset);
+        let i = self
+            .link_info
+            .partition_point(|info| info.source.end <= offset);
+        let object = self
+            .link_info
+            .get(i)
+            .map(|info| info.source.start.max(offset));
+        match (text, object) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
     /// Find tiles intersecting a source range in O(log tiles), with no scan.
     pub fn tiles_overlapping(&self, span: Span) -> std::ops::Range<usize> {
         let start = self.tiles.partition_point(|tile| tile.end <= span.start);
@@ -221,7 +294,7 @@ impl Document {
 
     pub fn link_destination(&self, id: LinkId) -> Option<&str> {
         let span = match self.links.get(id.0)? {
-            LinkTarget::Direct(span) => *span,
+            LinkTarget::Direct(span) | LinkTarget::Email(span) => *span,
             LinkTarget::Reference(symbol) => self.references.entries.get(symbol.0)?.destination?,
         };
         self.text(span)
@@ -230,15 +303,26 @@ impl Document {
     /// Resolve inline or late-defined reference titles without copying text.
     pub fn link_title(&self, id: LinkId) -> Option<&str> {
         let span = match self.links.get(id.0)? {
-            LinkTarget::Direct(_) => self.link_info.get(id.0)?.title?,
+            LinkTarget::Direct(_) | LinkTarget::Email(_) => self.link_info.get(id.0)?.title?,
             LinkTarget::Reference(symbol) => self.references.entries.get(symbol.0)?.title?,
         };
         self.text(span)
     }
 
+    /// URI targets borrow source; email autolinks allocate only the mailto: URL.
+    pub fn link_url(&self, id: LinkId) -> Option<std::borrow::Cow<'_, str>> {
+        let destination = self.link_destination(id)?;
+        Some(if matches!(self.links.get(id.0)?, LinkTarget::Email(_)) {
+            std::borrow::Cow::Owned(format!("mailto:{destination}"))
+        } else {
+            std::borrow::Cow::Borrowed(destination)
+        })
+    }
+
     pub fn tile_key(&self, id: TileId) -> Option<TileKey> {
         let source = self.tile(id)?;
         Some(TileKey {
+            document: self.id,
             source,
             syntax_revision: self.annotations.newest(source),
             reference_revision: self.references.revision,
@@ -265,13 +349,20 @@ impl Document {
     }
 
     pub fn append(&mut self, text: &str) -> Result<Update, Finished> {
+        let mut update = Update::default();
+        self.append_into(text, &mut update)?;
+        Ok(update)
+    }
+
+    /// Reuse event vector capacities. On Finished, the buffer is unchanged.
+    pub fn append_into(&mut self, text: &str, update: &mut Update) -> Result<(), Finished> {
         if self.finished {
             return Err(Finished);
         }
         let old_end = self.source.len();
-        let mut update = self.begin_update(old_end);
+        self.begin_update(old_end, update);
         if text.is_empty() {
-            return Ok(update);
+            return Ok(());
         }
         self.revision += 1;
         update.revision = self.revision;
@@ -279,6 +370,7 @@ impl Document {
         self.extend_tiles(old_end);
         update.appended.end = self.source.len();
         update.dirty.push(update.appended);
+        update.change(update.appended, ChangeKind::Text);
         let end = self.source.len();
         let mut cursor = old_end;
         while cursor < end {
@@ -292,9 +384,9 @@ impl Document {
                         break;
                     }
                 }
-                self.extend_line(line, Span::new(start, cursor), &mut update);
+                self.extend_line(line, Span::new(start, cursor), update);
                 if self.source.as_bytes()[cursor - 1] == b'\n' {
-                    self.end_line(line, &mut update);
+                    self.end_line(line, update);
                     self.line_start = cursor;
                     self.streaming = None;
                 }
@@ -305,56 +397,75 @@ impl Document {
                 let limit = cursor - self.line_start >= BLOCK_LOOKAHEAD
                     && self.source.is_char_boundary(cursor);
                 if newline || limit {
-                    self.commit_line(Span::new(self.line_start, cursor), newline, &mut update);
+                    self.commit_line(Span::new(self.line_start, cursor), newline, update);
                     if newline {
                         self.line_start = cursor;
                     }
                 }
             }
         }
-        self.complete_update(&mut update);
-        Ok(update)
+        self.complete_update(update);
+        Ok(())
     }
 
     /// Seal EOF once. Unmatched constructs become literal without reparsing.
     /// Further calls are no-ops; append after EOF returns [`Finished`].
     pub fn finish(&mut self) -> Update {
-        let mut update = self.begin_update(self.source.len());
+        let mut update = Update::default();
+        self.finish_into(&mut update);
+        update
+    }
+
+    pub fn finish_into(&mut self, update: &mut Update) {
+        self.begin_update(self.source.len(), update);
         if self.finished {
-            return update;
+            return;
         }
         self.revision += 1;
         update.revision = self.revision;
         if let Some(line) = self.streaming.take() {
-            self.end_line(line, &mut update);
+            self.end_line(line, update);
         } else if self.line_start < self.source.len() {
-            self.commit_line(
-                Span::new(self.line_start, self.source.len()),
-                true,
-                &mut update,
-            );
+            self.commit_line(Span::new(self.line_start, self.source.len()), true, update);
         }
-        self.flush_table_header(&mut update);
-        self.close_current(&mut update);
+        self.flush_table_header(update);
+        self.close_current(update);
         self.line_start = self.source.len();
         self.fence = None;
         self.finished = true;
-        self.complete_update(&mut update);
-        update
+        self.complete_update(update);
     }
 
-    fn begin_update(&self, start: usize) -> Update {
-        Update {
+    fn begin_update(&self, start: usize, update: &mut Update) {
+        let mut dirty = std::mem::take(&mut update.dirty);
+        let mut references_changed = std::mem::take(&mut update.references_changed);
+        let mut tables_changed = std::mem::take(&mut update.tables_changed);
+        let mut rows_changed = std::mem::take(&mut update.rows_changed);
+        let mut changes = std::mem::take(&mut update.changes);
+        dirty.clear();
+        references_changed.clear();
+        tables_changed.clear();
+        rows_changed.clear();
+        changes.clear();
+        *update = Update {
+            document: Some(self.id),
+            base_revision: self.revision,
             revision: self.revision,
             appended: Span::new(start, start),
             new_blocks: self.blocks.len()..self.blocks.len(),
             new_tiles: self.tiles.len()..self.tiles.len(),
-            dirty: Vec::new(),
-            references_changed: Vec::new(),
+            dirty,
+            references_changed,
             new_headings: self.headings.entries().len()..self.headings.entries().len(),
             new_tables: self.tables.len()..self.tables.len(),
-            tables_changed: Vec::new(),
-        }
+            tables_changed,
+            rows_changed,
+            changes,
+            new_links: self.links.len()..self.links.len(),
+            changed_blocks: self.blocks.len()..self.blocks.len(),
+            changed_links: self.links.len()..self.links.len(),
+            changed_headings: self.headings.entries().len()..self.headings.entries().len(),
+        };
     }
 
     fn complete_update(&self, update: &mut Update) {
@@ -362,6 +473,13 @@ impl Document {
         update.new_tiles.end = self.tiles.len();
         update.new_headings.end = self.headings.entries().len();
         update.new_tables.end = self.tables.len();
+        update.new_links.end = self.links.len();
+        if update.base_revision != update.revision {
+            update.changed_blocks = update.new_blocks.start.saturating_sub(1)..self.blocks.len();
+            update.changed_links = update.new_links.start.saturating_sub(1)..self.links.len();
+            update.changed_headings =
+                update.new_headings.start.saturating_sub(1)..self.headings.entries().len();
+        }
     }
 
     fn extend_tiles(&mut self, start: usize) {
@@ -413,13 +531,20 @@ impl Document {
         let mut inline = std::mem::take(&mut self.inline);
         inline.finish(&mut self.effects(update));
         self.inline = inline;
-        self.current = None;
+        if let Some(id) = self.current.take() {
+            self.blocks[id.0].state = SyntaxState::Sealed;
+        }
     }
 
     fn new_block(&mut self, span: Span, kind: BlockKind, update: &mut Update) -> BlockId {
         self.close_current(update);
         let id = BlockId(self.blocks.len());
-        self.blocks.push(Block { source: span, kind });
+        self.blocks.push(Block {
+            source: span,
+            kind,
+            state: SyntaxState::Growing,
+        });
+        update.change(span, ChangeKind::Structure);
         self.current = Some(id);
         id
     }
@@ -503,8 +628,11 @@ impl Document {
                     .define(symbol, destination, title, self.revision)
                 {
                     update.references_changed.push(symbol);
+                    if let Some(start) = self.references.entries[symbol.0].first_use {
+                        update.change(Span::new(start, self.source.len()), ChangeKind::Reference);
+                    }
                 }
-                self.current = None;
+                self.close_current(update);
                 return;
             }
             classification = Line::Text;

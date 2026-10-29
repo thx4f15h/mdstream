@@ -1,7 +1,9 @@
 use crate::annotations::Annotations;
 use crate::destination::{Destination, Progress};
 use crate::references::{MAX_LABEL_BYTES, References};
-use crate::{LinkId, LinkInfo, LinkKind, LinkTarget, Span, Style, Update, Work};
+use crate::{
+    ChangeKind, LinkId, LinkInfo, LinkKind, LinkTarget, Span, Style, SyntaxState, Update, Work,
+};
 
 pub(crate) struct Effects<'a> {
     pub source: &'a str,
@@ -18,6 +20,16 @@ impl Effects<'_> {
         if span.is_empty() {
             return;
         }
+        self.update.change(
+            span,
+            if style.contains(Style::HIDDEN) {
+                ChangeKind::Visibility
+            } else if style != Style::default() {
+                ChangeKind::Style
+            } else {
+                ChangeKind::Structure
+            },
+        );
         self.annotations
             .apply(span, style, link, self.update.revision);
         // Coalesce adjacent/overlapping mutations without scanning prior changes.
@@ -55,7 +67,16 @@ impl Effects<'_> {
                 suffix.map_or(candidate.close + 1, |s| s.end),
             ),
             title,
+            state: if suffix.is_some() {
+                SyntaxState::Sealed
+            } else {
+                SyntaxState::Provisional
+            },
         };
+        if let LinkTarget::Reference(symbol) = target {
+            let first = &mut self.references.entries[symbol.0].first_use;
+            *first = Some(first.map_or(info.source.start, |old| old.min(info.source.start)));
+        }
         let id = match candidate.link {
             Some(id) => {
                 self.links[id.0] = target;
@@ -148,6 +169,7 @@ pub(crate) struct Inline {
     spaces: Option<usize>,
     carriage: bool,
     line_break: Option<LineBreak>,
+    autolink: Option<usize>,
 }
 
 impl Inline {
@@ -191,6 +213,39 @@ impl Inline {
         if self.tail.is_some() && self.tail_byte(byte, pos, effects) {
             return;
         }
+        if let Some(start) = self.autolink.take() {
+            if byte == b'>' {
+                effects.work.autolink_bytes += (pos - start - 1) as u64;
+                if let Some(target) = crate::autolink::classify(&effects.source[start + 1..pos]) {
+                    let label = Span::new(start + 1, pos);
+                    let id = LinkId(effects.links.len());
+                    effects.links.push(match target {
+                        crate::autolink::Target::Uri => LinkTarget::Direct(label),
+                        crate::autolink::Target::Email => LinkTarget::Email(label),
+                    });
+                    effects.link_info.push(LinkInfo {
+                        kind: LinkKind::Link,
+                        label,
+                        source: Span::new(start, pos + 1),
+                        title: None,
+                        state: SyntaxState::Sealed,
+                    });
+                    effects.mark(label, Style::default(), Some(id));
+                    effects.hide(Span::new(start, start + 1));
+                    effects.hide(Span::new(pos, pos + 1));
+                }
+                return;
+            }
+            if byte > b' '
+                && byte != 0x7f
+                && byte != b'<'
+                && pos - start <= crate::MAX_AUTOLINK_BYTES
+            {
+                self.autolink = Some(start);
+                return;
+            }
+            // Consume the rejecting byte normally, without replaying the prefix.
+        }
         if self.carriage && byte != b'\n' {
             self.spaces = None;
             self.escape = None;
@@ -224,6 +279,10 @@ impl Inline {
         }
         let bang = self.bang.take();
         match byte {
+            b'<' => {
+                self.autolink = Some(pos);
+                self.bracket = None;
+            }
             b'\\' => self.escape = Some(pos),
             b'*' | b'_' | b'~' | b'`' => self.start_run(byte, pos),
             b'!' => self.bang = Some(pos),
@@ -338,13 +397,19 @@ impl Inline {
                         start: pos,
                     })
                 }
-                _ => return false,
+                _ => {
+                    self.seal_candidate(candidate, effects);
+                    return false;
+                }
             },
             Tail::Destination {
                 candidate,
                 mut parser,
             } => match parser.byte(byte, pos) {
-                Progress::Invalid => return false,
+                Progress::Invalid => {
+                    self.seal_candidate(candidate, effects);
+                    return false;
+                }
                 Progress::Complete { destination, title } => {
                     effects.complete_link(
                         candidate,
@@ -357,6 +422,7 @@ impl Inline {
             },
             Tail::Label { candidate, start } => {
                 if pos - start - 1 > MAX_LABEL_BYTES || matches!(byte, b'\n' | b'\r' | b'[') {
+                    self.seal_candidate(candidate, effects);
                     return false;
                 }
                 if byte == b']' {
@@ -372,6 +438,8 @@ impl Inline {
                             Some(Span::new(start, pos + 1)),
                             None,
                         );
+                    } else {
+                        self.seal_candidate(candidate, effects);
                     }
                 } else {
                     self.tail = Some(Tail::Label { candidate, start });
@@ -381,7 +449,21 @@ impl Inline {
         true
     }
 
+    fn seal_candidate(&self, candidate: Candidate, effects: &mut Effects<'_>) {
+        if let Some(id) = candidate.link {
+            effects.link_info[id.0].state = SyntaxState::Sealed;
+        }
+    }
+
     pub fn finish(&mut self, effects: &mut Effects<'_>) {
+        if let Some(tail) = &self.tail {
+            let candidate = match tail {
+                Tail::After(c)
+                | Tail::Destination { candidate: c, .. }
+                | Tail::Label { candidate: c, .. } => *c,
+            };
+            self.seal_candidate(candidate, effects);
+        }
         self.finish_run(None, effects);
         effects.work.delimiter_steps += self.stack.len() as u64;
         self.stack.clear();
@@ -395,5 +477,6 @@ impl Inline {
         self.spaces = None;
         self.carriage = false;
         self.line_break = None;
+        self.autolink = None;
     }
 }

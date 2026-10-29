@@ -11,6 +11,12 @@ pub enum NavAction {
     Heading(HeadingId),
     NextHeading { max_level: u8 },
     PreviousHeading { max_level: u8 },
+    ParentHeading,
+    FirstChildHeading,
+    NextSiblingHeading,
+    PreviousSiblingHeading,
+    NextAtLevel { level: u8 },
+    PreviousAtLevel { level: u8 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,6 +94,32 @@ impl Navigator {
             }
             NavAction::PreviousHeading { max_level } => {
                 Some(document.headings().previous(offset, max_level)?)
+            }
+            NavAction::ParentHeading => Some(
+                document
+                    .headings()
+                    .parent(document.headings().current(offset)?)?,
+            ),
+            NavAction::FirstChildHeading => Some(
+                document
+                    .headings()
+                    .first_child(document.headings().current(offset)?)?,
+            ),
+            NavAction::NextSiblingHeading => Some(
+                document
+                    .headings()
+                    .next_sibling(document.headings().current(offset)?)?,
+            ),
+            NavAction::PreviousSiblingHeading => Some(
+                document
+                    .headings()
+                    .previous_sibling(document.headings().current(offset)?)?,
+            ),
+            NavAction::NextAtLevel { level } => {
+                Some(document.headings().next_at_level(offset, level)?)
+            }
+            NavAction::PreviousAtLevel { level } => {
+                Some(document.headings().previous_at_level(offset, level)?)
             }
             _ => None,
         };

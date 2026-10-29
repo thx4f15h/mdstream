@@ -136,7 +136,11 @@ fn streaming_updates_reference_reset_and_skipped_update_recovery() {
     let stale = index.ticket(TileId(0)).unwrap();
     let update = doc.append("[x]: /url\n").unwrap();
     index.apply(&doc, &update).unwrap();
-    assert_eq!(index.height(TileId(0)), Some(1));
+    assert_eq!(index.height(TileId(0)), Some(8));
+    assert_eq!(
+        index.height_state(TileId(0)),
+        Some(mdtui3::HeightState::Expired)
+    );
     assert_eq!(index.measure(stale, 5), Err(LayoutError::StaleMeasurement));
     doc.append("missed\n").unwrap();
     let update = doc.append("again\n").unwrap();

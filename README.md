@@ -4,7 +4,9 @@
 
 目标是：即使输入逐字符到达、一个段落长达数百万字、分隔符很晚才闭合、引用定义出现在文末，也不反复扫描旧文档。支持的方言有明确限制，以换取可证明的复杂度。
 
-后续优化见 [核心改进顺序与验收条件](TODO.md#核心改进顺序与验收条件)：优先保证整帧实际重排受窗口和恢复预算约束，再改善缓存复用与扩展语义支持。
+当前开发方向（2026-10-30 确认）：先把地基打牢，在既定需求和复杂度约束内支持尽量丰富、可复用的基础功能，再在其上搭建完整项目。现阶段交付核心库与可运行示例，终端 UI 留到后续阶段；按依赖关系和实现容易程度持续推进 TODO 中的核心能力。具体范围见 [开发阶段与推进原则](TODO.md#开发阶段与推进原则)。
+
+已交付任务及验收记录见 [DONE](DONE.md)。后续优化见 [核心改进顺序与验收条件](TODO.md#核心改进顺序与验收条件)：优先保证整帧实际重排受窗口和恢复预算约束，再改善缓存复用与扩展语义支持。
 
 ## 接入
 
@@ -39,9 +41,9 @@ for tile in heights.viewport(100..124, 4, 32) {
 
 可执行示例在 `examples/stream.rs`。库 crate 名称为 `mdtui3`。
 
-`append(&str)` 接收有效 UTF-8，可以在任意 Unicode 标量边界分块；传输层的任意字节分块需要先做 UTF-8 解码。`finish()` 表示真正的 EOF、完成尾部解析，重复调用无副作用，此后不能再追加。空追加不改变 revision。
+`append(&str)` 接收有效 UTF-8，可以在任意 Unicode 标量边界分块；传输层的任意字节分块可使用 `Utf8Document`：最多暂存 3 字节不完整尾部，非法序列及 EOF 截断采用 U+FFFD 替换；偏移按解码后的文档定义。`finish()` 表示真正的 EOF、完成尾部解析，重复调用无副作用，此后不能再追加。空追加不改变 revision。
 
-所有 ID 和源码 byte offset 都只在所属文档中有效。已分配的 `BlockId`、`TileId`、`LinkId`、`SymbolId`、`TableId`、`HeadingId` 不会重排；当前块和最后一个片段可以增长。库返回的是借用、区间和增量通知，不复制历史 AST。`Update` 应当逐次处理后释放，不需要保存事件历史。
+所有 ID 和源码 byte offset 都只在所属文档中有效。已分配的 `BlockId`、`TileId`、`LinkId`、`SymbolId`、`TableId`、`HeadingId` 不会重排；当前块和最后一个片段可以增长。库返回的是借用、区间和增量通知，不复制历史 AST。`Update` 可以逐次消费，或使用 `merge` 将连续更新合并后在最终 revision 消费，不需要保存事件历史。
 
 ## 数据结构与复杂度
 
@@ -79,11 +81,11 @@ for tile in heights.viewport(100..124, 4, 32) {
 1. 原文保存在 append-only String 中，所有语义对象引用 byte span。输入游标只向前走，块分类最多查看一次完整短行或长行的有界前缀。
 2. 行内解析是状态机。分隔符的同类 opener 索引允许直接定位候选；每个 opener 至多入栈、出栈各一次。失败的候选不会回退重扫。反引号 run 按长度配对，无论 run 多长都只保存区间。
 3. 样式和隐藏标记保存在动态二叉区间树。闭合分隔符只向覆盖区间的 O(log n) 个节点写 tag；查询继承这些 tag。源码不需要移动、包裹或重新分词。节点同时聚合最新 revision 和“全部隐藏”信息。
-4. 引用保留 `LinkId -> SymbolId -> destination` 间接关系。定义只更新一个符号和一个全局引用 epoch，没有反向引用列表遍历。旧缓存通过 `TileKey` 按需发现变化。
+4. 引用保留 `LinkId -> SymbolId -> destination` 间接关系。定义只更新一个符号版本和一个保守全局引用 epoch，没有反向引用列表遍历。`DependencyKey` 只检查自身引用符号；尺寸变化从符号最早使用位置保守失效后续布局状态。
 5. 高度树支持 lazy assignment、子树和以及按累计高度选择。零高度区域可整段跳过。重复 resize 重用节点，不累计废弃树。
 6. 检查点子树记录有效计数。失效只把覆盖子树的计数置零，查找前驱直接剪枝。失效时不逐个运行调用者状态的析构函数；旧状态在该位置被覆盖或整个索引销毁时释放。
 
-`Document::work()` 暴露输入扫描量、块分类输入量、行内扫描量、分隔符操作数、标签规范化字节数、区间树实际写入访问次数、表格行扫描字节数。分类字节量是分类器接收的字节数，分类器内部对这些字节只做固定次数的线性扫描。它不是 CPU 指令计数。测试使用这些指标约束增长，不依赖机器跑分来“证明”复杂度。
+`Document::work()` 暴露输入扫描量、块分类输入量、行内扫描量、分隔符操作数、标签规范化字节数、区间树实际写入访问次数、表格行扫描字节数与自动链接候选检查字节数。分类字节量是分类器接收的字节数，分类器内部对这些字节只做固定次数的线性扫描。它不是 CPU 指令计数。测试使用这些指标约束增长，不依赖机器跑分来“证明”复杂度。
 
 `Runs::annotation_visits()` 单独统计本次查询访问的区间节点，不修改文档统计。查询只在开始时二分定位块，之后顺序跨越块边界并遍历样式区间，不对每个字符从根重查；均匀长区间可以直接跳过。片段划分直接跳到最多 256 字节处，再回退至 UTF-8 边界，无需逐字符解码整段新增输入。
 
@@ -113,9 +115,9 @@ if let Some((from, state)) = checkpoints.previous(target) {
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-每次追加及 EOF 后，立即对高度索引和检查点调用 `apply`。检查点从最早变化的片段起保守失效到末尾，因为换行状态可能向后传播。漏掉 update 会返回 `OutOfOrderUpdate`，可以调用 `rebuild` 恢复估计；不能把一个文档的 ID/update/ticket 用于另一个文档或索引。更换宽度、字体或其它排版参数时，调用 `heights.reset(...)` 和 `checkpoints.clear()`。
+每次追加及 EOF 后，逐次调用 `apply`，或合并连续 Update 后在最终 revision 调用一次。`apply_layout_update` / `apply_layout_update_with_policy` 先验证两个索引再修改状态。检查点从最早变化的片段起保守失效到末尾，因为换行状态可能向后传播。漏掉 update 会返回 `OutOfOrderUpdate`，可以调用 `rebuild` 恢复估计；不能把一个文档的 ID/update/ticket 用于另一个文档或索引。更换宽度、字体或其它排版参数时，调用 `heights.reset(...)` 和 `checkpoints.clear()`。
 
-开始排版前取得 `Measurement` ticket，完成后通过 `measure` 回填行高。期间如果发生了失效或 resize，旧 ticket 会被拒绝。零行高是合法结果，例如一个只含隐藏语法或不拥有任何完整显示行的片段。`Anchor` 保存片段和片段内行号，`row_of` 可以在高度修正后重新求滚动位置。
+开始排版前取得 `Measurement` ticket，完成后通过 `measure` 回填行高。期间如果发生依赖范围内的失效或 resize，旧 ticket 会被拒绝；不相关的尾部追加保留旧视口 ticket。零行高是合法结果，例如一个只含隐藏语法或不拥有任何完整显示行的片段。`Anchor` 保存片段和片段内行号，`row_of` 可以在高度修正后重新求滚动位置。
 
 **未排版区域只有估计高度。** 在从未访问、也没有邻近检查点的超长软换行段落中，第一次跳转无法同时保证绝对行号精确和只做一屏工作。这不是通过完整预排版掩盖的成本：本库明确选择估计滚动位置及源码锚点。渲染器应限制恢复距离和每帧工作量，必要时采用局部临时起点，之后逐步修正；不要为找到一个遥远的精确检查点回扫整个段落。
 
@@ -127,7 +129,7 @@ if let Some((from, state)) = checkpoints.previous(target) {
 # let mut heights = HeightIndex::default();
 # let tile_id = TileId(0);
 if let Some(span) = doc.tile(tile_id) {
-    let next = doc.next_visible(span.start);
+    let next = doc.next_drawable(span.start);
     if next.is_none_or(|offset| offset >= span.end) {
         let end = next.and_then(|offset| doc.tile_at(offset))
             .map_or(doc.tile_count(), |tile| tile.0);
@@ -204,7 +206,31 @@ nav.navigate(&doc, &heights, NavAction::End, 24);
 
 标题动作返回的 `ScrollTarget.source` 是精确目标位置，`top` 是当前高度索引下的估计视口顶行；渲染器需要用局部排版把源码位置映射成实际显示行，再调用 `reconcile`。普通逐行/翻页之后，用 `reconcile_source` 回填实际视口的源码锚点，后续标题查找才会从精确位置出发；未回填时使用片段起点估计。这些接口不通过预排版整篇内容获取精确行号。键盘事件映射和目录选择器列入 [TODO](TODO.md)。
 
-后续的目录、章节关系、文内锚点、跳转历史及隐藏目标定位见 [标题导航与折叠联动规划](TODO.md#标题导航与折叠联动规划)。[折叠支持规划](TODO.md#折叠支持规划) 覆盖章节、代码、表格、列表/引用等对象，以及嵌套状态、流式追加和有界排版；这些折叠能力尚未实现。
+后续的目录、文内锚点、跳转历史及隐藏目标定位见 [标题导航与折叠联动规划](TODO.md#标题导航与折叠联动规划)。[折叠支持规划](TODO.md#折叠支持规划) 覆盖章节、代码、表格、列表/引用等对象，以及嵌套状态、流式追加和有界排版；这些折叠能力尚未实现。
+
+## 共享预算与增量缓存
+
+`Budget` 同时限制查询次数、tile 次数、实际交付的源码字节、语义对象、恢复步骤和依赖检查。一次帧内所有工作共用同一个实例；新建 Budget 表示开始新的帧或显式后台任务。原有 `viewport` / `runs` 是底层无整帧约束的接口，接入方不能将它们与预算接口混用后宣称整帧有界。
+
+`viewport_budgeted` / `resume_viewport` 复用输出 Vec，返回 `Covered`、`EndOfDocument` 或 `BudgetExhausted`。继续位置保存稳定 tile 锚点，并验证视图、文档 revision 和失效版本；高度校准后重新计算累计位置。`LayoutPass` 保留半个 tile 的字节/对象位置，下一帧不会重新扫描已完成前缀。`LayoutPass::from_checkpoint` 限制恢复源码距离，每个恢复步骤也计入预算。无附近上下文时，从局部起点排版并标记为 `Local`；未知前缀的绝对行号仍是估计。
+
+一个不可暂停的外部回调不会因为传入 Budget 就自动获得时间上界。`LayoutSink` 每次收到的文本和对象有界；昂贵的图片解码、字体排版或用户析构需另外拆成可暂停任务。`examples/budget.rs` 展示 UTF-8 字节输入、Update 合并以及跨帧推进；其中按 Unicode 标量计列，仅验证消费协议，不是终端宽度或字素排版实现。
+
+`HeightState` 区分 `Measured`、`Local`、`Estimated`、`Expired`。`expire` 用区间操作保留旧的非零高度，并将旧零高度替换为正估计，恢复可检索性；`invalidate` 保留原来统一重置估计的低层语义。默认 `apply` 从最早可能改变尺寸的位置过期后续布局，不扫描屏外内容。渲染器确认引用目标、样式或表格宽度提示不影响尺寸时，可用 `LayoutPolicy` 保留对应测量；更换策略需重置布局。
+
+普通 ticket 保守依赖当前 tile 之前的整个输入布局。`ticket_from` / `measure_from` 将依赖缩小到指定有效检查点，并验证该检查点的身份与版本；替换输入状态后用 `insert_for_layout` 同时过期后续高度和检查点。单次高度回填只更新当前 tile，不把后继 tile 逐个重排。
+
+`DependencyKey` 针对直接语义依赖检查符号版本，检查数量计入 Budget；它不能替代传入排版状态的 ticket。`Document::snapshot` 显式复制受上限和字节预算约束的源码，未复制全 AST。`CheckpointIndex::drain_before` 按对象/查询预算移出旧状态，返回状态所有权；失效本身不批量执行用户析构。
+
+## 更新事件与源码交互
+
+Update 携带文档身份及 `base_revision -> revision`。空追加、重复 EOF 和重复应用均为无副作用操作；漏更新、乱序、错误文档或视图返回明确错误。已消费更新之后的新测量不会被重复通知清掉。`merge` 移入新事件，累计成本随事件数增长；合并后的失效可比逐步处理更保守，但不遗漏失效。`append_into` / `finish_into` 与 `viewport_into` 保留 Vec 容量用于复用。
+
+`changes` 将文本、隐藏性、样式、块结构、引用和表格宽度提示分开。`changed_blocks`、`changed_headings`、`changed_links` 是有界增量范围，允许额外包含最后一个没有变化的旧对象；`rows_changed` 报告表格行范围。`SyntaxState` 区分暂定、增长中、局部封口，标题的状态读取其所属块；封口不代表引用定义不会晚到。Update 对象事件用于对象状态缓存，TileKey 用于显示语义缓存。
+
+`HeadingIndex` 提供 `current`、`parent`、`first_child`、`next_sibling`、`previous_sibling`、`section` / `section_end` 和严格同级前后查询，对应动作已接入 `Navigator`。跳级标题按最近更浅级别确定父节点，兄弟不等于同级。章节末尾可随追加增长，查询不读取标题文本。
+
+`SourceSearch` 是按字节预算推进的固定查询 KMP 任务，支持跨追加和重叠匹配；失败回退也计入预算。更换查询新建任务，历史搜索不会隐式同步完成。`Selection` 绑定文档身份及源码区间，`TaskState` 保存独立的复选框覆盖状态，二者都不修改追加源码。这些接口为后续 UI 提供基础；显示文本搜索和折叠联动另行实现。
 
 ## 明确支持的 Markdown 方言
 
@@ -214,6 +240,7 @@ nav.navigate(&doc, &heights, NavAction::End, 24);
 - 管道表格、列对齐、单元格行内语法；任务列表复选框状态。
 - `*em*`、`_em_`、`**strong**`、`__strong__`、`~~strike~~`，以及精确长度匹配的反引号代码 span。支持跨同一段落的多行输入。
 - ASCII 标点反斜线转义；内联链接 `[text](destination)`；shortcut/full/collapsed 引用链接；单行引用定义；裸目标和尖括号目标，可选 title。
+- 尖括号 URI/email 自动链接；`link_destination` 借用原始地址，`link_url` 为 email 添加 `mailto:`。
 - 图片 `![alt](destination)` 及引用式图片，保留独立类型和 alt 信息，可由渲染器降级为链接。
 - CRLF 的 CR 隐藏，LF 保留。裸 CR 按原文处理。
 - 同块行内软换行、双空格/反斜线硬换行的结构化标记。
@@ -225,7 +252,8 @@ nav.navigate(&doc, &heights, NavAction::End, 24);
 - 已识别的引用立即显示 label，并隐藏引用语法；尚未定义时没有可跳转目标。定义到来后只增加目标。第一个有效定义生效，后续重复定义不覆盖。标签最多 999 字节，折叠 Unicode 空白并转小写，不做完整 Unicode case folding。
 - URL 和 title 各最多 4096 字节，左括号后的链接后缀候选最多 8256 字节（包括空白和闭合右括号）。支持平衡括号和转义定界，但返回的 destination/title 是原文；不提供多行目标/title、URL 解码或安全过滤。后缀失败时保留原文及已有 shortcut 引用，不回扫后缀中的其它语法。
 - 引用定义、Setext、分隔线、闭合 fence 必须在块分类前缀内完成。超长候选行按普通内容/代码处理；超长 opening fence 的 info 只保留已分类前缀，其余该行隐藏。超长标题末尾的 closing hashes 不再回看识别。
-- 不处理 HTML、实体解码、自动链接、脚注、数学公式等额外语义。它们可能包含上述方言仍能识别的普通行内标记。HTML 不在当前需求范围。
+- 自动链接候选最多 4096 字节，URI scheme 为 2..32 个 ASCII 字符；email 按 CommonMark 0.31.2 的 ASCII 地址规则。失败或 EOF 未完成的候选不重放内部行内语法；新自动链接中止未完成的外层方括号候选，保持链接源码有序且不重叠。返回原始 URI，不做 percent encoding。
+- 不处理 HTML、实体解码、GFM 裸 URL 自动链接、脚注、数学公式等额外语义。它们可能包含上述方言仍能识别的普通行内标记。HTML 不在当前需求范围。
 - 支持只追加，不支持任意位置编辑、撤回已有源码或移除定义。文档销毁会释放 O(n) 状态，这是一次性清理成本。
 
 ## 源码入口
@@ -258,6 +286,7 @@ nix develop -c cargo fmt --all -- --check
 nix develop -c cargo run -r --example stream
 nix develop -c cargo run -r --example structure
 nix develop -c cargo run -r --example scaling
+nix develop -c cargo run -r --example budget
 ```
 
 测试包含任意单切点和随机 UTF-8 分块、与朴素数组/有序映射对照的区间/高度/检查点随机测试、深层 opener、百万字 Setext 转换、百万字隐藏区间、十亿片段的稀疏高度索引、逐字符超长段落、延迟定义成本和 resize 节点复用。没有把 wall-clock 阈值当作正确性条件。`scaling` 示例输出时间及操作计数，便于在目标机器上复查。
@@ -265,3 +294,11 @@ nix develop -c cargo run -r --example scaling
 行内分块测试会特意跨过 `BLOCK_LOOKAHEAD`，避免短样例被整行缓冲后才解析。另有中间前缀一致性、TileKey 未变则语义不变、标题/链接索引与线性查询对照、目标/title 长度边界及百万字尾空格确认成本测试。自比较验证分块一致性，预期语义样例和朴素数据结构模型提供另外的判定依据，不能将这些测试视为完整规范合规率。
 
 本 checkout 已安装 Rust skill 提供的本地 pre-commit：运行 `cargo fmt --all` 后只重新 stage 原本暂存的 Rust 文件。格式化可能改变提交中的行号；其它未暂存文件可能被格式化，但不会自动暂存。钩子不随 Git 分发，紧急情况下可用 `git commit --no-verify` 跳过。
+
+## 存储实测与标准样例范围
+
+`annotation_arena_stats`、高度树/检查点的 `arena_stats`、高度依赖树的 `dependency_arena_stats` 返回 Vec 容量字节数、节点数与实际容量增长分配次数。统计不包含 allocator 元数据、碎片、其它 String/Vec 或用户状态的间接堆分配。`scaling` 示例同时记录操作计数、查询分位数与容量；`one_byte_reused` 对照复用通知缓冲的逐字符输入。
+
+2026-10-30 在 ark 上的 release 样本：524,286 字节密集标记产生 854,391 个语义节点；子索引改用 `Option<NonZeroUsize>` 后，节点大小由 88 降至 72 字节，对应 arena 容量由 92,274,688 降至 75,497,472 字节（约 18.2%）。写入访问数 8,010,100、固定视口查询访问数 13,022 均未改变，分配次数同为 20。缩小了节点常数，没有增加全树压缩过程。峰值 arena 容量等于当前容量，因为该 arena 不缩容；这不是整个进程峰值内存。语义/修订存储拆分与查询 scratch 复用尚未实施。
+
+标准样例固定为 [CommonMark 0.31.2 autolinks](https://spec.commonmark.org/0.31.2/#autolinks)，离线夹具保存在 `tests/fixtures/commonmark_autolinks.rs`，保留上游 CC BY-SA 4.0 归属信息。19 个样例中，18 个在源码文本/目标语义上符合；606 为刻意差异：失败候选内部的反斜线不重新解析。URI percent encoding 属输出层，因此对照时归一化目标编码。其它 CommonMark 章节与 GFM 全集未评分；现有容器展平、强调/代码回退和语法长度限制仍按上文方言约定，不以自比较分块测试充当完整规范合规率。

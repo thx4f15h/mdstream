@@ -3,17 +3,18 @@ use std::{hint::black_box, time::Instant};
 
 fn main() {
     println!(
-        "case,bytes,parse_ms,inline_bytes,delimiter_steps,tree_visits,annotation_nodes,viewport_median_us,viewport_p95_us,query_visits"
+        "case,bytes,parse_ms,inline_bytes,delimiter_steps,tree_visits,annotation_nodes,annotation_capacity_bytes,annotation_allocations,height_capacity_bytes,viewport_median_us,viewport_p95_us,query_visits"
     );
     for size in [65_536, 131_072, 262_144, 524_288] {
         for case in [
             "one_byte_appends",
+            "one_byte_reused",
             "dense_markup",
             "deep_openers",
             "late_references",
         ] {
             let source = match case {
-                "one_byte_appends" => "x".repeat(size),
+                "one_byte_appends" | "one_byte_reused" => "x".repeat(size),
                 "dense_markup" => "*a* **b** ~~c~~ [d](e) `f`\n".repeat(size / 27),
                 "deep_openers" => format!("*a {}z*\n", "_b ".repeat(size / 3)),
                 _ => format!("{}\n\n[key]: /destination\n", "[key] ".repeat(size / 6)),
@@ -23,6 +24,12 @@ fn main() {
             if case == "one_byte_appends" {
                 for _ in 0..size {
                     black_box(doc.append("x").unwrap());
+                }
+            } else if case == "one_byte_reused" {
+                let mut update = mdtui3::Update::default();
+                for _ in 0..size {
+                    doc.append_into("x", &mut update).unwrap();
+                    black_box(&update);
                 }
             } else {
                 black_box(doc.append(&source).unwrap());
@@ -53,13 +60,16 @@ fn main() {
             samples.sort_by(f64::total_cmp);
             let work = doc.work();
             println!(
-                "{case},{},{:.3},{},{},{},{},{:.3},{:.3},{}",
+                "{case},{},{:.3},{},{},{},{},{},{},{},{:.3},{:.3},{}",
                 source.len(),
                 elapsed.as_secs_f64() * 1000.0,
                 work.inline_bytes,
                 work.delimiter_steps,
                 work.tree_visits,
                 doc.annotation_node_count(),
+                doc.annotation_arena_stats().capacity_bytes,
+                doc.annotation_arena_stats().allocation_calls,
+                heights.arena_stats().capacity_bytes,
                 samples[15],
                 samples[29],
                 query_visits

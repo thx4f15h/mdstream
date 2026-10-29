@@ -18,6 +18,76 @@ pub struct HeadingIndex {
 }
 
 impl HeadingIndex {
+    /// Innermost current section, including its heading's first byte.
+    pub fn current(&self, offset: usize) -> Option<HeadingId> {
+        self.entries
+            .partition_point(|h| h.source.start <= offset)
+            .checked_sub(1)
+            .map(HeadingId)
+    }
+
+    pub fn parent(&self, id: HeadingId) -> Option<HeadingId> {
+        let heading = self.get(id)?;
+        self.previous(heading.source.start, heading.level - 1)
+    }
+
+    pub fn first_child(&self, id: HeadingId) -> Option<HeadingId> {
+        let next = HeadingId(id.0.checked_add(1)?);
+        (self.get(next)?.level > self.get(id)?.level).then_some(next)
+    }
+
+    /// First heading outside this section. None means an open tail at current EOF.
+    pub fn section_end(&self, id: HeadingId) -> Option<HeadingId> {
+        let heading = self.get(id)?;
+        self.next(heading.source.start, heading.level)
+    }
+
+    pub fn section(&self, id: HeadingId, source_end: usize) -> Option<Span> {
+        Some(Span::new(
+            self.get(id)?.source.start,
+            self.section_end(id)
+                .map_or(source_end, |end| self.entries[end.0].source.start),
+        ))
+    }
+
+    pub fn next_at_level(&self, offset: usize, level: u8) -> Option<HeadingId> {
+        let ids = self.at_level(level);
+        ids.get(ids.partition_point(|id| self.entries[id.0].source.start <= offset))
+            .copied()
+    }
+
+    pub fn previous_at_level(&self, offset: usize, level: u8) -> Option<HeadingId> {
+        let ids = self.at_level(level);
+        ids.partition_point(|id| self.entries[id.0].source.start < offset)
+            .checked_sub(1)
+            .map(|i| ids[i])
+    }
+
+    /// Siblings share a parent, but may have different levels when levels are skipped.
+    pub fn next_sibling(&self, id: HeadingId) -> Option<HeadingId> {
+        let parent = self.parent(id);
+        let h = self.get(id)?;
+        // A deeper heading is a child. The first non-descendant is the only candidate.
+        let next = self.next(h.source.start, h.level)?;
+        (self.parent(next) == parent).then_some(next)
+    }
+
+    pub fn previous_sibling(&self, id: HeadingId) -> Option<HeadingId> {
+        let parent = self.parent(id);
+        let lower = parent.map_or(0, |p| self.entries[p.0].level);
+        let before = self.get(id)?.source.start;
+        // At most six candidates: for each level, its last heading before us.
+        // Its ancestors are bounded by the six Markdown heading levels.
+        let mut candidate = self.previous(before, 6)?;
+        while self.get(candidate)?.level > lower {
+            if self.parent(candidate) == parent {
+                return Some(candidate);
+            }
+            candidate = self.parent(candidate)?;
+        }
+        None
+    }
+
     pub fn entries(&self) -> &[Heading] {
         &self.entries
     }

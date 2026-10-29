@@ -43,6 +43,8 @@ impl References {
             label: normalized,
             destination: None,
             title: None,
+            revision: 0,
+            first_use: None,
         });
         Some(id)
     }
@@ -60,6 +62,7 @@ impl References {
         }
         entry.destination = Some(destination);
         entry.title = title;
+        entry.revision += 1;
         self.revision = revision;
         true
     }
