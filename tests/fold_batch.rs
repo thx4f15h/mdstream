@@ -132,6 +132,183 @@ fn all_subtree_level_and_focus_preserve_precise_local_choices() {
 }
 
 #[test]
+fn siblings_share_parent_across_levels_and_kinds_and_keep_descendant_choices() {
+    let doc = document(
+        "```\ntop\n```\n# Parent\n```\nlocal\n```\n### Left\n#### Deep\n```\nnested\n```\n## Target\n### Child\n## Last\n# Outside\n",
+    );
+    assert_eq!(doc.tile_count(), 1);
+    let all = candidates(&doc);
+    let codes: Vec<_> = all
+        .iter()
+        .filter(|c| matches!(c.id, FoldId::Code(_)))
+        .map(|c| c.id)
+        .collect();
+    let siblings = [codes[1], heading(1), heading(3), heading(5)];
+    for target in siblings {
+        for collapsed in [true, false] {
+            let mut view = FoldView::new(&doc, 1).unwrap();
+            let mut expected: Vec<_> = all.iter().enumerate().map(|(i, _)| i % 2 == 0).collect();
+            for (candidate, state) in all.iter().zip(&mut expected) {
+                // Exercise an already hidden target and preserve its own choice.
+                *state |= candidate.id == heading(0) || candidate.id == target;
+                view.set_collapsed(&doc, candidate.id, *state).unwrap();
+            }
+            let mut changed = 0;
+            for (candidate, state) in all.iter().zip(&mut expected) {
+                if siblings.contains(&candidate.id) && candidate.id != target {
+                    changed += usize::from(*state != collapsed);
+                    *state = collapsed;
+                }
+            }
+            let action = FoldBatchAction::Siblings { target, collapsed };
+            assert_eq!(run(&doc, &mut view, action).changed, changed);
+            assert_model(&doc, &view, &all, &expected);
+            view.set_collapsed(&doc, heading(0), false).unwrap();
+            let parent = all.iter().position(|c| c.id == heading(0)).unwrap();
+            expected[parent] = false;
+            assert_model(&doc, &view, &all, &expected);
+            let version = view.version();
+            assert_eq!(run(&doc, &mut view, action).changed, 0);
+            assert_eq!(view.version(), version);
+        }
+    }
+}
+
+#[test]
+fn root_siblings_include_preamble_code_and_empty_sections_but_not_children() {
+    let doc = document("```\npreamble\n```\n### Early\n#### Child\n# Main\n## Child\n# Empty\n");
+    let all = candidates(&doc);
+    let roots = [all[0].id, heading(0), heading(2), heading(4)];
+    for target in roots {
+        let mut view = FoldView::new(&doc, 1).unwrap();
+        let mut expected = vec![false; all.len()];
+        for collapsed in [true, false] {
+            let progress = run(
+                &doc,
+                &mut view,
+                FoldBatchAction::Siblings { target, collapsed },
+            );
+            assert_eq!(progress.changed, roots.len() - 1);
+            for (candidate, state) in all.iter().zip(&mut expected) {
+                if roots.contains(&candidate.id) && candidate.id != target {
+                    *state = collapsed;
+                }
+            }
+            assert_model(&doc, &view, &all, &expected);
+        }
+    }
+    for text in ["# Only\n", "```\nonly\n```\n"] {
+        let doc = document(text);
+        let mut view = FoldView::new(&doc, 1).unwrap();
+        let progress = run(
+            &doc,
+            &mut view,
+            FoldBatchAction::Siblings {
+                target: candidates(&doc)[0].id,
+                collapsed: true,
+            },
+        );
+        assert_eq!(progress.changed, 0);
+        assert_eq!(progress.change, None);
+    }
+}
+
+#[test]
+fn siblings_limit_discovery_to_parent_and_budget_even_unmatched_blocks() {
+    let doc = document(&format!(
+        "{}# Root\n{}### Left\n#### Left child\n## Target\n### Target child\n# End\n{}",
+        "- outside\n".repeat(1000),
+        "- plain\n".repeat(2000),
+        "- outside\n".repeat(1000),
+    ));
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    let mut task = FoldBatch::new(
+        &doc,
+        &view,
+        FoldBatchAction::Siblings {
+            target: heading(3),
+            collapsed: true,
+        },
+    )
+    .unwrap();
+    for limit in [
+        WorkLimit::default(),
+        WorkLimit {
+            queries: 1,
+            ..Default::default()
+        },
+        WorkLimit {
+            objects: 1,
+            ..Default::default()
+        },
+    ] {
+        let mut budget = Budget::new(limit);
+        let progress = task.advance(&doc, &mut view, &mut budget).unwrap();
+        assert_eq!(progress.completion, Completion::BudgetExhausted);
+        assert_eq!(progress.visited, 0);
+        assert_eq!(progress.change, None);
+        assert_eq!(budget.used(), WorkLimit::default());
+    }
+    assert_eq!(
+        task.advance(&doc, &mut view, &mut tiny()).unwrap().visited,
+        0
+    );
+    for visited in 1..=2000 {
+        let progress = task.advance(&doc, &mut view, &mut tiny()).unwrap();
+        assert_eq!(progress.visited, visited);
+        assert_eq!(progress.changed, 0);
+    }
+    let old_ticket = view.heights().ticket(TileId(0)).unwrap();
+    let progress = task.advance(&doc, &mut view, &mut tiny()).unwrap();
+    assert_eq!(progress.changed, 1);
+    assert_eq!(
+        progress.change.unwrap().source,
+        doc.fold_candidate(heading(1)).unwrap().hidden
+    );
+    assert!(view.is_collapsed(heading(1)));
+    // Unrelated earlier measurements remain valid and do not stale the task.
+    view.measure(old_ticket, 2).unwrap();
+    let progress = finish(&mut task, &doc, &mut view);
+    assert_eq!(progress.visited, 2004);
+    assert_eq!(progress.changed, 1);
+    for id in [0, 2, 3, 4, 5] {
+        assert!(!view.is_collapsed(heading(id)));
+    }
+}
+
+#[test]
+fn siblings_restart_after_late_setext_and_keep_completed_changes_on_invalidation() {
+    let mut doc = Document::new();
+    doc.append("# Root\n### Target\n### Before\nbody\n\nLate\n")
+        .unwrap();
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    let action = FoldBatchAction::Siblings {
+        target: heading(1),
+        collapsed: true,
+    };
+    let mut task = FoldBatch::new(&doc, &view, action).unwrap();
+    for _ in 0..3 {
+        task.advance(&doc, &mut view, &mut tiny()).unwrap();
+    }
+    assert!(view.is_collapsed(heading(2)));
+    let update = doc.append("---\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    let mut budget = tiny();
+    let version = view.version();
+    assert_eq!(
+        task.advance(&doc, &mut view, &mut budget),
+        Err(LayoutError::StaleContinuation)
+    );
+    assert_eq!(budget.used(), WorkLimit::default());
+    assert_eq!(view.version(), version);
+    assert!(view.is_collapsed(heading(2)));
+    let progress = run(&doc, &mut view, action);
+    assert_eq!(progress.changed, 1);
+    assert!(view.is_collapsed(heading(3)));
+    assert!(!view.is_collapsed(heading(1)));
+}
+
+#[test]
 fn every_block_is_budgeted_and_cancellation_keeps_partial_results() {
     let doc = document(&format!("{}# A\na\n# B\nb\n", "- plain\n".repeat(2000)));
     let mut view = FoldView::new(&doc, 1).unwrap();
@@ -201,6 +378,14 @@ fn identity_staleness_and_invalid_actions_fail_before_mutation_or_budget() {
         },
         FoldBatchAction::Focus {
             target: FoldId::Code(BlockId(0)),
+        },
+        FoldBatchAction::Siblings {
+            target: heading(99),
+            collapsed: true,
+        },
+        FoldBatchAction::Siblings {
+            target: FoldId::Code(BlockId(0)),
+            collapsed: false,
         },
     ] {
         assert!(matches!(
@@ -348,7 +533,7 @@ fn seeded_batches_match_parent_chain_and_visible_interval_models() {
     for round in 0..100 {
         let target = all[random() % all.len()].id;
         let collapsed = random() % 2 == 0;
-        let action = match random() % 4 {
+        let action = match random() % 5 {
             0 => FoldBatchAction::All { collapsed },
             1 => FoldBatchAction::Subtree {
                 root: target,
@@ -358,6 +543,7 @@ fn seeded_batches_match_parent_chain_and_visible_interval_models() {
                 level: (random() % 6 + 1) as u8,
                 collapsed,
             },
+            3 => FoldBatchAction::Siblings { target, collapsed },
             _ => FoldBatchAction::Focus { target },
         };
         let ancestry = |id| {
@@ -386,6 +572,13 @@ fn seeded_batches_match_parent_chain_and_visible_interval_models() {
                 }
                 FoldBatchAction::Focus { target } => {
                     *state = !ancestry(target).contains(&candidate.id)
+                }
+                FoldBatchAction::Siblings { target, collapsed }
+                    if candidate.id != target
+                        && candidate.parent
+                            == all.iter().find(|c| c.id == target).unwrap().parent =>
+                {
+                    *state = collapsed;
                 }
                 _ => {}
             }
@@ -433,6 +626,43 @@ fn million_byte_subtree_and_many_candidates_use_bounded_steps() {
     assert_eq!(progress.changed, 3);
     assert_eq!(progress.completion, Completion::BudgetExhausted);
     assert_eq!(finish(&mut task, &doc, &mut view).changed, 20_000);
+    let progress = run(
+        &doc,
+        &mut view,
+        FoldBatchAction::Siblings {
+            target: heading(10_000),
+            collapsed: false,
+        },
+    );
+    assert_eq!(progress.visited, 20_000);
+    assert_eq!(progress.changed, 19_999);
+    assert!(view.is_collapsed(heading(10_000)));
+}
+
+#[test]
+fn siblings_do_not_read_million_byte_descendant_or_change_its_choice() {
+    let doc = document(&format!(
+        "# Root\n### Target\n## Other\n```\n{}\n```\n# Outside\n",
+        "x".repeat(1_000_000),
+    ));
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    let work = doc.work();
+    let mutations = view.heights().mutation_visits();
+    let progress = run(
+        &doc,
+        &mut view,
+        FoldBatchAction::Siblings {
+            target: heading(1),
+            collapsed: true,
+        },
+    );
+    assert_eq!(progress.visited, 3);
+    assert_eq!(progress.changed, 1);
+    assert_eq!(doc.work(), work);
+    assert!(view.heights().mutation_visits() - mutations < 4000);
+    let all = candidates(&doc);
+    let expected: Vec<_> = all.iter().map(|c| c.id == heading(2)).collect();
+    assert_model(&doc, &view, &all, &expected);
 }
 
 #[test]

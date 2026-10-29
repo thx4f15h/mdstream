@@ -46,6 +46,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     run(
         &doc,
         &mut view,
+        FoldBatchAction::Siblings {
+            target: FoldId::Heading(HeadingId(101)),
+            collapsed: true,
+        },
+    )?;
+    run(
+        &doc,
+        &mut view,
         FoldBatchAction::AtLevel {
             level: 2,
             collapsed: true,

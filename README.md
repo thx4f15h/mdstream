@@ -378,6 +378,8 @@ assert!(view.is_collapsed(FoldId::Heading(HeadingId(1))));
 
 `FoldBatch` 提供当前 revision 上的显式命令：`All` 展开/收起全部候选，`Subtree` 包括根及全部后代，`AtLevel` 只修改严格等于指定级别（1–6）的标题，`Focus` 展开目标及祖先并收起所有其他候选。聚焦会修改后代意愿；仅想露出目标并保留无关状态时使用 `FoldNavigationPolicy::Reveal`。
 
+`Siblings { target, collapsed }` 展开/收起与目标具有相同 `FoldCandidate::parent` 的其他候选，保留目标、祖先和各节点后代的原有意愿。兄弟可以是不同级别的标题或代码块；没有父节点的候选互为根层兄弟，包括首个标题之前的代码块。目标已被祖先隐藏时仍可操作，但不会自动展开祖先；没有兄弟时完成且无变化。该命令只修改已有节点，不改变新节点默认值。
+
 ```rust
 use mdtui3::*;
 
@@ -405,7 +407,7 @@ assert!(!view.is_collapsed(FoldId::Heading(HeadingId(1))));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-创建任务为 O(1)，范围定位在第一次 `advance` 中消费 1 query、1 object；之后每个块同样消费 1 query、1 object，包括非候选及不匹配级别的块。子树范围通过索引定位，其他命令分帧扫描当前块索引；既不扫描源码正文，也不逐 tile 更新隐藏范围。每步为 O(log B + log H + log F + log T) 的固定次数索引操作（B 为块数），完整任务按实际访问的块数计费。`visited` / `changed` 是累计块访问数/实际状态变化数，`change` 是本次调用的区间包络及最新版本，耗尽返回 `BudgetExhausted`。任务仅保存 O(1) 游标状态；不复制候选列表或折叠快照。
+创建任务为 O(1)，范围定位在第一次 `advance` 中消费 1 query、1 object；之后每个块同样消费 1 query、1 object，包括非候选及不匹配级别/父节点的块。子树范围通过索引定位；兄弟操作检查父章节正文范围内的块，包含后代块的元数据但不修改后代意愿，根层兄弟操作及其他命令分帧扫描整个块索引。既不扫描源码正文，也不逐 tile 更新隐藏范围。每步为 O(log B + log H + log F + log T) 的固定次数索引操作（B 为块数），完整任务按实际访问的块数计费。`visited` / `changed` 是累计块访问数/实际状态变化数，`change` 是本次调用的区间包络及最新版本，耗尽返回 `BudgetExhausted`。任务仅保存 O(1) 游标状态；不复制候选列表或折叠快照。
 
 批量任务渐进生效；取消、文档更新、外部折叠操作、默认设置变化或 reset 后，已经完成的修改保留。旧任务会在消费预算或修改视图之前被拒绝；任务自身修改及正常高度测量允许继续，完成后重复调用不再产生修改。每次实际修改复用单节点的高度遮蔽、检查点及测量失效，调用方可以在两次 advance 之间正常绘制。需要原子切换整棵树或取消回滚的宿主，不能将该接口当成事务。
 
@@ -459,7 +461,7 @@ assert!(!view.is_collapsed(FoldId::Heading(HeadingId(1))));
 | `src/headings.rs` | 标题 arena 和六个级别的索引 |
 | `src/navigation.rs` | 逐行/翻页/首尾/标题导航及源码目标 |
 | `src/fold_navigation.rs` | 有预算折叠导航、可见标题跳过及源码锚点投影/恢复 |
-| `src/fold_batch.rs` | 分帧全部/子树/级别/聚焦命令及进度 |
+| `src/fold_batch.rs` | 分帧全部/子树/兄弟/级别/聚焦命令及进度 |
 | `tests/` | 语义样例、随机模型对照、分块一致性、复杂度回归 |
 
 ## 验证与开发

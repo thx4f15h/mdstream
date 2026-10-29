@@ -15,6 +15,12 @@ pub enum FoldBatchAction {
         root: FoldId,
         collapsed: bool,
     },
+    /// Other candidates with the same parent, regardless of heading level or
+    /// candidate kind. Preserve the target, ancestors and descendant choices.
+    Siblings {
+        target: FoldId,
+        collapsed: bool,
+    },
     /// Exactly this heading level (1..=6); code and other levels keep their choices.
     AtLevel {
         level: u8,
@@ -50,6 +56,7 @@ pub struct FoldBatch {
     action: FoldBatchAction,
     candidates: Option<FoldCandidates>,
     focus: usize,
+    parent: Option<FoldId>,
     visited: usize,
     changed: usize,
 }
@@ -66,7 +73,9 @@ impl FoldBatch {
             FoldBatchAction::AtLevel { level, .. } if !(1..=6).contains(&level) => {
                 return Err(LayoutError::InvalidRange);
             }
-            FoldBatchAction::Subtree { root: id, .. } | FoldBatchAction::Focus { target: id } => {
+            FoldBatchAction::Subtree { root: id, .. }
+            | FoldBatchAction::Siblings { target: id, .. }
+            | FoldBatchAction::Focus { target: id } => {
                 let valid = match id {
                     FoldId::Heading(id) => document.headings().get(id).is_some(),
                     FoldId::Code(id) => document
@@ -87,6 +96,7 @@ impl FoldBatch {
             action,
             candidates: None,
             focus: 0,
+            parent: None,
             visited: 0,
             changed: 0,
         })
@@ -132,6 +142,13 @@ impl FoldBatch {
                     FoldBatchAction::Subtree { root, .. } => {
                         document.fold_candidate(root).unwrap().source
                     }
+                    FoldBatchAction::Siblings { target, .. } => {
+                        self.parent = document.fold_candidate(target).unwrap().parent;
+                        self.parent
+                            .map_or(Span::new(0, document.source().len()), |id| {
+                                document.fold_candidate(id).unwrap().hidden
+                            })
+                    }
                     _ => Span::new(0, document.source().len()),
                 };
                 if let FoldBatchAction::Focus { target } = self.action {
@@ -146,6 +163,12 @@ impl FoldBatch {
             };
             let collapsed = match self.action {
                 FoldBatchAction::All { collapsed } | FoldBatchAction::Subtree { collapsed, .. } => {
+                    collapsed
+                }
+                FoldBatchAction::Siblings { target, collapsed } => {
+                    if candidate.id == target || candidate.parent != self.parent {
+                        continue;
+                    }
                     collapsed
                 }
                 FoldBatchAction::AtLevel { level, collapsed } => {
