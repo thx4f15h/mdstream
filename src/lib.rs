@@ -30,6 +30,7 @@ mod fold_batch;
 mod fold_navigation;
 mod folding;
 mod frame;
+mod heading_search;
 mod headings;
 mod history;
 mod inline;
@@ -58,6 +59,7 @@ pub use folding::{
     FoldPreviewProgress, FoldView,
 };
 pub use frame::{FoldLayoutSink, LayoutPass, LayoutSink};
+pub use heading_search::{HeadingMatch, HeadingSearch};
 pub use headings::{Heading, HeadingIndex};
 pub use history::{Bookmark, HistoryDirection, HistoryNavigation, NavigationHistory};
 pub use layout::{

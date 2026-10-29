@@ -207,7 +207,43 @@ nav.navigate(&doc, &heights, NavAction::End, 24);
 
 标题动作返回的 `ScrollTarget.source` 是精确目标位置，`top` 是当前高度索引下的估计视口顶行；渲染器需要用局部排版把源码位置映射成实际显示行，再调用 `reconcile`。普通逐行/翻页之后，用 `reconcile_source` 回填实际视口的源码锚点，后续标题查找才会从精确位置出发；未回填时使用片段起点估计。这些接口不通过预排版整篇内容获取精确行号。键盘事件映射和目录选择器列入 [TODO](TODO.md)。
 
-章节/代码块折叠、隐藏目标定位和源码锚点恢复见下方接口。后续的目录、文内 slug、跳转历史及更多折叠对象见 [标题导航与折叠联动规划](TODO.md#标题导航与折叠联动规划)及[折叠支持规划](TODO.md#折叠支持规划)。
+章节/代码块折叠、隐藏目标定位、源码锚点恢复及跳转历史见下方接口。后续的目录、文内 slug 及更多折叠对象见 [标题导航与折叠联动规划](TODO.md#标题导航与折叠联动规划)及[折叠支持规划](TODO.md#折叠支持规划)。
+
+## 标题显示名称检索
+
+`HeadingSearch::new(&doc, query, max_level)` 只搜索标题索引中各标题 `content` 的非 `HIDDEN` 显示文本，复用实体解码、代码 span 规范化和源码映射。`max_level` 与标题导航一致：选择级别不超过上限的标题，大于 6 按 6 处理，0 不选择标题。空查询返回 `InvalidRange`。匹配区分大小写，保留重叠命中，不做额外空白处理、Unicode 归一化或模糊匹配；标题之间独立匹配，不串接名称，也不读取正文、代码块和当前方言尚未索引的容器内标题。
+
+```rust
+use mdtui3::{Budget, Completion, Document, HeadingId, HeadingSearch, WorkLimit};
+let mut doc = Document::new();
+doc.append("# a**b**&amp;c\nbody-only\n## ` ab&c `\n### ab&c\n")?;
+doc.finish();
+let mut search = HeadingSearch::new(&doc, "ab&c", 2)?;
+let mut matches = Vec::new();
+loop {
+    let mut budget = Budget::new(WorkLimit {
+        bytes: 16, queries: 2, objects: 2, ..Default::default()
+    });
+    if search.advance(&doc, &mut budget, &mut matches)? == Completion::EndOfDocument {
+        break;
+    }
+}
+assert_eq!(matches.len(), 2);
+assert_eq!(matches[0].heading, HeadingId(0));
+assert_eq!(matches[0].display, 0..4);
+assert_eq!(doc.text(matches[0].source), Some("a**b**&amp;c"));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`HeadingMatch` 每项表示一次出现，按标题及匹配位置排序；重复名称由 `HeadingId` 区分，同一标题可返回多项。`display` 是该标题显示内容内的 UTF-8 字节范围，`source` 是绝对源码包络，端点来自实体等替代内容时包含完整原始区间。调用方可按 ID 生成选择器条目，用显示范围高亮，并通过 `NavAction::Heading(hit.heading)` 定位标题或 `Source(hit.source.start)` 定位命中。搜索包含被折叠隐藏的标题，不改变折叠状态；选中结果后可交给 `FoldNavigation::Reveal` 展开必要路径。
+
+候选查找先消费 1 query / 1 object，通过最多六个级别索引的二分查询跳过被过滤的标题；没有后续候选的查询也计费。每个标题的读取、KMP 比较/回退及命中输出沿用 `DisplaySearch` 的字节/query/object 计费，整个过程共用调用方 Budget 和结果 Vec，每轮 6 bytes、1 query、1 object 可持续推进。`current_heading()` / `source_position()` 返回当前标题及其已读源码位置，读取可能领先于匹配；标题之间或完成后返回 `None`。完成后再次调用不重复输出。
+
+任务与已返回命中绑定文档身份及 revision。追加、Setext 晚确认、长 ATX 继续增长和首次 `finish` 后，旧任务在消费预算/修改结果前返回 `StaleContinuation`；错误文档返回 `WrongDocument`。调用方丢弃旧命中并按需重建，库不自动重搜历史标题。空追加及重复 `finish` 不失效；仍在流入的文档也能搜索当前 revision。
+
+查询预处理一次 O(m)，任务存储 O(m + TILE_BYTES)，m 为查询字节数；切换标题只重置位置，不重建查询表、清空映射环或复制标题。设 H 为全部标题数、h 为选中标题数、s 为其内容源码字节数、n 为文档总字节数，单 revision 最坏搜索成本为 O(m + (h + 1) log(H + 1) + s log(n + 1))，输出存储由调用方逐批管理。百万字 Setext 的确认和任务构造不读取标题，扫描在显式预算调用中推进；被过滤标题和正文的长度不增加读取字节。完整显示名称可用已有 `display_cursor(heading.content)` 限量读取，不先生成所有名称。文内 slug 和 `#fragment` 解析仍待实现。
+
+`cargo run -r --example heading_search` 演示级别过滤、逐帧搜索、复用输出缓冲区及跳到折叠内命中。`tests/heading_search.rs` 覆盖重复/空标题、跨 run/tile 和长查询、各预算维度、身份/过期、流式前缀/切点、固定种子朴素模型、百万字正文/Setext 和级别过滤跳过测试。
 
 ## 共享预算与增量缓存
 
@@ -531,6 +567,7 @@ loop {
 | `src/checkpoints.rs` | 有效检查点的范围失效和前驱查询 |
 | `src/table.rs` | 表格行/单元格、对齐、流式单元格解析和列宽提示 |
 | `src/headings.rs` | 标题 arena 和六个级别的索引 |
+| `src/heading_search.rs` | 有预算的标题显示名称检索、级别过滤和命中源码映射 |
 | `src/navigation.rs` | 逐行/翻页/首尾/标题导航及源码目标 |
 | `src/fold_navigation.rs` | 有预算折叠导航、可见标题跳过及源码锚点投影/恢复 |
 | `src/fold_batch.rs` | 分帧全部/子树/兄弟/级别/聚焦命令及进度 |
@@ -553,6 +590,7 @@ nix develop -c cargo run -r --example scaling
 nix develop -c cargo run -r --example budget
 nix develop -c cargo run -r --example display
 nix develop -c cargo run -r --example search
+nix develop -c cargo run -r --example heading_search
 nix develop -c cargo run -r --example folding
 nix develop -c cargo run -r --example fold_batch
 nix develop -c cargo run -r --example history

@@ -102,12 +102,38 @@ impl DisplaySearch {
         budget: &mut Budget,
         out: &mut Vec<DisplayMatch>,
     ) -> Result<Completion, LayoutError> {
+        self.advance_with(document, budget, |hit| out.push(hit))
+    }
+
+    pub(crate) fn validate(&self, document: &Document) -> Result<(), LayoutError> {
         if document.id() != self.document {
             return Err(LayoutError::WrongDocument);
         }
         if document.revision() != self.revision {
             return Err(LayoutError::StaleContinuation);
         }
+        Ok(())
+    }
+
+    /// Reuse the prepared pattern for another independent range in the same
+    /// revision. Old ring entries need no clearing: a new full match overwrites
+    /// all of them before reading its source start. The caller validates first.
+    pub(crate) fn reset(&mut self, cursor: DisplayCursor) {
+        self.cursor = cursor;
+        self.matched = 0;
+        self.display_position = 0;
+        self.next_source = 0;
+        self.pending_len = 0;
+        self.pending_position = 0;
+    }
+
+    pub(crate) fn advance_with(
+        &mut self,
+        document: &Document,
+        budget: &mut Budget,
+        mut emit: impl FnMut(DisplayMatch),
+    ) -> Result<Completion, LayoutError> {
+        self.validate(document)?;
         loop {
             if self.pending_position == self.pending_len {
                 match self.cursor.next(document, budget)? {
@@ -150,7 +176,7 @@ impl DisplaySearch {
             if equal {
                 self.matched += 1;
                 if complete {
-                    out.push(DisplayMatch {
+                    emit(DisplayMatch {
                         display: self.display_position - self.pattern.len()..self.display_position,
                         source: Span::new(self.sources[self.next_source].start, source.end),
                     });
