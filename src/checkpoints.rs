@@ -83,7 +83,9 @@ impl<S> CheckpointIndex<S> {
             return Err(LayoutError::InvalidRange);
         }
         heights.expire(tile.0..heights.len())?;
-        self.invalidate(tile.0..self.capacity)?;
+        if tile.0 < self.capacity {
+            self.invalidate(tile.0..self.capacity)?;
+        }
         self.insert(tile, state)
     }
     pub fn new() -> Self {

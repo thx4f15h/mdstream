@@ -78,6 +78,12 @@ struct Node {
     zeros: usize,
     fill: Option<u64>,
     status: Option<HeightState>,
+    // Coverage belongs to canonical tree intervals. Removing a mask must use
+    // exactly the range that installed it; parent masks never overwrite children.
+    covers: usize,
+    open_count: usize,
+    open_sum: u128,
+    open_zeros: usize,
 }
 
 impl Node {
@@ -89,6 +95,20 @@ impl Node {
             zeros: if height == 0 { width } else { 0 },
             fill: None,
             status: Some(HeightState::Estimated),
+            covers: 0,
+            open_count: width,
+            open_sum: u128::from(height) * width as u128,
+            open_zeros: if height == 0 { width } else { 0 },
+        }
+    }
+
+    fn visible_sum(&self, height: Option<u64>, fill: Option<u64>) -> u128 {
+        if self.covers > 0 {
+            0
+        } else if let Some(height) = height {
+            self.open_count as u128 * u128::from(height)
+        } else {
+            self.open_sum + self.open_zeros as u128 * u128::from(fill.unwrap_or(0))
         }
     }
 }
@@ -209,14 +229,12 @@ impl HeightIndex {
             let right = self.nodes.len();
             self.push_node(Node::uniform(self.estimate, self.capacity));
             let root = self.nodes.len();
-            self.push_node(Node {
-                children: [Some(self.root), Some(right)],
-                sum: self.nodes[self.root].sum + self.nodes[right].sum,
-                uniform: None,
-                zeros: self.nodes[self.root].zeros,
-                fill: None,
-                status: None,
-            });
+            let mut node = Node::uniform(self.estimate, self.capacity * 2);
+            node.children = [Some(self.root), Some(right)];
+            node.uniform = None;
+            node.status = None;
+            self.push_node(node);
+            self.recount(root);
             self.root = root;
             self.capacity *= 2;
         }
@@ -231,7 +249,9 @@ impl HeightIndex {
         }
         self.estimate = estimated_rows;
         self.assign(self.root, self.capacity, estimated_rows);
-        self.total = self.len as u128 * u128::from(estimated_rows);
+        // Capacity beyond len is always uncovered and carries the new estimate.
+        self.total = self.nodes[self.root].visible_sum(None, None)
+            - (self.capacity - self.len) as u128 * u128::from(estimated_rows);
         self.epoch += 1;
         self.layout_epoch += 1;
         Ok(())
@@ -343,12 +363,18 @@ impl HeightIndex {
         if tile.0 >= self.len {
             return None;
         }
-        Some(self.sum(self.root, 0, self.capacity, tile.0..tile.0 + 1, None) as u64)
+        Some(self.visible_sum(self.root, 0, self.capacity, tile.0..tile.0 + 1, None, None) as u64)
+    }
+
+    /// Stored height before folding visibility, including expired estimates.
+    pub fn base_height(&self, tile: TileId) -> Option<u64> {
+        (tile.0 < self.len)
+            .then(|| self.sum(self.root, 0, self.capacity, tile.0..tile.0 + 1, None) as u64)
     }
 
     /// Height of tiles before `end` (including `end == len`).
     pub fn prefix_rows(&self, end: usize) -> Option<u128> {
-        (end <= self.len).then(|| self.sum(self.root, 0, self.capacity, 0..end, None))
+        (end <= self.len).then(|| self.visible_sum(self.root, 0, self.capacity, 0..end, None, None))
     }
 
     pub fn locate(&self, row: u128) -> Option<Anchor> {
@@ -357,9 +383,13 @@ impl HeightIndex {
         }
         let (mut id, mut lo, mut hi, mut rest) = (self.root, 0, self.capacity, row);
         let mut fill = None;
+        let mut assigned = None;
         loop {
             let node = &self.nodes[id];
-            if let Some(height) = node.uniform {
+            assigned = assigned.or(node.uniform);
+            if let Some(height) = assigned
+                && node.open_count == hi - lo
+            {
                 let height = if height == 0 {
                     fill.unwrap_or(0)
                 } else {
@@ -372,12 +402,14 @@ impl HeightIndex {
                     offset: (rest % u128::from(height)) as u64,
                 });
             }
+            if assigned == Some(0) {
+                assigned = fill;
+            }
             let mid = lo + (hi - lo) / 2;
             let left = node.children[0].unwrap();
             let right = node.children[1].unwrap();
             fill = node.fill.or(fill);
-            let left_sum = self.nodes[left].sum
-                + u128::from(fill.unwrap_or(0)) * self.nodes[left].zeros as u128;
+            let left_sum = self.nodes[left].visible_sum(assigned, fill);
             if rest < left_sum {
                 id = left;
                 hi = mid;
@@ -620,10 +652,11 @@ impl HeightIndex {
         if range.is_empty() {
             return Ok(());
         }
-        let old = self.sum(self.root, 0, self.capacity, range.clone(), None);
+        let old = self.visible_sum(self.root, 0, self.capacity, range.clone(), None, None);
         self.changed(range.clone());
         self.expire_range(self.root, 0, self.capacity, range.clone());
-        self.total = self.total - old + self.sum(self.root, 0, self.capacity, range, None);
+        self.total =
+            self.total - old + self.visible_sum(self.root, 0, self.capacity, range, None, None);
         Ok(())
     }
 
@@ -663,12 +696,16 @@ impl HeightIndex {
         node.zeros = if height == 0 { width } else { 0 };
         node.fill = None;
         node.status = Some(HeightState::Estimated);
+        node.open_sum = node.open_count as u128 * u128::from(height);
+        node.open_zeros = if height == 0 { node.open_count } else { 0 };
     }
 
     fn revive(&mut self, id: usize, height: u64) {
         let node = &mut self.nodes[id];
         if node.zeros > 0 {
             node.sum += node.zeros as u128 * u128::from(height);
+            node.open_sum += node.open_zeros as u128 * u128::from(height);
+            node.open_zeros = 0;
             node.zeros = 0;
             if node.uniform == Some(0) {
                 node.uniform = Some(height);
@@ -709,12 +746,105 @@ impl HeightIndex {
             .iter()
             .map(|id| self.nodes[id.unwrap()].zeros)
             .sum();
+        let (mut count, mut sum, mut zeros) = (0, 0, 0);
+        for child in children.into_iter().flatten() {
+            let node = &self.nodes[child];
+            if node.covers == 0 {
+                count += node.open_count;
+                sum += node.open_sum;
+                zeros += node.open_zeros;
+            }
+        }
+        self.nodes[id].open_count = count;
+        self.nodes[id].open_sum = sum;
+        self.nodes[id].open_zeros = zeros;
     }
 
     fn set_range(&mut self, range: Range<usize>, height: u64, status: HeightState) {
-        let old = self.sum(self.root, 0, self.capacity, range.clone(), None);
-        self.total = self.total - old + (range.end - range.start) as u128 * u128::from(height);
-        self.update(self.root, 0, self.capacity, range, height, status);
+        let old = self.visible_sum(self.root, 0, self.capacity, range.clone(), None, None);
+        self.update(self.root, 0, self.capacity, range.clone(), height, status);
+        self.total =
+            self.total - old + self.visible_sum(self.root, 0, self.capacity, range, None, None);
+    }
+
+    /// Internal paired mask operation. FoldView owns each installed range.
+    pub(crate) fn cover(&mut self, range: Range<usize>, covered: bool) {
+        assert!(range.start <= range.end && range.end <= self.len);
+        if range.is_empty() {
+            return;
+        }
+        let old = self.visible_sum(self.root, 0, self.capacity, range.clone(), None, None);
+        self.cover_range(self.root, 0, self.capacity, range.clone(), covered);
+        self.total =
+            self.total - old + self.visible_sum(self.root, 0, self.capacity, range, None, None);
+    }
+
+    fn cover_range(&mut self, id: usize, lo: usize, hi: usize, range: Range<usize>, covered: bool) {
+        self.visits += 1;
+        if range.start <= lo && hi <= range.end {
+            if covered {
+                self.nodes[id].covers += 1;
+            } else {
+                self.nodes[id].covers = self.nodes[id].covers.checked_sub(1).expect("paired mask");
+            }
+            return;
+        }
+        self.push(id, hi - lo);
+        let mid = lo + (hi - lo) / 2;
+        for (side, start, end) in [(0, lo, mid), (1, mid, hi)] {
+            if range.start < end && start < range.end {
+                self.cover_range(
+                    self.nodes[id].children[side].unwrap(),
+                    start,
+                    end,
+                    range.clone(),
+                    covered,
+                );
+            }
+        }
+        self.recount(id);
+    }
+
+    fn visible_sum(
+        &self,
+        id: usize,
+        lo: usize,
+        hi: usize,
+        range: Range<usize>,
+        assigned: Option<u64>,
+        fill: Option<u64>,
+    ) -> u128 {
+        let start = lo.max(range.start);
+        let end = hi.min(range.end);
+        let node = &self.nodes[id];
+        if start >= end || node.covers > 0 {
+            return 0;
+        }
+        if start == lo && end == hi {
+            return node.visible_sum(assigned, fill);
+        }
+        let assigned = assigned.or(node.uniform).map(|height| {
+            if height == 0 {
+                fill.unwrap_or(0)
+            } else {
+                height
+            }
+        });
+        if let Some(height) = assigned
+            && node.open_count == hi - lo
+        {
+            return (end - start) as u128 * u128::from(height);
+        }
+        let fill = node.fill.or(fill);
+        let mid = lo + (hi - lo) / 2;
+        self.visible_sum(
+            node.children[0].unwrap(),
+            lo,
+            mid,
+            range.clone(),
+            assigned,
+            fill,
+        ) + self.visible_sum(node.children[1].unwrap(), mid, hi, range, assigned, fill)
     }
 
     fn update(
@@ -793,5 +923,130 @@ impl HeightIndex {
         let fill = node.fill.or(fill);
         self.sum(node.children[0].unwrap(), lo, mid, range.clone(), fill)
             + self.sum(node.children[1].unwrap(), mid, hi, range, fill)
+    }
+}
+
+#[cfg(test)]
+mod folding_tests {
+    use super::*;
+
+    #[test]
+    fn masks_assignments_expiration_resize_and_growth_match_array() {
+        let mut heights = HeightIndex::new(3).unwrap();
+        let mut values = Vec::<u64>::new();
+        let mut masks = Vec::<Range<usize>>::new();
+        let mut seed = 0x48a7_1cf9_u64;
+        let mut estimate = 3;
+        for step in 0..4000 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let n = values.len();
+            let a = (seed >> 32) as usize % (n + 1);
+            let b = (seed >> 16) as usize % (n + 1);
+            let range = a.min(b)..a.max(b);
+            match seed % 8 {
+                0 => {
+                    let end = n + 1 + step % 5;
+                    heights.grow_to(end).unwrap();
+                    values.resize(end, estimate);
+                }
+                1 => {
+                    heights.cover(range.clone(), true);
+                    masks.push(range);
+                }
+                2 if !masks.is_empty() => {
+                    let range = masks.swap_remove(a % masks.len());
+                    heights.cover(range, false);
+                }
+                3 => {
+                    heights.expire(range.clone()).unwrap();
+                    for h in &mut values[range] {
+                        if *h == 0 {
+                            *h = estimate;
+                        }
+                    }
+                }
+                4 => {
+                    estimate = 1 + a as u64 % 7;
+                    heights.reset(estimate).unwrap();
+                    values.fill(estimate);
+                }
+                5 => {
+                    heights.suppress(range.clone()).unwrap();
+                    values[range].fill(0);
+                }
+                6 if a < n => {
+                    let h = b as u64 % 9;
+                    heights
+                        .measure(heights.ticket(TileId(a)).unwrap(), h)
+                        .unwrap();
+                    values[a] = h;
+                }
+                _ => {
+                    heights.invalidate(range.clone()).unwrap();
+                    values[range].fill(estimate);
+                }
+            }
+            let mut prefix = 0;
+            for (i, &base) in values.iter().enumerate() {
+                let visible = if masks.iter().any(|r| r.contains(&i)) {
+                    0
+                } else {
+                    base
+                };
+                assert_eq!(
+                    heights.base_height(TileId(i)),
+                    Some(base),
+                    "base step {step} tile {i}"
+                );
+                assert_eq!(
+                    heights.height(TileId(i)),
+                    Some(visible),
+                    "step {step} tile {i}"
+                );
+                assert_eq!(heights.prefix_rows(i), Some(prefix));
+                if visible > 0 {
+                    assert_eq!(
+                        heights.locate(prefix),
+                        Some(Anchor {
+                            tile: TileId(i),
+                            offset: 0
+                        })
+                    );
+                    assert_eq!(
+                        heights.locate(prefix + u128::from(visible) - 1),
+                        Some(Anchor {
+                            tile: TileId(i),
+                            offset: visible - 1
+                        })
+                    );
+                }
+                prefix += u128::from(visible);
+            }
+            assert_eq!(heights.total_rows(), prefix, "step {step}");
+            assert_eq!(heights.locate(prefix), None);
+        }
+    }
+
+    #[test]
+    fn billion_tile_masks_are_logarithmic_and_reuse_nodes() {
+        let mut heights = HeightIndex::default();
+        heights.grow_to(1_000_000_000).unwrap();
+        let start = heights.mutation_visits();
+        heights.cover(100..900_000_000, true);
+        heights.cover(200..800_000_000, true);
+        let nodes = heights.node_count();
+        assert!(heights.mutation_visits() - start < 1000);
+        heights.cover(100..900_000_000, false);
+        assert_eq!(heights.height(TileId(500)), Some(0));
+        assert_eq!(heights.base_height(TileId(500)), Some(1));
+        for _ in 0..100 {
+            heights.cover(100..900_000_000, true);
+            heights.reset(2).unwrap();
+            heights.expire(0..1_000_000_000).unwrap();
+            heights.cover(100..900_000_000, false);
+        }
+        assert!(heights.node_count() <= nodes + 120);
+        heights.cover(200..800_000_000, false);
+        assert_eq!(heights.total_rows(), 2_000_000_000);
     }
 }

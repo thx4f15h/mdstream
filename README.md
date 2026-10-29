@@ -73,7 +73,7 @@ for tile in heights.viewport(100..124, 4, 32) {
 | 表格按行列读取 / 按源码定位行 | O(1) / O(log R)，R 为该表行数 |
 | 按视口查询链接/图片对象 | O(log L + 结果数)，L 为链接和图片总数 |
 
-核心文档空间 O(n)。高度树最多 O(T) 节点，但未测量的整片区域只用一个均匀节点。检查点树按需分配：若曾缓存 C 个位置，空间 O(min(T, C log T))，另外保存调用者提供的状态。所有树的递归深度受机器字长约束，不随 Markdown 嵌套深度增长；释放文档不会递归释放一个深层 AST。
+核心文档空间 O(n)。高度树最多 O(T) 节点，但没有遮蔽边界的未测量整片区域只用一个均匀节点。检查点树按需分配：若曾缓存 C 个位置，空间 O(min(T, C log T))，另外保存调用者提供的状态。所有树的递归深度受机器字长约束，不随 Markdown 嵌套深度增长；释放文档不会递归释放一个深层 AST。
 
 单次 `append` **不是最坏情况 O(新增字节数)**：Vec/String 可能扩容；一个新闭合符可能弹出许多旧 opener；换行可能提交之前缓冲的有界行前缀与一个候选表头。保证针对整个流的摊还复杂度，累计不会变成 O(n²)。没有使用局部无界二次算法。调用者主动在每次追加后遍历 `source()` 或整段 `runs_in()`，仍会自己制造二次工作；常规显示应使用有界 `runs(TileId)`。
 
@@ -293,6 +293,45 @@ assert_eq!(matches[0].source, Span::new(0, doc.source().len()));
 
 查询预处理时间及任务存储为 O(m)，m 为查询字节数；另有固定大小的片段缓冲，源码映射使用长度为 m 的环形缓冲。单 revision 的 KMP 比较总量 O(d)，d 为显示字节数；每次显示读取另有 O(log(n + 1) + 检查窗口) 的成本，窗口不超过 `TILE_BYTES + 2`，最坏累计搜索 O(n log(n + 1) + m)。输出空间由调用方管理，可逐批消费，不在任务中保存全文或全部命中。示例见 `examples/search.rs`。
 
+## 基础折叠
+
+`FoldView` 为每个视图保存独立的收起意愿、高度和检查点。当前支持顶层标题章节、围栏和缩进代码块：章节保留标题，正文及子章节变为一个占位；代码块整体变为占位。空章节不生成占位。父节点展开后恢复原来的子节点状态，源码、解析对象和 `Style::HIDDEN` 不变。
+
+```rust
+use mdtui3::{Document, FoldView, FoldId, HeadingId, Budget, WorkLimit};
+
+let mut doc = Document::new();
+doc.append("# Guide\n## Details\nbody\n")?;
+let mut view = FoldView::new(&doc, 1)?;
+view.set_collapsed(&doc, FoldId::Heading(HeadingId(1)), true)?;
+view.set_collapsed(&doc, FoldId::Heading(HeadingId(0)), true)?;
+let update = doc.append("more\n# Next\nvisible\n")?;
+view.apply(&doc, &update)?;
+view.set_collapsed(&doc, FoldId::Heading(HeadingId(0)), false)?;
+assert!(view.is_collapsed(FoldId::Heading(HeadingId(1))));
+
+let mut budget = Budget::new(WorkLimit {
+    queries: 16, tiles: 8, bytes: 1024, objects: 16,
+    ..Default::default()
+});
+let mut tiles = Vec::new();
+view.heights().viewport_budgeted(0..24, 0, &mut budget, &mut tiles);
+// 使用同一个 budget 驱动 LayoutPass::folded / advance_folded。
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`Document::fold_candidate` 按稳定 `FoldId` 查询整段范围、隐藏正文、父节点、摘要源码及开放状态；`fold_candidate_at` 查询当前位置的最内层候选。`fold_candidates(span)` 二分定位范围，只枚举开头块与范围相交的候选；其 `advance` 与视口共享 Budget，每检查一个块（包括非候选）消耗一次 query 和 object，耗尽可续，完成返回 `Covered`。游标绑定文档和 revision；范围之前开始的祖先通过 `parent` 查询。摘要用 `summary_text` 限定 UTF-8 字节数并计费，不统计正文行数、任务数或复制长标题。`hidden_at` 按预算返回 `FoldLookup::{Visible, Hidden, BudgetExhausted}`，隐藏结果是最外层遮蔽者，适合占位命中和源码定位。
+
+`LayoutPass::folded` / `advance_folded` 接收 `FoldLayoutSink`，复用已有有预算排版循环。每个可见占位只调用一次 `placeholder`，传入稳定 ID、隐藏源码、摘要区间及归属 tile；接入方将占位作为块边界绘制并在 `end_tile` 中计入其高度、重置必要的换行状态。回调只获得元数据，若要读取摘要，应另用共享 Budget。占位高度全部归属隐藏起点所在 tile；同一 tile 可有多个占位、标题和后继正文。隐藏内部的文字、图片和子占位不会交给回调。该接口仍使用 `RenderRun`，显示实体解码、终端宽度及真实软换行由接入方处理。完整示例见 `examples/folding.rs`。
+
+高度树独立保存基础高度/有效性与区间遮蔽计数。`height`、`prefix_rows`、`locate` 和视口查询返回折叠后的高度，`base_height` 返回遮蔽前的储存值；完整隐藏的内部 tile 无须逐个清零或恢复。每个占位及末端边界 tile 保持可检索，再按预算精确测量。单节点操作为 O(log H + log F + log T)，标题祖先最多六级，H/F/T 分别是标题、已收起节点和 tile 数。父子交替收放、失效、基础高度变化、树增长及 O(1) resize 保留嵌套遮蔽。重复操作不保存历史快照，新增视图状态 O(F)，高度树仍为 O(T)。
+
+`set_collapsed` / `toggle` 返回源码变化范围和视图版本；从受影响边界起惰性过期后续高度与检查点，旧异步测量和布局继续任务会被拒绝。`view.measure` 验证本视图的测量及检查点依赖；`insert_checkpoint` 同时使下游布局失效。`reset` 保留折叠意愿与遮蔽，只重置基础估计和检查点。保留的高度仍可能是过期估计，展开后仅测量请求窗口；选择远处 tile 时默认局部近似，不能承诺精确绝对行号。`folded_from_checkpoint` 只接受本视图的有效起点及指定字节距离内的恢复，接入方恢复 sink 状态，恢复步骤也使用同一 Budget。
+
+每次 append/finish 或连续 Update 批处理后调用 `view.apply`，然后才能查询。更新只检查最多六个开放章节和一个开放代码块，不枚举历史折叠；新 tile 在 apply 返回前继承遮蔽。开放代码块的未分类行前缀暂属该块，闭合/下一块确认后可以收回；Setext 晚确认也能缩短前一章节的范围。普通源码追加不会读取旧正文。重复应用不清掉新测量，错误文档或不连续更新在修改视图之前被拒绝。
+
+本阶段不包含递归/全部/默认策略、折叠内导航与锚点恢复、目录 UI、预览、表格/容器折叠、手工交叉范围。候选定位和高度遮蔽已具备这些后续工作的基础，具体验收继续见 [TODO](TODO.md#折叠支持规划)。
+
 ## 明确支持的 Markdown 方言
 
 - 段落与空行；ATX 标题；Setext 标题；分隔线。
@@ -330,7 +369,8 @@ assert_eq!(matches[0].source, Span::new(0, doc.source().len()));
 | `src/search.rs` / `src/display_search.rs` | 源码增量搜索、revision 绑定的显示文本搜索与命中映射、选区及任务状态 |
 | `src/annotations.rs` | 区间样式、隐藏聚合、最新 revision |
 | `src/references.rs` | 有长度上限的标签规范化和 BTreeMap 符号表 |
-| `src/layout.rs` | lazy 高度树、viewport、锚点和过期测量拒绝 |
+| `src/layout.rs` | lazy 高度与遮蔽树、viewport、锚点和过期测量拒绝 |
+| `src/folding.rs` / `src/frame.rs` | 章节/代码块候选、独立折叠视图、预算排版和占位 |
 | `src/checkpoints.rs` | 有效检查点的范围失效和前驱查询 |
 | `src/table.rs` | 表格行/单元格、对齐、流式单元格解析和列宽提示 |
 | `src/headings.rs` | 标题 arena 和六个级别的索引 |
@@ -353,6 +393,7 @@ nix develop -c cargo run -r --example scaling
 nix develop -c cargo run -r --example budget
 nix develop -c cargo run -r --example display
 nix develop -c cargo run -r --example search
+nix develop -c cargo run -r --example folding
 ```
 
 测试包含任意单切点和随机 UTF-8 分块、与朴素数组/有序映射对照的区间/高度/检查点随机测试、深层 opener、百万字 Setext 转换、百万字隐藏区间、十亿片段的稀疏高度索引、逐字符超长段落、延迟定义成本和 resize 节点复用。没有把 wall-clock 阈值当作正确性条件。`scaling` 示例输出时间及操作计数，便于在目标机器上复查。

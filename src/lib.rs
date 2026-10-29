@@ -26,6 +26,7 @@ mod destination;
 mod display;
 mod display_search;
 mod entity;
+mod folding;
 mod frame;
 mod headings;
 mod inline;
@@ -45,7 +46,10 @@ pub use checkpoints::{CheckpointIndex, CheckpointToken};
 pub use destination::{MAX_DESTINATION_BYTES, MAX_LINK_SUFFIX_BYTES, MAX_LINK_TITLE_BYTES};
 pub use display::{DisplayCursor, DisplayRun, DisplayRuns, DisplayStep};
 pub use display_search::{DisplayMatch, DisplaySearch};
-pub use frame::{LayoutPass, LayoutSink};
+pub use folding::{
+    FoldCandidate, FoldCandidates, FoldChange, FoldId, FoldLookup, FoldPlaceholder, FoldView,
+};
+pub use frame::{FoldLayoutSink, LayoutPass, LayoutSink};
 pub use headings::{Heading, HeadingIndex};
 pub use layout::{
     Anchor, HeightIndex, HeightState, LayoutError, Measurement, ViewportCursor, ViewportPage,
