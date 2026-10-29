@@ -447,6 +447,48 @@ for target in [Some(root), None] {
 
 `cargo run -r --example folding` 演示父章节预览、子折叠保留及结束恢复。`tests/fold_preview.rs` 和折叠排版模型覆盖预算原子性、显式意愿、流式范围、独立视图和旧任务拒绝；百万字节点的切换不读正文，进入预览后的排版仍受窗口及字节预算限制。
 
+## 跳转历史与书签
+
+`Bookmark::new(&doc, source, viewport_offset)` 保存文档身份、精确 UTF-8 源码锚点、捕获时所在的章节/代码 ID，以及目标行相对视口顶端的行偏移。源码应来自实际排版或精确跳转目标；普通滚动后先用 `Navigator::reconcile_source` 回填映射，不能把估计的 tile 起点当作精确返回位置。书签可单独保存，并通过 `Bookmark::navigation` 创建最小路径展开任务；可以用于同一文档的其他视图。追加、finish、Setext 晚确认和 resize 后仍以保存的源码位置为准，目标 ID 仅是捕获时的元数据。EOF 使用左亲和，新增内容不会移动旧 EOF 书签；重载后的新文档身份会被拒绝。
+
+`NavigationHistory` 保存当前条目和线性的前进/后退分支。普通滚动用 `replace_current` 更新当前返回位置；新跳转成功后才 `push` 目标并截断前进分支。完全相同的书签是无操作，保留前进分支；相同源码、不同偏移或目标元数据则是不同条目。`navigation` 在历史边界返回 `None`，否则创建可暂停的 `HistoryNavigation`；完成后自动移动历史游标，宿主将返回的 `ScrollTarget` 应用到 Navigator。
+
+```rust
+use mdtui3::*;
+let mut doc = Document::new();
+doc.append("# Guide\n## Details\nbody\n# Next\ntail\n")?;
+let mut view = FoldView::new(&doc, 1)?;
+let mut nav = Navigator::new();
+let body = doc.source().find("body").unwrap();
+let saved = Bookmark::new(&doc, body, 2)?;
+let mut history = NavigationHistory::new(saved);
+let destination = doc.headings().get(HeadingId(2)).unwrap().source.start;
+let target = nav.navigate(&doc, view.heights(), NavAction::Source(destination), 4).unwrap();
+history.push(Bookmark::new(&doc, target.source.unwrap(), 0)?)?;
+view.set_collapsed(&doc, FoldId::Heading(HeadingId(0)), true)?;
+
+let mut back = history.navigation(&doc, &view, HistoryDirection::Back, 4)?.unwrap();
+loop {
+    let mut budget = Budget::new(WorkLimit {
+        queries: 1, objects: 1, ..Default::default()
+    });
+    let progress = back.advance(&doc, &mut view, &mut history, &mut budget)?;
+    if let Some(target) = progress.target {
+        nav.apply_target(target);
+        assert_eq!(target.source, Some(body));
+        assert_eq!(history.current(), saved);
+        break;
+    }
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+书签恢复和历史任务复用 `FoldNavigation` 的共享 Budget，每步消费 1 query / 1 object，不扫描正文、不复制折叠树；最终定位步骤同时支付 O(1) 的历史游标更新。预算耗尽、取消和错误都不提前移动游标；取消时已展开的节点保持展开。历史条目变化或另一任务完成会使旧任务失效，错误历史实例返回 `WrongHistory`；文档/视图更新沿用原导航的过期检查。任务完成后重复调用不再移动游标。高度回填可在任务中途进行，最终定位使用最新高度；append 或 resize 后应从仍有效的书签/历史重新创建任务。
+
+返回的 `top` 是估计位置。实际布局按预算定位到 `source_row` 后，用 `bookmark.viewport_top(source_row, viewport_rows)` 计算视口顶端，再调用 `Navigator::reconcile_source`，传入保存的源码目标。该计算在视口缩小时限制偏移，并对文档开头饱和减法；文档末尾的顶端限制由 Navigator 完成。历史完成表示已获得源码目标和估计位置，实际终端行定位仍由排版接入完成。
+
+捕获书签只做 O(log B + log H) 的索引查询，每个书签/任务占 O(1) 空间。历史共 O(J) 空间，J 为保留条目数；Vec 容量保留历史峰值，追加摊还 O(1)，扩容可能复制现有条目，不承诺追加历史的硬时延。`cargo run -r --example history` 演示返回折叠代码、追加与 resize 后恢复、前进和历史边界。`tests/history.rs` 包含固定种子 2000 次操作模型、同 tile 重复标题、普通滚动、分支截断、身份/过期/取消、流式语义变化和百万字隐藏路径验证。
+
 ## 明确支持的 Markdown 方言
 
 - 段落与空行；ATX 标题；Setext 标题；分隔线。
@@ -492,6 +534,7 @@ for target in [Some(root), None] {
 | `src/navigation.rs` | 逐行/翻页/首尾/标题导航及源码目标 |
 | `src/fold_navigation.rs` | 有预算折叠导航、可见标题跳过及源码锚点投影/恢复 |
 | `src/fold_batch.rs` | 分帧全部/子树/兄弟/级别/聚焦命令及进度 |
+| `src/history.rs` | 文档内书签、视口偏移及有预算前进/后退历史 |
 | `tests/` | 语义样例、随机模型对照、分块一致性、复杂度回归 |
 
 ## 验证与开发
@@ -512,6 +555,7 @@ nix develop -c cargo run -r --example display
 nix develop -c cargo run -r --example search
 nix develop -c cargo run -r --example folding
 nix develop -c cargo run -r --example fold_batch
+nix develop -c cargo run -r --example history
 ```
 
 测试包含任意单切点和随机 UTF-8 分块、与朴素数组/有序映射对照的区间/高度/检查点随机测试、深层 opener、百万字 Setext 转换、百万字隐藏区间、十亿片段的稀疏高度索引、逐字符超长段落、延迟定义成本和 resize 节点复用。没有把 wall-clock 阈值当作正确性条件。`scaling` 示例输出时间及操作计数，便于在目标机器上复查。

@@ -219,6 +219,10 @@ impl FoldAnchor {
         self.source
     }
 
+    pub fn document_id(&self) -> DocumentId {
+        self.document
+    }
+
     /// None means budget exhaustion with no side effects. One query and one
     /// object cover the bounded ancestor lookup and estimated height lookup.
     /// The renderer refines the returned source/placeholder row locally.

@@ -11,6 +11,7 @@ pub enum LayoutError {
     OutOfOrderUpdate,
     WrongDocument,
     WrongView,
+    WrongHistory,
     StaleContinuation,
 }
 

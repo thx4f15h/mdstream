@@ -31,6 +31,7 @@ mod fold_navigation;
 mod folding;
 mod frame;
 mod headings;
+mod history;
 mod inline;
 mod layout;
 mod model;
@@ -58,6 +59,7 @@ pub use folding::{
 };
 pub use frame::{FoldLayoutSink, LayoutPass, LayoutSink};
 pub use headings::{Heading, HeadingIndex};
+pub use history::{Bookmark, HistoryDirection, HistoryNavigation, NavigationHistory};
 pub use layout::{
     Anchor, HeightIndex, HeightState, LayoutError, Measurement, ViewportCursor, ViewportPage,
     VisibleTile,
