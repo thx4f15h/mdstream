@@ -177,3 +177,27 @@ fn semantic_queries_visit_intervals_instead_of_searching_per_character() {
     assert_eq!(cursor, span.end);
     assert!(runs.annotation_visits() <= 2 * span.len() as u64 + 64);
 }
+
+#[test]
+fn incomplete_link_suffixes_and_long_break_markers_have_bounded_work() {
+    for n in [8_192, 16_384, 32_768] {
+        let source = format!("[a](<{}\n\n{}\\\r\nb\n", "x".repeat(n), "x ".repeat(n));
+        let mut doc = Document::new();
+        for c in source.chars() {
+            doc.append(c.encode_utf8(&mut [0; 4])).unwrap();
+        }
+        doc.finish();
+        let work = doc.work();
+        assert!(work.inline_bytes <= source.len() as u64);
+        assert!(work.label_bytes <= 4);
+        assert!(work.tree_visits < 500);
+        assert_eq!(doc.link_destination(mdtui3::LinkId(0)), None);
+    }
+    let mut doc = Document::new();
+    doc.append(&format!("x{}\n", " ".repeat(1_000_000)))
+        .unwrap();
+    let before = doc.work();
+    doc.append("b\n").unwrap();
+    assert_eq!(doc.work().inline_bytes - before.inline_bytes, 2);
+    assert!(doc.work().tree_visits - before.tree_visits < 300);
+}

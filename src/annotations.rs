@@ -298,7 +298,7 @@ mod tests {
             let a = random() % 1024;
             let b = random() % 1024;
             let span = Span::new(a.min(b), a.max(b) + 1);
-            let style = Style(1 << (random() % 5));
+            let style = Style(1 << (random() % 7));
             let link = (random() % 3 == 0).then_some(LinkId(serial as usize));
             // Many writes share a document revision, including link rewrites.
             let revision = serial / 7 + 1;
