@@ -16,6 +16,15 @@ pub enum FoldId {
     Code(BlockId),
 }
 
+/// Initial choices for candidates first discovered by a subsequent `apply`.
+/// Existing choices are never overwritten, including explicit expansions.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FoldDefaults {
+    /// Index 0 is h1, index 5 is h6. True starts that heading collapsed.
+    pub heading_levels: [bool; 6],
+    pub code: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FoldCandidate {
     pub id: FoldId,
@@ -92,6 +101,25 @@ pub struct FoldCandidates {
 }
 
 impl FoldCandidates {
+    pub(crate) fn is_done(&self) -> bool {
+        self.next == self.end
+    }
+
+    /// Caller pays for one block, including blocks without a candidate.
+    pub(crate) fn next_block(&mut self, document: &Document) -> Option<FoldCandidate> {
+        let block = &document.blocks()[self.next];
+        let id = match block.kind {
+            BlockKind::Code { .. } => Some(FoldId::Code(BlockId(self.next))),
+            BlockKind::Heading { .. } => document
+                .headings()
+                .current(block.source.start)
+                .map(FoldId::Heading),
+            _ => None,
+        };
+        self.next += 1;
+        id.and_then(|id| document.fold_candidate(id))
+    }
+
     pub fn advance(
         &mut self,
         document: &Document,
@@ -115,19 +143,9 @@ impl FoldCandidates {
             }) {
                 return Ok(crate::Completion::BudgetExhausted);
             }
-            let block = &document.blocks()[self.next];
-            let id = match block.kind {
-                BlockKind::Code { .. } => Some(FoldId::Code(BlockId(self.next))),
-                BlockKind::Heading { .. } => document
-                    .headings()
-                    .current(block.source.start)
-                    .map(FoldId::Heading),
-                _ => None,
-            };
-            if let Some(candidate) = id.and_then(|id| document.fold_candidate(id)) {
+            if let Some(candidate) = self.next_block(document) {
                 out.push(candidate);
             }
-            self.next += 1;
         }
         Ok(crate::Completion::Covered)
     }
@@ -360,6 +378,8 @@ pub struct FoldView<S = ()> {
     checkpoints: CheckpointIndex<S>,
     pub(crate) state: FoldState,
     range_visits: u64,
+    defaults: FoldDefaults,
+    default_visits: u64,
 }
 
 impl FoldView<()> {
@@ -382,6 +402,8 @@ impl<S> FoldView<S> {
             checkpoints,
             state: FoldState::default(),
             range_visits: 0,
+            defaults: FoldDefaults::default(),
+            default_visits: 0,
         })
     }
 
@@ -400,6 +422,26 @@ impl<S> FoldView<S> {
     }
     pub fn is_collapsed(&self, id: FoldId) -> bool {
         self.state.collapsed.contains_key(&id)
+    }
+
+    pub fn defaults(&self) -> FoldDefaults {
+        self.defaults
+    }
+
+    /// O(1). Applies only to newly identified headings/code blocks in future
+    /// updates, including late Setext recognition. Existing choices stay intact;
+    /// use FoldBatch to change them explicitly. Invalidates pending view tasks.
+    pub fn set_defaults(&mut self, defaults: FoldDefaults) {
+        if self.defaults != defaults {
+            self.defaults = defaults;
+            self.version += 1;
+        }
+    }
+
+    /// New heading/block metadata inspected to initialize default choices.
+    /// No historical candidates or source text are scanned.
+    pub fn default_visits(&self) -> u64 {
+        self.default_visits
     }
 
     pub(crate) fn check(&self, document: &Document) -> Result<(), LayoutError> {
@@ -512,6 +554,33 @@ impl<S> FoldView<S> {
                     .min(old.hidden.start)
                     .min(new.hidden.start),
             );
+        }
+        if self
+            .defaults
+            .heading_levels
+            .iter()
+            .any(|&collapsed| collapsed)
+        {
+            for index in update.new_headings.clone() {
+                self.default_visits += 1;
+                let heading = document.headings().get(HeadingId(index)).unwrap();
+                if self.defaults.heading_levels[usize::from(heading.level - 1)] {
+                    let candidate = document
+                        .fold_candidate(FoldId::Heading(HeadingId(index)))
+                        .unwrap();
+                    self.state.insert(document, &mut self.heights, candidate);
+                    dirty = Some(dirty.unwrap_or(usize::MAX).min(candidate.hidden.start));
+                }
+            }
+        }
+        if self.defaults.code {
+            for index in update.new_blocks.clone() {
+                self.default_visits += 1;
+                if let Some(candidate) = document.fold_candidate(FoldId::Code(BlockId(index))) {
+                    self.state.insert(document, &mut self.heights, candidate);
+                    dirty = Some(dirty.unwrap_or(usize::MAX).min(candidate.hidden.start));
+                }
+            }
         }
         if let Some(start) = dirty {
             self.expire_from(document, start)?;

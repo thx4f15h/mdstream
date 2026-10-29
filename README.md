@@ -328,9 +328,9 @@ view.heights().viewport_budgeted(0..24, 0, &mut budget, &mut tiles);
 
 `set_collapsed` / `toggle` 返回源码变化范围和视图版本；从受影响边界起惰性过期后续高度与检查点，旧异步测量和布局继续任务会被拒绝。`view.measure` 验证本视图的测量及检查点依赖；`insert_checkpoint` 同时使下游布局失效。`reset` 保留折叠意愿与遮蔽，只重置基础估计和检查点。保留的高度仍可能是过期估计，展开后仅测量请求窗口；选择远处 tile 时默认局部近似，不能承诺精确绝对行号。`folded_from_checkpoint` 只接受本视图的有效起点及指定字节距离内的恢复，接入方恢复 sink 状态，恢复步骤也使用同一 Budget。
 
-每次 append/finish 或连续 Update 批处理后调用 `view.apply`，然后才能查询。更新只检查最多六个开放章节和一个开放代码块，不枚举历史折叠；新 tile 在 apply 返回前继承遮蔽。开放代码块的未分类行前缀暂属该块，闭合/下一块确认后可以收回；Setext 晚确认也能缩短前一章节的范围。普通源码追加不会读取旧正文。重复应用不清掉新测量，错误文档或不连续更新在修改视图之前被拒绝。
+每次 append/finish 或连续 Update 批处理后调用 `view.apply`，然后才能查询。对已有折叠，更新只检查最多六个开放章节和一个开放代码块；开启默认收起时还处理新增标题/块的元数据，不枚举历史折叠。新 tile 在 apply 返回前继承遮蔽。开放代码块的未分类行前缀暂属该块，闭合/下一块确认后可以收回；Setext 晚确认也能缩短前一章节的范围。普通源码追加不会读取旧正文。重复应用不清掉新测量，错误文档或不连续更新在修改视图之前被拒绝。
 
-递归/全部/默认策略、目录 UI、预览、表格/容器折叠、手工交叉范围继续见 [TODO](TODO.md#折叠支持规划)。折叠导航与锚点恢复接口见下一节。
+折叠导航、锚点恢复和有预算批量操作见下文。目录 UI、预览、表格/容器折叠、手工交叉范围继续见 [TODO](TODO.md#折叠支持规划)。
 
 ## 折叠导航与源码锚点
 
@@ -373,6 +373,47 @@ assert!(view.is_collapsed(FoldId::Heading(HeadingId(1))));
 任务绑定文档身份/revision、视图身份及折叠版本，文档追加/首次 finish、外部折叠操作和 reset 后拒绝旧任务；错误返回前不消费预算或修改视图。自身展开更新其版本，期间的正常高度测量不使任务失效；最终定位使用最新高度。完成后重复调用返回原结果且不重复展开，返回行仍是当时的估计。任务不改写原 Navigator；调用方只应用当前有效任务的结果，新的用户导航应丢弃旧任务。用 `Navigator::apply_target` 应用结果，它在 source 为 None 的普通滚动后清除旧的精确源码目标。远处定位、同 tile 多标题和折叠占位仍由局部 `LayoutPass` 在共享 Budget 下细化，随后再 reconcile；此接口不排整篇前缀，也不承诺精确绝对行号。
 
 `FoldAnchor::new(&doc, source)` 保存文档身份和精确源码位置，`resolve(&doc, &view, viewport_rows, &mut budget)` 返回当前投影。隐藏时 `hidden_by` 标明最外层折叠，`target.source` 指向其占位起点；可见时返回原位置。保留同一个 FoldAnchor，在收起/展开、append、Setext 晚确认或 resize 后重新 resolve 并应用目标即可恢复；不要用占位位置覆盖保存的原锚点。每次 resolve 消费 1 query、1 object，预算不足返回 None，不改变折叠。锚点允许 EOF，追加后原字节偏移保持不变；不绑定 revision，错误文档或未同步的 FoldView 会被拒绝。它保存源码而非精确屏幕行/列，选区仍使用原源码范围。示例 `examples/folding.rs` 演示占位投影和分帧恢复到 120 万字节正文内的目标。
+
+## 批量折叠与新节点默认设置
+
+`FoldBatch` 提供当前 revision 上的显式命令：`All` 展开/收起全部候选，`Subtree` 包括根及全部后代，`AtLevel` 只修改严格等于指定级别（1–6）的标题，`Focus` 展开目标及祖先并收起所有其他候选。聚焦会修改后代意愿；仅想露出目标并保留无关状态时使用 `FoldNavigationPolicy::Reveal`。
+
+```rust
+use mdtui3::*;
+
+let mut doc = Document::new();
+let mut view = FoldView::new(&doc, 1)?;
+view.set_defaults(FoldDefaults {
+    heading_levels: [false, true, true, true, true, true],
+    code: true,
+});
+let update = doc.append("# Guide\n## Details\nbody\n")?;
+view.apply(&doc, &update)?;
+assert!(view.is_collapsed(FoldId::Heading(HeadingId(1))));
+
+let mut task = FoldBatch::new(&doc, &view, FoldBatchAction::All { collapsed: false })?;
+loop {
+    let mut budget = Budget::new(WorkLimit {
+        queries: 1, objects: 1, ..Default::default()
+    });
+    let progress = task.advance(&doc, &mut view, &mut budget)?;
+    // progress.change 是本次调用已生效的源码包络；中间状态可以直接排版。
+    if progress.completion == Completion::Covered { break; }
+    // UI 应在此交回事件循环，下帧使用新 Budget 继续。
+}
+assert!(!view.is_collapsed(FoldId::Heading(HeadingId(1))));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+创建任务为 O(1)，范围定位在第一次 `advance` 中消费 1 query、1 object；之后每个块同样消费 1 query、1 object，包括非候选及不匹配级别的块。子树范围通过索引定位，其他命令分帧扫描当前块索引；既不扫描源码正文，也不逐 tile 更新隐藏范围。每步为 O(log B + log H + log F + log T) 的固定次数索引操作（B 为块数），完整任务按实际访问的块数计费。`visited` / `changed` 是累计块访问数/实际状态变化数，`change` 是本次调用的区间包络及最新版本，耗尽返回 `BudgetExhausted`。任务仅保存 O(1) 游标状态；不复制候选列表或折叠快照。
+
+批量任务渐进生效；取消、文档更新、外部折叠操作、默认设置变化或 reset 后，已经完成的修改保留。旧任务会在消费预算或修改视图之前被拒绝；任务自身修改及正常高度测量允许继续，完成后重复调用不再产生修改。每次实际修改复用单节点的高度遮蔽、检查点及测量失效，调用方可以在两次 advance 之间正常绘制。需要原子切换整棵树或取消回滚的宿主，不能将该接口当成事务。
+
+`FoldDefaults` 只规定**后续首次识别**的节点初始意愿：`heading_levels[0..6]` 对应 h1–h6，`code` 控制代码块，默认全部展开。`set_defaults` 为 O(1)，不追溯已有候选，不覆盖显式展开/收起；已有文档创建视图后仍全部展开，需要调整时使用批量命令。默认设置变化增加视图版本，但不改变当前布局；相同设置无操作。批量命令不修改默认设置，因此“全部展开”后新到来的标题仍按当前默认初始化。单节点收放继续保留子节点意愿；resize 保留默认设置和所有节点意愿。
+
+`view.apply` 通过 `Update.new_headings` / `new_blocks` 初始化新候选，Setext 晚确认使用新 HeadingId，即使其块早已存在；重复应用不会重置意愿。`default_visits` 计量检查的新增标题/块元数据，`range_visits` 继续计量最多七个已有开放范围。初始化成本计入新增对象事件，不宣称任意大 Update 的消费具有整帧硬预算；没有新的候选时，不回访历史节点或读取旧正文。合并 Update 在 apply 时统一使用当前默认设置；需要在流中切换默认值时，先应用切换前的更新。
+
+可运行示例：`cargo run -r --example fold_batch`。
 
 ## 明确支持的 Markdown 方言
 
@@ -418,6 +459,7 @@ assert!(view.is_collapsed(FoldId::Heading(HeadingId(1))));
 | `src/headings.rs` | 标题 arena 和六个级别的索引 |
 | `src/navigation.rs` | 逐行/翻页/首尾/标题导航及源码目标 |
 | `src/fold_navigation.rs` | 有预算折叠导航、可见标题跳过及源码锚点投影/恢复 |
+| `src/fold_batch.rs` | 分帧全部/子树/级别/聚焦命令及进度 |
 | `tests/` | 语义样例、随机模型对照、分块一致性、复杂度回归 |
 
 ## 验证与开发
@@ -437,6 +479,7 @@ nix develop -c cargo run -r --example budget
 nix develop -c cargo run -r --example display
 nix develop -c cargo run -r --example search
 nix develop -c cargo run -r --example folding
+nix develop -c cargo run -r --example fold_batch
 ```
 
 测试包含任意单切点和随机 UTF-8 分块、与朴素数组/有序映射对照的区间/高度/检查点随机测试、深层 opener、百万字 Setext 转换、百万字隐藏区间、十亿片段的稀疏高度索引、逐字符超长段落、延迟定义成本和 resize 节点复用。没有把 wall-clock 阈值当作正确性条件。`scaling` 示例输出时间及操作计数，便于在目标机器上复查。

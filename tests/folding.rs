@@ -71,6 +71,64 @@ fn heading(id: usize) -> FoldId {
 }
 
 #[test]
+fn default_masks_and_partial_batches_feed_budgeted_layout() {
+    let mut doc = Document::new();
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    view.set_defaults(FoldDefaults {
+        heading_levels: [false, true, true, true, true, true],
+        code: true,
+    });
+    let update = doc.append("# Root\nintro\n## Child\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    for _ in 0..10 {
+        let update = doc.append(&"hidden\n".repeat(100)).unwrap();
+        view.apply(&doc, &update).unwrap();
+        let sink = render(&doc, &mut view, true);
+        assert_eq!(sink.text, "Root\nintro\nChild\n[fold]\n");
+        assert!(sink.bytes < 50);
+    }
+    let update = doc.append("```rs\ncode\n```\n# Next\ntail\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    let update = doc.finish();
+    view.apply(&doc, &update).unwrap();
+    assert_eq!(
+        render(&doc, &mut view, true).text,
+        "Root\nintro\nChild\n[fold]\nNext\ntail\n"
+    );
+    let mut task = FoldBatch::new(&doc, &view, FoldBatchAction::All { collapsed: true }).unwrap();
+    let mut budget = Budget::new(WorkLimit {
+        queries: 2,
+        objects: 2,
+        ..Default::default()
+    });
+    let progress = task.advance(&doc, &mut view, &mut budget).unwrap();
+    assert_eq!(progress.changed, 1);
+    assert_eq!(progress.completion, Completion::BudgetExhausted);
+    assert_eq!(
+        render(&doc, &mut view, true).text,
+        "Root\n[fold]\nNext\ntail\n"
+    );
+    task.advance(&doc, &mut view, &mut Budget::new(WorkLimit::unlimited()))
+        .unwrap();
+    view.reset(2).unwrap();
+    assert_eq!(
+        render(&doc, &mut view, true).text,
+        "Root\n[fold]\nNext\n[fold]\n"
+    );
+    let code = FoldId::Code(doc.block_at(doc.source().find("code").unwrap()).unwrap());
+    let mut task = FoldBatch::new(&doc, &view, FoldBatchAction::Focus { target: code }).unwrap();
+    task.advance(&doc, &mut view, &mut Budget::new(WorkLimit::unlimited()))
+        .unwrap();
+    assert_eq!(
+        render(&doc, &mut view, true).text,
+        format!(
+            "Root\nintro\nChild\n{}code\nNext\n[fold]\n",
+            "hidden\n".repeat(1000)
+        )
+    );
+}
+
+#[test]
 fn same_tile_boundaries_empty_sections_nested_choices_and_independent_views() {
     let doc = document("# A\na\n## B\nb\n### C\nc\n## D\nd\n# E\n# F\nf\n");
     assert_eq!(doc.tile_count(), 1);
