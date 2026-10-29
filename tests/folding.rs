@@ -466,6 +466,7 @@ fn seeded_nested_toggles_and_resize_match_source_union() {
         )
         .collect();
     let mut selected = Vec::new();
+    let mut preview = None;
     let mut seed = 0x90f1_8ab7_u64;
     for step in 0..160 {
         seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
@@ -476,11 +477,26 @@ fn seeded_nested_toggles_and_resize_match_source_union() {
             selected.push(id);
         }
         view.toggle(&doc, id).unwrap();
+        if step % 3 == 0 {
+            preview = Some(id);
+        } else if step % 5 == 0 {
+            preview = None;
+        }
+        view.set_preview(&doc, preview, &mut Budget::new(WorkLimit::unlimited()))
+            .unwrap();
+        for &candidate in &ids {
+            assert_eq!(view.is_collapsed(candidate), selected.contains(&candidate));
+        }
         if step % 7 == 0 {
             view.reset(2 + step % 5).unwrap();
         }
         let sink = render(&doc, &mut view, false);
-        let expected = oracle(&doc, &selected);
+        let effective: Vec<_> = selected
+            .iter()
+            .copied()
+            .filter(|&id| Some(id) != preview)
+            .collect();
+        let expected = oracle(&doc, &effective);
         assert_eq!(sink.text, expected, "step {step}");
         assert_eq!(
             view.heights().total_rows(),
@@ -489,6 +505,9 @@ fn seeded_nested_toggles_and_resize_match_source_union() {
         );
     }
     assert!(view.heights().node_count() < doc.tile_count() * 4);
+    view.set_preview(&doc, None, &mut Budget::new(WorkLimit::unlimited()))
+        .unwrap();
+    assert_eq!(render(&doc, &mut view, true).text, oracle(&doc, &selected));
 }
 
 #[test]
@@ -500,6 +519,7 @@ fn every_streaming_prefix_agrees_with_independent_source_projection() {
     let mut doc = Document::new();
     let mut view = FoldView::new(&doc, 1).unwrap();
     let mut selected = Vec::new();
+    let mut preview = None;
     let mut seed = 42_u64;
     for ch in input.chars() {
         let update = doc.append(ch.encode_utf8(&mut [0; 4])).unwrap();
@@ -526,16 +546,81 @@ fn every_streaming_prefix_agrees_with_independent_source_projection() {
                 selected.push(id);
             }
         }
+        if !selected.is_empty() && seed.is_multiple_of(13) {
+            preview = Some(selected[(seed >> 32) as usize % selected.len()]);
+        } else if seed.is_multiple_of(17) {
+            preview = None;
+        }
+        view.set_preview(&doc, preview, &mut Budget::new(WorkLimit::unlimited()))
+            .unwrap();
+        let effective: Vec<_> = selected
+            .iter()
+            .copied()
+            .filter(|&id| Some(id) != preview)
+            .collect();
         assert_eq!(
             render(&doc, &mut view, false).text,
-            oracle(&doc, &selected),
+            oracle(&doc, &effective),
             "prefix {}",
             doc.source().len()
         );
     }
     let update = doc.finish();
     view.apply(&doc, &update).unwrap();
+    view.set_preview(&doc, None, &mut Budget::new(WorkLimit::unlimited()))
+        .unwrap();
     assert_eq!(render(&doc, &mut view, true).text, oracle(&doc, &selected));
+}
+
+#[test]
+fn preview_renders_only_budgeted_window_and_rejects_previous_layout_pass() {
+    let doc = document(&format!("# A\n{}# Next\ntail\n", "word\n".repeat(200_000)));
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    view.set_collapsed(&doc, heading(0), true).unwrap();
+    let mut old_pass = LayoutPass::folded(&doc, &view, TileId(0), 5).unwrap();
+    let mut budget = Budget::new(WorkLimit {
+        queries: 16,
+        objects: 16,
+        tiles: 1,
+        bytes: 64,
+        ..Default::default()
+    });
+    view.set_preview(&doc, Some(heading(0)), &mut budget)
+        .unwrap();
+    let mut sink = Sink::default();
+    assert_eq!(
+        old_pass.advance_folded(&doc, &mut view, &mut budget, &mut sink),
+        Err(LayoutError::StaleContinuation)
+    );
+    let mut pass = LayoutPass::folded(&doc, &view, TileId(0), 5).unwrap();
+    pass.advance_folded(&doc, &mut view, &mut budget, &mut sink)
+        .unwrap();
+    assert!(sink.bytes <= 64);
+    assert!(sink.text.contains("word"));
+    assert!(sink.placeholders.is_empty());
+    assert!(pass.source_position() < 100);
+    view.set_preview(
+        &doc,
+        None,
+        &mut Budget::new(WorkLimit {
+            queries: 1,
+            objects: 1,
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        pass.advance_folded(
+            &doc,
+            &mut view,
+            &mut Budget::new(WorkLimit::unlimited()),
+            &mut sink
+        ),
+        Err(LayoutError::StaleContinuation)
+    );
+    let folded = render(&doc, &mut view, true);
+    assert_eq!(folded.text, "A\n[fold]\nNext\ntail\n");
+    assert!(folded.bytes < 64);
 }
 
 #[test]
@@ -604,6 +689,17 @@ fn placeholders_revive_syntax_zero_tiles_and_recovery_is_bounded() {
     view.toggle(&doc, FoldId::Code(BlockId(0))).unwrap();
     assert_eq!(render(&doc, &mut view, true).text, "[fold]\n");
     assert_eq!(view.heights().total_rows(), 1);
+    view.set_preview(
+        &doc,
+        Some(FoldId::Code(BlockId(0))),
+        &mut Budget::new(WorkLimit::unlimited()),
+    )
+    .unwrap();
+    assert!(render(&doc, &mut view, true).text.is_empty());
+    assert_eq!(view.heights().total_rows(), 0);
+    view.set_preview(&doc, None, &mut Budget::new(WorkLimit::unlimited()))
+        .unwrap();
+    assert_eq!(render(&doc, &mut view, true).text, "[fold]\n");
     view.toggle(&doc, FoldId::Code(BlockId(0))).unwrap();
     assert!(render(&doc, &mut view, true).text.is_empty());
     assert_eq!(view.heights().total_rows(), 0);

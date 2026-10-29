@@ -74,6 +74,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     view.apply(&document, &update)?;
     println!("Parent collapsed:");
     show(&document, &mut view)?;
+    for (target, label) in [
+        (
+            Some(FoldId::Heading(HeadingId(0))),
+            "Parent preview; child remains collapsed:",
+        ),
+        (None, "Preview ended; parent restored:"),
+    ] {
+        let mut budget = Budget::new(WorkLimit {
+            queries: 1,
+            objects: 1,
+            ..Default::default()
+        });
+        let progress = view.set_preview(&document, target, &mut budget)?;
+        assert_eq!(progress.completion, Completion::Covered);
+        assert!(view.is_collapsed(FoldId::Heading(HeadingId(0))));
+        println!("{label}");
+        show(&document, &mut view)?;
+    }
     view.set_collapsed(&document, FoldId::Heading(HeadingId(0)), false)?;
     println!("Parent expanded; child remains collapsed:");
     show(&document, &mut view)?;

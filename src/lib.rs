@@ -54,7 +54,7 @@ pub use fold_navigation::{
 };
 pub use folding::{
     FoldCandidate, FoldCandidates, FoldChange, FoldDefaults, FoldId, FoldLookup, FoldPlaceholder,
-    FoldView,
+    FoldPreviewProgress, FoldView,
 };
 pub use frame::{FoldLayoutSink, LayoutPass, LayoutSink};
 pub use headings::{Heading, HeadingIndex};

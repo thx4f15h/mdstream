@@ -417,6 +417,36 @@ assert!(!view.is_collapsed(FoldId::Heading(HeadingId(1))));
 
 可运行示例：`cargo run -r --example fold_batch`。
 
+## 临时折叠预览
+
+`FoldView::set_preview(&doc, Some(id), &mut budget)` 暂时展开一个章节或代码块；传入 `None` 结束预览，切换 ID 则先恢复旧节点。每个视图同时只有一个预览。祖先和后代的折叠意愿保持不变，因此被父章节隐藏的节点不会因预览而自动露出；展开父章节的预览仍保留子节点占位。这里提供暂时展开整节点的视图状态，实际只排版当前窗口；按前几行/字节截断的摘要预览另行实现。
+
+```rust
+use mdtui3::*;
+let mut doc = Document::new();
+doc.append("# Guide\nintro\n## Details\nbody\n")?;
+let mut view = FoldView::new(&doc, 1)?;
+let root = FoldId::Heading(HeadingId(0));
+view.set_collapsed(&doc, root, true)?;
+for target in [Some(root), None] {
+    let mut budget = Budget::new(WorkLimit {
+        queries: 1, objects: 1, ..Default::default()
+    });
+    let progress = view.set_preview(&doc, target, &mut budget)?;
+    assert_eq!(progress.completion, Completion::Covered);
+    assert_eq!(view.preview(), target);
+    // 本地折叠意愿没有改变；实际可见性用 hidden_at 或有预算排版读取。
+    assert!(view.is_collapsed(root));
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`is_collapsed` 始终返回节点的本地意愿。预览期间调用 `set_collapsed`、`toggle` 或批量命令，会修改结束预览后应恢复的意愿；预览继续让本节点展开。未显式修改时恢复预览前的状态。其他节点的操作立即生效，`FoldNavigation` 按实际可见性判断必要展开路径。宿主在预览结束时显式传 `None`；预览不会因普通导航、默认设置变化、追加、finish 或 resize 自动结束。恢复使用当前结构范围，因此流式增长和 Setext 晚确认不会恢复过期的遮蔽区间。
+
+开始、切换及结束各原子消费 1 query、1 object，支付最多两个节点的固定次数索引操作；O(log H + log F + log T)，只额外保存一个 ID 和布尔意愿，O(1) 空间。不读取正文、不枚举覆盖的 tile、不保存历史快照。相同目标为无操作且不扣预算；预算不足返回 `BudgetExhausted`，保留当前预览和所有状态，可在后续帧重试。错误文档、未同步视图和非法候选在扣费及修改前被拒绝。预览变化返回旧/新隐藏范围的包络和最新版本，并使受影响的高度、检查点、测量和继续任务失效；即使节点原已展开或范围为空也增加版本。实际绘制继续使用共享 Budget 的剩余额度，或留待后续帧。
+
+`cargo run -r --example folding` 演示父章节预览、子折叠保留及结束恢复。`tests/fold_preview.rs` 和折叠排版模型覆盖预算原子性、显式意愿、流式范围、独立视图和旧任务拒绝；百万字节点的切换不读正文，进入预览后的排版仍受窗口及字节预算限制。
+
 ## 明确支持的 Markdown 方言
 
 - 段落与空行；ATX 标题；Setext 标题；分隔线。

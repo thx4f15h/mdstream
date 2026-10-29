@@ -4,8 +4,8 @@ use std::{
 };
 
 use crate::{
-    BlockId, BlockKind, Budget, CheckpointIndex, Document, DocumentId, HeadingId, HeightIndex,
-    LayoutError, Measurement, Span, SyntaxState, TileId, Update, WorkLimit,
+    BlockId, BlockKind, Budget, CheckpointIndex, Completion, Document, DocumentId, HeadingId,
+    HeightIndex, LayoutError, Measurement, Span, SyntaxState, TileId, Update, WorkLimit,
 };
 
 /// Document-local stable identity. Containers and arbitrary crossing ranges are
@@ -81,6 +81,14 @@ pub struct FoldPlaceholder {
 pub struct FoldChange {
     pub version: u64,
     pub source: Span,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FoldPreviewProgress {
+    /// Covered means the requested preview is active (or has ended).
+    /// BudgetExhausted leaves the previous preview and all choices untouched.
+    pub completion: Completion,
+    pub change: Option<FoldChange>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -380,6 +388,9 @@ pub struct FoldView<S = ()> {
     range_visits: u64,
     defaults: FoldDefaults,
     default_visits: u64,
+    // The active node is temporarily absent from the effective masks. Keep only
+    // its local choice; ancestor/descendant choices remain in the usual index.
+    preview: Option<(FoldId, bool)>,
 }
 
 impl FoldView<()> {
@@ -404,6 +415,7 @@ impl<S> FoldView<S> {
             range_visits: 0,
             defaults: FoldDefaults::default(),
             default_visits: 0,
+            preview: None,
         })
     }
 
@@ -420,8 +432,94 @@ impl<S> FoldView<S> {
     pub fn range_visits(&self) -> u64 {
         self.range_visits
     }
+    /// Local choice, including the choice temporarily overridden by preview.
+    /// Use hidden_at to query actual visibility under ancestors and preview.
     pub fn is_collapsed(&self, id: FoldId) -> bool {
-        self.state.collapsed.contains_key(&id)
+        match self.preview {
+            Some((target, collapsed)) if target == id => collapsed,
+            _ => self.state.collapsed.contains_key(&id),
+        }
+    }
+
+    pub fn preview(&self) -> Option<FoldId> {
+        self.preview.map(|(id, _)| id)
+    }
+
+    /// Temporarily expand one node, preserving ancestor/descendant choices.
+    /// None ends preview; switching restores the previous node first. Explicit
+    /// set_collapsed/toggle/batch commands update the saved choice even during
+    /// preview. Appends and reset preserve preview, using current ranges on exit.
+    ///
+    /// A change atomically costs one query and one object for at most two nodes'
+    /// fixed index operations, O(log H + log F + log T), with O(1) extra storage.
+    /// No source or covered tiles are scanned. An identical request is free.
+    /// Rendering the newly visible window still needs its own shared budget.
+    pub fn set_preview(
+        &mut self,
+        document: &Document,
+        target: Option<FoldId>,
+        budget: &mut Budget,
+    ) -> Result<FoldPreviewProgress, LayoutError> {
+        self.check(document)?;
+        // Validate IDs in O(1), before charging or changing the old preview.
+        if let Some(id) = target {
+            let valid = match id {
+                FoldId::Heading(id) => document.headings().get(id).is_some(),
+                FoldId::Code(id) => document
+                    .block(id)
+                    .is_some_and(|block| matches!(block.kind, BlockKind::Code { .. })),
+            };
+            if !valid {
+                return Err(LayoutError::InvalidRange);
+            }
+        }
+        if self.preview() == target {
+            return Ok(FoldPreviewProgress {
+                completion: Completion::Covered,
+                change: None,
+            });
+        }
+        if !budget.charge(WorkLimit {
+            queries: 1,
+            objects: 1,
+            ..Default::default()
+        }) {
+            return Ok(FoldPreviewProgress {
+                completion: Completion::BudgetExhausted,
+                change: None,
+            });
+        }
+        let mut source = None;
+        if let Some((id, collapsed)) = self.preview.take() {
+            let candidate = document
+                .fold_candidate(id)
+                .expect("stable folding identity");
+            source = Some(candidate.hidden);
+            if collapsed {
+                self.state.insert(document, &mut self.heights, candidate);
+            }
+        }
+        if let Some(id) = target {
+            let candidate = document.fold_candidate(id).unwrap();
+            let collapsed = self.state.remove(&mut self.heights, id).is_some();
+            self.preview = Some((id, collapsed));
+            source = Some(source.map_or(candidate.hidden, |old| {
+                Span::new(
+                    old.start.min(candidate.hidden.start),
+                    old.end.max(candidate.hidden.end),
+                )
+            }));
+        }
+        let source = source.expect("changed preview has an old or new target");
+        self.version += 1;
+        self.expire_from(document, source.start)?;
+        Ok(FoldPreviewProgress {
+            completion: Completion::Covered,
+            change: Some(FoldChange {
+                version: self.version,
+                source,
+            }),
+        })
     }
 
     pub fn defaults(&self) -> FoldDefaults {
@@ -489,7 +587,11 @@ impl<S> FoldView<S> {
         if self.is_collapsed(id) == collapsed {
             return Ok(None);
         }
-        if collapsed {
+        if let Some((target, choice)) = &mut self.preview
+            && *target == id
+        {
+            *choice = collapsed;
+        } else if collapsed {
             self.state.insert(document, &mut self.heights, candidate);
         } else {
             self.state.remove(&mut self.heights, id);
