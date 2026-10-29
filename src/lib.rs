@@ -19,6 +19,7 @@
 mod annotations;
 mod block;
 mod checkpoints;
+mod destination;
 mod headings;
 mod inline;
 mod layout;
@@ -29,8 +30,8 @@ mod table;
 
 pub use block::{BLOCK_LOOKAHEAD, MAX_FENCE_LENGTH};
 pub use checkpoints::CheckpointIndex;
+pub use destination::{MAX_DESTINATION_BYTES, MAX_LINK_SUFFIX_BYTES, MAX_LINK_TITLE_BYTES};
 pub use headings::{Heading, HeadingIndex};
-pub use inline::MAX_DESTINATION_BYTES;
 pub use layout::{Anchor, HeightIndex, LayoutError, Measurement, VisibleTile};
 pub use model::*;
 pub use navigation::{NavAction, Navigator, ScrollTarget};
@@ -222,6 +223,15 @@ impl Document {
         let span = match self.links.get(id.0)? {
             LinkTarget::Direct(span) => *span,
             LinkTarget::Reference(symbol) => self.references.entries.get(symbol.0)?.destination?,
+        };
+        self.text(span)
+    }
+
+    /// Resolve inline or late-defined reference titles without copying text.
+    pub fn link_title(&self, id: LinkId) -> Option<&str> {
+        let span = match self.links.get(id.0)? {
+            LinkTarget::Direct(_) => self.link_info.get(id.0)?.title?,
+            LinkTarget::Reference(symbol) => self.references.entries.get(symbol.0)?.title?,
         };
         self.text(span)
     }
@@ -476,14 +486,22 @@ impl Document {
             }
             return;
         }
-        if let Line::Definition { label, destination } = classification {
+        if let Line::Definition {
+            label,
+            destination,
+            title,
+        } = classification
+        {
             if let Some(symbol) = self
                 .references
                 .intern(&self.source[label.range()], &mut self.work)
             {
                 self.new_block(span, BlockKind::Definition { symbol }, update);
                 self.mark(span, Style::HIDDEN, update);
-                if self.references.define(symbol, destination, self.revision) {
+                if self
+                    .references
+                    .define(symbol, destination, title, self.revision)
+                {
                     update.references_changed.push(symbol);
                 }
                 self.current = None;

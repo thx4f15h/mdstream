@@ -42,16 +42,24 @@ impl References {
         self.entries.push(Reference {
             label: normalized,
             destination: None,
+            title: None,
         });
         Some(id)
     }
 
-    pub fn define(&mut self, id: SymbolId, destination: Span, revision: u64) -> bool {
+    pub fn define(
+        &mut self,
+        id: SymbolId,
+        destination: Span,
+        title: Option<Span>,
+        revision: u64,
+    ) -> bool {
         let entry = &mut self.entries[id.0];
         if entry.destination.is_some() {
             return false;
         }
         entry.destination = Some(destination);
+        entry.title = title;
         self.revision = revision;
         true
     }

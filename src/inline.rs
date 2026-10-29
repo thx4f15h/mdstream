@@ -1,8 +1,7 @@
 use crate::annotations::Annotations;
+use crate::destination::{Destination, Progress};
 use crate::references::{MAX_LABEL_BYTES, References};
 use crate::{LinkId, LinkInfo, LinkKind, LinkTarget, Span, Style, Update, Work};
-
-pub const MAX_DESTINATION_BYTES: usize = 4096;
 
 pub(crate) struct Effects<'a> {
     pub source: &'a str,
@@ -42,6 +41,7 @@ impl Effects<'_> {
         candidate: Candidate,
         target: LinkTarget,
         suffix: Option<Span>,
+        title: Option<Span>,
     ) -> LinkId {
         let info = LinkInfo {
             kind: if candidate.image.is_some() {
@@ -54,6 +54,7 @@ impl Effects<'_> {
                 candidate.image.unwrap_or(candidate.open),
                 suffix.map_or(candidate.close + 1, |s| s.end),
             ),
+            title,
         };
         let id = match candidate.link {
             Some(id) => {
@@ -113,13 +114,17 @@ struct Bracket {
     image: Option<usize>,
 }
 
+struct LineBreak {
+    newline: Span,
+    hidden: Span,
+    hard: bool,
+}
+
 enum Tail {
     After(Candidate),
     Destination {
         candidate: Candidate,
-        start: usize,
-        depth: usize,
-        escaped: bool,
+        parser: Destination,
     },
     Label {
         candidate: Candidate,
@@ -140,6 +145,9 @@ pub(crate) struct Inline {
     tail: Option<Tail>,
     escape: Option<usize>,
     previous: Option<u8>,
+    spaces: Option<usize>,
+    carriage: bool,
+    line_break: Option<LineBreak>,
 }
 
 impl Inline {
@@ -153,6 +161,20 @@ impl Inline {
     }
 
     fn byte(&mut self, byte: u8, pos: usize, effects: &mut Effects<'_>) {
+        // Only a subsequent byte in the same inline block confirms a break.
+        // Block closure discards this candidate, so terminal newlines stay plain.
+        if let Some(line_break) = self.line_break.take() {
+            effects.mark(
+                line_break.newline,
+                if line_break.hard {
+                    Style::HARD_BREAK
+                } else {
+                    Style::SOFT_BREAK
+                },
+                None,
+            );
+            effects.hide(line_break.hidden);
+        }
         if let Some(run) = &mut self.run {
             if byte == run.byte {
                 run.source.end = pos + 1;
@@ -168,6 +190,31 @@ impl Inline {
         }
         if self.tail.is_some() && self.tail_byte(byte, pos, effects) {
             return;
+        }
+        if self.carriage && byte != b'\n' {
+            self.spaces = None;
+            self.escape = None;
+        }
+        self.carriage = byte == b'\r';
+        if self.carriage {
+            return;
+        }
+        if byte == b'\n' {
+            let end = pos - usize::from(self.previous == Some(b'\r'));
+            let escape = self.escape.take().filter(|at| *at + 1 == end);
+            let spaces = self.spaces.take();
+            self.line_break = Some(LineBreak {
+                newline: Span::new(pos, pos + 1),
+                hidden: Span::new(escape.or(spaces).unwrap_or(end), end),
+                hard: escape.is_some() || spaces.is_some_and(|start| end - start >= 2),
+            });
+            self.bang = None;
+            return;
+        }
+        if byte == b' ' {
+            self.spaces.get_or_insert(pos);
+        } else {
+            self.spaces = None;
         }
         if let Some(escape) = self.escape.take()
             && byte.is_ascii_punctuation()
@@ -199,6 +246,7 @@ impl Inline {
                         candidate.link = Some(effects.complete_link(
                             candidate,
                             LinkTarget::Reference(symbol),
+                            None,
                             None,
                         ));
                     }
@@ -281,9 +329,7 @@ impl Inline {
                 b'(' => {
                     self.tail = Some(Tail::Destination {
                         candidate,
-                        start: pos,
-                        depth: 1,
-                        escaped: false,
+                        parser: Destination::new(pos + 1),
                     })
                 }
                 b'[' => {
@@ -296,38 +342,19 @@ impl Inline {
             },
             Tail::Destination {
                 candidate,
-                start,
-                mut depth,
-                mut escaped,
-            } => {
-                if pos - start - 1 > MAX_DESTINATION_BYTES || byte.is_ascii_whitespace() {
-                    return false;
-                }
-                if escaped {
-                    escaped = false;
-                } else {
-                    match byte {
-                        b'\\' => escaped = true,
-                        b'(' => depth += 1,
-                        b')' => depth -= 1,
-                        _ => {}
-                    }
-                }
-                if depth == 0 {
+                mut parser,
+            } => match parser.byte(byte, pos) {
+                Progress::Invalid => return false,
+                Progress::Complete { destination, title } => {
                     effects.complete_link(
                         candidate,
-                        LinkTarget::Direct(Span::new(start + 1, pos)),
-                        Some(Span::new(start, pos + 1)),
+                        LinkTarget::Direct(destination),
+                        Some(Span::new(parser.start - 1, pos + 1)),
+                        title,
                     );
-                } else {
-                    self.tail = Some(Tail::Destination {
-                        candidate,
-                        start,
-                        depth,
-                        escaped,
-                    });
                 }
-            }
+                Progress::Pending => self.tail = Some(Tail::Destination { candidate, parser }),
+            },
             Tail::Label { candidate, start } => {
                 if pos - start - 1 > MAX_LABEL_BYTES || matches!(byte, b'\n' | b'\r' | b'[') {
                     return false;
@@ -343,6 +370,7 @@ impl Inline {
                             candidate,
                             LinkTarget::Reference(symbol),
                             Some(Span::new(start, pos + 1)),
+                            None,
                         );
                     }
                 } else {
@@ -364,5 +392,8 @@ impl Inline {
         self.tail = None;
         self.escape = None;
         self.previous = None;
+        self.spaces = None;
+        self.carriage = false;
+        self.line_break = None;
     }
 }

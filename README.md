@@ -164,6 +164,21 @@ assert_eq!(doc.text(table.cell(1, 1).unwrap().source), Some("**42**"));
 
 图片复用链接目标解析，但 `link_info(LinkId)` 的 `LinkKind::Image` 与普通链接明确区分，保留 alt 区间和完整语法区间。支持直接目标、引用式图片、延迟定义。可以先把 alt 渲染成链接；空 alt 图片也会保留对象，用 `links_in(visible_span)` 在 O(log L + 结果数) 内查询，避免因没有可见 label run 而遗漏。图片解码和绘制未实现。
 
+链接和图片支持裸目标、`<含空格的目标>`，以及双引号、单引号、括号包围的 title；目标和 title 之间需要空格或 tab。`LinkInfo.title` 保留直接链接的 title 区间；`link_title(id)` 同时处理直接链接和延迟定义的引用 title。直接链接和引用定义共用单遍状态机，返回的字符串仍保留反斜线转义，不分配解码副本。规则参考 [CommonMark 链接](https://spec.commonmark.org/0.31.2/#links)，当前仅支持单行目标和 title。
+
+`Style::SOFT_BREAK` / `Style::HARD_BREAK` 标记继续同一行内块的 LF。两个以上行尾空格或一个未转义的反斜线产生硬换行，普通换行为软换行；CRLF 跨 append 也有效。为避免把块末换行误判为行内换行，直到后续同块内容到达才确认，并通过 `dirty` 使旧片段失效；块末和代码内部不加这两种标记。继续行前的尾部空格及硬换行反斜线隐藏，源码仍可寻址。
+
+```rust
+use mdtui3::{Document, LinkId, Span, Style};
+let mut doc = Document::new();
+doc.append("[guide](<docs/my guide.md> 'Guide')  \nnext\n")?;
+doc.finish();
+assert_eq!(doc.link_title(LinkId(0)), Some("Guide"));
+assert!(doc.runs_in(Span::new(0, doc.source().len())).unwrap()
+    .any(|run| run.style.contains(Style::HARD_BREAK)));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 ## 标题索引与导航
 
 `doc.headings()` 提供文档顺序的 `HeadingIndex`。每个 `Heading` 包含稳定 ID 对应的块、级别、整个标题的源码区间和不含标题标记的内容区间。标题文字不复制；超长 Setext 标题也只保存区间。`at_level(level)` 直接返回该级别的 ID 列表；`next(offset, max_level)` / `previous(...)` 查找严格位于指定源码位置之后/之前、级别不超过上限的标题。`Update.new_headings` 给出新加入的 ID 范围。长 ATX 标题的区间会随追加更新；索引不含当前方言尚未解析的容器内标题。
@@ -194,16 +209,17 @@ nav.navigate(&doc, &heights, NavAction::End, 24);
 - 引用行和有序/无序列表项的块信息。容器按物理行展平，提供 quote depth 或列表 indent/number，不构建嵌套列表树，不推断列表续行或 lazy blockquote continuation。
 - 管道表格、列对齐、单元格行内语法；任务列表复选框状态。
 - `*em*`、`_em_`、`**strong**`、`__strong__`、`~~strike~~`，以及精确长度匹配的反引号代码 span。支持跨同一段落的多行输入。
-- ASCII 标点反斜线转义；内联链接 `[text](destination)`；shortcut/full/collapsed 引用链接；单行引用定义 `[label]: destination` 或 `[label]: <destination>`。
+- ASCII 标点反斜线转义；内联链接 `[text](destination)`；shortcut/full/collapsed 引用链接；单行引用定义；裸目标和尖括号目标，可选 title。
 - 图片 `![alt](destination)` 及引用式图片，保留独立类型和 alt 信息，可由渲染器降级为链接。
 - CRLF 的 CR 隐藏，LF 保留。裸 CR 按原文处理。
+- 同块行内软换行、双空格/反斜线硬换行的结构化标记。
 
 取舍：
 
 - 不是完整 CommonMark/GFM 实现。行内 `***` 等超过支持长度的强调 run 按原文处理；flanking 使用 ASCII 空白规则，单词内下划线不匹配。交叉闭合采用最近同类 opener，并丢弃中间未闭合 opener，不做回溯。
 - 未闭合的代码 span 在块结束后保留为原文，期间跳过的其它语法不会重新解析。嵌套链接不支持：新 `[` 替换尚未闭合的外层 `[`。
 - 已识别的引用立即显示 label，并隐藏引用语法；尚未定义时没有可跳转目标。定义到来后只增加目标。第一个有效定义生效，后续重复定义不覆盖。标签最多 999 字节，折叠 Unicode 空白并转小写，不做完整 Unicode case folding。
-- URL 最多 4096 字节，支持平衡括号和转义括号的定界，但返回的 destination 是原文；不提供 title、多行 destination、URL 解码或安全过滤。渲染器自行决定协议策略和转义解码。
+- URL 和 title 各最多 4096 字节，左括号后的链接后缀候选最多 8256 字节（包括空白和闭合右括号）。支持平衡括号和转义定界，但返回的 destination/title 是原文；不提供多行目标/title、URL 解码或安全过滤。后缀失败时保留原文及已有 shortcut 引用，不回扫后缀中的其它语法。
 - 引用定义、Setext、分隔线、闭合 fence 必须在块分类前缀内完成。超长候选行按普通内容/代码处理；超长 opening fence 的 info 只保留已分类前缀，其余该行隐藏。超长标题末尾的 closing hashes 不再回看识别。
 - 不处理 HTML、实体解码、自动链接、脚注、数学公式等额外语义。它们可能包含上述方言仍能识别的普通行内标记。HTML 不在当前需求范围。
 - 支持只追加，不支持任意位置编辑、撤回已有源码或移除定义。文档销毁会释放 O(n) 状态，这是一次性清理成本。
@@ -215,6 +231,7 @@ nav.navigate(&doc, &heights, NavAction::End, 24);
 | `src/lib.rs` | 流式提交、稳定块/片段、按范围惰性查询、缓存 key |
 | `src/block.rs` | 有界块分类 |
 | `src/inline.rs` | 单遍分隔符、代码和链接状态机 |
+| `src/destination.rs` | 链接/定义共享的有界目标及 title 状态机 |
 | `src/annotations.rs` | 区间样式、隐藏聚合、最新 revision |
 | `src/references.rs` | 有长度上限的标签规范化和 BTreeMap 符号表 |
 | `src/layout.rs` | lazy 高度树、viewport、锚点和过期测量拒绝 |
@@ -240,5 +257,7 @@ nix develop -c cargo run -r --example scaling
 ```
 
 测试包含任意单切点和随机 UTF-8 分块、与朴素数组/有序映射对照的区间/高度/检查点随机测试、深层 opener、百万字 Setext 转换、百万字隐藏区间、十亿片段的稀疏高度索引、逐字符超长段落、延迟定义成本和 resize 节点复用。没有把 wall-clock 阈值当作正确性条件。`scaling` 示例输出时间及操作计数，便于在目标机器上复查。
+
+行内分块测试会特意跨过 `BLOCK_LOOKAHEAD`，避免短样例被整行缓冲后才解析。另有中间前缀一致性、TileKey 未变则语义不变、标题/链接索引与线性查询对照、目标/title 长度边界及百万字尾空格确认成本测试。自比较验证分块一致性，预期语义样例和朴素数据结构模型提供另外的判定依据，不能将这些测试视为完整规范合规率。
 
 本 checkout 已安装 Rust skill 提供的本地 pre-commit：运行 `cargo fmt --all` 后只重新 stage 原本暂存的 Rust 文件。格式化可能改变提交中的行号；其它未暂存文件可能被格式化，但不会自动暂存。钩子不随 Git 分发，紧急情况下可用 `git commit --no-verify` 跳过。

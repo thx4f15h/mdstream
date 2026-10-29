@@ -16,6 +16,7 @@ pub(crate) enum Line {
     Definition {
         label: Span,
         destination: Span,
+        title: Option<Span>,
     },
     Setext(u8),
     FenceOpen {
@@ -246,15 +247,22 @@ fn definition(source: &str, start: usize, end: usize) -> Option<Line> {
     if a == b {
         return None;
     }
-    if source.as_bytes()[a] == b'<' && source.as_bytes()[b - 1] == b'>' {
-        a += 1;
-        b -= 1;
+    let mut parser = crate::destination::Destination::new(a);
+    for pos in a..b {
+        if !matches!(
+            parser.byte(source.as_bytes()[pos], pos),
+            crate::destination::Progress::Pending
+        ) {
+            return None;
+        }
     }
-    if source.as_bytes()[a..b].iter().any(u8::is_ascii_whitespace) {
+    let crate::destination::Progress::Complete { destination, title } = parser.finish_definition()
+    else {
         return None;
-    }
+    };
     Some(Line::Definition {
         label: Span::new(start + 1, start + close),
-        destination: Span::new(a, b),
+        destination,
+        title,
     })
 }

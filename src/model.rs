@@ -93,6 +93,10 @@ impl Style {
     pub const STRIKE: Self = Self(4);
     pub const CODE: Self = Self(8);
     pub const HIDDEN: Self = Self(16);
+    /// An explicit line break within continuing inline content (on the LF).
+    pub const HARD_BREAK: Self = Self(32);
+    /// An ordinary line break within continuing inline content (on the LF).
+    pub const SOFT_BREAK: Self = Self(64);
 
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
@@ -122,12 +126,15 @@ pub struct LinkInfo {
     pub kind: LinkKind,
     pub label: Span,
     pub source: Span,
+    /// Inline title without quotes; reference titles are resolved by Document.
+    pub title: Option<Span>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Reference {
     pub label: String,
     pub destination: Option<Span>,
+    pub title: Option<Span>,
 }
 
 /// Counters of actual parser work, useful for deterministic scaling tests.

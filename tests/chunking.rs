@@ -72,6 +72,26 @@ fn every_single_split_for_small_constructs() {
 }
 
 #[test]
+fn every_inline_split_after_lookahead_exercises_live_parser_states() {
+    for suffix in [
+        "**中🙂** [a](<a b> \"t\\\"t\")\r\nnext\n",
+        "![alt](a(b) 'title') [b][key]\n\n[key]: /u (title)\n",
+        "a  \r\nb\\\r\nc\\\\\nd\n",
+        "[a](bad target) `a  \nb`\n",
+    ] {
+        let prefix = "x".repeat(BLOCK_LOOKAHEAD);
+        let source = format!("{prefix}{suffix}");
+        for (offset, _) in suffix.char_indices() {
+            check_chunks(&source, &[prefix.len() + offset]);
+        }
+        check_chunks(
+            &source,
+            &source.char_indices().map(|(i, _)| i).collect::<Vec<_>>(),
+        );
+    }
+}
+
+#[test]
 fn character_chunks_through_lookahead_and_fence_boundaries() {
     let source = format!(
         "**{}**\n\n```rust {}\n{}\n```\n{}\r\n[x]: url\n",
@@ -102,7 +122,7 @@ fn streaming_unicode_table_rows_match_single_chunk_input() {
 fn deterministic_fuzz_chunk_invariance_and_source_coverage() {
     let alphabet = [
         "a", " ", "\n", "\r", "*", "_", "`", "~", "[", "]", "(", ")", "\\", ":", "#", ">", "-",
-        "é", "🙂", "|", "!",
+        "é", "🙂", "|", "!", "<", ">", "\"", "'", "\t", "&",
     ];
     let mut state = 0x1234_5678_u64;
     let mut random = || {
@@ -131,5 +151,51 @@ fn deterministic_fuzz_chunk_invariance_and_source_coverage() {
             cursor = block.source.end;
         }
         assert_eq!(cursor, source.len());
+    }
+}
+
+#[test]
+fn provisional_semantics_match_at_every_observed_prefix() {
+    let parts = [
+        "**a _b_ c** ",
+        "[x](<a b> 'title') ",
+        "![图][key] ",
+        "  \r\n",
+        "continued\\\n",
+        "[bad](<bad<target>)\n",
+        "\n",
+        "| a | b |\n|:--|--:|\n| `x\\|y` | **z** |\n",
+        "# heading\n",
+        "title\n---\n",
+        "[key]: <a b> \"说明\"\n",
+        "`unfinished ",
+    ];
+    let mut state = 981_u64;
+    for _ in 0..24 {
+        let mut source = "x".repeat(BLOCK_LOOKAHEAD);
+        for _ in 0..16 {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            source.push_str(parts[(state >> 32) as usize % parts.len()]);
+        }
+        let mut incremental = Document::new();
+        incremental.append(&source[..BLOCK_LOOKAHEAD]).unwrap();
+        let mut start = BLOCK_LOOKAHEAD;
+        for (offset, c) in source[BLOCK_LOOKAHEAD..].char_indices() {
+            let end = BLOCK_LOOKAHEAD + offset + c.len_utf8();
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            if !state.is_multiple_of(7) && end < source.len() {
+                continue;
+            }
+            incremental.append(&source[start..end]).unwrap();
+            let mut whole = Document::new();
+            whole.append(&source[..end]).unwrap();
+            assert_eq!(
+                snapshot(&incremental),
+                snapshot(&whole),
+                "prefix {:?}",
+                &source[..end]
+            );
+            start = end;
+        }
     }
 }
