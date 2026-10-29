@@ -246,6 +246,11 @@ impl Document {
             document: self,
             cursor: span.start,
             end: span.end,
+            block: self
+                .blocks
+                .partition_point(|block| block.source.end <= span.start),
+            marks: self.annotations.segments(span),
+            pending: None,
         })
     }
 
@@ -350,16 +355,25 @@ impl Document {
     }
 
     fn extend_tiles(&mut self, start: usize) {
-        for (offset, c) in self.source[start..].char_indices() {
-            let pos = start + offset;
-            let end = pos + c.len_utf8();
-            if let Some(tile) = self.tiles.last_mut()
-                && end - tile.start <= TILE_BYTES
-            {
-                tile.end = end;
-            } else {
-                self.tiles.push(Span::new(pos, end));
+        let mut cursor = start;
+        while cursor < self.source.len() {
+            if let Some(tile) = self.tiles.last_mut() {
+                let mut end = tile.start.saturating_add(TILE_BYTES).min(self.source.len());
+                while !self.source.is_char_boundary(end) {
+                    end -= 1;
+                }
+                if end > cursor {
+                    tile.end = end;
+                    cursor = end;
+                    continue;
+                }
             }
+            let mut end = cursor.saturating_add(TILE_BYTES).min(self.source.len());
+            while !self.source.is_char_boundary(end) {
+                end -= 1;
+            }
+            self.tiles.push(Span::new(cursor, end));
+            cursor = end;
         }
     }
 
@@ -744,6 +758,16 @@ pub struct Runs<'a> {
     document: &'a Document,
     cursor: usize,
     end: usize,
+    block: usize,
+    marks: annotations::Segments<'a>,
+    pending: Option<(Span, annotations::Mark)>,
+}
+
+impl Runs<'_> {
+    /// Tree nodes traversed by this query; independent of parser mutation work.
+    pub fn annotation_visits(&self) -> u64 {
+        self.marks.visits
+    }
 }
 
 impl<'a> Iterator for Runs<'a> {
@@ -754,18 +778,32 @@ impl<'a> Iterator for Runs<'a> {
             return None;
         }
         let start = self.cursor;
-        let block = self.document.block_at(start);
-        let first = self.document.annotations.at(start);
-        let mut end = start;
-        for c in self.document.source[start..self.end].chars() {
-            let mark = self.document.annotations.at(end);
-            if mark.style != first.style
-                || mark.link != first.link
-                || self.document.block_at(end) != block
-            {
+        while self
+            .document
+            .blocks
+            .get(self.block)
+            .is_some_and(|b| b.source.end <= start)
+        {
+            self.block += 1;
+        }
+        let (block, limit) = match self.document.blocks.get(self.block) {
+            Some(b) if b.source.start <= start => {
+                (Some(BlockId(self.block)), b.source.end.min(self.end))
+            }
+            Some(b) => (None, b.source.start.min(self.end)),
+            None => (None, self.end),
+        };
+        let (span, first) = self.pending.take().or_else(|| self.marks.next())?;
+        let mut end = span.end.min(limit);
+        self.pending = (span.end > end).then_some((span, first));
+        while end < limit {
+            let (span, mark) = self.marks.next()?;
+            if mark.style != first.style || mark.link != first.link {
+                self.pending = Some((span, mark));
                 break;
             }
-            end += c.len_utf8();
+            end = span.end.min(limit);
+            self.pending = (span.end > end).then_some((span, mark));
         }
         self.cursor = end;
         let mut style = first.style;

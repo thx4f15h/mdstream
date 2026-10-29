@@ -149,6 +149,7 @@ impl Annotations {
         None
     }
 
+    #[cfg(test)]
     pub fn at(&self, offset: usize) -> Mark {
         if offset >= self.capacity {
             return Mark::default();
@@ -198,6 +199,83 @@ impl Annotations {
 
     pub fn node_count(&self) -> usize {
         self.nodes.len()
+    }
+
+    pub fn segments(&self, span: Span) -> Segments<'_> {
+        let mut stack = Vec::new();
+        if span.end > self.capacity && !span.is_empty() {
+            stack.push(Frame {
+                node: None,
+                span: Span::new(span.start.max(self.capacity), span.end),
+                inherited: Mark::default(),
+            });
+        }
+        if span.start < self.capacity && !span.is_empty() {
+            stack.push(Frame {
+                node: Some(self.root),
+                span: Span::new(0, self.capacity),
+                inherited: Mark::default(),
+            });
+        }
+        Segments {
+            tree: self,
+            query: span,
+            stack,
+            visits: 0,
+        }
+    }
+}
+
+struct Frame {
+    node: Option<usize>,
+    span: Span,
+    inherited: Mark,
+}
+
+/// Ordered constant-mark intervals. Each relevant tree node is visited once,
+/// including absent children (uniform inherited tags), with O(log n) state.
+/// Internal intervals may split UTF-8; the public run iterator coalesces them.
+pub(crate) struct Segments<'a> {
+    tree: &'a Annotations,
+    query: Span,
+    stack: Vec<Frame>,
+    pub visits: u64,
+}
+
+impl Iterator for Segments<'_> {
+    type Item = (Span, Mark);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(frame) = self.stack.pop() {
+            self.visits += 1;
+            let mut mark = frame.inherited;
+            if let Some(id) = frame.node {
+                let node = &self.tree.nodes[id];
+                mark = mark.merge(node.tag);
+                if node.children != [None; 2] {
+                    let mid = frame.span.start + frame.span.len() / 2;
+                    for (side, start, end) in [(1, mid, frame.span.end), (0, frame.span.start, mid)]
+                    {
+                        if start < self.query.end && self.query.start < end {
+                            self.stack.push(Frame {
+                                node: node.children[side],
+                                span: Span::new(start, end),
+                                inherited: mark,
+                            });
+                        }
+                    }
+                    continue;
+                }
+            }
+            return Some((
+                Span::new(
+                    frame.span.start.max(self.query.start),
+                    frame.span.end.min(self.query.end),
+                ),
+                mark,
+            ));
+        }
+        None
     }
 }
 
@@ -252,6 +330,22 @@ mod tests {
                     .max()
                     .unwrap()
             );
+            if serial % 31 == 0 {
+                let mut cursor = query.start;
+                let mut segments = tree.segments(query);
+                for (span, mark) in segments.by_ref() {
+                    assert_eq!(span.start, cursor);
+                    assert!(span.end > span.start);
+                    for &expected in &model[span.range()] {
+                        assert_eq!(mark.style, expected.style);
+                        assert_eq!(mark.link, expected.link);
+                        assert_eq!(mark.revision, expected.revision);
+                    }
+                    cursor = span.end;
+                }
+                assert_eq!(cursor, query.end);
+                assert!(segments.visits <= 2 * query.len() as u64 + 32);
+            }
         }
     }
 
@@ -264,5 +358,18 @@ mod tests {
         tree.apply(Span::new(9, 12), Style::HIDDEN, None, 2);
         assert_eq!(tree.next_visible(9, 11), None);
         assert_eq!(tree.next_visible(9, 13), Some(12));
+    }
+
+    #[test]
+    fn segments_cover_unallocated_tail_and_empty_ranges() {
+        let mut tree = Annotations::default();
+        tree.apply(Span::new(0, 8), Style::STRONG, None, 1);
+        let segments: Vec<_> = tree.segments(Span::new(5, 13)).collect();
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].0, Span::new(5, 8));
+        assert_eq!(segments[0].1.style, Style::STRONG);
+        assert_eq!(segments[1].0, Span::new(8, 13));
+        assert_eq!(segments[1].1, Mark::default());
+        assert_eq!(tree.segments(Span::new(13, 13)).count(), 0);
     }
 }

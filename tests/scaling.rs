@@ -150,3 +150,30 @@ fn huge_hidden_regions_are_skipped_without_visiting_tiles() {
     let hidden = doc.source().rfind("```").unwrap();
     assert_eq!(doc.next_visible(hidden), None);
 }
+
+#[test]
+fn semantic_queries_visit_intervals_instead_of_searching_per_character() {
+    let mut plain = Document::new();
+    plain.append(&"x".repeat(1_000_000)).unwrap();
+    plain.finish();
+    let mut runs = plain.runs_in(Span::new(0, plain.source().len())).unwrap();
+    assert_eq!(runs.by_ref().count(), 1);
+    assert!(runs.annotation_visits() < 32);
+
+    let mut dense = Document::new();
+    dense
+        .append(&"*é* **🙂** [中](url)\n".repeat(10_000))
+        .unwrap();
+    dense.finish();
+    let tile = dense.tile_at(dense.source().len() / 2).unwrap();
+    let span = dense.tile(tile).unwrap();
+    let mut runs = dense.runs(tile).unwrap();
+    let mut cursor = span.start;
+    for run in runs.by_ref() {
+        assert_eq!(run.source.start, cursor);
+        assert_eq!(dense.text(run.source), Some(run.text));
+        cursor = run.source.end;
+    }
+    assert_eq!(cursor, span.end);
+    assert!(runs.annotation_visits() <= 2 * span.len() as u64 + 64);
+}

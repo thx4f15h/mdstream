@@ -3,7 +3,7 @@ use std::{hint::black_box, time::Instant};
 
 fn main() {
     println!(
-        "case,bytes,parse_ms,inline_bytes,delimiter_steps,tree_visits,annotation_nodes,viewport_us"
+        "case,bytes,parse_ms,inline_bytes,delimiter_steps,tree_visits,annotation_nodes,viewport_us,query_visits"
     );
     for size in [65_536, 131_072, 262_144, 524_288] {
         for case in [
@@ -33,22 +33,26 @@ fn main() {
             heights.rebuild(&doc).unwrap();
             let top = (doc.tile_count() / 2) as u128;
             let start = Instant::now();
+            let mut query_visits = 0;
             for tile in heights.viewport(top..top + 24, 2, 32) {
-                for run in doc.runs(tile.tile).unwrap() {
+                let mut runs = doc.runs(tile.tile).unwrap();
+                for run in runs.by_ref() {
                     black_box(run);
                 }
+                query_visits += runs.annotation_visits();
             }
             let viewport = start.elapsed();
             let work = doc.work();
             println!(
-                "{case},{},{:.3},{},{},{},{},{:.3}",
+                "{case},{},{:.3},{},{},{},{},{:.3},{}",
                 source.len(),
                 elapsed.as_secs_f64() * 1000.0,
                 work.inline_bytes,
                 work.delimiter_steps,
                 work.tree_visits,
                 doc.annotation_node_count(),
-                viewport.as_secs_f64() * 1_000_000.0
+                viewport.as_secs_f64() * 1_000_000.0,
+                query_visits
             );
         }
     }
