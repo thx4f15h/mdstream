@@ -1,0 +1,5 @@
+# Project-local rustfmt config.
+# Presence of this file overrides any global ~/.rustfmt.toml,
+# so formatting is consistent across machines and CI.
+
+edition = "2024"

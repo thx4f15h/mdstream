@@ -1,0 +1,55 @@
+use mdtui3::{Document, HeightIndex};
+use std::{hint::black_box, time::Instant};
+
+fn main() {
+    println!(
+        "case,bytes,parse_ms,inline_bytes,delimiter_steps,tree_visits,annotation_nodes,viewport_us"
+    );
+    for size in [65_536, 131_072, 262_144, 524_288] {
+        for case in [
+            "one_byte_appends",
+            "dense_markup",
+            "deep_openers",
+            "late_references",
+        ] {
+            let source = match case {
+                "one_byte_appends" => "x".repeat(size),
+                "dense_markup" => "*a* **b** ~~c~~ [d](e) `f`\n".repeat(size / 27),
+                "deep_openers" => format!("*a {}z*\n", "_b ".repeat(size / 3)),
+                _ => format!("{}\n\n[key]: /destination\n", "[key] ".repeat(size / 6)),
+            };
+            let mut doc = Document::new();
+            let start = Instant::now();
+            if case == "one_byte_appends" {
+                for _ in 0..size {
+                    black_box(doc.append("x").unwrap());
+                }
+            } else {
+                black_box(doc.append(&source).unwrap());
+            }
+            black_box(doc.finish());
+            let elapsed = start.elapsed();
+            let mut heights = HeightIndex::default();
+            heights.rebuild(&doc).unwrap();
+            let top = (doc.tile_count() / 2) as u128;
+            let start = Instant::now();
+            for tile in heights.viewport(top..top + 24, 2, 32) {
+                for run in doc.runs(tile.tile).unwrap() {
+                    black_box(run);
+                }
+            }
+            let viewport = start.elapsed();
+            let work = doc.work();
+            println!(
+                "{case},{},{:.3},{},{},{},{},{:.3}",
+                source.len(),
+                elapsed.as_secs_f64() * 1000.0,
+                work.inline_bytes,
+                work.delimiter_steps,
+                work.tree_visits,
+                doc.annotation_node_count(),
+                viewport.as_secs_f64() * 1_000_000.0
+            );
+        }
+    }
+}
