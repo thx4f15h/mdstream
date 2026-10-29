@@ -77,5 +77,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     view.set_collapsed(&document, FoldId::Heading(HeadingId(0)), false)?;
     println!("Parent expanded; child remains collapsed:");
     show(&document, &mut view)?;
+
+    // A saved source position survives projection onto a fold placeholder.
+    let anchor = FoldAnchor::new(
+        &document,
+        document.source().find("hidden body").unwrap() + 7,
+    )?;
+    let mut navigator = Navigator::new();
+    let mut budget = Budget::new(WorkLimit {
+        queries: 1,
+        objects: 1,
+        ..Default::default()
+    });
+    let projected = anchor.resolve(&document, &view, 24, &mut budget)?.unwrap();
+    println!(
+        "Saved source {}, projected to {:?}",
+        anchor.source(),
+        projected
+    );
+    navigator.apply_target(projected.target);
+    // A search result or link destination can use the same exact source action.
+    let mut navigation = FoldNavigation::new(
+        &document,
+        &view,
+        &navigator,
+        NavAction::Source(anchor.source()),
+        FoldNavigationPolicy::Reveal,
+        24,
+    )?;
+    let mut steps = 0;
+    loop {
+        let mut budget = Budget::new(WorkLimit {
+            queries: 1,
+            objects: 1,
+            ..Default::default()
+        });
+        steps += 1;
+        let progress = navigation.advance(&document, &mut view, &mut budget)?;
+        if let Some(change) = progress.change {
+            println!("Opened path: {change:?}");
+        }
+        if progress.completion == Completion::Covered {
+            let target = progress.target.unwrap();
+            navigator.apply_target(target);
+            println!("Source restored in {steps} steps: {target:?}");
+            break;
+        }
+    }
     Ok(())
 }

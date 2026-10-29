@@ -203,11 +203,11 @@ nav.navigate(&doc, &heights, NavAction::End, 24);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-`Navigator` 支持 `LineUp/LineDown`、`PageUp/PageDown`、`Home/End`、`Heading(id)` 和按级别前后标题跳转。翻页移动一个视口高度，首尾及越界动作自动钳制到有效范围；空文档也可安全使用。高度修正后通过保存的 `Anchor` 恢复位置。
+`Navigator` 支持 `LineUp/LineDown`、`PageUp/PageDown`、`Home/End`、`Heading(id)`、`Source(offset)` 和按级别前后标题跳转。源码目标必须位于有效 UTF-8 边界，允许当前 EOF；非法目标返回 `None`。翻页移动一个视口高度，首尾及越界动作自动钳制到有效范围；空文档也可安全使用。高度修正后通过保存的 `Anchor` 恢复位置。
 
 标题动作返回的 `ScrollTarget.source` 是精确目标位置，`top` 是当前高度索引下的估计视口顶行；渲染器需要用局部排版把源码位置映射成实际显示行，再调用 `reconcile`。普通逐行/翻页之后，用 `reconcile_source` 回填实际视口的源码锚点，后续标题查找才会从精确位置出发；未回填时使用片段起点估计。这些接口不通过预排版整篇内容获取精确行号。键盘事件映射和目录选择器列入 [TODO](TODO.md)。
 
-后续的目录、文内锚点、跳转历史及隐藏目标定位见 [标题导航与折叠联动规划](TODO.md#标题导航与折叠联动规划)。[折叠支持规划](TODO.md#折叠支持规划) 覆盖章节、代码、表格、列表/引用等对象，以及嵌套状态、流式追加和有界排版；这些折叠能力尚未实现。
+章节/代码块折叠、隐藏目标定位和源码锚点恢复见下方接口。后续的目录、文内 slug、跳转历史及更多折叠对象见 [标题导航与折叠联动规划](TODO.md#标题导航与折叠联动规划)及[折叠支持规划](TODO.md#折叠支持规划)。
 
 ## 共享预算与增量缓存
 
@@ -330,7 +330,49 @@ view.heights().viewport_budgeted(0..24, 0, &mut budget, &mut tiles);
 
 每次 append/finish 或连续 Update 批处理后调用 `view.apply`，然后才能查询。更新只检查最多六个开放章节和一个开放代码块，不枚举历史折叠；新 tile 在 apply 返回前继承遮蔽。开放代码块的未分类行前缀暂属该块，闭合/下一块确认后可以收回；Setext 晚确认也能缩短前一章节的范围。普通源码追加不会读取旧正文。重复应用不清掉新测量，错误文档或不连续更新在修改视图之前被拒绝。
 
-本阶段不包含递归/全部/默认策略、折叠内导航与锚点恢复、目录 UI、预览、表格/容器折叠、手工交叉范围。候选定位和高度遮蔽已具备这些后续工作的基础，具体验收继续见 [TODO](TODO.md#折叠支持规划)。
+递归/全部/默认策略、目录 UI、预览、表格/容器折叠、手工交叉范围继续见 [TODO](TODO.md#折叠支持规划)。折叠导航与锚点恢复接口见下一节。
+
+## 折叠导航与源码锚点
+
+`FoldNavigation::new` 从当前 `Navigator` 快照创建任务，接受全部 `NavAction`。目录选择用 `Heading(id)`，搜索命中或已解析链接用 `Source(offset)`；普通滚动后的起点由 `Navigator::reconcile_source` 提供。创建任务只检查身份及参数，实际索引查询在 `advance` 中计入共享 Budget。
+
+```rust
+use mdtui3::*;
+let mut doc = Document::new();
+doc.append("# Guide\n## Details\nbody\n")?;
+let mut view = FoldView::new(&doc, 1)?;
+view.set_collapsed(&doc, FoldId::Heading(HeadingId(0)), true)?;
+view.set_collapsed(&doc, FoldId::Heading(HeadingId(1)), true)?;
+let mut nav = Navigator::new();
+let mut jump = FoldNavigation::new(
+    &doc, &view, &nav, NavAction::Heading(HeadingId(1)),
+    FoldNavigationPolicy::Reveal, 24,
+)?;
+loop {
+    let mut budget = Budget::new(WorkLimit {
+        queries: 1, objects: 1, ..Default::default()
+    });
+    let progress = jump.advance(&doc, &mut view, &mut budget)?;
+    if progress.completion == Completion::Covered {
+        if let Some(target) = progress.target {
+            nav.apply_target(target);
+        }
+        break;
+    }
+    // 在后续帧继续；已经展开的祖先保持展开。
+}
+assert!(!view.is_collapsed(FoldId::Heading(HeadingId(0))));
+assert!(view.is_collapsed(FoldId::Heading(HeadingId(1))));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`Reveal` 是默认策略，只展开实际遮住目标的章节/代码块；目标标题自身正文和无关子树的折叠意愿保留。`VisibleOnly` 不改变折叠：`NextHeading` / `PreviousHeading` 与严格同级的 `NextAtLevel` / `PreviousAtLevel` 遇到隐藏标题时，按最外层折叠范围端点重新查索引，跳过整段。显式 `Heading` / `Source` 及父/子/兄弟等结构动作若目标隐藏，返回无目标，不改成另一种结构关系。级别上限与严格同级的语义沿用现有索引。逐行、翻页及首尾动作直接使用折叠后的高度索引。
+
+每个有界步骤消费 1 query、1 object：解析动作、检查可见性并展开/跳过一个遮蔽范围、或查询最终估计行。当前方言的祖先最多六级标题加一个代码块；一次步骤含固定数量的索引操作，不读取正文或标题文本。只给上述最小预算也可推进。耗尽返回 `BudgetExhausted`，保存目标或已经跳过的区间；`Covered` 表示动作结束，`target: None` 表示无匹配目标。`change` 是**本次调用**已展开区间的包络和最新视图版本，已同步更新高度/检查点失效；取消或失效不会撤销已完成的展开。任务存储 O(1)，Reveal 最多打开七个节点；VisibleOnly 总工作按实际跳过的折叠区间数计费，每步 O(log H + log F + log T)，不会逐个检查被隐藏的标题。
+
+任务绑定文档身份/revision、视图身份及折叠版本，文档追加/首次 finish、外部折叠操作和 reset 后拒绝旧任务；错误返回前不消费预算或修改视图。自身展开更新其版本，期间的正常高度测量不使任务失效；最终定位使用最新高度。完成后重复调用返回原结果且不重复展开，返回行仍是当时的估计。任务不改写原 Navigator；调用方只应用当前有效任务的结果，新的用户导航应丢弃旧任务。用 `Navigator::apply_target` 应用结果，它在 source 为 None 的普通滚动后清除旧的精确源码目标。远处定位、同 tile 多标题和折叠占位仍由局部 `LayoutPass` 在共享 Budget 下细化，随后再 reconcile；此接口不排整篇前缀，也不承诺精确绝对行号。
+
+`FoldAnchor::new(&doc, source)` 保存文档身份和精确源码位置，`resolve(&doc, &view, viewport_rows, &mut budget)` 返回当前投影。隐藏时 `hidden_by` 标明最外层折叠，`target.source` 指向其占位起点；可见时返回原位置。保留同一个 FoldAnchor，在收起/展开、append、Setext 晚确认或 resize 后重新 resolve 并应用目标即可恢复；不要用占位位置覆盖保存的原锚点。每次 resolve 消费 1 query、1 object，预算不足返回 None，不改变折叠。锚点允许 EOF，追加后原字节偏移保持不变；不绑定 revision，错误文档或未同步的 FoldView 会被拒绝。它保存源码而非精确屏幕行/列，选区仍使用原源码范围。示例 `examples/folding.rs` 演示占位投影和分帧恢复到 120 万字节正文内的目标。
 
 ## 明确支持的 Markdown 方言
 
@@ -375,6 +417,7 @@ view.heights().viewport_budgeted(0..24, 0, &mut budget, &mut tiles);
 | `src/table.rs` | 表格行/单元格、对齐、流式单元格解析和列宽提示 |
 | `src/headings.rs` | 标题 arena 和六个级别的索引 |
 | `src/navigation.rs` | 逐行/翻页/首尾/标题导航及源码目标 |
+| `src/fold_navigation.rs` | 有预算折叠导航、可见标题跳过及源码锚点投影/恢复 |
 | `tests/` | 语义样例、随机模型对照、分块一致性、复杂度回归 |
 
 ## 验证与开发

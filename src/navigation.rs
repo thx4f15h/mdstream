@@ -8,15 +8,25 @@ pub enum NavAction {
     PageDown,
     Home,
     End,
+    /// Exact UTF-8 source boundary (including the current EOF).
+    Source(usize),
     Heading(HeadingId),
-    NextHeading { max_level: u8 },
-    PreviousHeading { max_level: u8 },
+    NextHeading {
+        max_level: u8,
+    },
+    PreviousHeading {
+        max_level: u8,
+    },
     ParentHeading,
     FirstChildHeading,
     NextSiblingHeading,
     PreviousSiblingHeading,
-    NextAtLevel { level: u8 },
-    PreviousAtLevel { level: u8 },
+    NextAtLevel {
+        level: u8,
+    },
+    PreviousAtLevel {
+        level: u8,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,7 +39,7 @@ pub struct ScrollTarget {
     pub source: Option<usize>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Navigator {
     anchor: Option<Anchor>,
     source: Option<usize>,
@@ -41,6 +51,14 @@ impl Navigator {
     }
     pub fn top(&self, heights: &HeightIndex) -> u128 {
         self.anchor.and_then(|a| heights.row_of(a)).unwrap_or(0)
+    }
+
+    /// Apply a current task result or projected anchor in O(1), without repeating
+    /// height queries. A source-less scroll clears the previous exact source;
+    /// reconcile instead preserves it while refining a source jump.
+    pub fn apply_target(&mut self, target: ScrollTarget) {
+        self.anchor = target.anchor;
+        self.source = target.source;
     }
 
     /// Refresh the viewport anchor after the renderer refines a source jump.
@@ -123,7 +141,16 @@ impl Navigator {
             }
             _ => None,
         };
-        let (row, source) = if let Some(id) = heading {
+        let (row, source) = if let NavAction::Source(source) = action {
+            if !document.source().is_char_boundary(source) {
+                return None;
+            }
+            let row = match document.tile_at(source) {
+                Some(tile) => heights.prefix_rows(tile.0)?,
+                None => heights.total_rows(),
+            };
+            (row, Some(source))
+        } else if let Some(id) = heading {
             let heading = document.headings().get(id)?;
             let tile = document.tile_at(heading.source.start)?;
             (heights.prefix_rows(tile.0)?, Some(heading.source.start))
