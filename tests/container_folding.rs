@@ -401,7 +401,7 @@ fn every_utf8_split_and_prefix_updates_masks_and_retracts_pending_siblings() {
         text
     };
     let expected = parse(vec![source], false);
-    assert_eq!(expected, "R\n[fold]\nout\nEnd\n");
+    assert_eq!(expected, "R\n[fold]\nEnd\n"); // `out` lazily continues the last item.
     for (at, _) in source
         .char_indices()
         .chain(std::iter::once((source.len(), '\0')))
@@ -471,7 +471,7 @@ fn deep_open_chain_has_one_tail_update_and_no_per_ancestor_append_work() {
     );
     assert!(view.container_index_visits() - work <= 24);
     let visits = view.range_visits();
-    let update = doc.append("\noutside\n").unwrap();
+    let update = doc.append("\n# outside\n").unwrap();
     view.apply(&doc, &update).unwrap();
     assert_eq!(update.closed_containers.len(), 1000);
     assert_eq!(view.range_visits() - visits, 1001);
@@ -650,7 +650,7 @@ fn seeded_toggle_preview_and_resize_model_checks_heights_and_lookup() {
 
 #[test]
 fn thousands_of_closed_siblings_have_logarithmic_lookup_and_bounded_storage() {
-    let doc = document(&"> item\noutside\n".repeat(4096));
+    let doc = document(&"> item\n---\n".repeat(4096));
     assert_eq!(doc.container_count(), 4096);
     let mut view = FoldView::new(&doc, 1).unwrap();
     batch(&doc, &mut view, FoldBatchAction::All { collapsed: true });
@@ -1098,7 +1098,7 @@ fn default_depth_batch_and_preview_preserve_saved_choices_and_initialize_new_chi
 fn default_depth_policy_changes_invalidate_tasks_without_changing_layout_or_scanning_history() {
     let mut doc = Document::new();
     let mut view = FoldView::new(&doc, 1).unwrap();
-    let update = doc.append(&"> item\nout\n".repeat(4096)).unwrap();
+    let update = doc.append(&"> item\n---\n".repeat(4096)).unwrap();
     view.apply(&doc, &update).unwrap();
     let mut task = FoldBatch::new(&doc, &view, FoldBatchAction::All { collapsed: true }).unwrap();
     let before = (

@@ -714,6 +714,7 @@ impl Document {
         );
         let mut content = span;
         let mut container_line = None;
+        let mut lazy = false;
         let mut table_text = matches!(classification, Line::Text);
         if self.fence.is_none() || fence_scope.is_some() {
             // Root fences remain opaque. Scoped fences first match their
@@ -731,6 +732,7 @@ impl Document {
                     complete,
                     root_markers,
                     paragraph: previous_title.and_then(|(id, _)| self.blocks[id.0].container),
+                    lazy_paragraph: self.container_inline,
                     table_header: header.as_ref().map(|h| (h.container.unwrap(), h.columns)),
                     fence: fence_scope,
                 },
@@ -745,14 +747,18 @@ impl Document {
                 self.close_current(update);
             }
             if let Some(line) = line {
+                lazy = line.lazy;
                 let same_scope = previous_title
                     .is_some_and(|(id, _)| self.blocks[id.0].container == self.containers.inner());
                 let inner = Span::new(line.prefix, span.end);
                 content = inner;
-                self.work.classified_bytes += inner.len() as u64;
-                let inner_classification =
-                    block::classify(&self.source, inner, complete, self.fence, same_scope);
-                table_text = matches!(inner_classification, Line::Text);
+                let inner_classification = if lazy {
+                    Line::Text
+                } else {
+                    self.work.classified_bytes += inner.len() as u64;
+                    block::classify(&self.source, inner, complete, self.fence, same_scope)
+                };
+                table_text = !lazy && matches!(inner_classification, Line::Text);
                 classification = match inner_classification {
                     leaf @ (Line::Heading { .. }
                     | Line::Setext(_)
@@ -772,6 +778,7 @@ impl Document {
         }
         if let Some(header) = header {
             if header.container == self.containers.inner()
+                && !lazy
                 && complete
                 && let Some(columns) = table::delimiter(&self.source, content, header.columns)
             {

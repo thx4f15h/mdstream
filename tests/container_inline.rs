@@ -78,13 +78,13 @@ fn explicit_continuations_share_delimiters_but_keep_physical_leaf_ids() {
 #[test]
 fn container_switches_and_explicit_blank_lines_discard_old_openers() {
     for source in [
-        "> *a\nout*\n",
+        "> *a\n\nout*\n",
         "*root\n> end*\n",
-        "> *a\n> > b*\n> c*\n",
-        "> > *a\n> b*\n> > c*\n",
+        "> *a\n> > b*\n>\n> c*\n",
+        "> > *a\n>\n> b*\n> > c*\n",
         "- *a\n- b*\n",
         "1. *a\n2. b*\n",
-        "- *a\n  - b*\n  c*\n",
+        "- *a\n  - b*\n  \n  c*\n",
         "> *a\n>\n> b*\n",
         "- *a\n  \n  b*\n",
         "> *a\n\n> b*\n",
@@ -166,7 +166,7 @@ fn soft_and_hard_breaks_wait_for_a_classified_same_scope_payload() {
             assert_eq!(breaks(&doc), [(newline, hard)]);
         }
     }
-    for tail in ["", ">\n", "> # h\n", "outside\n", "> - sibling\n"] {
+    for tail in ["", ">\n", "> # h\n", "# outside\n", "> - sibling\n"] {
         let doc = parse(&format!("> a\\\n{tail}"));
         assert!(breaks(&doc).is_empty());
         assert_eq!(visible(&doc, doc.blocks()[0].source), "a\\\n");

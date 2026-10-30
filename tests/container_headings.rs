@@ -231,7 +231,7 @@ fn streaming_scope_ranges_pending_input_and_object_updates_are_explicit() {
     doc.append("# root\n> ## quote\n> body\n").unwrap();
     let end = doc.source().len();
     let old_heading = doc.headings().entries()[1];
-    let pending = doc.append("outside").unwrap();
+    let pending = doc.append("[r]: /url").unwrap();
     assert!(pending.closed_containers.is_empty());
     assert_eq!(
         doc.headings()

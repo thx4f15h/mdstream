@@ -23,7 +23,7 @@ fn visible(doc: &Document) -> String {
 
 #[test]
 fn mixed_containers_have_exact_parents_ranges_and_leaf_membership() {
-    let source = "> - [x] first\n>   continued\n>   > deep\n> - second\nplain\n";
+    let source = "> - [x] first\n>   continued\n>   > deep\n> - second\n# end\n";
     let doc = parsed(source);
     let n = nodes(&doc);
     assert_eq!(n.len(), 5);
@@ -59,7 +59,7 @@ fn mixed_containers_have_exact_parents_ranges_and_leaf_membership() {
         }
     );
     let sibling = source.find("> - second").unwrap();
-    let outside = source.find("plain").unwrap();
+    let outside = source.find("# end").unwrap();
     assert_eq!(n[0].source, Span::new(0, outside));
     assert_eq!(n[1].source, Span::new(0, outside));
     assert_eq!(n[2].source, Span::new(0, sibling));
@@ -79,7 +79,7 @@ fn mixed_containers_have_exact_parents_ranges_and_leaf_membership() {
             None
         ]
     );
-    assert_eq!(visible(&doc), "first\ncontinued\ndeep\nsecond\nplain\n");
+    assert_eq!(visible(&doc), "first\ncontinued\ndeep\nsecond\nend\n");
     assert!(doc.links().is_empty());
 }
 
@@ -142,17 +142,17 @@ fn blanks_explicit_continuations_empty_tasks_and_opaque_inner_fence() {
 }
 
 #[test]
-fn root_rules_and_lazy_lines_close_containers_but_indented_payload_does_not() {
-    for delimiter in ["---\n", "- - -\n", "***\n", "plain\n", "\n"] {
+fn root_rules_close_containers_but_lazy_and_indented_text_retain_the_path() {
+    for delimiter in ["---\n", "- - -\n", "***\n", "# end\n", "\n"] {
         let doc = parsed(&format!("- item\n{delimiter}"));
         assert_eq!(doc.container(ContainerId(0)).unwrap().source.end, 7);
         assert_eq!(doc.blocks()[1].container, None);
     }
     let doc =
         parsed("> quote\nlazy\n- item\n  continuation\n    - child\n      tail\n  parent again\n");
-    assert_eq!(doc.blocks()[1].container, None);
+    assert_eq!(doc.blocks()[1].container, doc.blocks()[0].container);
     assert_eq!(doc.blocks()[2].container, doc.blocks()[3].container);
-    assert_eq!(doc.blocks()[2].container, doc.blocks()[6].container);
+    assert_eq!(doc.blocks()[4].container, doc.blocks()[6].container);
     assert_eq!(doc.blocks()[4].container, doc.blocks()[5].container);
     assert_ne!(doc.blocks()[2].container, doc.blocks()[4].container);
 }
@@ -164,7 +164,7 @@ fn streaming_boundaries_and_notifications_exclude_pending_source() {
     assert_eq!(first.new_containers, 0..3);
     assert_eq!(first.container_end, 6);
     let snapshot = nodes(&doc);
-    let pending = doc.append("outside").unwrap();
+    let pending = doc.append("# outer").unwrap();
     assert_eq!(pending.container_end, 6);
     assert_eq!(nodes(&doc), snapshot);
     assert!(pending.closed_containers.is_empty());
@@ -258,7 +258,8 @@ fn quote_depth_changes_match_a_generated_independent_range_model() {
     for _ in 0..2000 {
         seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
         let depth = (seed >> 32) as usize % 17;
-        let line = format!("{}text\n", ">".repeat(depth));
+        // Headings force a scope boundary even when prefixes are omitted.
+        let line = format!("{}# text\n", ">".repeat(depth));
         while path.len() > depth {
             let old = path.pop().unwrap();
             expected[old].state = SyntaxState::Sealed;

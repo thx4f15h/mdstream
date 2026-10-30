@@ -406,3 +406,19 @@
 项目 devShell 验收全部通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 349 项、`cargo test --doc` 31 项、`cargo fmt --all -- --check` 与 `git diff --check`。`cargo run -r --example container_inline` 用 19 帧 / 437 个计费字节读取跨行显示文本，保留六个物理叶块与条目折叠状态。日志：`/tmp/mdtui3-container-inline-validation.log`、`/tmp/mdtui3-container-inline-release.log`。
 
 本单元交付显式正文的跨行行内衔接核心；跨行链接/图片标签及数学内容映射、多物理行 Setext、需要撤销已确认样式的更完整规则、lazy continuation、tight/loose、tab/分类上限扩展和终端 UI 继续保留 TODO，不声明完整容器或 CommonMark 兼容。
+
+## 2026-10-30 容器 lazy continuation 核心交付
+
+连续非空正文现在可省略引用或列表条目的部分/全部前缀，保留原最内层 `ContainerId`、物理叶块和既有行内状态。显式匹配在首次失配处停止，一次有界正文判定决定保留整段剩余路径或关闭未匹配内层；不逐祖先试探、复制活动栈或重放旧正文。前缀隐藏、软/硬换行、强调/代码 span 晚闭合、范围通知、容器/章节折叠及预算消费复用原接口。
+
+方言与边界见 [README](README.md#容器-lazy-continuation)：空白、有效标题/围栏/定义/分隔线及新容器标记中断，任意合法编号和空列表标记沿用项目方言；只有已有非空正文具备 lazy 资格。未决表头可退为正文，但 lazy 行不确认/延续表格，也不新建表头；缺省前缀的 `===` 为正文，后续显式 Setext 仍只提升最近物理叶块。非法定义标签及失败候选留作行内正文；纯空白分类前缀不保留路径，长行沿用 1 KiB 分类窗口并在后续追加中不重试。
+
+新增 15 项验收（`tests/container_lazy.rs` 14 项、`tests/chunking.rs` 1 项），并补充既有 UTF-8 全切点、逐前缀及确定种子随机分块样本。覆盖混合嵌套/任务、部分前缀、兄弟与块中断、非正文资格、空白/缩进、失败候选、表格/Setext、CRLF/EOF、旧测量失效、稳定叶块、显示预算和折叠状态；1200 行生成输入对照独立容器范围/开闭模型，并通过 Update 重建全部中间快照及合并事件。旧测试中明确要求退出的输入改用空白、标题或定义中断，保留原关闭、索引和折叠断言；普通省略前缀输入按新语义验证。
+
+复杂度：千层引用之后 4096 行无前缀短文本恰好增加 4096 次活动帧检查；百万字 lazy 正文再逐字追加 1000 次，只增加 1000 inline bytes，无分类/前缀/祖先回扫。250 层列表的部分缩进仅检查实际匹配层和一次失配，空格扫描线性。500 个开放章节之后 1000 行 lazy 追加仅更新 1000 次共享折叠末端，容器和章节索引零写入；折叠百万字正文的 LayoutPass 计费 0 字节、无正文回调。没有新增持久状态或运行时依赖，累计解析 O(n log n)、空间 O(n)、`forbid(unsafe_code)` 及摊还 EOF 契约保持。
+
+项目 devShell 验收：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 364 项、`cargo test --doc` 32 项、`cargo fmt --all -- --check` 与 `git diff --check` 通过。新示例 `cargo run -r --example container_lazy` 用 11 帧 / 250 个计费字节读取混合续行，保持 4 个容器及折叠意愿；另外 8 个既有容器相关示例通过。日志：`/tmp/mdtui3-lazy-final-validation.log`。
+
+附加巡检发现 `examples/container_tables.rs:30` 仍把表格折叠父节点断言为顶层标题，实际已是条目容器；在改动前提交 `a976459` 的独立源码副本中复现相同失败（`/tmp/mdtui3-lazy-baseline-example.log`）。此为既有示例断言问题，本单元未修改它；表格相关核心测试全部通过。
+
+本单元完成有界 lazy continuation 核心；tight/loose、完整 tab 缩进、分类上限、多物理行 Setext、跨行链接/图片/数学内容表示及更完整块确认/撤销规则保留 TODO，终端 UI 仍留待后续。

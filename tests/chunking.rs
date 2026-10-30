@@ -70,6 +70,11 @@ fn check_chunks(source: &str, boundaries: &[usize]) {
 #[test]
 fn every_single_split_for_small_constructs() {
     for source in [
+        "> > **中\r\n> _🙂_**\\\r\nlazy\n> # end\n",
+        "> - [x] ` 中\n> 🙂\nend`\n- next\n",
+        "> *a|b\n|--|--|\nend*\n> title\n===\n> ---\n",
+        "> *a\n[r]: <bad<target>\nend*\n[^n]: raw\n",
+        "- a\n  - b\n  lazy\n  # parent\n2. sibling\n\nroot\n",
         "**a _b_ c**",
         "> - [x] **中\r\n>   _🙂_**\\\r\n>   next\n> - sibling\n",
         "> ` 中\r\n> 🙂\r\n> ` &amp;\n> $open\n> end$ [open\n> label](u)\n",
@@ -180,6 +185,28 @@ fn container_inline_long_lines_match_every_live_prefix_and_bytewise_completion()
 }
 
 #[test]
+fn lazy_continuations_match_every_live_prefix_across_lookahead_and_eof() {
+    let source = format!(
+        "> - > **中\r\n{}\r\n> end**\n> [r]: /{}\nlast\n# outside\n> > `a\n> b\n c`",
+        "🙂".repeat(270),
+        "x".repeat(1100),
+    );
+    let mut streamed = Document::new();
+    for (offset, c) in source.char_indices() {
+        let end = offset + c.len_utf8();
+        streamed.append(&source[offset..end]).unwrap();
+        let mut whole = Document::new();
+        whole.append(&source[..end]).unwrap();
+        assert_eq!(snapshot(&streamed), snapshot(&whole), "prefix {end}");
+    }
+    streamed.finish();
+    let mut whole = Document::new();
+    whole.append(&source).unwrap();
+    whole.finish();
+    assert_eq!(snapshot(&streamed), snapshot(&whole));
+}
+
+#[test]
 fn streaming_unicode_table_rows_match_single_chunk_input() {
     let source = format!(
         "intro\n| h1 | h2 |\n| :-- | --: |\n| {} | ![图](img) |\r\n| `x\\|y` | [link][key] |\n\n[key]: /target\n",
@@ -230,6 +257,8 @@ fn deterministic_fuzz_chunk_invariance_and_source_coverage() {
 #[test]
 fn provisional_semantics_match_at_every_observed_prefix() {
     let parts = [
+        "> > **中\r\n> 🙂**\nmissing\n> # end\n",
+        "> - *a|b\n|--|--|\nend*\n# root\n",
         "**a _b_ c** ",
         "> **a\n> b**\r\n> ` 中\r\n> 🙂\r\n> `\n",
         "> *a\n> b*|c\n> ---\n> [open\n> label](u)\n",

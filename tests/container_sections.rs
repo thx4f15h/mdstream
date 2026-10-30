@@ -268,7 +268,7 @@ fn exact_scope_parents_discovery_and_innermost_candidates() {
 
 #[test]
 fn retained_titles_empty_sections_same_tile_and_parent_intent() {
-    let doc = parse("> # A\n> ## B\n> x\n> # C\n> # D\n> y\nout\n");
+    let doc = parse("> # A\n> ## B\n> x\n> # C\n> # D\n> y\n# out\n");
     let mut view = FoldView::new(&doc, 2).unwrap();
     for id in [h(0), h(1), h(2), h(3)] {
         view.set_collapsed(&doc, id, true).unwrap();
@@ -306,7 +306,7 @@ fn late_setext_pending_exit_and_merged_closures_preserve_choices() {
     verify(&doc, &view);
     let mut merged = doc.append("> ===\n").unwrap();
     merged
-        .merge(doc.append("> body\n> ## child\n> more\nout").unwrap())
+        .merge(doc.append("> body\n> ## child\n> more\n[r]: /out").unwrap())
         .unwrap();
     view.apply(&doc, &merged).unwrap();
     for id in [h(0), h(1)] {
@@ -322,7 +322,7 @@ fn late_setext_pending_exit_and_merged_closures_preserve_choices() {
     view.apply(&doc, &update).unwrap();
     assert_eq!(
         doc.fold_candidate(h(2)).unwrap().source.end,
-        doc.source().find("out").unwrap()
+        doc.source().find("[r]:").unwrap()
     );
     assert!(!doc.fold_candidate(h(2)).unwrap().open);
     verify(&doc, &view);
@@ -839,10 +839,10 @@ fn hundreds_of_open_scopes_and_million_byte_body_have_constant_append_work() {
     assert_eq!(sink.text, "H\n[fold]\n");
     assert!(sink.bytes < 16);
     let before = view.range_visits();
-    let update = doc.append("\nout\n").unwrap();
+    let update = doc.append("\n[r]: /out\n").unwrap();
     view.apply(&doc, &update).unwrap();
     assert_eq!(view.range_visits() - before, 501);
-    let boundary = doc.source().find("out").unwrap();
+    let boundary = doc.source().find("[r]:").unwrap();
     for i in 0..500 {
         assert_eq!(doc.fold_candidate(h(i)).unwrap().source.end, boundary);
     }

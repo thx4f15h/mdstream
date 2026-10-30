@@ -100,6 +100,8 @@ pub(crate) struct ContainerOptions {
     pub complete: bool,
     pub root_markers: bool,
     pub paragraph: Option<ContainerId>,
+    // Only an active nonblank inline sequence can retain unmatched frames.
+    pub lazy_paragraph: Option<ContainerId>,
     pub table_header: Option<(ContainerId, usize)>,
     // Match this fence's existing path, but do not interpret its payload as
     // new containers. A missing prefix/sibling still ends that exact scope.
@@ -109,6 +111,7 @@ pub(crate) struct ContainerOptions {
 pub(crate) struct ContainerLine {
     pub prefix: usize,
     pub kind: BlockKind,
+    pub lazy: bool,
 }
 
 impl Containers {
@@ -195,8 +198,9 @@ impl Containers {
         }
     }
 
-    /// Each retained frame consumes an explicit prefix byte or positive item
-    /// indentation. A failed match pops once; it never retries old ancestors.
+    /// Each matched frame consumes an explicit prefix byte or positive item
+    /// indentation. At the first mismatch, lazy text retains the entire suffix
+    /// in O(1); otherwise each unmatched frame pops once.
     /// Space runs are scanned once even when several list levels consume them.
     pub fn line(
         &mut self,
@@ -210,6 +214,7 @@ impl Containers {
             complete,
             root_markers,
             paragraph,
+            lazy_paragraph,
             table_header,
             fence,
         } = options;
@@ -278,6 +283,19 @@ impl Containers {
                 }
             }
             keep += 1;
+        }
+        if keep < self.active.len()
+            && lazy_paragraph.is_some()
+            && lazy_paragraph == self.inner()
+            && prefix.lazy_text(source, span, work)
+        {
+            self.end = span.end;
+            work.container_bytes += prefix.inspected;
+            return Some(ContainerLine {
+                prefix: prefix.pos,
+                kind,
+                lazy: true,
+            });
         }
         self.close_to(keep, span.start, work, update);
         while !self.active.is_empty() || root_markers {
@@ -368,6 +386,7 @@ impl Containers {
         self.inner().map(|_| ContainerLine {
             prefix: prefix.pos,
             kind,
+            lazy: false,
         })
     }
 }
@@ -411,6 +430,37 @@ impl<'a> Prefix<'a> {
             }
         }
         self.spaces_end - self.pos
+    }
+
+    fn lazy_text(&mut self, source: &str, span: Span, work: &mut Work) -> bool {
+        // Only the bounded, as-yet-unconsumed payload is examined. No probe
+        // mutates the path or consumes text that must remain visible.
+        let payload = Span::new(self.pos, span.end);
+        self.inspected += payload.len() as u64;
+        if self.bytes[self.pos..self.end]
+            .iter()
+            .all(u8::is_ascii_whitespace)
+        {
+            return false;
+        }
+        let spaces = self.spaces();
+        if spaces <= 3
+            && (self.bytes.get(self.pos + spaces) == Some(&b'>') || self.marker().is_some())
+        {
+            return false;
+        }
+        work.classified_bytes += payload.len() as u64;
+        match crate::block::classify(source, payload, self.complete, None, false) {
+            crate::block::Line::Text | crate::block::Line::Indented { .. } => true,
+            crate::block::Line::Definition { label, .. } => {
+                // Match References::intern's label rejection without interning
+                // a symbol or allocating a normalized candidate.
+                self.inspected += label.len() as u64;
+                label.len() > crate::references::MAX_LABEL_BYTES
+                    || source[label.range()].chars().all(char::is_whitespace)
+            }
+            _ => false,
+        }
     }
 
     fn quote(&mut self) -> bool {
