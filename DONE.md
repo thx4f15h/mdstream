@@ -375,3 +375,18 @@
 项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 320 项、`cargo test --doc` 29 项、`cargo fmt --all -- --check` 与 `git diff --check`。`cargo run -r --example container_code` 用 7 帧/45 个计费字节读取首行代码摘要，再用 6 帧恢复源码位置 30，缩进代码兄弟保持折叠。日志：`/tmp/mdtui3-container-code-validation.log`、`/tmp/mdtui3-container-code-release.log`。TODO 与 README 已同步。
 
 本单元交付容器内围栏/缩进代码核心；容器内定义、多物理行 Setext、lazy continuation、tight/loose、完整 CommonMark 缩进/空行/tab 规则、实际代码排版与终端 UI 继续保留待办。
+
+## 2026-10-30 容器内定义核心交付
+
+- [x] **链接与脚注定义接入**：显式 Quote/Item 内按既有方言识别链接定义和单物理行脚注定义，复用 `BlockKind::Definition/FootnoteDefinition` 与稳定 BlockId；块保存确切容器、完整物理行及前缀，目标/title/正文保持源码区间。支持嵌套、条目续行及任务前缀，围栏/四空格缩进代码保持字面语义。
+- [x] **全局符号和晚定义**：根、嵌套、兄弟及已经关闭的容器共用文档全局命名空间，链接和脚注各自独立；首个有效定义优先，重复定义隐藏但不覆盖/改版本。引用链接、图片及脚注复用间接寻址，晚定义只改当前符号及 first_use 范围失效；脚注编号仍按首次引用全局分配，容器退出和折叠不改变解析目标。
+- [x] **流式、失败与边界**：链接定义连同行末须位于含前缀的分类窗口内；脚注 marker 在窗口内确认后正文可无限增长，LF/EOF 封闭，CRLF 只修正尾端。定义中断同作用域正文/表格、不作为 Setext 候选、不吸收下一物理行。非法/超长/未完成候选沿用行内失败规则，无效纯空白链接标签保留容器前缀隐藏和独立叶块，避免合并进外层段落。
+- [x] **复用预算与视图协议**：现有 Update 新块/变化范围、符号通知及 merge 可重建全部中间状态；DependencyKey 和布局 ticket 处理晚定义，容器/章节折叠意愿保持。窗口引用查询、间接解析和 UTF-8 原文游标共用 Budget，原子暂停后可继续。语法隐藏的百万字定义布局跳过正文，字节计费及正文/对象回调均为零。
+
+验证：新增 14 项验收（`tests/container_definitions.rs` 13 项及 `tests/chunking.rs` 1 项），并扩充既有 UTF-8 全切点、确定种子逐前缀/随机分块快照与脚注回归。400 组生成输入对照独立首定义、源码物理范围和容器深度模型；通知重建和逐次/合并折叠消费一致。覆盖大小写/Unicode 标签、首定义与重复、代码/标题/表格优先级、分类窗口、失败标签、流式正文、CRLF/EOF、预算及缓存。
+
+复杂度：两万处链接和两万处脚注引用之后，容器内晚定义不改变旧引用数组，链接只 intern 1 字节标签、脚注仅 3 次符号步骤，不增加 inline bytes。千层容器中的百万字脚注追加 1000 次单字，只增加 1000 input bytes 和 1000 次当前脚注操作，无分类/正文/标签回扫、祖先操作或容器/章节索引写入；百万字失败链接候选后追加同样只消费新字节。250 层列表的续行空格单次扫描，4096 对历史链接/脚注符号不增加重复定义刷新；复用现有数据结构，累计 O(n log n)、空间 O(n)、零运行时依赖及 `forbid(unsafe_code)` 保持。
+
+项目 devShell 下 `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 334 项、`cargo test --doc` 30 项、`cargo fmt --all -- --check` 及 `git diff --check` 全部通过。`cargo run -r --example container_definitions` 演示全局晚定义、稳定编号和容器折叠，脚注正文 6 帧 / 32 字节读取完成。验收日志：`/tmp/mdtui3-container-definitions-validation.log`、`/tmp/mdtui3-container-definitions-release.log`。
+
+保留边界：仍采用显式容器与既有 1 KiB 分类前缀；链接多行目标/title、脚注多行/多段及正文 Markdown 排版、脚注区/上标/双向跳转、完整容器续行规则和终端 UI 继续待办。本轮没有新增局部符号作用域或改变现有方言长度上限。

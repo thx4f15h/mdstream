@@ -127,20 +127,20 @@ fn invalid_and_unfinished_labels_do_not_become_reference_links_or_replay() {
 #[test]
 fn inline_contexts_containers_tables_and_block_precedence_compose() {
     let doc = parse(
-        "`[^code]` $[^math]$ [link](/[^target] '[^title]') <https://x/[^auto]> \\[^escaped] ![^image] **[^yes]**\n\n```\n[^fence]: body\n```\n\n    [^indent]: body\n> [^quote]: literal container definition\n- [^list]\n\n| [^head] | h |\n| -- | -- |\n| [^cell] | [^cut |\n| off] | end |\n\n[^yes]: raw\n",
+        "`[^code]` $[^math]$ [link](/[^target] '[^title]') <https://x/[^auto]> \\[^escaped] ![^image] **[^yes]**\n\n```\n[^fence]: body\n```\n\n    [^indent]: body\n> [^quote]: container definition\n- [^list]\n\n| [^head] | h |\n| -- | -- |\n| [^cell] | [^cut |\n| off] | end |\n\n[^yes]: raw\n",
     );
     let labels: Vec<_> = doc
         .footnote_references()
         .iter()
         .map(|r| doc.footnote(r.symbol).unwrap().label.as_str())
         .collect();
-    assert_eq!(labels, ["yes", "quote", "list", "head", "cell"]);
+    assert_eq!(labels, ["yes", "list", "head", "cell"]);
     assert_eq!(
         doc.footnotes()
             .iter()
             .filter(|n| n.definition.is_some())
             .count(),
-        1
+        2
     );
     let first = doc.footnote_references()[0];
     assert!(
@@ -149,7 +149,7 @@ fn inline_contexts_containers_tables_and_block_precedence_compose() {
             .all(|r| r.style.contains(Style::STRONG))
     );
     assert_eq!(doc.tables().len(), 1);
-    // A root definition ends a table; a container definition stays inline text.
+    // Definitions end a table rather than becoming another data row.
     let doc = parse("h | h\n-- | --\n[^stop]: a|b\n");
     assert_eq!(doc.tables()[0].rows().len(), 1);
     assert_eq!(

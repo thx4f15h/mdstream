@@ -71,6 +71,10 @@ fn check_chunks(source: &str, boundaries: &[usize]) {
 fn every_single_split_for_small_constructs() {
     for source in [
         "**a _b_ c**",
+        "[r] [^中]\n> - [x] [r]: <a b> '说明'\r\n>   [^中]: **raw**\r\n> - [r]: /duplicate\n[^中]: duplicate\n",
+        "> [ ]: /bad\n> ---\n> [bad]: <bad<target>\n> [^bad label]: raw\n> [^e]:\n> [^open",
+        "> h|h\n> -|-\n> [r]: /a|b\n> [^f]: a|b\n> [r] [^f]\n",
+        "- [^a]: a\n  [r]: /r\n  > [^b]: b\n- [^a]: duplicate\n\n[r] [^a] [^b]\n",
         "[^中] [^a] [^中]\r\n\n[^a]: first\n[^中]: **raw**\n[^a]: duplicate\n",
         "> [^x]\n| [^x] | b |\n| -- | -- |\n| [^y] | [^x] |\n\n[^x]: body\n",
         "[^a b] [^] [^a\\b] [^open\n\n[^last]",
@@ -199,6 +203,8 @@ fn deterministic_fuzz_chunk_invariance_and_source_coverage() {
 fn provisional_semantics_match_at_every_observed_prefix() {
     let parts = [
         "**a _b_ c** ",
+        "> - [x] [key]: /late 'title'\n>   [^中]: raw body\r\n> - [^中]: duplicate\n",
+        "> [ ]: /bad\n> ---\n> [^open\n",
         "[^中] [^missing]\n\n[^中]: raw **body**\r\n",
         "[x](<a b> 'title') ",
         "![图][key] ",
@@ -245,4 +251,26 @@ fn provisional_semantics_match_at_every_observed_prefix() {
             start = end;
         }
     }
+}
+
+#[test]
+fn container_definition_streaming_snapshots_match_every_prefix_and_final_state() {
+    let source = format!(
+        "[r] [^中]\n> - [r]: <a b> '说明'\r\n>   [^中]: {}\r\n> - [^中]: duplicate {}\r\n> [r]: /ignored\n> [^last]: tail",
+        "中🙂".repeat(150),
+        "x".repeat(1024),
+    );
+    let mut streamed = Document::new();
+    for (offset, c) in source.char_indices() {
+        let end = offset + c.len_utf8();
+        streamed.append(&source[offset..end]).unwrap();
+        let mut whole = Document::new();
+        whole.append(&source[..end]).unwrap();
+        assert_eq!(snapshot(&streamed), snapshot(&whole), "prefix {end}");
+    }
+    streamed.finish();
+    let mut whole = Document::new();
+    whole.append(&source).unwrap();
+    whole.finish();
+    assert_eq!(snapshot(&streamed), snapshot(&whole));
 }

@@ -696,6 +696,7 @@ impl Document {
             paragraph,
         );
         let mut content = span;
+        let mut container_line = None;
         let mut table_text = matches!(classification, Line::Text);
         if self.fence.is_none() || fence_scope.is_some() {
             // Root fences remain opaque. Scoped fences first match their
@@ -741,12 +742,15 @@ impl Document {
                     | Line::FenceOpen { .. }
                     | Line::FenceClose
                     | Line::Code
-                    | Line::Indented { .. }) => leaf,
+                    | Line::Indented { .. }
+                    | Line::Definition { .. }
+                    | Line::FootnoteDefinition { .. }) => leaf,
                     _ => Line::Container {
                         prefix: line.prefix,
-                        kind: line.kind,
+                        kind: line.kind.clone(),
                     },
                 };
+                container_line = Some(line);
             }
         }
         if let Some(header) = header {
@@ -853,7 +857,12 @@ impl Document {
                 self.close_current(update);
                 return;
             }
-            classification = Line::Text;
+            // An invalid normalized label is ordinary text in its original
+            // container, with the same prefix hiding and standalone boundary.
+            classification = container_line.map_or(Line::Text, |line| Line::Container {
+                prefix: line.prefix,
+                kind: line.kind,
+            });
         }
         let body_end = block::body_end(&self.source, span);
         let mut payload = span;
