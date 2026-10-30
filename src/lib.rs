@@ -23,6 +23,7 @@ mod block;
 mod budget;
 mod cache;
 mod checkpoints;
+mod containers;
 mod destination;
 mod display;
 mod display_search;
@@ -53,6 +54,7 @@ pub use block::{BLOCK_LOOKAHEAD, MAX_FENCE_LENGTH};
 pub use budget::{Budget, Completion, WorkLimit};
 pub use cache::{CacheValidity, DependencyKey, SourceSnapshot};
 pub use checkpoints::{CheckpointIndex, CheckpointToken};
+pub use containers::{Container, ContainerAncestors, ContainerId, ContainerKind, ListMarker};
 pub use destination::{MAX_DESTINATION_BYTES, MAX_LINK_SUFFIX_BYTES, MAX_LINK_TITLE_BYTES};
 pub use display::{DisplayCursor, DisplayRun, DisplayRuns, DisplayStep};
 pub use display_search::{DisplayMatch, DisplaySearch};
@@ -146,6 +148,7 @@ pub struct Document {
     source: String,
     tiles: Vec<Span>,
     blocks: Vec<Block>,
+    containers: containers::Containers,
     links: Vec<LinkTarget>,
     link_info: Vec<LinkInfo>,
     headings: HeadingIndex,
@@ -180,6 +183,20 @@ impl Document {
     }
     pub fn block(&self, id: BlockId) -> Option<&Block> {
         self.blocks.get(id.0)
+    }
+    /// O(1) current-revision snapshot; ID belongs to this document.
+    pub fn container(&self, id: ContainerId) -> Option<Container> {
+        self.containers.get(id)
+    }
+    pub fn container_count(&self) -> usize {
+        self.containers.len()
+    }
+    pub fn container_ancestors(&self, id: ContainerId) -> Option<ContainerAncestors<'_>> {
+        self.containers.ancestors(id)
+    }
+    /// Arena plus active-stack capacity; excludes source and Update buffers.
+    pub fn container_arena_stats(&self) -> ArenaStats {
+        self.containers.stats()
     }
     pub fn tile_count(&self) -> usize {
         self.tiles.len()
@@ -459,6 +476,8 @@ impl Document {
         }
         self.flush_table_header(update);
         self.close_current(update);
+        self.containers
+            .close_to(0, self.source.len(), &mut self.work, update);
         self.line_start = self.source.len();
         self.fence = None;
         self.finished = true;
@@ -471,11 +490,13 @@ impl Document {
         let mut tables_changed = std::mem::take(&mut update.tables_changed);
         let mut rows_changed = std::mem::take(&mut update.rows_changed);
         let mut changes = std::mem::take(&mut update.changes);
+        let mut closed_containers = std::mem::take(&mut update.closed_containers);
         dirty.clear();
         references_changed.clear();
         tables_changed.clear();
         rows_changed.clear();
         changes.clear();
+        closed_containers.clear();
         *update = Update {
             document: Some(self.id),
             base_revision: self.revision,
@@ -491,6 +512,9 @@ impl Document {
             rows_changed,
             changes,
             new_links: self.links.len()..self.links.len(),
+            new_containers: self.containers.len()..self.containers.len(),
+            closed_containers,
+            container_end: self.containers.end,
             changed_blocks: self.blocks.len()..self.blocks.len(),
             changed_links: self.links.len()..self.links.len(),
             changed_headings: self.headings.entries().len()..self.headings.entries().len(),
@@ -503,6 +527,8 @@ impl Document {
         update.new_headings.end = self.headings.entries().len();
         update.new_tables.end = self.tables.len();
         update.new_links.end = self.links.len();
+        update.new_containers.end = self.containers.len();
+        update.container_end = self.containers.end;
         if update.base_revision != update.revision {
             update.changed_blocks = update.new_blocks.start.saturating_sub(1)..self.blocks.len();
             update.changed_links = update.new_links.start.saturating_sub(1)..self.links.len();
@@ -573,6 +599,7 @@ impl Document {
             source: span,
             kind,
             state: SyntaxState::Growing,
+            container: self.containers.inner(),
         });
         update.change(span, ChangeKind::Structure);
         self.current = Some(id);
@@ -581,6 +608,7 @@ impl Document {
 
     fn commit_line(&mut self, span: Span, complete: bool, update: &mut Update) {
         self.work.classified_bytes += span.len() as u64;
+        self.containers.end = span.end;
         if let Some(header) = self.table_header.take() {
             if complete && let Some(columns) = table::delimiter(&self.source, span, header.columns)
             {
@@ -609,6 +637,27 @@ impl Document {
             .is_some_and(|id| self.blocks[id.0].kind == BlockKind::Paragraph);
         let mut classification =
             block::classify(&self.source, span, complete, self.fence, paragraph);
+        if self.fence.is_none() {
+            // Preserve root-level rule/Setext precedence. Inside containers only
+            // explicit prefixes and inline payload are supported in this phase.
+            let root_markers = matches!(
+                classification,
+                Line::Indented { .. } | Line::Text | Line::Blank
+            );
+            if let Some(line) = self.containers.line(
+                &self.source,
+                span,
+                complete,
+                root_markers,
+                &mut self.work,
+                update,
+            ) {
+                classification = Line::Container {
+                    prefix: line.prefix,
+                    kind: line.kind,
+                };
+            }
+        }
         if let Some(block) = self.current
             && let BlockKind::Table { id } = self.blocks[block.0].kind
         {
@@ -754,28 +803,20 @@ impl Document {
                 }
                 self.new_block(span, BlockKind::Heading { level }, update)
             }
-            Line::Quote { depth, prefix } => {
+            Line::Container { prefix, kind } => {
                 standalone = true;
                 payload.start = prefix;
-                self.new_block(span, BlockKind::Quote { depth }, update)
-            }
-            Line::List {
-                indent,
-                number,
-                prefix,
-                task,
-            } => {
-                standalone = true;
-                payload.start = prefix;
-                self.new_block(
-                    span,
-                    BlockKind::ListItem {
-                        indent,
-                        number,
-                        task,
-                    },
-                    update,
-                )
+                let blank = complete
+                    && self.source[prefix..body_end]
+                        .bytes()
+                        .all(|b| b.is_ascii_whitespace());
+                inline = !blank;
+                let kind = if blank && kind == BlockKind::Paragraph {
+                    BlockKind::Blank
+                } else {
+                    kind
+                };
+                self.new_block(span, kind, update)
             }
             Line::Rule => {
                 standalone = true;
@@ -833,6 +874,7 @@ impl Document {
     }
 
     fn extend_line(&mut self, line: StreamingLine, span: Span, update: &mut Update) {
+        self.containers.end = span.end;
         self.blocks[line.block.0].source.end = span.end;
         if line.table {
             self.feed_table_row(span, update);

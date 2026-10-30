@@ -43,7 +43,7 @@ for tile in heights.viewport(100..124, 4, 32) {
 
 `append(&str)` 接收有效 UTF-8，可以在任意 Unicode 标量边界分块；传输层的任意字节分块可使用 `Utf8Document`：最多暂存 3 字节不完整尾部，非法序列及 EOF 截断采用 U+FFFD 替换；偏移按解码后的文档定义。`finish()` 表示真正的 EOF、完成尾部解析，重复调用无副作用，此后不能再追加。空追加不改变 revision。
 
-所有 ID 和源码 byte offset 都只在所属文档中有效。已分配的 `BlockId`、`TileId`、`LinkId`、`SymbolId`、`TableId`、`HeadingId` 不会重排；当前块和最后一个片段可以增长。库返回的是借用、区间和增量通知，不复制历史 AST。`Update` 可以逐次消费，或使用 `merge` 将连续更新合并后在最终 revision 消费，不需要保存事件历史。
+所有 ID 和源码 byte offset 都只在所属文档中有效。已分配的 `BlockId`、`TileId`、`LinkId`、`SymbolId`、`TableId`、`HeadingId`、`ContainerId` 不会重排；当前块和最后一个片段可以增长。库返回的是借用、区间和增量通知，不复制历史 AST。`Update` 可以逐次消费，或使用 `merge` 将连续更新合并后在最终 revision 消费，不需要保存事件历史。
 
 ## 数据结构与复杂度
 
@@ -70,6 +70,8 @@ for tile in heights.viewport(100..124, 4, 32) {
 | 按级别查找前后标题 | O(log H)，H 为标题数，至多查六个级别 |
 | 逐行、翻页、首尾导航 | O(log T)，基于当前高度估计 |
 | 标题导航 | O(log H + log n + log T) |
+| 容器按 ID 读取范围、父 ID、深度 | O(1)，开放末端共用已解析位置 |
+| 有预算地向上读取 D 个容器 | O(D)，游标 O(1) 空间 |
 | 表格按行列读取 / 按源码定位行 | O(1) / O(log R)，R 为该表行数 |
 | 按视口查询链接/图片对象 | O(log L + 结果数)，L 为链接和图片总数 |
 
@@ -84,9 +86,10 @@ for tile in heights.viewport(100..124, 4, 32) {
 3. 样式和隐藏标记保存在动态二叉区间树。闭合分隔符只向覆盖区间的 O(log n) 个节点写 tag；查询继承这些 tag。源码不需要移动、包裹或重新分词。节点同时聚合最新 revision 和“全部隐藏”信息。
 4. 引用保留 `LinkId -> SymbolId -> destination` 间接关系。定义只更新一个符号版本和一个保守全局引用 epoch，没有反向引用列表遍历。`DependencyKey` 只检查自身引用符号；尺寸变化从符号最早使用位置保守失效后续布局状态。
 5. 高度树支持 lazy assignment、子树和以及按累计高度选择。零高度区域可整段跳过。重复 resize 重用节点，不累计废弃树。
-6. 检查点子树记录有效计数。失效只把覆盖子树的计数置零，查找前驱直接剪枝。失效时不逐个运行调用者状态的析构函数；旧状态在该位置被覆盖或整个索引销毁时释放。
+6. 容器独立 arena 只保存父 ID、深度和属性；活动栈每保留一层必须消费本行的显式标记或正长度缩进，空格串只扫描一次。开放范围共用一个已解析末端，长行追加不更新祖先；容器各开闭一次，不复制祖先链。
+7. 检查点子树记录有效计数。失效只把覆盖子树的计数置零，查找前驱直接剪枝。失效时不逐个运行调用者状态的析构函数；旧状态在该位置被覆盖或整个索引销毁时释放。
 
-`Document::work()` 暴露输入扫描量、块分类输入量、行内扫描量、分隔符操作数、标签规范化字节数、区间树实际写入访问次数、表格行扫描字节数与自动链接候选检查字节数。分类字节量是分类器接收的字节数，分类器内部对这些字节只做固定次数的线性扫描。它不是 CPU 指令计数。测试使用这些指标约束增长，不依赖机器跑分来“证明”复杂度。
+`Document::work()` 暴露输入扫描量、块分类输入量、行内扫描量、分隔符操作数、标签规范化字节数、区间树实际写入访问次数、表格行扫描字节数与自动链接候选检查字节数；`container_bytes` 计容器前缀检查，`container_steps` 计活动帧匹配及单个容器开闭。分类字节量是分类器接收的字节数，分类器内部对这些字节只做固定次数的线性扫描。它不是 CPU 指令计数。测试使用这些指标约束增长，不依赖机器跑分来“证明”复杂度。
 
 `Runs::annotation_visits()` 单独统计本次查询访问的区间节点，不修改文档统计。查询只在开始时二分定位块，之后顺序跨越块边界并遍历样式区间，不对每个字符从根重查；均匀长区间可以直接跳过。片段划分直接跳到最多 256 字节处，再回退至 UTF-8 边界，无需逐字符解码整段新增输入。
 
@@ -142,6 +145,44 @@ if let Some(span) = doc.tile(tile_id) {
 ```
 
 不完整的行首也在片段中，立即以原文可见。`pending()` 最多 1024 + 3 字节；在换行、EOF 或达到上限时提交块分类。超过上限的行后续直接流式消费，不积累一个待重新解析的巨型尾巴。缓存使用 `tile_key()`，不要只按片段 ID 永久缓存；`Update::dirty` 是源码区间通知，不是展开的片段 ID 列表。
+
+## 显式列表与引用容器
+
+`ContainerId` 指向独立 arena，`ContainerKind` 区分 Quote、List 和 Item；列表节点保存 bullet/有序分隔符，条目保存 number 和可选 TaskMarker。`Document::container(id)` O(1) 返回当前 revision 的 `Container` 快照：父 ID、深度（根为 1）、完整物理行源码包络、Growing/Sealed 状态。每个叶块只增加 `Block.container` 指向最内层容器，叶块索引仍按源码排列；`BlockKind::Quote/ListItem` 保留本行标记信息，不再代表整个容器范围。ID 只在所属 Document 内有效，关闭后不复用。
+
+```rust
+use mdtui3::{Budget, ContainerKind, Document, SyntaxState, WorkLimit};
+let mut doc = Document::new();
+let update = doc.append("> - [x] first\n>   continued\n")?;
+assert_eq!(update.new_containers, 0..3); // quote -> list -> item
+let item = doc.blocks()[0].container.unwrap();
+assert_eq!(doc.blocks()[1].container, Some(item));
+assert_eq!(doc.container(item).unwrap().depth, 3);
+assert!(matches!(doc.container(item).unwrap().kind, ContainerKind::Item { .. }));
+let mut path = doc.container_ancestors(item).unwrap();
+let mut budget = Budget::new(WorkLimit { queries: 1, objects: 1, ..Default::default() });
+assert_eq!(path.advance(&mut budget).unwrap().unwrap().0, item);
+let update = doc.append("outside\n")?;
+assert_eq!(update.closed_containers.len(), 3);
+assert_eq!(doc.container(item).unwrap().state, SyntaxState::Sealed);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`container_ancestors` 借用文档，每次 `advance` 消费 1 query / 1 object 返回一层，预算不足返回 `Err(BudgetExhausted)` 且不移动，换预算继续；根之后为 `Ok(None)`。借用期间不能追加，游标不复制路径也不允许静默跨 revision 使用。简单上下文读取可以直接使用 O(1) 的父 ID 和深度摘要；不要每帧自行无预算地遍历所有容器。
+
+流式协议：只在换行、EOF 或 `BLOCK_LOOKAHEAD` 前缀达到上限时提交结构。未分类尾部不属于开放范围；`Update.container_end` 是所有 Growing 容器共用的已解析末端，解析长行时随实际消费增长。`new_containers` 给新 ID 范围；`closed_containers` 按实际弹栈次序报告关闭 ID，每次从最内层向外关闭，节点末端固定为离开该容器的行首或 EOF。结束一个叶块不意味着容器关闭；同一 List 的兄弟 Item 使用不同 ID，List ID 保持。容器范围/状态属于对象元数据，不能仅凭旧 `tile_key` 复用这些快照。追加仅改变共享末端，不逐祖先生成增长事件；消费方同样可以保存共享末端，不能因收到更新就自动遍历全部开放节点。`merge` 只移动新事件，`append_into/finish_into` 复用关闭缓冲区；空追加和重复 finish 不产生开闭。
+
+当前方言与边界：
+
+- 支持显式 `>`、`>>`、`> >`，以及 `-`/`+`/`*` 和 1..9 位数字加 `.`/`)` 列表；可混合嵌套。每层标记前允许 0..3 个 ASCII 空格，`>` 后最多消费一个可选空格。相同父级、相同缩进、相同 bullet/有序分隔符延续 List；改变数字只创建新 Item，改变标记类型创建新 List。
+- 列表标记后须为空格、tab 或完整行结束；消费标记后的全部水平空白。续行须用 ASCII 空格补足该 Item 从父前缀到正文的字节宽度（包含标记前缩进；空条目按标记末端宽度），再匹配子层。tab 只作为列表标记/任务后的分隔字节，每个算 1，不展开为 tab stop；不接受 tab 作为续行缩进。每个兄弟按自己的数字/空白宽度确定续行要求。
+- 引用续行必须重复 `>`；列表续行必须有足够缩进。不推断 lazy continuation。无前缀空行关闭全部容器；显式 `>` 空行保留引用，缩进足够的空行保留对应条目。缺失某层前缀只保留已经匹配的外层，内层关闭。空条目和空任务保留条目身份；任务只识别最内层新条目的正文开头，任务标记之后作为普通行内正文。
+- 容器内叶块按物理行独立解析行内语法；强调、代码 span 及软/硬换行不跨这些叶块。容器内标题、表格、引用定义、围栏/缩进代码、分隔线仍作为正文，不生成对应块对象（仍按行内方言处理）。顶层表格分隔行确认、分隔线/Setext 和已打开围栏的优先级保持。列表/引用的整段折叠、tight/loose、容器内章节作用域及终端布局尚未接入。
+- 结构仅从既有 1024 字节分类前缀（UTF-8 边界最多额外 3 字节）识别。前缀中的完整 `>` 可以开层，列表/任务候选必须在前缀内有分隔符或完整行末；截断候选和前缀后的标记保留正文，不在后续追加中重新分类。深度受前缀字节限制；不声称支持无限深度或完整 CommonMark/GFM 容器规则。
+
+容器新增解析工作累计 O(n + 开闭次数)，容器/活动栈空间 O(n)；保留一层必定消费正长度前缀，失败只做一次退出并批量弹栈，列表续行共享空格扫描结果。整库仍累计 O(n log n)。`container_arena_stats` 统计节点和活动栈实际容量字节及 Vec 增长次数，不含源码、分配器元数据或 Update。批量关闭和 EOF 仍可能一次处理整个活动栈；解析不承诺单次调用硬预算。有预算的查询不会枚举正文或子树。
+
+`cargo run -r --example containers` 展示混合嵌套、续行、兄弟切换、未分类尾部及分帧祖先读取。`tests/containers.rs` 验证独立范围模型、增量快照重建、1000 层引用、深列表单次空格扫描、百万字长续行、空行批量关闭及分块一致性；现有分块/fuzz 快照也包含容器。
 
 ## 表格、任务列表与图片
 
@@ -644,7 +685,7 @@ loop {
 
 - 段落与空行；ATX 标题；Setext 标题；分隔线。
 - 缩进代码；反引号/波浪线围栏代码，opening fence 长度 3..32；代码 info 保留源码区间。
-- 引用行和有序/无序列表项的块信息。容器按物理行展平，提供 quote depth 或列表 indent/number，不构建嵌套列表树，不推断列表续行或 lazy blockquote continuation。
+- 显式引用/列表容器 ID、父关系及流式开闭，支持有缩进的条目续行和混合嵌套；具体前缀、空行、深度和未实现规则见[容器方言](#显式列表与引用容器)。
 - 管道表格、列对齐、单元格行内语法；任务列表复选框状态。
 - `*em*`、`_em_`、`**strong**`、`__strong__`、`~~strike~~`，以及精确长度匹配的反引号代码 span。支持跨同一段落的多行输入。
 - ASCII 标点反斜线转义；内联链接 `[text](destination)`；shortcut/full/collapsed 引用链接；单行引用定义；裸目标和尖括号目标，可选 title。
@@ -708,6 +749,7 @@ assert_eq!(text, "first\nsecond\n");
 | --- | --- |
 | `src/lib.rs` | 流式提交、稳定块/片段、按范围惰性查询、缓存 key |
 | `src/block.rs` | 有界块分类 |
+| `src/containers.rs` | 显式容器 arena、活动栈、共享开放末端与有预算祖先查询 |
 | `src/inline.rs` | 单遍分隔符、代码和链接状态机 |
 | `src/destination.rs` | 链接/定义共享的有界目标及 title 状态机 |
 | `src/display.rs` / `src/entity.rs` | 显示片段、替代文本源码映射、预算游标及字符引用解码 |
@@ -741,6 +783,7 @@ nix develop -c cargo test --doc
 nix develop -c cargo fmt --all -- --check
 nix develop -c cargo run -r --example stream
 nix develop -c cargo run -r --example structure
+nix develop -c cargo run -r --example containers
 nix develop -c cargo run -r --example scaling
 nix develop -c cargo run -r --example budget
 nix develop -c cargo run -r --example display

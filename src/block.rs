@@ -1,4 +1,4 @@
-use crate::{Span, TaskMarker};
+use crate::Span;
 
 /// At most this many bytes (+3 to finish UTF-8) await block classification.
 pub const BLOCK_LOOKAHEAD: usize = 1024;
@@ -33,15 +33,9 @@ pub(crate) enum Line {
         prefix: usize,
         body_end: usize,
     },
-    Quote {
-        depth: usize,
+    Container {
         prefix: usize,
-    },
-    List {
-        indent: usize,
-        number: Option<u32>,
-        prefix: usize,
-        task: Option<TaskMarker>,
+        kind: crate::BlockKind,
     },
     Rule,
 }
@@ -165,64 +159,6 @@ pub(crate) fn classify(
                 body_end,
             };
         }
-    }
-    if text[0] == b'>' {
-        let mut offset = 0;
-        let mut depth = 0;
-        while offset < text.len() && text[offset] == b'>' {
-            depth += 1;
-            offset += 1;
-            if offset < text.len() && text[offset] == b' ' {
-                offset += 1;
-            }
-        }
-        return Line::Quote {
-            depth,
-            prefix: span.start + spaces + offset,
-        };
-    }
-    let (marker, number) = if matches!(text[0], b'-' | b'+' | b'*') {
-        (1, None)
-    } else {
-        let digits = text.iter().take_while(|b| b.is_ascii_digit()).count();
-        if !(1..=9).contains(&digits) || !matches!(text.get(digits), Some(b'.' | b')')) {
-            return Line::Text;
-        }
-        let value = text[..digits]
-            .iter()
-            .fold(0, |n, b| n * 10 + u32::from(b - b'0'));
-        (digits + 1, Some(value))
-    };
-    if marker == text.len() || text[marker].is_ascii_whitespace() {
-        let mut prefix = span.start + spaces + marker;
-        while prefix < end && source.as_bytes()[prefix].is_ascii_whitespace() {
-            prefix += 1;
-        }
-        let bytes = source.as_bytes();
-        let task = if prefix + 3 <= end
-            && bytes[prefix] == b'['
-            && matches!(bytes[prefix + 1], b' ' | b'x' | b'X')
-            && bytes[prefix + 2] == b']'
-            && (prefix + 3 == end || bytes[prefix + 3].is_ascii_whitespace())
-        {
-            let marker = TaskMarker {
-                checked: bytes[prefix + 1] != b' ',
-                source: Span::new(prefix, prefix + 3),
-            };
-            prefix += 3;
-            while prefix < end && bytes[prefix].is_ascii_whitespace() {
-                prefix += 1;
-            }
-            Some(marker)
-        } else {
-            None
-        };
-        return Line::List {
-            indent: spaces,
-            number,
-            prefix,
-            task,
-        };
     }
     Line::Text
 }

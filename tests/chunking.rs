@@ -4,6 +4,7 @@ use mdtui3::{BLOCK_LOOKAHEAD, Block, Document, LinkTarget, Reference, Span, Styl
 struct Snapshot {
     source: String,
     blocks: Vec<Block>,
+    containers: Vec<mdtui3::Container>,
     tiles: Vec<Span>,
     references: Vec<Reference>,
     links: Vec<LinkTarget>,
@@ -18,6 +19,9 @@ fn snapshot(doc: &Document) -> Snapshot {
     Snapshot {
         source: doc.source().to_owned(),
         blocks: doc.blocks().to_vec(),
+        containers: (0..doc.container_count())
+            .map(|i| doc.container(mdtui3::ContainerId(i)).unwrap())
+            .collect(),
         tiles: (0..doc.tile_count())
             .map(|i| doc.tile(TileId(i)).unwrap())
             .collect(),
@@ -70,6 +74,7 @@ fn every_single_split_for_small_constructs() {
         "| a | b |\r\n|:---|---:|\r\n| **x** | y\\|z |\r\n",
         "intro\na | b\n-- | --\nx | y\n",
         "- [ ] todo\n- [X] done\n![alt](img) ![x][ref]\n",
+        "> - [x] task\r\n>   > nested\n>   continuation\n> - sibling\n\nplain\n",
     ] {
         for (i, _) in source.char_indices() {
             check_chunks(source, &[i]);
@@ -177,6 +182,7 @@ fn provisional_semantics_match_at_every_observed_prefix() {
         "`unfinished ",
         "&amp; &#x1f642; &NotEqualTilde; &bad*ok*; ",
         "` a\r\nb ` ",
+        "> - item\n>   > quote\n> - sibling\n  - nested list\n    continuation\n",
     ];
     let mut state = 981_u64;
     for _ in 0..24 {

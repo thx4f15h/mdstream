@@ -72,7 +72,8 @@ pub struct TaskMarker {
     pub source: Span,
 }
 
-/// Containers are deliberately flattened; quote and list markers describe one line.
+/// Leaf blocks remain source ordered. Quote/list variants describe the markers
+/// on one physical line; structural ancestry lives in `Block::container`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BlockKind {
     Paragraph,
@@ -105,6 +106,7 @@ pub struct Block {
     pub source: Span,
     pub kind: BlockKind,
     pub state: SyntaxState,
+    pub container: Option<crate::ContainerId>,
 }
 
 /// Independent flags. Hidden syntax stays addressable in the source.
@@ -182,6 +184,10 @@ pub struct Work {
     /// Bounded entity candidate bytes examined at semicolon; feed bytes are
     /// already included in inline_bytes.
     pub entity_bytes: u64,
+    /// Container prefix bytes inspected (including bounded failed candidates).
+    pub container_bytes: u64,
+    /// Active-frame checks and individual container opens/closes.
+    pub container_steps: u64,
 }
 
 /// Actual Vec arena capacity and allocation/reallocation calls. Allocator headers,
@@ -209,6 +215,11 @@ pub struct Update {
     /// Column width hints changed; invalidate layout of this table lazily.
     pub tables_changed: Vec<TableId>,
     pub new_links: Range<usize>,
+    pub new_containers: Range<usize>,
+    /// Exact close events, innermost first; no event per growing ancestor.
+    pub closed_containers: Vec<crate::ContainerId>,
+    /// Shared end of all still-open containers; excludes unclassified input.
+    pub container_end: usize,
     /// Conservative contiguous object deltas, including new objects. The last
     /// existing object can be reported even when its value did not change.
     pub changed_blocks: Range<usize>,
@@ -347,6 +358,9 @@ impl Update {
         self.new_links.end = next.new_links.end;
         self.new_headings.end = next.new_headings.end;
         self.new_tables.end = next.new_tables.end;
+        self.new_containers.end = next.new_containers.end;
+        self.container_end = next.container_end;
+        self.closed_containers.append(&mut next.closed_containers);
         for (old, new) in [
             (&mut self.changed_blocks, next.changed_blocks),
             (&mut self.changed_links, next.changed_links),
