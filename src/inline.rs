@@ -13,6 +13,7 @@ pub(crate) struct Effects<'a> {
     pub links: &'a mut Vec<LinkTarget>,
     pub link_info: &'a mut Vec<LinkInfo>,
     pub maths: &'a mut Vec<crate::Math>,
+    pub math_gaps: &'a mut Vec<Span>,
     pub footnotes: &'a mut crate::footnotes::Footnotes,
     pub update: &'a mut Update,
     pub work: &'a mut Work,
@@ -135,6 +136,8 @@ struct Code {
 struct MathCandidate {
     open: Span,
     escaped: bool,
+    // End of the last feed; same-scope container prefixes are not fed.
+    end: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -291,11 +294,28 @@ impl Inline {
     }
 
     pub fn feed(&mut self, span: Span, effects: &mut Effects<'_>) {
+        if span.is_empty() {
+            return;
+        }
+        if let Some(math) = &self.math
+            && math.end < span.start
+            && effects.source.as_bytes()[math.end - 1] == b'\n'
+        {
+            // Record omitted source once, without inspecting/copying the body
+            // or walking ancestors. Failed candidates may leave unused gaps;
+            // they cannot overlap a later confirmed object's content.
+            // An ATX closing suffix is a same-line gap, not a container prefix.
+            debug_assert!(effects.math_gaps.last().is_none_or(|g| g.end <= math.end));
+            effects.math_gaps.push(Span::new(math.end, span.start));
+        }
         for pos in span.range() {
             let byte = effects.source.as_bytes()[pos];
             effects.work.inline_bytes += 1;
             self.byte(byte, pos, effects);
             self.previous = Some(byte);
+        }
+        if let Some(math) = &mut self.math {
+            math.end = span.end;
         }
     }
 
@@ -551,6 +571,7 @@ impl Inline {
                 self.math = Some(MathCandidate {
                     open: run.source,
                     escaped: false,
+                    end: run.source.end,
                 });
             }
             return;
@@ -701,13 +722,6 @@ impl Inline {
         if let Some(id) = candidate.link {
             effects.link_info[id.0].state = SyntaxState::Sealed;
         }
-    }
-
-    /// Math still borrows contiguous raw content. Labels instead retain a
-    /// bounded payload buffer for reference lookup and use display runs for
-    /// their source-mapped text, so they continue in the same exact scope.
-    pub fn end_container_line(&mut self) {
-        self.math = None;
     }
 
     pub fn finish(&mut self, effects: &mut Effects<'_>) {

@@ -267,14 +267,15 @@ fn single_line_setext_promotion_preserves_committed_inline_semantics_then_closes
 }
 
 #[test]
-fn labels_continue_while_math_and_footnotes_keep_physical_boundaries() {
+fn labels_and_math_continue_while_footnotes_keep_physical_boundaries() {
     let doc = parse(
         "> [cross\n> label](url)\n> ![image\n> label](img)\n> $*opaque\n> tail$\n> [^open\n> note]\n",
     );
     assert_eq!(doc.links().len(), 2);
     assert_eq!(doc.link_destination(LinkId(0)), Some("url"));
     assert_eq!(doc.link_destination(LinkId(1)), Some("img"));
-    assert!(doc.maths().is_empty());
+    assert_eq!(doc.maths().len(), 1);
+    assert_eq!(doc.text(doc.maths()[0].content), Some("*opaque\n> tail"));
     assert!(doc.footnote_references().is_empty());
     assert!(
         doc.runs_in(Span::new(0, doc.source().len()))

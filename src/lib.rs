@@ -163,6 +163,7 @@ pub struct Document {
     links: Vec<LinkTarget>,
     link_info: Vec<LinkInfo>,
     maths: Vec<Math>,
+    math_gaps: Vec<Span>,
     headings: HeadingIndex,
     tables: Vec<Table>,
     table_header: Option<table::HeaderCandidate>,
@@ -687,6 +688,7 @@ impl Document {
             links: &mut self.links,
             link_info: &mut self.link_info,
             maths: &mut self.maths,
+            math_gaps: &mut self.math_gaps,
             footnotes: &mut self.footnotes,
             update,
             work: &mut self.work,
@@ -1343,9 +1345,6 @@ impl Document {
 
     fn end_container_text(&mut self, block: BlockId) {
         self.blocks[block.0].state = SyntaxState::Sealed;
-        if self.source.as_bytes()[self.blocks[block.0].source.end - 1] == b'\n' {
-            self.inline.end_container_line();
-        }
     }
 
     fn flush_table_header(&mut self, update: &mut Update) {

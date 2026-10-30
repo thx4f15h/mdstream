@@ -12,6 +12,7 @@ struct Snapshot {
     headings: Vec<mdtui3::Heading>,
     tables: Vec<mdtui3::Table>,
     maths: Vec<mdtui3::Math>,
+    math_payloads: Vec<Vec<(Span, String)>>,
     footnotes: Vec<mdtui3::Footnote>,
     footnote_references: Vec<mdtui3::FootnoteReference>,
     runs: Vec<(Span, Option<mdtui3::BlockId>, Style, Option<mdtui3::LinkId>)>,
@@ -36,6 +37,17 @@ fn snapshot(doc: &Document) -> Snapshot {
         headings: doc.headings().entries().to_vec(),
         tables: doc.tables().to_vec(),
         maths: doc.maths().to_vec(),
+        math_payloads: (0..doc.maths().len())
+            .map(|i| {
+                let mut cursor = doc.math_payload(mdtui3::MathId(i)).unwrap();
+                let mut budget = mdtui3::Budget::new(mdtui3::WorkLimit::unlimited());
+                let mut chunks = Vec::new();
+                while let Some(chunk) = cursor.advance(&mut budget).unwrap() {
+                    chunks.push((chunk.source, chunk.text.to_owned()));
+                }
+                chunks
+            })
+            .collect(),
         footnotes: doc.footnotes().to_vec(),
         footnote_references: doc.footnote_references().to_vec(),
         runs: doc
@@ -70,6 +82,9 @@ fn check_chunks(source: &str, boundaries: &[usize]) {
 #[test]
 fn every_single_split_for_small_constructs() {
     for source in [
+        "> - $$中 &amp;\\\r\n>   🙂$$\n>\n> $a\n> > b$\n",
+        "> $a\n> b$\n> ---\n> $next\nlazy$\n",
+        "> $$a\n> b|$c$\n> -|-\n> $a\\|b$|$ c $\n",
         "> - ![中&amp;\r\n> 🙂 `a\n b`][r]\n>   [r]: /u 't'\n",
         "> [a\n> b][] ![x\n> y](u)\n> [a b]: /late\n",
         "> [open\n> > nested](u)\n> [a\n> b|c\n> -|-\n",
@@ -637,6 +652,8 @@ fn deterministic_fuzz_chunk_invariance_and_source_coverage() {
 #[test]
 fn provisional_semantics_match_at_every_observed_prefix() {
     let parts = [
+        "> - $$中 &amp;\\\r\n>   🙂$$\n>\n",
+        "> $a\n> b$\n> ---\n> $next\nlazy$\n",
         "> ![中&amp;\r\n> 🙂][ref]\n> [ref]: /late\n",
         "> [a\n> b][]\n> [a b]: /u\n",
         "- **中**\r\n  \r\n- 🙂\r\n",
@@ -717,4 +734,37 @@ fn container_definition_streaming_snapshots_match_every_prefix_and_final_state()
     whole.append(&source).unwrap();
     whole.finish();
     assert_eq!(snapshot(&streamed), snapshot(&whole));
+}
+
+#[test]
+fn container_math_matches_all_utf8_splits_and_live_prefixes() {
+    for source in [
+        format!("> - $$中 &amp;\r\n>   {}🙂$$\n", "x".repeat(1030)),
+        format!("> $$old\n> {}|$local$\n> -|-\n", "x".repeat(1030)),
+        format!("> $$old\n> {}|tail$$\n> wrong\n", "x".repeat(1030)),
+        format!("> $old\n> {}$ closed|b\n> -|-\n", "x".repeat(1030)),
+        format!(
+            "> $old\n> {}|b\n> {}x|tail$\n",
+            "x".repeat(1030),
+            "-".repeat(1030)
+        ),
+        "> - $中\\\r\n> 🙂\nend$\n>   ---\n".to_owned(),
+    ] {
+        for (at, _) in source.char_indices() {
+            check_chunks(&source, &[at]);
+        }
+        let mut live = Document::new();
+        for (at, c) in source.char_indices() {
+            let end = at + c.len_utf8();
+            live.append(&source[at..end]).unwrap();
+            let mut whole = Document::new();
+            whole.append(&source[..end]).unwrap();
+            assert_eq!(snapshot(&live), snapshot(&whole), "prefix {end}");
+        }
+        live.finish();
+        let mut whole = Document::new();
+        whole.append(&source).unwrap();
+        whole.finish();
+        assert_eq!(snapshot(&live), snapshot(&whole));
+    }
 }

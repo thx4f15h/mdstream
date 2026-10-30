@@ -123,7 +123,7 @@ fn paragraph_newlines_and_structural_boundaries_are_explicit() {
         ("$a\nb$", vec![(MathKind::Inline, "a\nb")]),
         ("$a\n\nb$\n", vec![]),
         ("$a\n# b$\n", vec![]),
-        ("> $a\n> b$\n", vec![]),
+        ("> $a\n> b$\n", vec![(MathKind::Inline, "a\n> b")]),
         ("> - $inner$\n", vec![(MathKind::Inline, "inner")]),
         ("# $$heading$$\n", vec![(MathKind::Display, "heading")]),
         ("$title$\n---\n", vec![(MathKind::Inline, "title")]),

@@ -577,3 +577,21 @@ README、TODO 已同步，只将本独立子项标记完成；已闭合跨行语
 项目 devShell 验收：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 503 项、`cargo test --doc` 42 项、`cargo fmt --all -- --check` 与 `git diff --check` 通过。`cargo run -r --example container_links` 验证晚定义、稳定图片及容器折叠，标签读取 4 帧/61 计费字节；既有 `container_inline`、`link_headers`、`container_lazy` 示例通过。验收日志：`/tmp/mdtui3-container-links-validation.log`。
 
 README、TODO 已同步，仅将容器跨行标签子项标记完成；数学内容表示、多行目标/title/full 引用后缀、更完整边界撤销、其它容器规则及终端 UI 继续保留后续。
+
+## 2026-10-30 容器跨行数学内容核心交付
+
+交付同一确切 Quote/Item 中跨物理行的 `$` / `$$` 候选，支持显式、等价前缀和 lazy 正文续接。定界串长度、逐字节转义、opaque 内容、失败不回放及块/作用域边界沿用既有方言；空行、兄弟/内外容器切换、标题、代码、定义和表格单元格结束候选。单行 Setext 晚提升保留已确认对象；旧数学在首管道前闭合则取消长表头探测，未闭合则确认时独立消费当前单元格，失败继续原候选。具体规则及可运行片段见 [README](README.md#容器跨行数学内容)。
+
+新增 `Document::math_payload(id)`，复用固定大小 `MathContent` 游标返回去前缀正文和绝对源码映射；`math_content` 保持完整原文。`Math.source/content` 仍为含前缀的稳定源码包络，MathId 仅在闭合时发布。每个 `MathChunk.source` 连续覆盖原文，text 借用对应源码，前缀片段的 text 为空；保留原始 CRLF、首尾空白、实体拼写及所有反斜线，包括表格中显示层隐藏的转义管道反斜线。无需把整段公式复制或按通用 HIDDEN 样式过滤。
+
+模型与复杂度：候选仅增加上次 feed 的末端；跨物理行的不连续 feed 追加一条有序前缀间隙，同物理行的 ATX 尾标记不入索引。每个间隙记录一次，总记录成本 O(G)、存储 O(G)；失败/被表头丢弃的候选允许留下无引用记录，但不与后续对象重叠。正文仍单遍消费，确认只做常数次 O(log n) 范围标记，不扫描旧行、祖先或间隙列表。游标 O(1) 构造，第一次成功推进扣费后通过 O(log G) 二分定位，随后逐片 O(1)。全库累计解析 O(n log n)、空间 O(n)，零运行时依赖且禁止 unsafe；单次 append、闭合和存储扩容继续为摊还保证。
+
+新增 14 项验收：`tests/container_math.rs` 11 项、`tests/chunking.rs` 全切点/逐前缀 1 项、内部间隙存储测试 2 项；既有分块及固定种子快照纳入预算读取的 payload 映射。基线先复现容器 LF 丢弃数学候选，日志 `/tmp/mdtui3-container-math-baseline.log`。400 组输入对照无前缀数学解析与独立源码偏移模型，覆盖 CRLF/Unicode、精确/失配/转义美元串、代码/链接组合、边界/失败/EOF、Setext、表头确认/取消/长分隔行失败、稳定对象与物理叶块。三个旧“数学限单物理行”断言更新为新对象与闭合取消表头探测的验收。
+
+资源验收：千层引用和 250 层列表中，百万字正文后 1000 次逐字追加仅增加 1000 个 inline bytes，分类、math steps、容器步骤和注解 arena 分配不变；闭合仅消费新增 7 字节，树访问少于 2000 次，前缀匹配至多 1000 步。间隙索引在百万字同物理行增长和 100 条 lazy 行中容量/条目数不变，显式续行才新增记录。千层引用下 4096 条 lazy 续行每行一次失配；4096 个历史对象后新对象只消费 11 字节和 2 次定界步骤，4096 个失败候选不增加后续读取步数。
+
+预算与消费验收：每步至多 TILE_BYTES 源码字节、1 query/1 object，隐藏前缀也按实际源码长度计费；四字节可推进任意标量，预算不足时位置与预算不变，完成后免费。测试覆盖元数据/内容共享预算、空前缀片段、原始 CRLF/转义保留、旧缓存/测量/检查点/搜索拒绝及合并 Update 重建。晚闭合保留折叠意愿，收起百万字数学正文的布局零正文回调、零字节计费。
+
+项目 devShell 验收：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 517 项、`cargo test --doc` 43 项、`cargo fmt --all -- --check` 和 `git diff --check` 通过。`cargo run -r --example container_math` 验证流式对象、稳定叶块、容器折叠与逐帧映射，读取 4 帧/30 源码字节；既有 `math`、`math_headers`、`container_inline`、`container_links` 示例通过。完整日志：`/tmp/mdtui3-container-math-validation.log`。
+
+README、TODO 已同步，仅将容器跨行数学内容子项标记完成；数学块、额外定界方言、TeX 排版与实际对象回调、更完整块语义撤销、其余容器规则及终端 UI 继续保留待办。

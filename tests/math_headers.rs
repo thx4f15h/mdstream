@@ -350,7 +350,7 @@ fn generated_dollar_runs_and_escapes_match_independent_closure_model() {
 }
 
 #[test]
-fn containers_keep_physical_line_math_boundaries_and_existing_table_semantics() {
+fn containers_cancel_table_probe_when_inherited_math_closes_before_pipe() {
     for (open, prefix) in [
         ("> ".to_owned(), "> ".to_owned()),
         ("- ".repeat(250), " ".repeat(500)),
@@ -362,21 +362,18 @@ fn containers_keep_physical_line_math_boundaries_and_existing_table_semantics() 
             "x".repeat(2048)
         ))
         .unwrap();
-        // Container line end already abandoned $old; the local object is live.
+        // The first dollar on the continuation closes $old and cancels probing.
         assert_eq!(doc.maths().len(), 1);
         let math = *doc.math(MathId(0)).unwrap();
         doc.append(&format!("|$tail$\n{prefix}-|-\n{prefix}$body$|z\n"))
             .unwrap();
         doc.finish();
-        assert_eq!(doc.tables().len(), 1);
+        assert!(doc.tables().is_empty());
         assert_eq!(*doc.math(MathId(0)).unwrap(), math);
         assert_eq!(doc.maths().len(), 3);
-        assert_eq!(doc.text(math.content), Some("local"));
-        assert!(
-            doc.block(doc.tables()[0].block)
-                .unwrap()
-                .container
-                .is_some()
+        assert_eq!(
+            doc.text(math.content),
+            Some(format!("old\n{prefix}").as_str())
         );
     }
     let source = format!("old $$\n{}|b\n> -|-\n", "x".repeat(1030));
