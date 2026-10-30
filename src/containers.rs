@@ -110,6 +110,12 @@ impl Active {
 pub(crate) struct Containers {
     nodes: Vec<Container>,
     active: Vec<Active>,
+    // Sorted active-frame indices: locate the first missing quote without
+    // walking the list ancestors retained across an unindented blank.
+    quotes: Vec<usize>,
+    // An omitted-prefix blank can separate any resumed list at/after this
+    // depth. Resolve only its next direct scope, never write all ancestors.
+    blank_from: Option<usize>,
     pub end: usize,
     allocations: u64,
 }
@@ -132,6 +138,7 @@ pub(crate) struct ContainerLine {
     pub virtual_spaces: u8,
     pub kind: BlockKind,
     pub lazy: bool,
+    pub detached_blank: bool,
 }
 
 impl Containers {
@@ -249,6 +256,7 @@ impl Containers {
                 BlockKind::Quote { depth: quotes }
             },
             lazy: false,
+            detached_blank: false,
         })
     }
 
@@ -284,7 +292,8 @@ impl Containers {
         ArenaStats {
             nodes: self.nodes.len(),
             capacity_bytes: self.nodes.capacity() * std::mem::size_of::<Container>()
-                + self.active.capacity() * std::mem::size_of::<Active>(),
+                + self.active.capacity() * std::mem::size_of::<Active>()
+                + self.quotes.capacity() * std::mem::size_of::<usize>(),
             allocation_calls: self.allocations,
         }
     }
@@ -313,6 +322,10 @@ impl Containers {
     }
 
     fn push(&mut self, frame: Active) {
+        if matches!(frame, Active::Quote(_)) {
+            self.allocations += u64::from(self.quotes.len() == self.quotes.capacity());
+            self.quotes.push(self.active.len());
+        }
         self.allocations += u64::from(self.active.len() == self.active.capacity());
         self.active.push(frame);
     }
@@ -327,12 +340,30 @@ impl Containers {
     pub fn close_to(&mut self, keep: usize, end: usize, work: &mut Work, update: &mut Update) {
         while self.active.len() > keep {
             match self.active.pop().unwrap() {
-                Active::Quote(id) => self.close(id, end, work, update),
+                Active::Quote(id) => {
+                    self.quotes.pop();
+                    self.close(id, end, work, update);
+                }
                 Active::List { list, item, .. } => {
                     self.close(item, end, work, update);
                     self.close(list, end, work, update);
                 }
             }
+        }
+        if self
+            .blank_from
+            .is_some_and(|from| from >= self.active.len())
+        {
+            self.blank_from = None;
+        }
+    }
+
+    fn resolve_blank(&mut self) {
+        if let Some(from) = self.blank_from.take()
+            && from < self.active.len()
+            && let Some(Active::List { spacing, .. }) = self.active.last_mut()
+        {
+            spacing.pending_blank = true;
         }
     }
 
@@ -355,6 +386,9 @@ impl Containers {
         work: &mut Work,
         update: &mut Update,
     ) {
+        if !blank {
+            self.resolve_blank();
+        }
         let Some(Active::List {
             list,
             item,
@@ -382,8 +416,9 @@ impl Containers {
 
     /// Each matched frame consumes an explicit prefix byte or positive item
     /// indentation (whole bytes at four-column tab stops). At the first mismatch,
-    /// lazy text retains the entire suffix in O(1); otherwise each unmatched
-    /// frame pops once. Whitespace runs are scanned at most twice across levels.
+    /// lazy text retains the entire suffix in O(1); a complete blank retains
+    /// lists up to the first missing quote via its depth index. Other unmatched
+    /// frames pop once. Whitespace runs are scanned at most twice across levels.
     pub fn line(
         &mut self,
         source: &str,
@@ -435,9 +470,11 @@ impl Containers {
                             break;
                         }
                         work.list_steps += 1;
-                        if spacing.pending_blank {
+                        if spacing.pending_blank || self.blank_from.is_some_and(|from| from <= keep)
+                        {
                             self.loosen(list, work, update);
                         }
+                        self.blank_from = None;
                         self.close_to(keep + 1, span.start, work, update);
                         self.close(item, span.start, work, update);
                         let item = self.open(
@@ -471,6 +508,45 @@ impl Containers {
             }
             keep += 1;
         }
+        // Blank classification is bounded by the physical prefix window. No
+        // long-line retry and no missing quote is retained. The only scan below
+        // is over the new line's remaining bytes, not the unmatched stack.
+        let blank = complete && new_item.is_none() && {
+            prefix.inspected += (prefix.end - prefix.pos) as u64;
+            prefix.bytes[prefix.pos..prefix.end]
+                .iter()
+                .all(u8::is_ascii_whitespace)
+        };
+        if blank && matches!(self.active.get(keep), Some(Active::List { .. })) {
+            let next_quote = self.quotes.partition_point(|&depth| {
+                work.container_steps += 1;
+                depth < keep
+            });
+            let retained = self
+                .quotes
+                .get(next_quote)
+                .copied()
+                .unwrap_or(self.active.len());
+            self.close_to(retained, span.start, work, update);
+            // The last explicitly matched Item also owns this separator (the
+            // pre-existing exact-scope blank rule). Its omitted child lists
+            // may now survive until the next line resolves the actual scope.
+            let from = if keep > 0 && matches!(self.active[keep - 1], Active::List { .. }) {
+                keep - 1
+            } else {
+                keep
+            };
+            self.blank_from = Some(self.blank_from.map_or(from, |old| old.min(from)));
+            self.end = span.end;
+            work.container_bytes += prefix.inspected;
+            return Some(ContainerLine {
+                prefix: prefix.pos,
+                virtual_spaces: 0,
+                kind,
+                lazy: false,
+                detached_blank: true,
+            });
+        }
         if keep < self.active.len()
             && lazy_paragraph.is_some()
             && lazy_paragraph == self.inner()
@@ -483,9 +559,13 @@ impl Containers {
                 virtual_spaces: 0,
                 kind,
                 lazy: true,
+                detached_blank: false,
             });
         }
         self.close_to(keep, span.start, work, update);
+        if !blank {
+            self.resolve_blank();
+        }
         while !self.active.is_empty() || root_markers {
             if fence.is_some() && fence == self.inner() {
                 break;
@@ -580,6 +660,7 @@ impl Containers {
             virtual_spaces: 0,
             kind,
             lazy: false,
+            detached_blank: false,
         })
     }
 }

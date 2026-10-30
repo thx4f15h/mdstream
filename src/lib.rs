@@ -942,7 +942,10 @@ impl Document {
             self.sync_heading_scopes(new_start, closed_start, update);
             self.headings
                 .context(self.containers.inner(), span.start, &mut self.work);
-            if fence_scope.is_some() && fence_scope != self.containers.inner() {
+            if fence_scope.is_some()
+                && (fence_scope != self.containers.inner()
+                    || line.as_ref().is_some_and(|line| line.detached_blank))
+            {
                 self.fence = None;
                 self.close_current(update);
             }

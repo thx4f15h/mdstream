@@ -218,7 +218,7 @@ pub struct Work {
     pub entity_bytes: u64,
     /// Container prefix bytes inspected (including bounded failed candidates).
     pub container_bytes: u64,
-    /// Active-frame checks and individual container opens/closes.
+    /// Active-frame checks, quote-index probes and individual opens/closes.
     pub container_steps: u64,
     /// Direct item payload/sibling checks and one-time Tight -> Loose changes.
     /// No descendant or ancestor scans are included or required.

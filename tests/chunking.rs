@@ -1060,3 +1060,44 @@ fn new_leaf_partial_tabs_match_all_utf8_splits_live_prefixes_and_bounds() {
         assert_eq!(snapshot(&live), snapshot(&whole));
     }
 }
+
+#[test]
+fn list_blank_retention_matches_all_utf8_splits_live_prefixes_and_eof() {
+    for source in [
+        "- # 中\r\n\r\n- [x] 🙂\r\n\n- [ ]".to_owned(),
+        "- *open\n  - [label](u)\n\n    **中**\n\n  # parent\n\n- sibling\n".to_owned(),
+        "- - child\n  \n  # parent\n- > - deep\n\n  > new\n\n- sibling\n".to_owned(),
+        "> - a\n>\n> - b\n\n> - c\n>\n>   tail\n> \n".to_owned(),
+        "- ```\n  raw\n\n  next\n\n  $$\n  raw\n\n  [^n]: body\n\n- tail".to_owned(),
+        "- h|h\n\n  -|-\n\n  head\n\n  ===\n\n+ other\n".to_owned(),
+        "- a\n\n\t# title\n\n\ttext\n- b\n\t\r\n- c".to_owned(),
+        "-\n\n text\n\n- [x]\n\n- [ ]\n\n".to_owned(),
+        format!("- a\n{}\n- 中🙂\n", " ".repeat(BLOCK_LOOKAHEAD - 1)),
+        format!("- a\n{}\n- 中🙂\n", " ".repeat(BLOCK_LOOKAHEAD)),
+        format!(
+            "- a\n\n  {}|h\n  -|-\n\n- end\n",
+            "x".repeat(BLOCK_LOOKAHEAD + 20)
+        ),
+    ] {
+        for (at, _) in source.char_indices() {
+            check_chunks(&source, &[at]);
+        }
+        let mut live = Document::new();
+        for (at, c) in source.char_indices() {
+            let end = at + c.len_utf8();
+            live.append(&source[at..end]).unwrap();
+            let mut whole = Document::new();
+            whole.append(&source[..end]).unwrap();
+            assert_eq!(
+                snapshot(&live),
+                snapshot(&whole),
+                "prefix {end}: {source:?}"
+            );
+        }
+        live.finish();
+        let mut whole = Document::new();
+        whole.append(&source).unwrap();
+        whole.finish();
+        assert_eq!(snapshot(&live), snapshot(&whole));
+    }
+}

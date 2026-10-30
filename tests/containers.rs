@@ -128,10 +128,10 @@ fn blanks_explicit_continuations_empty_tasks_and_opaque_inner_fence() {
     assert!(doc.tables().is_empty());
     assert!(matches!(b[3].kind, BlockKind::Code { .. }));
     let blank = source.find("\n\n").unwrap() + 1;
-    assert_eq!(doc.container(item).unwrap().source.end, blank);
+    assert_eq!(doc.container(item).unwrap().source.end, blank + 1);
     assert_eq!(
         doc.block(doc.block_at(blank).unwrap()).unwrap().container,
-        None
+        Some(item)
     );
     assert_eq!(b[3].source.end, blank);
     assert!(visible(&doc).contains("inner\n---\na | b\n- | -\n"));
@@ -143,11 +143,14 @@ fn blanks_explicit_continuations_empty_tasks_and_opaque_inner_fence() {
 
 #[test]
 fn root_rules_close_containers_but_lazy_and_indented_text_retain_the_path() {
-    for delimiter in ["---\n", "- - -\n", "***\n", "# end\n", "\n"] {
+    for delimiter in ["---\n", "- - -\n", "***\n", "# end\n"] {
         let doc = parsed(&format!("- item\n{delimiter}"));
         assert_eq!(doc.container(ContainerId(0)).unwrap().source.end, 7);
         assert_eq!(doc.blocks()[1].container, None);
     }
+    let doc = parsed("- item\n\n");
+    assert_eq!(doc.container(ContainerId(0)).unwrap().source.end, 8);
+    assert_eq!(doc.blocks()[1].container, Some(ContainerId(1)));
     let doc =
         parsed("> quote\nlazy\n- item\n  continuation\n    - child\n      tail\n  parent again\n");
     assert_eq!(doc.blocks()[1].container, doc.blocks()[0].container);
@@ -327,7 +330,7 @@ fn thousand_deep_long_line_never_updates_ancestors_per_append() {
 }
 
 #[test]
-fn deep_lists_consume_each_indentation_run_once_and_blanks_close_once() {
+fn deep_lists_consume_each_indentation_run_once_and_exit_closes_once() {
     for depth in [64, 128, 256] {
         let first = format!("{}leaf\n", "- ".repeat(depth));
         let continuation = format!("{}tail\n", "  ".repeat(depth));
@@ -345,21 +348,23 @@ fn deep_lists_consume_each_indentation_run_once_and_blanks_close_once() {
         );
         assert!(after.container_bytes - before.container_bytes < continuation.len() as u64 * 300);
         let update = doc.append("\n").unwrap();
-        assert_eq!(update.closed_containers.len(), depth * 2);
+        assert!(update.closed_containers.is_empty());
         let before = doc.work();
         let update = doc.append(&"\n".repeat(20_000)).unwrap();
         assert!(update.closed_containers.is_empty());
-        assert_eq!(before.container_steps, doc.work().container_steps);
+        assert_eq!(doc.work().container_steps - before.container_steps, 20_000);
         assert_eq!(doc.container_count(), depth * 2);
         assert_eq!(
             doc.container(ContainerId(0)).unwrap().source.end,
-            first.len() + continuation.len() * 100
+            first.len() + continuation.len() * 100 + 20_001
         );
+        let update = doc.append("# exit\n").unwrap();
+        assert_eq!(update.closed_containers.len(), depth * 2);
         let capacity = update.closed_containers.capacity();
         let mut scratch = update;
-        doc.append_into("- next\n\n", &mut scratch).unwrap();
+        doc.append_into("- next\n\n# exit\n", &mut scratch).unwrap();
         let capacity = capacity.max(scratch.closed_containers.capacity());
-        doc.append_into("- next\n\n", &mut scratch).unwrap();
+        doc.append_into("- next\n\n# exit\n", &mut scratch).unwrap();
         assert_eq!(scratch.closed_containers.capacity(), capacity);
     }
 }

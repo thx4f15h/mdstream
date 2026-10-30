@@ -802,6 +802,88 @@ fn mixed_streaming_open_masks_and_closed_masks_match_interval_model() {
 }
 
 #[test]
+fn pending_list_blanks_preview_and_scope_exit_match_interval_height_model() {
+    let mut doc = Document::new();
+    let mut view = FoldView::new(&doc, 2).unwrap();
+    let mut selected = std::collections::BTreeSet::new();
+    let mut preview = None;
+    let mut seed = 0xa7514de9u64;
+    for step in 0..240 {
+        let line = match step % 12 {
+            0 => "# Root\n- first\n".to_owned(),
+            1 => "\n \r\n".to_owned(),
+            2 => "  - nested\n    # section\n".to_owned(),
+            3 => "\n\n".to_owned(),
+            4 => format!("    {}", "long ".repeat(1500)),
+            5 => "tail\n\n- sibling\n".to_owned(),
+            6 => "\n  h|h\n  -|-\n  x|y\n\n".to_owned(),
+            7 => "  > - quoted\n  >\n  > - next\n".to_owned(),
+            8 => "\n".to_owned(),
+            9 => "- [x] last\n\n".to_owned(),
+            10 => "+ other\n\n".to_owned(),
+            _ => "outside".to_owned(),
+        };
+        let update = doc.append(&line).unwrap();
+        view.apply(&doc, &update).unwrap();
+        for i in update.new_containers {
+            if i % 3 != 0 {
+                selected.insert(container(i));
+                view.set_collapsed(&doc, container(i), true).unwrap();
+            }
+        }
+        let ids: Vec<_> = (0..doc.container_count()).map(container).collect();
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        let id = ids[seed as usize % ids.len()];
+        match step % 5 {
+            0 => {
+                preview = Some(id);
+                view.set_preview(&doc, preview, &mut tiny()).unwrap();
+            }
+            1 => {
+                preview = None;
+                view.set_preview(&doc, None, &mut tiny()).unwrap();
+            }
+            2 => view.reset(3).unwrap(),
+            _ => {
+                if !selected.insert(id) {
+                    selected.remove(&id);
+                }
+                view.toggle(&doc, id).unwrap();
+            }
+        }
+        let effective: Vec<_> = selected
+            .iter()
+            .copied()
+            .filter(|&id| Some(id) != preview)
+            .collect();
+        let sink = render(&doc, &mut view, false);
+        assert_eq!(sink.text, oracle(&doc, &effective), "step {step}");
+        assert_eq!(
+            view.heights().total_rows(),
+            sink.text.bytes().filter(|&b| b == b'\n').count() as u128
+        );
+        let offset = seed as usize % doc.source().len();
+        let expected = ranges(&doc, &effective)
+            .into_iter()
+            .find(|(span, _)| span.range().contains(&offset));
+        match view.hidden_at(&doc, offset, &mut tiny()).unwrap() {
+            FoldLookup::Hidden(c) => assert_eq!(Some(c.id), expected.map(|(_, id)| id)),
+            FoldLookup::Visible => assert!(expected.is_none()),
+            other => panic!("visibility did not finish: {other:?}"),
+        }
+    }
+    let update = doc.finish();
+    view.apply(&doc, &update).unwrap();
+    view.set_preview(&doc, None, &mut tiny()).unwrap();
+    assert_eq!(
+        render(&doc, &mut view, false).text,
+        oracle(&doc, &selected.into_iter().collect::<Vec<_>>())
+    );
+}
+
+#[test]
 fn empty_eof_and_task_containers_keep_metadata_and_own_one_placeholder() {
     for source in [
         ">",

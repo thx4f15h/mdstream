@@ -110,23 +110,31 @@ fn blanks_affect_only_their_exact_item_and_nested_children_count_as_content() {
             "- - inner\n  \n  # next\n",
             vec![ListTightness::Loose, ListTightness::Tight],
         ),
-        (
-            "> - first\n>\n> - new list\n",
-            vec![ListTightness::Tight, ListTightness::Tight],
-        ),
+        ("> - first\n>\n> - new list\n", vec![ListTightness::Loose]),
     ] {
         assert_eq!(lists(&parse(source)), expected, "{source:?}");
     }
 }
 
 #[test]
-fn unprefixed_blanks_and_marker_changes_keep_existing_scope_boundaries() {
+fn unprefixed_blanks_keep_identity_but_marker_changes_close_the_list() {
     let source = "- a\n\n- b\n  \n+ c\n  \n1. d\n  \n1) e\n";
     let doc = parse(source);
-    assert_eq!(lists(&doc), vec![ListTightness::Tight; 5]);
-    assert_eq!(doc.container(ContainerId(0)).unwrap().source.end, 4);
+    assert_eq!(
+        lists(&doc),
+        [
+            ListTightness::Loose,
+            ListTightness::Tight,
+            ListTightness::Tight,
+            ListTightness::Tight
+        ]
+    );
+    assert_eq!(
+        doc.container(ContainerId(0)).unwrap().source.end,
+        source.find('+').unwrap()
+    );
     assert_eq!(doc.blocks()[1].kind, BlockKind::Blank);
-    assert_eq!(doc.blocks()[1].container, None);
+    assert_eq!(doc.blocks()[1].container, Some(ContainerId(1)));
 }
 
 #[test]
@@ -310,10 +318,12 @@ fn new_close_loosen_and_shared_tail_deltas_reconstruct_snapshots_and_merge() {
     );
 
     let mut doc = Document::new();
-    doc.append_into("- a\n  \n  b\n\n", &mut scratch).unwrap();
+    doc.append_into("- a\n  \n  b\n\n# exit\n", &mut scratch)
+        .unwrap();
     let capacity = scratch.loosened_lists.capacity();
     for _ in 0..100 {
-        doc.append_into("- a\n  \n  b\n\n", &mut scratch).unwrap();
+        doc.append_into("- a\n  \n  b\n\n# exit\n", &mut scratch)
+            .unwrap();
         assert_eq!(scratch.loosened_lists.len(), 1);
         assert_eq!(scratch.loosened_lists.capacity(), capacity);
     }
@@ -495,7 +505,7 @@ fn generated_nested_list_groups_match_independent_expected_spacing() {
             .map(|line| format!("{prefix}{line}\n"))
             .collect::<String>();
         source.push_str(&group);
-        source.push('\n');
+        source.push_str("\n# exit\n");
         expected.extend_from_slice(values);
         let start = streamed.source().len();
         let mut at = start;
