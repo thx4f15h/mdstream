@@ -263,7 +263,7 @@ pub(crate) struct FoldState {
     row_ranges: BTreeMap<usize, TableRowRange>,
     source_ranges: BTreeMap<usize, SourceFoldId>,
     source_candidates: BTreeMap<SourceFoldId, SourceCandidate>,
-    // The sole open top-level paragraph, even if expanded or previewed.
+    // The sole open logical paragraph, even if expanded or previewed.
     open_paragraph: Option<SourceFoldId>,
     // At most one disjoint source range ends at the old EOF. It can coexist
     // with a completed syntax/row boundary, so it needs its own refresh slot.

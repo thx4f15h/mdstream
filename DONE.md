@@ -951,3 +951,19 @@ README/TODO 已同步，仅标记此独立子项。显式目标/引用后缀、�
 项目 devShell 验收全部通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 815 项、`cargo test --doc` 64 项、`cargo fmt --all -- --check` 及 `git diff --check`。更新的 `paragraph_folding` release 示例先收起开放段落再追加百万字，8 帧/47 计费字节、一次段尾恢复；既有 `source_folding`、`folding`、`table_row_folding` 示例通过。完整日志：`/tmp/mdtui3-open-paragraph-validation.log`；专项日志：`/tmp/mdtui3-open-paragraph-targeted2.log`、`/tmp/mdtui3-open-paragraph-targeted3.log`（后者的千层测试输入修正已由完整验收复核）。
 
 README/TODO 已同步，只勾选显式开放顶层段落前缀折叠。容器跨物理叶块段落身份、自动发现/长度默认策略、逻辑/显示行数预览、完整字素/对象截断、媒体详情、通用手工范围增长和终端 UI 继续保留 TODO。
+
+## 2026-10-30 容器内段落有界前缀折叠交付
+
+完成已识别容器方言内的独立段落折叠核心：`SourceFoldRegistration::container_paragraph` 以首物理叶块 BlockId 标识同一确切作用域内的连续文本，显式/lazy 续行共用一个段落，物理叶块与行内对象保持原身份。开放或已闭合段落均可显式注册，初始展开，生成视图独立 SourceFoldId；源码字节前缀包含物理标记，向下对齐 UTF-8/CRLF，允许跨叶块或为零，必须在已分类包络内留下余文。其它叶块、空标记和非正文结构不接受。
+
+开放尾部暂定到 EOF，逐次/合并 apply 后保留增长、闭合和 reset 的身份与意愿。空行、块中断、子容器/兄弟条目及作用域退出冻结原段尾；返回外层的后续段落使用新首叶块。多行 Setext 或整段表格改型移除注册及预览，晚表头分离将段尾收缩到该物理行起点；若余文消失也移除。成功/失败长表头与超过分类窗口的分隔行均覆盖；不把选择自动转交新语法对象。
+
+解析器复用活动 container_title/current，闭合时仅插入一次 first -> end 有序索引，`Work::paragraph_closures` 计数；P 个闭合段落占 O(P)，封口 O(log P)，无物理叶块遍历。构造 O(log P + log R)，两端祖先路径逐项共享 Budget，注册游标 O(1)；视图继续共用一个活动段落槽，普通增长 O(log R + log F + log T)，闭合额外一次 O(log P) 查询。千层引用下百万字后再逐字追加 1000 次恰好 1000 次刷新，input/inline 各增加 1000，容器/标题步骤及段尾索引零增长；4096 叶块只在封口时写一次，旧叶块未改写。4096 历史段落注册不增加活动追加刷新；250 层列表注册的两条祖先路径总计 1000 次，完成前没有任何部分注册。
+
+整段与手工/其它段落注册不相交，保留章节/容器 parent、祖先折叠、批量、临时预览及 Reveal 导航。占位与 paragraph_end(first) 分别计费；占位贡献 owner tile 行高，结束回调只复位段落局部状态。远处隐藏内部起步与检查点恢复不回放隐藏正文；新可见叶块保留自身容器 ID，完整祖先上下文仍由宿主按预算查询。旧注册/枚举/布局任务、测量和检查点按既有通知及版本契约拒绝或失效。
+
+新增 15 项专项测试：288 组独立标量换行布局模型、240 轮流式/960 次切换的区间与高度模型、UTF-8 全切点及逐前缀、CRLF/EOF/孤立 CR、部分 tab/lazy/任务标记、普通闭合与迟确认、长表头/分隔行成功失败、百万字/千层引用/250 层列表/4096 历史段落和叶块、注册原子性与重叠拒绝、段尾零预算暂停、共享 recovery、独立视图、导航/批量/预览及合并通知重放。既有 30 项段落测试继续通过。首轮两处测试输入计算修正为实际字节端点和隐藏内部 tile 起点；Clippy 提示的两处整除写法也已修正，无解析期望降级。
+
+项目 devShell 全部验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 **830 项**、`cargo test --doc` **65 项**、`cargo fmt --all -- --check` 及 `git diff --check`。新增 `container_paragraph_folding` release 示例在百万字追加和兄弟条目恢复后仅 **6 帧/32 计费字节/一次段尾回调**；原 paragraph_folding、source_folding、container_folding release 示例均通过。完整日志 `/tmp/mdtui3-container-paragraph-validation.log`，专项日志 `/tmp/mdtui3-container-paragraph-targeted.log`。
+
+README/TODO 已同步；已交付显式源码前缀核心。自动发现/长度默认策略、逻辑/显示行数前缀、完整字素/对象截断、媒体详情、完整容器/tab 方言及终端排版继续保留 TODO。保持零运行时依赖、禁止 unsafe 和累计 O(n log n)/空间 O(n) 契约。

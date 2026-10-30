@@ -1641,7 +1641,7 @@ assert_eq!(view.fold_candidate(&doc, id)?, Some(candidate));
 
 创建仅做索引及固定次数 UTF-8/CRLF 端点探测；注册逐步检查至多两条顶层章节链，游标 O(1)，不读取前缀/余文。R 个注册占 O(R)，查询和切换沿用 O(log R + log F + log T)；不修改解析器，不为后续追加枚举旧段落。布局只读取有界前缀和后续可见窗口，完整隐藏内部按范围跳过，段尾上下文恢复不依赖余文长度。
 
-`cargo run -r --example paragraph_folding` 演示百万字余文、12 列示例换行与追加后的独立段落。`tests/paragraph_folding.rs` 覆盖 640 组列宽/边界布局模型、1000 轮随机与 240 次流式可见性/高度模型、UTF-8 全切点/逐前缀、行内映射、百万字恢复、4096 个历史注册以及旧任务/测量拒绝。开放顶层段落增长见下方；容器跨叶块段落身份、自动长度策略、按逻辑/显示行数选择预览、媒体详情及完整终端排版仍待实现。
+`cargo run -r --example paragraph_folding` 演示百万字余文、12 列示例换行与追加后的独立段落。`tests/paragraph_folding.rs` 覆盖 640 组列宽/边界布局模型、1000 轮随机与 240 次流式可见性/高度模型、UTF-8 全切点/逐前缀、行内映射、百万字恢复、4096 个历史注册以及旧任务/测量拒绝。开放顶层段落增长和容器跨叶块段落身份见下方；自动长度策略、按逻辑/显示行数选择预览、媒体详情及完整终端排版仍待实现。
 
 ### 开放顶层段落的前缀折叠
 
@@ -1677,7 +1677,37 @@ assert!(!view.is_collapsed(id));
 
 段尾回调依然表示这次布局已跳过的折叠尾部，即使文档尚未结束；追加使旧布局任务过期，宿主重建局部布局。收起范围增长、收缩或删除从原隐藏起点失效高度/检查点，过期测量和注册/枚举/导航任务均拒绝。展开及预览期间也维护活动范围，退出预览时使用最新边界；部分 tile 继续保留前缀/占位和后续可见内容，`paragraph_end` 的 object/recovery 预算及恢复规则保持不变。手工范围与整段预留不相交，章节祖先、批量和源码导航复用现有组合。
 
-最多一个顶层段落活动，视图只保留一个更新槽；每次通知只查原 BlockId 和该注册，O(log R + log F + log T)，不扫描历史注册、正文或祖先。封口/移除后退出槽，旧 EOF tile 沿用一次性边界校正；每个视图状态独立。解析器和语法索引没有新增工作。15 项专项验收覆盖 384 组独立换行布局、240 轮流式区间/高度模型、UTF-8 全切点/逐前缀及合并通知、各种迟确认/失败、百万字增长与恢复、4096 历史注册、千层容器边界、预算暂停和旧任务拒绝。`paragraph_folding` release 示例现在先注册并收起开放段落，再追加百万字及后续段落。容器跨叶块身份、自动发现/长度默认策略、按显示行数截断、完整对象边界与终端排版仍在 TODO。
+最多一个顶层段落活动，视图只保留一个更新槽；每次通知只查原 BlockId 和该注册，O(log R + log F + log T)，不扫描历史注册、正文或祖先。封口/移除后退出槽，旧 EOF tile 沿用一次性边界校正；每个视图状态独立。解析器和语法索引没有新增工作。15 项专项验收覆盖 384 组独立换行布局、240 轮流式区间/高度模型、UTF-8 全切点/逐前缀及合并通知、各种迟确认/失败、百万字增长与恢复、4096 历史注册、千层容器边界、预算暂停和旧任务拒绝。`paragraph_folding` release 示例现在先注册并收起开放段落，再追加百万字及后续段落。容器跨叶块身份见下方；自动发现/长度默认策略、按显示行数截断、完整对象边界与终端排版仍在 TODO。
+
+
+### 容器内多物理叶块段落的前缀折叠
+
+`SourceFoldRegistration::container_paragraph(document, view, first, preview_bytes)` 接受已识别容器内的开放或已闭合逻辑段落；`first` 必须是首物理叶块的 `BlockId`。同一确切容器作用域内的显式/lazy 续行共用该身份，后续叶块、空容器标记、标题、代码、定义和表格不接受。叶块的 `Sealed` 只表示物理行结束，不能用它判断逻辑段尾；不合并叶块，不修改原有行内对象、样式或源码映射。
+
+```rust
+use mdtui3::*;
+let mut doc = Document::new();
+doc.append("> first line\n> second line\n").unwrap();
+let mut view = FoldView::new(&doc, 1).unwrap();
+let mut task = SourceFoldRegistration::container_paragraph(&doc, &view, BlockId(0), 7).unwrap();
+let id = task.advance(&doc, &mut view, &mut Budget::new(WorkLimit::unlimited()))
+    .unwrap().id.unwrap();
+view.set_collapsed(&doc, id, true).unwrap();
+let update = doc.append("> third line\n>\n> next paragraph\n").unwrap();
+view.apply(&doc, &update).unwrap();
+let candidate = view.fold_candidate(&doc, id).unwrap().unwrap();
+assert!(!candidate.open);
+assert_eq!(candidate.summary, Some(Span::new(0, 7)));
+assert_eq!(candidate.source.end, doc.source().find(">\n").unwrap());
+```
+
+前缀按整个源码包络计字节，包含每行容器前缀、任务标记和隐藏语法；沿用 UTF-8/CRLF 向下对齐，上限必须小于已分类正文包络长度，不能只依靠未分类尾部留下余文。前缀可以跨多叶块，也可为零。开放尾部暂定到 EOF；空行、块中断、子容器/兄弟条目或作用域退出后冻结，返回外层的后续正文另起身份。EOF 也会封口。多行 Setext 改型使整个注册失效；晚表头从末叶块分离时，段尾收缩到表头物理起点，若余文消失则移除注册、意愿和预览。失败表头/分隔行仍留在原段落。宿主在逐次或合并 `apply` 后查询候选是否存在。
+
+整段预留与手工/其它段落注册不相交，端点预算验证结构范围的包含关系；parent 是注册时的最内层章节或容器。祖先折叠、批量、临时预览和 Reveal 导航保留内层意愿。占位使用首叶块身份，`paragraph_end(first)` 与占位分开计费；结束回调只复位段落局部状态、不计高。后续可见叶块仍携带自身容器身份，宿主若需要完整祖先路径，须继续使用有预算的容器接口；本接口不恢复任意深度的终端缩进栈。
+
+解析器只在真实逻辑段落闭合时写一个 `first -> end` 有序索引，`Work::paragraph_closures` 记录写入次数；P 个闭合段落占 O(P)，每次封口 O(log P)，不枚举物理叶块。活动首尾复用 `container_title/current`，普通增长不写此索引。注册构造 O(log P + log R)；随后两端祖先路径逐项共享 Budget，任务 O(1) 空间。每个视图仍仅有一个活动段落槽：普通增长 O(log R + log F + log T)，闭合时额外一次 O(log P) 查询；不扫描历史注册、正文或祖先。保留累计 O(n log n)、空间 O(n) 和摊还成本契约。
+
+`cargo run -r --example container_paragraph_folding` 演示引用中的列表条目、跨物理叶块注册、百万字追加及兄弟条目恢复。15 项专项测试覆盖 288 组独立布局、240 轮/960 次切换的可见性与高度模型、UTF-8 全切点/逐前缀、CRLF/EOF、部分 tab/lazy 续行、长表头及长分隔行成功/失败、千层引用与 250 层列表两端路径、4096 历史段落/物理叶块、预算暂停、检查点恢复及旧任务/测量拒绝。自动发现/长度策略、显示行数与完整对象截断、媒体详情、完整容器语法及终端排版继续保留 TODO。
 
 ## 表格连续行范围折叠
 
@@ -2110,6 +2140,7 @@ nix develop -c cargo run -r --example table_preview
 nix develop -c cargo run -r --example table_row_folding
 nix develop -c cargo run -r --example source_folding
 nix develop -c cargo run -r --example paragraph_folding
+nix develop -c cargo run -r --example container_paragraph_folding
 nix develop -c cargo run -r --example search
 nix develop -c cargo run -r --example heading_search
 nix develop -c cargo run -r --example anchors

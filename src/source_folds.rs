@@ -48,11 +48,38 @@ impl Document {
         end
     }
 
-    // A single active top-level paragraph can still grow or change kind. Its
-    // pending line is provisional, just like an open code/table fold's tail.
+    // Freeze one logical container paragraph, never its individual leaves.
+    // Setext promotion invalidates the first leaf; a table retracts the last.
+    pub(crate) fn close_container_paragraph(&mut self, end: usize) {
+        let Some((first, _)) = self.container_title.take() else {
+            return;
+        };
+        let block = &self.blocks[first.0];
+        if matches!(
+            block.kind,
+            BlockKind::Paragraph | BlockKind::Quote { .. } | BlockKind::ListItem { .. }
+        ) && block.source.start < end
+        {
+            self.container_paragraph_ends.insert(first, end);
+            self.work.paragraph_closures += 1;
+        }
+    }
+
+    // A single logical paragraph can grow or change kind. Container physical
+    // Sealed states do not close it. Pending input provisionally joins its tail.
     pub(crate) fn open_paragraph_source(&self, block: BlockId) -> Option<(Span, bool)> {
         let entry = self.block(block)?;
-        if entry.kind != BlockKind::Paragraph || entry.container.is_some() {
+        if entry.container.is_some() {
+            if self
+                .container_title
+                .is_some_and(|(first, _)| first == block)
+            {
+                return Some((Span::new(entry.source.start, self.source().len()), true));
+            }
+            let end = *self.container_paragraph_ends.get(&block)?;
+            return Some((Span::new(entry.source.start, end), false));
+        }
+        if entry.kind != BlockKind::Paragraph {
             return None;
         }
         let open = entry.state != SyntaxState::Sealed && !self.is_finished();
@@ -115,6 +142,7 @@ pub struct SourceFoldProgress {
 /// `new` and `paragraph` only accept Document::source_fold_limit's prefix;
 /// their anchors have left affinity, including at the old EOF. `open_paragraph`
 /// follows the active paragraph and may be removed on late structural changes.
+/// `container_paragraph` accepts open/closed multi-leaf container paragraphs.
 /// Changing the prefix requires removal and a new ID. Until completion no view state changes;
 /// cancellation, an error or stale document/view leaves no partial registration.
 /// O(1) task storage; two ancestor paths, never all candidates or covered bytes.
@@ -184,7 +212,7 @@ impl SourceFoldRegistration {
     /// its visible prefix. Remove it before changing the limit. Only sealed,
     /// top-level Paragraph blocks inside source_fold_limit are accepted; pending
     /// Setext/table candidates and open paragraphs can use `open_paragraph`;
-    /// container physical leaves are unsupported. O(log R), no body scan.
+    /// container sequences use [`Self::container_paragraph`]. O(log R), no body scan.
     pub fn paragraph<S>(
         document: &Document,
         view: &FoldView<S>,
@@ -224,7 +252,8 @@ impl SourceFoldRegistration {
     /// the block becomes a Setext heading/table, apply removes the registration,
     /// choice and preview. It does not transfer them to the new syntax object.
     /// Query `FoldView::fold_candidate` after apply to observe removal. Closed
-    /// paragraphs use [`Self::paragraph`]; container leaves are not accepted.
+    /// paragraphs use [`Self::paragraph`]; container sequences use
+    /// [`Self::container_paragraph`].
     ///
     /// One active registration is reconciled per update, including while
     /// expanded/previewed. No historical registrations, body bytes or ancestors
@@ -242,9 +271,68 @@ impl SourceFoldRegistration {
             .open_paragraph_source(block)
             .ok_or(LayoutError::InvalidRange)?;
         let entry = document.block(block).unwrap();
-        if !open || document.current != Some(block) || preview_bytes >= entry.source.len() {
+        if entry.container.is_some()
+            || !open
+            || document.current != Some(block)
+            || preview_bytes >= entry.source.len()
+        {
             return Err(LayoutError::InvalidRange);
         }
+        Self::paragraph_range(document, view, block, preview_bytes, source, open)
+    }
+
+    /// Register a logical paragraph in one exact container scope, using its
+    /// first physical leaf's BlockId. Explicit and lazy continuations share
+    /// this identity; later leaves, blank markers and non-text blocks fail.
+    /// Both open and closed paragraphs are accepted. The source-byte prefix
+    /// includes physical container prefixes and must leave classified content.
+    /// UTF-8/CRLF rounding and layout end callbacks match [`Self::paragraph`].
+    ///
+    /// Open ranges include pending input. Apply freezes them at a scope/block
+    /// boundary, retracts a late table header, or removes them after Setext or
+    /// whole-table promotion (also when retraction removes the hidden suffix).
+    /// Physical leaves and inline objects are never merged or copied. The
+    /// registration's parent is its innermost syntax ancestor; the two endpoint
+    /// paths consume budget even for arbitrarily deep containers.
+    ///
+    /// Construction uses O(log P + log R) index work, no leaf/body scan. Each
+    /// closed paragraph stores one end; open growth uses the existing parser
+    /// endpoints. One active registration per view is reconciled on apply.
+    pub fn container_paragraph<S>(
+        document: &Document,
+        view: &FoldView<S>,
+        first: BlockId,
+        preview_bytes: usize,
+    ) -> Result<Self, LayoutError> {
+        view.check(document)?;
+        let entry = document.block(first).ok_or(LayoutError::InvalidRange)?;
+        if entry.container.is_none() {
+            return Err(LayoutError::InvalidRange);
+        }
+        let (source, open) = document
+            .open_paragraph_source(first)
+            .ok_or(LayoutError::InvalidRange)?;
+        let classified_end = if open {
+            document.blocks[document.current.unwrap().0].source.end
+        } else {
+            source.end
+        };
+        if preview_bytes >= classified_end - source.start
+            || (!open && source.end > document.source_fold_limit())
+        {
+            return Err(LayoutError::InvalidRange);
+        }
+        Self::paragraph_range(document, view, first, preview_bytes, source, open)
+    }
+
+    fn paragraph_range<S>(
+        document: &Document,
+        view: &FoldView<S>,
+        block: BlockId,
+        preview_bytes: usize,
+        source: Span,
+        open: bool,
+    ) -> Result<Self, LayoutError> {
         view.validate_source_span(source)?;
         let mut cut = source.start + preview_bytes;
         while !document.source().is_char_boundary(cut) {
@@ -262,7 +350,7 @@ impl SourceFoldRegistration {
             source,
             hidden: Span::new(cut, source.end),
             paragraph: Some(block),
-            open: true,
+            open,
             endpoint: 0,
             started: false,
             next: None,

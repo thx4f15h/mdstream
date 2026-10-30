@@ -176,6 +176,9 @@ pub struct Document {
     // First leaf and content envelope of the current container text sequence.
     // Setext confirmation never merges leaves or reparses their inline content.
     container_title: Option<(BlockId, Span)>,
+    // Final paragraph ends keyed by the first physical leaf. The active
+    // sequence reuses container_title/current; ordinary growth writes no index.
+    container_paragraph_ends: std::collections::BTreeMap<BlockId, usize>,
     table_row: Option<table::RowParser>,
     references: References,
     footnotes: footnotes::Footnotes,
@@ -721,6 +724,9 @@ impl Document {
     }
 
     fn close_current(&mut self, update: &mut Update) {
+        if let Some(id) = self.current {
+            self.close_container_paragraph(self.blocks[id.0].source.end);
+        }
         self.container_inline = None;
         self.container_title = None;
         let mut inline = std::mem::take(&mut self.inline);
@@ -823,7 +829,6 @@ impl Document {
                 let list = self.containers.get(update.loosened_lists[index]).unwrap();
                 self.mark(list.source, Style::default(), update);
             }
-            self.container_title = None;
             let header = self.table_header.take().unwrap();
             self.confirm_table(header, span, columns, update);
             self.line_start = end;
@@ -1609,6 +1614,7 @@ impl Document {
         if header.container.is_some() {
             // A late header's first-cell state was moved above. An early header
             // discards its inherited paragraph state before parsing the cells.
+            self.close_container_paragraph(header.source.start);
             self.close_current(update);
             self.current = Some(block);
             self.blocks[block.0].state = SyntaxState::Growing;

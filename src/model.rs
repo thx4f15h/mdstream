@@ -193,6 +193,8 @@ pub struct Reference {
 /// Tree visits count mutation traversals; view queries do not mutate statistics.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Work {
+    /// Final container-paragraph endpoints inserted; no per-leaf/byte updates.
+    pub paragraph_closures: u64,
     pub input_bytes: u64,
     pub classified_bytes: u64,
     /// ATX payload bytes inspected once for leading whitespace and a possible

@@ -1582,3 +1582,797 @@ fn open_paragraph_closes_once_before_deep_containers_and_never_revisits_them() {
             .is_err()
     );
 }
+
+fn register_container(doc: &Document, view: &mut FoldView, block: BlockId, bytes: usize) -> FoldId {
+    let mut task = SourceFoldRegistration::container_paragraph(doc, view, block, bytes).unwrap();
+    let count = view.source_fold_count();
+    for _ in 0..2 * doc.container_count() + 30 {
+        let mut budget = one();
+        let p = task.advance(doc, view, &mut budget).unwrap();
+        assert_eq!(budget.used().bytes, 0);
+        if let Some(id) = p.id {
+            assert_eq!(p.completion, Completion::Covered);
+            assert_eq!(view.source_fold_count(), count + 1);
+            return id;
+        }
+        assert_eq!(view.source_fold_count(), count);
+    }
+    panic!("container registration stalled")
+}
+
+#[test]
+fn container_paragraph_first_leaf_identity_and_closed_multiline_ranges() {
+    let source = "> a中🙂bc\r\n> second\r\n>\r\n> third\n\n- item\n  continued\n- sibling\n";
+    let doc = parse(source);
+    for (text, end) in [
+        ("> a", source.find(">\r").unwrap()),
+        ("> third", source.find("\n\n-").unwrap() + 1),
+        ("- item", source.find("- sibling").unwrap()),
+        ("- sibling", source.len()),
+    ] {
+        let start = source.find(text).unwrap();
+        let first = doc.block_at(start).unwrap();
+        let mut view = FoldView::new(&doc, 2).unwrap();
+        let id = register_container(&doc, &mut view, first, 3);
+        let c = view.fold_candidate(&doc, id).unwrap().unwrap();
+        assert_eq!(c.source, Span::new(start, end));
+        assert_eq!(c.hidden, Span::new(start + 3, end));
+        assert!(!c.open);
+        assert_eq!(
+            view.paragraph_fold_block(&doc, source_id(id)).unwrap(),
+            Some(first)
+        );
+        assert_eq!(
+            c.parent,
+            doc.block(first).unwrap().container.map(FoldId::Container)
+        );
+        view.set_collapsed(&doc, id, true).unwrap();
+        verify_model(&doc, &view, &[c]);
+        view.reset(1).unwrap();
+        assert_eq!(view.fold_candidate(&doc, id).unwrap(), Some(c));
+    }
+    for (limit, cut) in [
+        (0, 0),
+        (3, 3),
+        (5, 3),
+        (6, 6),
+        (9, 6),
+        (10, 10),
+        (13, 12),
+        (15, 15),
+    ] {
+        let mut view = FoldView::new(&doc, 1).unwrap();
+        let id = register_container(&doc, &mut view, BlockId(0), limit);
+        assert_eq!(
+            view.fold_candidate(&doc, id).unwrap().unwrap().hidden.start,
+            cut
+        );
+    }
+}
+
+#[test]
+fn container_paragraph_rejects_other_leaves_nontext_and_overlap_atomically() {
+    let doc = parse(
+        "> first\n> second\n>\n> # heading\n> ```\n> code\n> ```\n> [r]: /url\n> a|b\n> -|-\n\nroot\n",
+    );
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    for i in 1..doc.blocks().len() {
+        assert!(
+            SourceFoldRegistration::container_paragraph(&doc, &view, BlockId(i), 0).is_err(),
+            "{i}: {:?}",
+            doc.blocks()[i]
+        );
+    }
+    assert!(SourceFoldRegistration::container_paragraph(&doc, &view, BlockId(0), 17).is_err());
+    let mut task = SourceFoldRegistration::container_paragraph(&doc, &view, BlockId(0), 4).unwrap();
+    let p = task
+        .advance(&doc, &mut view, &mut Budget::new(WorkLimit::default()))
+        .unwrap();
+    assert_eq!(p.completion, Completion::BudgetExhausted);
+    assert_eq!(view.source_fold_count(), 0);
+    let id = register_container(&doc, &mut view, BlockId(0), 4);
+    assert_eq!(
+        task.advance(&doc, &mut view, &mut one()),
+        Err(LayoutError::StaleContinuation)
+    );
+    assert!(SourceFoldRegistration::new(&doc, &view, Span::new(0, 3)).is_err());
+    assert!(SourceFoldRegistration::container_paragraph(&doc, &view, BlockId(0), 1).is_err());
+    let other = FoldView::new(&doc, 1).unwrap();
+    assert!(other.fold_candidate(&doc, id).unwrap().is_none());
+    view.remove_source_fold(&doc, source_id(id)).unwrap();
+    let mut manual = SourceFoldRegistration::new(&doc, &view, Span::new(3, 7)).unwrap();
+    finish(&mut manual, &doc, &mut view);
+    assert!(SourceFoldRegistration::container_paragraph(&doc, &view, BlockId(0), 1).is_err());
+}
+
+#[test]
+fn container_paragraph_growth_scope_changes_and_blank_boundaries() {
+    for (initial, tail, end) in [
+        ("> one\n", "> two\n>\n> next\n", 12),
+        ("> one\n", "lazy\n\nnext\n", 11),
+        ("> one\n", "> > nested\n", 6),
+        ("- one\n", "  two\n- next\n", 12),
+        ("> one\n", "> # next\n", 6),
+        ("> one\n", "> ```\n> code\n", 6),
+        ("> one\n", "> $$\n> math\n", 6),
+        ("> one\n", "> [r]: /url\n", 6),
+        ("> one\n", "> [^f]: note\n", 6),
+    ] {
+        let mut doc = Document::new();
+        doc.append(initial).unwrap();
+        let mut view = FoldView::new(&doc, 1).unwrap();
+        let id = register_container(&doc, &mut view, BlockId(0), 3);
+        view.set_collapsed(&doc, id, true).unwrap();
+        assert!(view.fold_candidate(&doc, id).unwrap().unwrap().open);
+        let update = doc.append(tail).unwrap();
+        view.apply(&doc, &update).unwrap();
+        let c = view.fold_candidate(&doc, id).unwrap().unwrap();
+        assert_eq!(c.source, Span::new(0, end), "{initial:?} {tail:?}");
+        assert!(!c.open && view.is_collapsed(id));
+        let visits = view.range_visits();
+        let update = doc.append("more").unwrap();
+        view.apply(&doc, &update).unwrap();
+        assert_eq!(view.fold_candidate(&doc, id).unwrap(), Some(c));
+        // One old-EOF correction may be required, but never a paragraph refresh.
+        assert!(view.range_visits() - visits <= 1);
+    }
+}
+
+#[test]
+fn container_paragraph_late_setext_and_tables_remove_or_retract() {
+    for (initial, tail, expected_end) in [
+        ("> one\n> two\n", "> ===\n", None),
+        ("> a|b\n", "> -|-\n", None),
+        ("> lead\n> a|b\n", "> -|-\n", Some(7)),
+        ("> lead\n> a|b\n", "> nope\n>\n", Some(20)),
+    ] {
+        for preview in [false, true] {
+            let mut doc = Document::new();
+            doc.append(initial).unwrap();
+            let mut view = FoldView::new(&doc, 1).unwrap();
+            let id = register_container(&doc, &mut view, BlockId(0), 3);
+            view.set_collapsed(&doc, id, true).unwrap();
+            if preview {
+                view.set_preview(&doc, Some(id), &mut one()).unwrap();
+            }
+            let update = doc.append(tail).unwrap();
+            view.apply(&doc, &update).unwrap();
+            let c = view.fold_candidate(&doc, id).unwrap();
+            assert_eq!(
+                c.map(|c| c.source.end),
+                expected_end,
+                "{initial:?} {tail:?}"
+            );
+            if expected_end.is_none() {
+                assert_eq!(view.source_fold_count(), 0);
+                assert!(!view.is_collapsed(id));
+                assert_eq!(view.preview(), None);
+                assert!(
+                    SourceFoldRegistration::container_paragraph(&doc, &view, BlockId(0), 0)
+                        .is_err()
+                );
+            } else {
+                assert!(!c.unwrap().open);
+                assert!(view.is_collapsed(id));
+                assert_eq!(view.preview(), preview.then_some(id));
+            }
+        }
+    }
+    let mut doc = Document::new();
+    doc.append("> lead\n> a|b\n").unwrap();
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    let id = register_container(&doc, &mut view, BlockId(0), 8);
+    let update = doc.append("> -|-\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    assert!(view.fold_candidate(&doc, id).unwrap().is_none());
+    // The surviving paragraph remains independently registerable with a shorter prefix.
+    register_container(&doc, &mut view, BlockId(0), 3);
+}
+
+#[test]
+fn container_paragraph_deep_million_byte_growth_and_thousands_of_leaves() {
+    let mut doc = Document::new();
+    doc.append(&format!("{}body\n", ">".repeat(1000))).unwrap();
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    let id = register_container(&doc, &mut view, BlockId(0), 1002);
+    view.set_collapsed(&doc, id, true).unwrap();
+    let update = doc
+        .append(&format!("{}{}", ">".repeat(1000), "x".repeat(1_000_000)))
+        .unwrap();
+    view.apply(&doc, &update).unwrap();
+    let before = doc.work();
+    let visits = view.range_visits();
+    for _ in 0..1000 {
+        let update = doc.append("x").unwrap();
+        view.apply(&doc, &update).unwrap();
+    }
+    assert_eq!(view.range_visits() - visits, 1000);
+    assert_eq!(doc.work().container_steps, before.container_steps);
+    assert_eq!(doc.work().heading_steps, before.heading_steps);
+    assert_eq!(doc.work().paragraph_closures, 0);
+    assert_eq!(doc.work().input_bytes - before.input_bytes, 1000);
+    assert_eq!(doc.work().inline_bytes - before.inline_bytes, 1000);
+    let update = doc.append("\n\n# outside\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    assert_eq!(doc.work().paragraph_closures, 1);
+    let sink = render(&doc, &mut view, TileId(5), 8, true);
+    assert_eq!(sink.ends, vec![BlockId(0)]);
+    assert!(
+        sink.bytes < 20 && sink.text.contains("outside"),
+        "bytes={} text={:?}",
+        sink.bytes,
+        sink.text
+    );
+    assert!(sink.placeholders.is_empty());
+
+    let mut doc = Document::new();
+    doc.append(&"> line\n".repeat(4096)).unwrap();
+    assert_eq!(doc.work().paragraph_closures, 0);
+    let old = doc.blocks().to_vec();
+    doc.append(">\n").unwrap();
+    assert_eq!(doc.work().paragraph_closures, 1);
+    assert_eq!(&doc.blocks()[..old.len()], old.as_slice());
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    let id = register_container(&doc, &mut view, BlockId(0), 3);
+    assert_eq!(
+        view.fold_candidate(&doc, id).unwrap().unwrap().source.end,
+        7 * 4096
+    );
+    for i in [1, 2048, 4095] {
+        assert!(SourceFoldRegistration::container_paragraph(&doc, &view, BlockId(i), 0).is_err());
+    }
+}
+
+#[test]
+fn container_paragraph_closed_history_does_not_add_append_refreshes() {
+    let mut doc = Document::new();
+    doc.append(&"> body\n>\n".repeat(4096)).unwrap();
+    assert_eq!(doc.work().paragraph_closures, 4096);
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    for i in 0..4096 {
+        let id = register_container(&doc, &mut view, BlockId(i * 2), 3);
+        view.set_collapsed(&doc, id, true).unwrap();
+    }
+    let update = doc.append("> active\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    let id = register_container(&doc, &mut view, BlockId(8192), 3);
+    let visits = view.range_visits();
+    for _ in 0..1000 {
+        let update = doc.append("z").unwrap();
+        view.apply(&doc, &update).unwrap();
+    }
+    assert_eq!(view.range_visits() - visits, 1000);
+    assert_eq!(doc.work().paragraph_closures, 4096);
+    assert_eq!(view.source_fold_count(), 4097);
+    let update = doc.finish();
+    view.apply(&doc, &update).unwrap();
+    assert!(!view.fold_candidate(&doc, id).unwrap().unwrap().open);
+    assert_eq!(doc.work().paragraph_closures, 4097);
+}
+
+#[test]
+fn container_paragraph_pending_end_and_checkpoint_recovery_use_shared_budget() {
+    let mut doc = Document::new();
+    doc.append(&format!("> {}", "x".repeat(1_000_000))).unwrap();
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    let id = register_container(&doc, &mut view, BlockId(0), 0);
+    view.set_collapsed(&doc, id, true).unwrap();
+    let mut pass = LayoutPass::folded(&doc, &view, TileId(0), u64::MAX).unwrap();
+    let mut sink = Sink {
+        width: 7,
+        ..Default::default()
+    };
+    let mut budget = Budget::new(WorkLimit {
+        objects: 1,
+        ..WorkLimit::unlimited()
+    });
+    assert_eq!(
+        pass.advance_folded(&doc, &mut view, &mut budget, &mut sink)
+            .unwrap(),
+        Completion::BudgetExhausted
+    );
+    assert_eq!(sink.placeholders.len(), 1);
+    assert!(sink.ends.is_empty());
+    for _ in 0..3 {
+        let mut budget = Budget::new(WorkLimit {
+            objects: 0,
+            ..WorkLimit::unlimited()
+        });
+        assert_eq!(
+            pass.advance_folded(&doc, &mut view, &mut budget, &mut sink)
+                .unwrap(),
+            Completion::BudgetExhausted
+        );
+        assert_eq!(budget.used(), WorkLimit::default());
+    }
+    assert_eq!(
+        pass.advance_folded(
+            &doc,
+            &mut view,
+            &mut Budget::new(WorkLimit::unlimited()),
+            &mut sink
+        )
+        .unwrap(),
+        Completion::EndOfDocument
+    );
+    assert_eq!(sink.ends, vec![BlockId(0)]);
+    assert_eq!(sink.bytes, 0);
+    let update = doc.append("\n\nnext\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    view.insert_checkpoint(TileId(0), ()).unwrap();
+    let mut pass =
+        LayoutPass::folded_from_checkpoint(&doc, &view, TileId(0), TileId(2), u64::MAX, 1024)
+            .unwrap()
+            .unwrap();
+    let mut sink = Sink {
+        width: 7,
+        ..Default::default()
+    };
+    let mut done = false;
+    for _ in 0..100 {
+        let mut budget = Budget::new(WorkLimit {
+            queries: 1,
+            objects: 1,
+            tiles: 1,
+            bytes: 4,
+            recovery: 1,
+            ..Default::default()
+        });
+        let completion = pass
+            .advance_folded(&doc, &mut view, &mut budget, &mut sink)
+            .unwrap();
+        assert!(budget.used().recovery <= 1);
+        if completion == Completion::EndOfDocument {
+            done = true;
+            break;
+        }
+    }
+    assert!(done && sink.bytes < 20);
+    assert_eq!(sink.text, "~\n\nnext\n");
+    assert_eq!(sink.ends, vec![BlockId(0)]);
+}
+
+#[test]
+fn container_paragraph_old_registration_readers_and_measurements_are_rejected() {
+    let mut doc = Document::new();
+    doc.append("> paragraph\n").unwrap();
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    let mut stale =
+        SourceFoldRegistration::container_paragraph(&doc, &view, BlockId(0), 0).unwrap();
+    let id = register_container(&doc, &mut view, BlockId(0), 3);
+    assert_eq!(
+        stale.advance(&doc, &mut view, &mut one()),
+        Err(LayoutError::StaleContinuation)
+    );
+    view.set_collapsed(&doc, id, true).unwrap();
+    let mut candidates =
+        SourceFoldCandidates::new(&doc, &view, Span::new(0, doc.source().len())).unwrap();
+    let mut pass = LayoutPass::folded(&doc, &view, TileId(0), 20).unwrap();
+    let ticket = view.heights().ticket(TileId(0)).unwrap();
+    view.insert_checkpoint(TileId(0), ()).unwrap();
+    let mut update = doc.append("pending").unwrap();
+    update.merge(doc.append("\n\n> next\n").unwrap()).unwrap();
+    view.apply(&doc, &update).unwrap();
+    view.apply(&doc, &update).unwrap();
+    assert!(view.measure(ticket, 9).is_err());
+    assert!(view.checkpoints().token(TileId(0)).is_none());
+    assert_eq!(
+        candidates.advance(&doc, &view, &mut one(), &mut Vec::new()),
+        Err(LayoutError::StaleContinuation)
+    );
+    assert_eq!(
+        pass.advance_folded(&doc, &mut view, &mut one(), &mut Sink::default()),
+        Err(LayoutError::StaleContinuation)
+    );
+    assert!(view.is_collapsed(id));
+    view.remove_source_fold(&doc, source_id(id)).unwrap();
+    let update = doc.append("more\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    let block = doc.block_at(doc.source().find("next").unwrap()).unwrap();
+    let mut stale = SourceFoldRegistration::container_paragraph(&doc, &view, block, 1).unwrap();
+    let update = doc.append("tail").unwrap();
+    view.apply(&doc, &update).unwrap();
+    assert_eq!(
+        stale.advance(&doc, &mut view, &mut one()),
+        Err(LayoutError::StaleContinuation)
+    );
+    assert_eq!(view.source_fold_count(), 0);
+}
+
+#[test]
+fn container_paragraph_preview_batch_anchor_and_navigation_preserve_choice() {
+    let doc = parse("> # Root\n> abcdefgh\n>\n> # Other\n> body\n");
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    let id = register_container(&doc, &mut view, BlockId(1), 3);
+    let heading = FoldId::Container(ContainerId(0));
+    view.set_collapsed(&doc, id, true).unwrap();
+    view.set_collapsed(&doc, heading, true).unwrap();
+    assert!(render(&doc, &mut view, TileId(0), 8, true).ends.is_empty());
+    view.set_collapsed(&doc, heading, false).unwrap();
+    assert!(view.is_collapsed(id));
+    view.set_preview(&doc, Some(id), &mut one()).unwrap();
+    assert!(render(&doc, &mut view, TileId(0), 8, true).ends.is_empty());
+    view.set_preview(&doc, None, &mut one()).unwrap();
+    assert_eq!(
+        render(&doc, &mut view, TileId(0), 8, true).ends,
+        vec![BlockId(1)]
+    );
+    let anchor = FoldAnchor::new(&doc, 16).unwrap();
+    assert_eq!(
+        anchor
+            .resolve(&doc, &view, 10, &mut one())
+            .unwrap()
+            .unwrap()
+            .hidden_by,
+        Some(id)
+    );
+    let mut nav = FoldNavigation::new(
+        &doc,
+        &view,
+        &Navigator::new(),
+        NavAction::Source(16),
+        FoldNavigationPolicy::Reveal,
+        10,
+    )
+    .unwrap();
+    for _ in 0..20 {
+        let p = nav.advance(&doc, &mut view, &mut one()).unwrap();
+        if p.completion == Completion::Covered {
+            assert_eq!(p.target.unwrap().source, Some(16));
+            break;
+        }
+    }
+    assert!(!view.is_collapsed(id));
+    let mut batch = FoldBatch::new(
+        &doc,
+        &view,
+        FoldBatchAction::Subtree {
+            root: id,
+            collapsed: true,
+        },
+    )
+    .unwrap();
+    for _ in 0..20 {
+        if batch
+            .advance(&doc, &mut view, &mut one())
+            .unwrap()
+            .completion
+            == Completion::Covered
+        {
+            break;
+        }
+    }
+    assert!(view.is_collapsed(id) && !view.is_collapsed(heading));
+}
+
+#[test]
+fn container_paragraph_all_splits_live_prefixes_and_merged_updates_agree() {
+    let cases = [
+        (
+            "> 中🙂 *prefix\r\n".to_string(),
+            "> across*\r\n>\r\n> after\n".to_string(),
+        ),
+        (
+            "> 中🙂\n".to_string(),
+            "> more\n> ===\n> next\n".to_string(),
+        ),
+        ("> a|b\n".to_string(), "> -|-\n> x|y\n\nend\n".to_string()),
+        (
+            format!("> lead\n> {}", "x".repeat(1100)),
+            "|中\r\n> -|-\r\n> x|y\r\n".to_string(),
+        ),
+        (
+            "> a|b\n".to_string(),
+            "> not a delimiter\n>\n> end\n".to_string(),
+        ),
+        (
+            "- [x] 中\n".to_string(),
+            "  lazy\nno prefix\n- next\n".to_string(),
+        ),
+        ("- > one\n".to_string(), "\t中\r\n\n# outside".to_string()),
+        ("> text\n".to_string(), "> more\r".to_string()),
+    ];
+    let shape = |c: FoldCandidate| (c.parent, c.source, c.hidden, c.summary, c.open);
+    for (initial, tail) in cases {
+        for bytes in [0, 3] {
+            let mut baseline = Document::new();
+            baseline.append(&initial).unwrap();
+            let mut expected = FoldView::new(&baseline, 1).unwrap();
+            let bid = register_container(&baseline, &mut expected, BlockId(0), bytes);
+            expected.set_collapsed(&baseline, bid, true).unwrap();
+            let mut update = baseline.append(&tail).unwrap();
+            update.merge(baseline.finish()).unwrap();
+            expected.apply(&baseline, &update).unwrap();
+            let candidate = expected.fold_candidate(&baseline, bid).unwrap().map(shape);
+            let layout = render(&baseline, &mut expected, TileId(0), 9, true);
+            for split in (0..=tail.len()).filter(|&i| tail.is_char_boundary(i)) {
+                for merged in [false, true] {
+                    let mut doc = Document::new();
+                    doc.append(&initial).unwrap();
+                    let mut view = FoldView::new(&doc, 1).unwrap();
+                    let id = register_container(&doc, &mut view, BlockId(0), bytes);
+                    view.set_collapsed(&doc, id, true).unwrap();
+                    let mut update = doc.append(&tail[..split]).unwrap();
+                    if !merged {
+                        view.apply(&doc, &update).unwrap();
+                    }
+                    let next = doc.append(&tail[split..]).unwrap();
+                    if merged {
+                        update.merge(next).unwrap();
+                    } else {
+                        update = next;
+                    }
+                    update.merge(doc.finish()).unwrap();
+                    view.apply(&doc, &update).unwrap();
+                    view.apply(&doc, &update).unwrap();
+                    assert_eq!(doc.blocks(), baseline.blocks());
+                    assert_eq!(view.fold_candidate(&doc, id).unwrap().map(shape), candidate);
+                    let sink = render(&doc, &mut view, TileId(0), 9, true);
+                    assert_eq!(sink.text, layout.text);
+                    assert_eq!(sink.positions, layout.positions);
+                    assert_eq!(sink.ends, layout.ends);
+                }
+            }
+            let mut doc = Document::new();
+            doc.append(&initial).unwrap();
+            let mut view = FoldView::new(&doc, 1).unwrap();
+            let id = register_container(&doc, &mut view, BlockId(0), bytes);
+            view.set_collapsed(&doc, id, true).unwrap();
+            for ch in tail.chars() {
+                let update = doc.append(ch.encode_utf8(&mut [0; 4])).unwrap();
+                view.apply(&doc, &update).unwrap();
+                let mut oracle = Document::new();
+                oracle.append(&initial).unwrap();
+                let mut ov = FoldView::new(&oracle, 1).unwrap();
+                let oid = register_container(&oracle, &mut ov, BlockId(0), bytes);
+                let update = oracle.append(&doc.source()[initial.len()..]).unwrap();
+                ov.apply(&oracle, &update).unwrap();
+                assert_eq!(
+                    view.fold_candidate(&doc, id).unwrap().map(shape),
+                    ov.fold_candidate(&oracle, oid).unwrap().map(shape)
+                );
+                verify_model(
+                    &doc,
+                    &view,
+                    &view
+                        .fold_candidate(&doc, id)
+                        .unwrap()
+                        .into_iter()
+                        .collect::<Vec<_>>(),
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn container_paragraph_layout_matches_independent_visible_scalar_model() {
+    for length in [7, 255, 256, 257, 511, 512, 513, 1024] {
+        for width in [1, 3, 7, 17] {
+            for bytes in [0, 3, length + 4] {
+                for tail in [">\n> next\n", "\n# outside\n", ""] {
+                    let mut doc = Document::new();
+                    doc.append(&format!("> {}\n> second line\n", "x".repeat(length)))
+                        .unwrap();
+                    let mut view = FoldView::new(&doc, 1).unwrap();
+                    let id = register_container(&doc, &mut view, BlockId(0), bytes);
+                    view.set_collapsed(&doc, id, true).unwrap();
+                    let mut update = doc.append(tail).unwrap();
+                    update.merge(doc.finish()).unwrap();
+                    view.apply(&doc, &update).unwrap();
+                    let c = view.fold_candidate(&doc, id).unwrap().unwrap();
+                    let mut oracle = Sink {
+                        width,
+                        ..Default::default()
+                    };
+                    for span in [
+                        Span::new(0, c.hidden.start),
+                        Span::new(c.hidden.end, doc.source().len()),
+                    ] {
+                        if span.start == c.hidden.end {
+                            oracle.scalar('~');
+                            oracle.scalar('\n');
+                        }
+                        for run in doc.runs_in(span).unwrap() {
+                            if !run.style.contains(Style::HIDDEN) {
+                                for ch in run.text.chars() {
+                                    oracle.scalar(ch);
+                                }
+                            }
+                        }
+                    }
+                    let sink = render(&doc, &mut view, TileId(0), width, true);
+                    assert_eq!(sink.text, oracle.text);
+                    assert_eq!(sink.total, oracle.total);
+                    assert_eq!(sink.ends, vec![BlockId(0)]);
+                    assert_eq!(view.heights().total_rows(), u128::from(sink.total));
+                    view.reset(1).unwrap();
+                    let large = render(&doc, &mut view, TileId(0), width, false);
+                    assert_eq!(sink.positions, large.positions);
+                    assert_eq!(sink.text, large.text);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn container_paragraph_streaming_visibility_and_height_model() {
+    let mut doc = Document::new();
+    doc.append("> # Root\n").unwrap();
+    let mut view = FoldView::new(&doc, 3).unwrap();
+    let mut ids = Vec::new();
+    let mut seed = 123u64;
+    for turn in 0..240 {
+        let start = doc.source().len();
+        let update = doc.append(&format!("> line {turn}\n")).unwrap();
+        view.apply(&doc, &update).unwrap();
+        let block = doc.block_at(start).unwrap();
+        let id = register_container(&doc, &mut view, block, 3);
+        let continuation = format!("> {}\n", "x".repeat(turn % 7 * 97 + 1));
+        let update = doc.append(&continuation).unwrap();
+        view.apply(&doc, &update).unwrap();
+        assert_eq!(
+            view.fold_candidate(&doc, id).unwrap().unwrap().source,
+            Span::new(start, doc.source().len())
+        );
+        let end = doc.source().len();
+        let setext = turn % 3 == 0;
+        let update = doc
+            .append(if setext { "> ===\n>\n" } else { ">\n" })
+            .unwrap();
+        view.apply(&doc, &update).unwrap();
+        if setext {
+            assert_eq!(view.fold_candidate(&doc, id).unwrap(), None);
+        } else {
+            let c = view.fold_candidate(&doc, id).unwrap().unwrap();
+            assert_eq!(c.source, Span::new(start, end));
+            assert_eq!(c.hidden.start, start + 3);
+            assert!(!c.open);
+            ids.push(c);
+        }
+        let mut expected = ids.clone();
+        for i in 0..doc.container_count() {
+            expected.push(
+                doc.fold_candidate(FoldId::Container(ContainerId(i)))
+                    .unwrap(),
+            );
+        }
+        for i in 0..doc.headings().entries().len() {
+            expected.push(doc.fold_candidate(FoldId::Heading(HeadingId(i))).unwrap());
+        }
+        for _ in 0..4 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let target = expected[(seed >> 32) as usize % expected.len()].id;
+            view.toggle(&doc, target).unwrap();
+            if seed.is_multiple_of(7) {
+                view.set_preview(&doc, Some(target), &mut one()).unwrap();
+            }
+            if seed.is_multiple_of(13) {
+                view.reset(2).unwrap();
+            }
+            verify_model(&doc, &view, &expected);
+        }
+    }
+}
+
+#[test]
+fn container_paragraph_long_late_headers_and_delimiters_preserve_only_prose() {
+    for success in [false, true] {
+        for first_header in [false, true] {
+            let mut doc = Document::new();
+            let lead = if first_header { "" } else { "> lead\n" };
+            doc.append(&format!("{lead}> {}", "x".repeat(1100)))
+                .unwrap();
+            let mut view = FoldView::new(&doc, 1).unwrap();
+            let id = register_container(&doc, &mut view, BlockId(0), 3);
+            view.set_collapsed(&doc, id, true).unwrap();
+            let update = doc.append("|other\n").unwrap();
+            view.apply(&doc, &update).unwrap();
+            let update = doc
+                .append(&format!("> {}|{}", "-".repeat(2048), "-".repeat(2048)))
+                .unwrap();
+            view.apply(&doc, &update).unwrap();
+            assert!(view.fold_candidate(&doc, id).unwrap().unwrap().open);
+            assert_eq!(doc.work().paragraph_closures, 0);
+            let update = doc.append(if success { "\n" } else { "x\n>\n" }).unwrap();
+            view.apply(&doc, &update).unwrap();
+            let c = view.fold_candidate(&doc, id).unwrap();
+            if success && first_header {
+                assert!(c.is_none());
+                assert_eq!(doc.work().paragraph_closures, 0);
+            } else {
+                let c = c.unwrap();
+                assert!(!c.open);
+                assert_eq!(
+                    c.source.end,
+                    if success {
+                        lead.len()
+                    } else {
+                        doc.source().len() - 2
+                    }
+                );
+                assert_eq!(doc.work().paragraph_closures, 1);
+                verify_model(&doc, &view, &[c]);
+            }
+        }
+    }
+}
+
+#[test]
+fn container_paragraph_index_is_chunk_invariant_from_first_leaf_to_eof() {
+    fn ranges(doc: &Document) -> Vec<(BlockId, Span, bool)> {
+        let mut view = FoldView::new(doc, 1).unwrap();
+        let mut out = Vec::new();
+        for i in 0..doc.blocks().len() {
+            if let Ok(mut task) =
+                SourceFoldRegistration::container_paragraph(doc, &view, BlockId(i), 0)
+            {
+                let id = finish(&mut task, doc, &mut view);
+                let c = view.fold_candidate(doc, id).unwrap().unwrap();
+                out.push((BlockId(i), c.source, c.open));
+            }
+        }
+        out
+    }
+    for source in [
+        "> 中\r\n> 🙂\r\n>\r\n- one\n  two\n- next\n\nroot\n",
+        "> one\n> two\n> ===\n> body\n>\n> third\n",
+        "> lead\n> a|b\n> -|-\n> x|y\n\n> after\n",
+        "- > *em\n\t中*\nno prefix\n\nnext\n",
+        "> [ref\n> label]\n> `code\n> end` $math\n> end$\n>\n[ref label]: /late\n",
+    ] {
+        let baseline = parse(source);
+        let expected = ranges(&baseline);
+        for split in (0..=source.len()).filter(|&i| source.is_char_boundary(i)) {
+            let mut doc = Document::new();
+            doc.append(&source[..split]).unwrap();
+            doc.append(&source[split..]).unwrap();
+            doc.finish();
+            assert_eq!(ranges(&doc), expected);
+            assert_eq!(
+                doc.work().paragraph_closures,
+                baseline.work().paragraph_closures
+            );
+        }
+        let mut doc = Document::new();
+        for ch in source.chars() {
+            doc.append(ch.encode_utf8(&mut [0; 4])).unwrap();
+            let mut whole = Document::new();
+            whole.append(doc.source()).unwrap();
+            assert_eq!(ranges(&doc), ranges(&whole));
+        }
+    }
+}
+
+#[test]
+fn container_paragraph_nested_list_registration_charges_both_ancestor_paths() {
+    let mut doc = Document::new();
+    for depth in 0..250 {
+        doc.append(&format!("{}- item {depth}\n", "  ".repeat(depth)))
+            .unwrap();
+    }
+    assert_eq!(doc.work().paragraph_closures, 249);
+    let block = BlockId(249);
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    let mut task = SourceFoldRegistration::container_paragraph(&doc, &view, block, 501).unwrap();
+    let id = loop {
+        let p = task.advance(&doc, &mut view, &mut one()).unwrap();
+        if let Some(id) = p.id {
+            assert_eq!(p.visited, 1000); // 250 lists + 250 items, twice.
+            break id;
+        }
+        assert_eq!(view.source_fold_count(), 0);
+    };
+    let before = doc.work();
+    let update = doc.append("lazy continuation\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    assert_eq!(doc.work().paragraph_closures, before.paragraph_closures);
+    assert!(view.fold_candidate(&doc, id).unwrap().unwrap().open);
+    let update = doc.finish();
+    view.apply(&doc, &update).unwrap();
+    assert_eq!(doc.work().paragraph_closures, 250);
+    let c = view.fold_candidate(&doc, id).unwrap().unwrap();
+    assert_eq!(c.source.end, doc.source().len());
+    assert!(!c.open);
+}
