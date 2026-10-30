@@ -180,14 +180,7 @@ impl Containers {
             work.container_steps += 1;
             matched = match *frame {
                 Active::Quote(_) => prefix.quote(),
-                Active::List { content_indent, .. } => {
-                    if prefix.spaces() >= content_indent {
-                        prefix.pos += content_indent;
-                        true
-                    } else {
-                        false
-                    }
-                }
+                Active::List { content_indent, .. } => prefix.consume_indent(content_indent),
             };
             if !matched {
                 break;
@@ -298,9 +291,9 @@ impl Containers {
     }
 
     /// Each matched frame consumes an explicit prefix byte or positive item
-    /// indentation. At the first mismatch, lazy text retains the entire suffix
-    /// in O(1); otherwise each unmatched frame pops once.
-    /// Space runs are scanned once even when several list levels consume them.
+    /// indentation (whole bytes at four-column tab stops). At the first mismatch,
+    /// lazy text retains the entire suffix in O(1); otherwise each unmatched
+    /// frame pops once. Whitespace runs are scanned at most twice across levels.
     pub fn line(
         &mut self,
         source: &str,
@@ -370,19 +363,18 @@ impl Containers {
                             list,
                             item,
                             indent,
-                            content_indent: marker.end - prefix.pos,
+                            content_indent: marker.column - prefix.column,
                             spacing: ItemSpacing::default(),
                         };
                         prefix.pos = marker.end;
+                        prefix.column = marker.column;
                         kind = BlockKind::ListItem {
                             indent,
                             number: marker.number,
                             task: None,
                         };
                         new_item = Some(item);
-                    } else if spaces >= content_indent {
-                        prefix.pos += content_indent;
-                    } else {
+                    } else if !prefix.consume_indent(content_indent) {
                         break;
                     }
                 }
@@ -427,7 +419,7 @@ impl Containers {
             // A continuing paragraph's underline wins over opening an empty
             // nested list, but cannot consume a sibling item's marker.
             if complete && paragraph.is_some() && paragraph == self.inner() {
-                let text = &prefix.bytes[prefix.pos + indent..prefix.end];
+                let text = &prefix.bytes[prefix.spaces_end..prefix.end];
                 prefix.inspected += text.len() as u64;
                 if crate::block::setext_level(text).is_some() {
                     break;
@@ -463,10 +455,11 @@ impl Containers {
                     list,
                     item,
                     indent,
-                    content_indent: marker.end - prefix.pos,
+                    content_indent: marker.column - prefix.column,
                     spacing: ItemSpacing::default(),
                 });
                 prefix.pos = marker.end;
+                prefix.column = marker.column;
                 kind = BlockKind::ListItem {
                     indent,
                     number: marker.number,
@@ -503,14 +496,17 @@ struct Marker {
     kind: ListMarker,
     number: Option<u32>,
     end: usize,
+    column: usize,
 }
 
 struct Prefix<'a> {
     bytes: &'a [u8],
     pos: usize,
+    column: usize,
     end: usize,
     complete: bool,
     spaces_end: usize,
+    spaces_column: usize,
     inspected: u64,
 }
 
@@ -519,25 +515,65 @@ impl<'a> Prefix<'a> {
         Self {
             bytes: source.as_bytes(),
             pos: span.start,
+            column: 0,
             end: crate::block::body_end(source, span),
             complete,
             spaces_end: span.start,
+            spaces_column: 0,
             inspected: 0,
         }
     }
 
+    /// Remaining columns in the cached horizontal whitespace run.
     fn spaces(&mut self) -> usize {
         if self.spaces_end <= self.pos {
             self.spaces_end = self.pos;
+            self.spaces_column = self.column;
             while self.spaces_end < self.end {
                 self.inspected += 1;
-                if self.bytes[self.spaces_end] != b' ' {
+                let byte = self.bytes[self.spaces_end];
+                if !matches!(byte, b' ' | b'\t') {
                     break;
                 }
+                self.spaces_column += indent_width(byte, self.spaces_column);
                 self.spaces_end += 1;
             }
         }
-        self.spaces_end - self.pos
+        self.spaces_column - self.column
+    }
+
+    /// Do not split a tab into virtual spaces. A failed match leaves the entire
+    /// prefix untouched, so lazy text or the new scope keeps the original bytes.
+    /// Cache the run endpoint across nested items; advancing visits each consumed
+    /// byte once more, never rescans the remaining run for every ancestor.
+    fn consume_indent(&mut self, columns: usize) -> bool {
+        if self.spaces() < columns {
+            return false;
+        }
+        let target = self.column + columns;
+        if target == self.spaces_column {
+            self.pos = self.spaces_end;
+            self.column = target;
+            return true;
+        }
+        if self.spaces_column - self.column == self.spaces_end - self.pos {
+            self.pos += columns;
+            self.column = target;
+            return true;
+        }
+        let mut at = self.pos;
+        let mut column = self.column;
+        while column < target {
+            self.inspected += 1;
+            column += indent_width(self.bytes[at], column);
+            at += 1;
+        }
+        if column != target {
+            return false;
+        }
+        self.pos = at;
+        self.column = column;
+        true
     }
 
     fn lazy_text(&mut self, source: &str, span: Span, work: &mut Work) -> bool {
@@ -553,7 +589,7 @@ impl<'a> Prefix<'a> {
         }
         let spaces = self.spaces();
         if spaces <= 3
-            && (self.bytes.get(self.pos + spaces) == Some(&b'>') || self.marker().is_some())
+            && (self.bytes.get(self.spaces_end) == Some(&b'>') || self.marker().is_some())
         {
             return false;
         }
@@ -573,23 +609,29 @@ impl<'a> Prefix<'a> {
 
     fn quote(&mut self) -> bool {
         let spaces = self.spaces();
-        let at = self.pos + spaces;
+        let at = self.spaces_end;
         self.inspected += u64::from(at < self.end);
         if spaces > 3 || at == self.end || self.bytes[at] != b'>' {
             return false;
         }
         self.pos = at + 1;
+        self.column = self.spaces_column + 1;
         if self.pos < self.end {
             self.inspected += 1;
-            if self.bytes[self.pos] == b' ' {
+            if self.bytes[self.pos] == b' '
+                || (self.bytes[self.pos] == b'\t' && indent_width(b'\t', self.column) == 1)
+            {
                 self.pos += 1;
+                self.column += 1;
             }
         }
         true
     }
 
     fn marker(&mut self) -> Option<Marker> {
-        let mut at = self.pos + self.spaces();
+        self.spaces();
+        let mut at = self.spaces_end;
+        let start = at;
         if at == self.end {
             return None;
         }
@@ -620,6 +662,7 @@ impl<'a> Prefix<'a> {
             at += 1;
             (kind, Some(value))
         };
+        let mut column = self.spaces_column + at - start;
         if at == self.end {
             if !self.complete {
                 return None;
@@ -629,6 +672,7 @@ impl<'a> Prefix<'a> {
                 kind,
                 number,
                 end: at,
+                column,
             });
         }
         self.inspected += 1;
@@ -637,12 +681,14 @@ impl<'a> Prefix<'a> {
         }
         while at < self.end && matches!(self.bytes[at], b' ' | b'\t') {
             self.inspected += 1;
+            column += indent_width(self.bytes[at], column);
             at += 1;
         }
         Some(Marker {
             kind,
             number,
             end: at,
+            column,
         })
     }
 
@@ -661,8 +707,10 @@ impl<'a> Prefix<'a> {
             return None;
         }
         self.pos += 3;
+        self.column += 3;
         while self.pos < self.end && matches!(self.bytes[self.pos], b' ' | b'\t') {
             self.inspected += 1;
+            self.column += indent_width(self.bytes[self.pos], self.column);
             self.pos += 1;
         }
         Some(TaskMarker {
@@ -670,4 +718,8 @@ impl<'a> Prefix<'a> {
             source: Span::new(at, at + 3),
         })
     }
+}
+
+fn indent_width(byte: u8, column: usize) -> usize {
+    if byte == b'\t' { 4 - column % 4 } else { 1 }
 }

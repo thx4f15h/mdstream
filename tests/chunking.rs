@@ -109,6 +109,11 @@ fn check_chunks(source: &str, boundaries: &[usize]) {
 #[test]
 fn every_single_split_for_small_constructs() {
     for source in [
+        "-\t```\r\n\t中🙂\r\n\t```\n-\t[x]\t# task\n",
+        "> \t-\tfirst\n> \t\t# title\n> \t-\tlast\n",
+        "- first\n\t# lazy\n\t- literal\n- ```\n\toutside\n",
+        "  >\t# title\n  >\t*中\n  >\t🙂*\n  >\t===\n",
+        "-\t[^n]: a\n\t    b\n\t\n\t$$\n\tx\n\t$$\n\th|h\n\t-|-\n",
         "[^n]\n[^n]: 中\r\n    🙂&amp;\r\n\r\n    last\r\nafter\n",
         "> - [^n]: first\n>       > # raw\n>   \n>       last\n> - [^n]: duplicate\n>       ignored\n",
         "- [^n]:\n  \n      second\n  \n  tail\n- next\n",
@@ -874,6 +879,37 @@ fn footnote_blocks_match_all_utf8_splits_and_live_prefixes_at_classification_lim
             "中🙂".repeat(150),
             "🙂中".repeat(150)
         );
+        for (at, _) in source.char_indices() {
+            check_chunks(&source, &[at]);
+        }
+        let mut live = Document::new();
+        for (at, c) in source.char_indices() {
+            let end = at + c.len_utf8();
+            live.append(&source[at..end]).unwrap();
+            let mut whole = Document::new();
+            whole.append(&source[..end]).unwrap();
+            assert_eq!(snapshot(&live), snapshot(&whole), "prefix {end}");
+        }
+        live.finish();
+        let mut whole = Document::new();
+        whole.append(&source).unwrap();
+        whole.finish();
+        assert_eq!(snapshot(&live), snapshot(&whole));
+    }
+}
+
+#[test]
+fn container_tabs_match_all_utf8_splits_and_live_prefixes_at_classification_limit() {
+    let sources = [
+        format!(
+            "-\t[中{}\r\n\t🙂](u)\n\t===\n-\t[x]\tlast",
+            "x".repeat(1020)
+        ),
+        format!("> \t-\th|h\r\n> \t\t{}|-\r\n> \t\tx|y\n", "-".repeat(1030)),
+        format!("{}-\t中\n{}\t# next\n", ">".repeat(1022), ">".repeat(1022)),
+        format!("-{}\t# literal\n\tcontinued\n", " ".repeat(1023)),
+    ];
+    for source in sources {
         for (at, _) in source.char_indices() {
             check_chunks(&source, &[at]);
         }

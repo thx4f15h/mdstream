@@ -84,6 +84,8 @@ pub enum BlockKind {
         depth: usize,
     },
     ListItem {
+        /// Marker indentation in columns relative to the parent prefix;
+        /// container tabs advance to physical-line stops every four columns.
         indent: usize,
         number: Option<u32>,
         task: Option<TaskMarker>,

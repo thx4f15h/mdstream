@@ -650,3 +650,17 @@ README、TODO 已同步，只标记独立数学块核心完成；额外数学定
 项目 devShell 验收：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run` 各 573 项、`cargo test --doc` 47 项、`cargo fmt --all -- --check` 和 `git diff --check` 通过。`cargo run -r --example footnote_blocks` 以 6 帧/61 源码字节完成读取并保持折叠；既有 `footnotes`、`container_definitions`、`list_tightness` 示例通过。完整日志：`/tmp/mdtui3-footnote-block-validation.log`，失败基线：`/tmp/mdtui3-footnote-block-baseline.log`；模型与相关回归日志：`/tmp/mdtui3-footnote-block-model.log`、`/tmp/mdtui3-footnote-block-chunking.log`。
 
 README、TODO 已同步；固定四空格/显式路径方言已完成，分类前缀上限、lazy/tab 等更完整续行规则、定义正文 Markdown 解析/排版、编号上标、脚注区、双向跳转/返回和实际对象回调继续保留待办，终端 UI 留待后续阶段。
+
+## 2026-10-30 容器完整 tab 边界缩进核心交付
+
+- [x] 容器前缀按物理行每四列对齐，列表标记后的混合水平空白和续行使用列距离；嵌套不重置列号，有序编号/兄弟各自保存宽度，任务标记不增加续行要求。容器标记前至多三列，引用后的可选分隔只消费一个空格或恰好一列的 tab。BlockKind::ListItem.indent 明确为相对父前缀的列数，源码区间继续使用原始字节。
+- [x] 仅匹配完整字节边界；目标位于 tab 内部时该层原子失败，连同此前空格原样保留，既有 lazy 正文或作用域关闭规则决定后续处理。被消费的 tab 只隐藏真实字节，不构造虚拟空格；叶块的四空格代码/脚注缩进等既有方言不变。长表格分隔行探测复用同一列匹配器，确认/失败与确切作用域保持一致。
+- [x] 保留流式分类时机和含前缀的 1 KiB 字节上限；源码映射、内联对象、tight/loose、稳定块/容器身份、折叠意愿、旧测量/读取任务拒绝及合并 Update 复用原接口。新增 container_tabs 示例以 4 帧/13 源码字节读取去前缀数学内容，容器折叠保持。
+
+匹配器只增加常数大小的当前列号、空白末端列号和 marker 列号，活动节点不增加存储。相邻列表层共享空白末端缓存，混合空白至多两遍，纯空格保持一次扫描；首次失配只检查一次有界 lazy 正文，余下路径 O(1) 保留或按实际关闭节点弹栈。新物理行的匹配按实际前缀长度计费，不遍历历史正文；长行后续追加不重新匹配祖先。累计解析 O(n log n)、空间 O(n)、零运行时依赖及禁止 unsafe 保持，无单次 append/finish 硬时延承诺。
+
+新增 13 项验收（12 项专用测试和 1 项全局分块快照），并补充既有短样本全切点：3072 组独立列宽/真实字节边界与围栏范围模型；UTF-8 全切点/逐前缀、CRLF/EOF、截断标记/分类上限、部分 tab 原子回退、嵌套及任务/兄弟宽度、标题/多行 Setext/代码/定义/脚注/数学/表格回归；长分隔行成功/失败、源映射收费与预算暂停、旧任务/测量失效和通知重建。250 层列表每轮完整续行只检查 250 帧，部分前缀 lazy 续行只检查 2 帧；1000 层引用及 250 层列表的百万字长行后再逐字追加 1000 次，分类/前缀/容器/章节工作和容器 arena 容量均不增长，inline_bytes 恰好增加 1000。
+
+项目 devShell 验收：cargo check --all-targets、cargo clippy --all-targets -- -D warnings、debug/release nextest 各 586 项、48 项文档测试、fmt 和 diff 检查通过。container_tabs、containers、container_code、footnote_blocks 四个示例通过。日志：`/tmp/mdtui3-container-tabs-validation.log`（check/clippy、release、doc、示例及格式），`/tmp/mdtui3-container-tabs-debug.log`（全量 debug）；初始失败基线：`/tmp/mdtui3-container-tabs-baseline.log`。
+
+按账本允许的独立子项交付完整 tab 边界规则。README/TODO 已同步；部分 tab 的虚拟空格表示、叶块 tab 缩进、分类上限扩展及其它容器规则继续保留未完成条目，不宣称完整 CommonMark 缩进或终端排版已完成。
