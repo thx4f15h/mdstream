@@ -366,7 +366,7 @@ view.heights().viewport_budgeted(0..24, 0, &mut budget, &mut tiles);
 
 每次 append/finish 或连续 Update 批处理后调用 `view.apply`，然后才能查询。对已有折叠，更新只检查最多六个开放章节和一个开放代码块；开启默认收起时还处理新增标题/块的元数据，不枚举历史折叠。新 tile 在 apply 返回前继承遮蔽。开放代码块的未分类行前缀暂属该块，闭合/下一块确认后可以收回；Setext 晚确认也能缩短前一章节的范围。普通源码追加不会读取旧正文。重复应用不清掉新测量，错误文档或不连续更新在修改视图之前被拒绝。
 
-折叠导航、锚点恢复和有预算批量操作见下文。目录 UI、预览、表格/容器折叠、手工交叉范围继续见 [TODO](TODO.md#折叠支持规划)。
+折叠导航、锚点恢复、有预算批量操作、临时展开和摘要读取见下文。目录 UI、摘要占位绘制、表格/容器折叠、手工交叉范围继续见 [TODO](TODO.md#折叠支持规划)。
 
 ## 折叠导航与源码锚点
 
@@ -455,7 +455,7 @@ assert!(!view.is_collapsed(FoldId::Heading(HeadingId(1))));
 
 ## 临时折叠预览
 
-`FoldView::set_preview(&doc, Some(id), &mut budget)` 暂时展开一个章节或代码块；传入 `None` 结束预览，切换 ID 则先恢复旧节点。每个视图同时只有一个预览。祖先和后代的折叠意愿保持不变，因此被父章节隐藏的节点不会因预览而自动露出；展开父章节的预览仍保留子节点占位。这里提供暂时展开整节点的视图状态，实际只排版当前窗口；按前几行/字节截断的摘要预览另行实现。
+`FoldView::set_preview(&doc, Some(id), &mut budget)` 暂时展开一个章节或代码块；传入 `None` 结束预览，切换 ID 则先恢复旧节点。每个视图同时只有一个预览。祖先和后代的折叠意愿保持不变，因此被父章节隐藏的节点不会因预览而自动露出；展开父章节的预览仍保留子节点占位。这里提供暂时展开整节点的视图状态，实际只排版当前窗口；按逻辑行/字节截断的摘要读取见下文。
 
 ```rust
 use mdtui3::*;
@@ -550,6 +550,43 @@ loop {
 - 不处理 HTML、GFM 裸 URL 自动链接、脚注、数学公式等额外语义。它们可能包含上述方言仍能识别的普通行内标记。HTML 不在当前需求范围。
 - 支持只追加，不支持任意位置编辑、撤回已有源码或移除定义。文档销毁会释放 O(n) 状态，这是一次性清理成本。
 
+## 有界显示摘要
+
+`DisplayExcerpt` 从指定源码范围读取非隐藏显示文本前缀，可用于代码块、章节正文及标题摘要。`ExcerptLimits` 同时限制源码前缀字节、输出 UTF-8 字节和 LF 分隔的逻辑行数；最后一行的 LF 包含在输出内，不添加省略号，空输入不产生空行。源码上限包含隐藏语法，防止巨型围栏 info 或隐藏目标拖延摘要；输出上限防止超长首行绕过行数限制。UTF-8 截断保留完整标量，行内实体/代码空白使用现有显示语义，样式、链接及完整替代源码映射保留。
+
+```rust
+use mdtui3::*;
+let mut doc = Document::new();
+doc.append("```rs\nfirst\nsecond\nthird\n```\n")?;
+doc.finish();
+let body = doc.fold_candidate(FoldId::Code(BlockId(0))).unwrap().hidden;
+let mut excerpt = DisplayExcerpt::new(&doc, body, ExcerptLimits {
+    source_bytes: 512, display_bytes: 128, lines: 2,
+})?;
+let mut text = String::new();
+loop {
+    let mut budget = Budget::new(WorkLimit {
+        queries: 1, objects: 1, bytes: 16, ..Default::default()
+    });
+    match excerpt.next(&doc, &mut budget)? {
+        ExcerptStep::Run(run) => text.push_str(run.text),
+        ExcerptStep::BudgetExhausted => continue,
+        ExcerptStep::Complete(end) => {
+            assert_eq!(end, ExcerptEnd::LineLimit);
+            break;
+        }
+    }
+}
+assert_eq!(text, "first\nsecond\n");
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+构造不扫描正文，任务 O(1) 空间，输出借用文档，由调用方决定是否收集。每次读取沿用 `DisplayCursor` 的 query/object/byte 计费，隐藏内容也计费；每个检查窗口至多 `TILE_BYTES + 2` 字节，额外两字节用于代码 CRLF 邻接检查，重复前瞻重复扣费。每帧 6 bytes、1 query、1 object 可推进；消费的源码前缀有总长度限制，实际检查量仍由共享 Budget 约束。截断仅扫描已支付的有界 run 或至多 8 字节的替代文本；累计成本 O((S + 1) log(n + 1))，S 为读取的源码前缀字节数。即使整块有百万字，也不会为了摘要统计全文行数。
+
+`Complete` 区分范围结束、源码上限、输出上限和行数上限；达到上限时不会向后寻找可见内容，因此不承诺余文一定非空。替代文本仍映射完整语法区间，该映射可以超过读取前缀；`source_position` 表示已检查 run 的末尾，可能超出最后输出的字符，不能拿它拼接被截断的余文。任务和输出绑定 revision，追加或首次 finish 后须显式丢弃并重建；空追加、重复 finish 不失效，错误文档及旧任务在扣费前被拒绝。
+
+读取不改变折叠意愿或高度，也不应用视图中的子折叠。宿主显式选取 `FoldCandidate.hidden` 预览正文、选取标题 `content` 读取名称；开放范围是当前 revision 的快照。逻辑行不等于终端软换行后的屏幕行，摘要占位绘制仍需由排版方限制实际显示行数、测量并归属高度。`cargo run -r --example excerpt` 展示百万字折叠代码的两行摘要；终端宽度、占位高度及 UI 接入继续见 TODO。
+
 ## 源码入口
 
 | 文件 | 职责 |
@@ -559,6 +596,7 @@ loop {
 | `src/inline.rs` | 单遍分隔符、代码和链接状态机 |
 | `src/destination.rs` | 链接/定义共享的有界目标及 title 状态机 |
 | `src/display.rs` / `src/entity.rs` | 显示片段、替代文本源码映射、预算游标及字符引用解码 |
+| `src/excerpt.rs` | 限制源码/输出字节和逻辑行数的有预算显示摘要 |
 | `src/search.rs` / `src/display_search.rs` | 源码增量搜索、revision 绑定的显示文本搜索与命中映射、选区及任务状态 |
 | `src/annotations.rs` | 区间样式、隐藏聚合、最新 revision |
 | `src/references.rs` | 有长度上限的标签规范化和 BTreeMap 符号表 |
@@ -589,6 +627,7 @@ nix develop -c cargo run -r --example structure
 nix develop -c cargo run -r --example scaling
 nix develop -c cargo run -r --example budget
 nix develop -c cargo run -r --example display
+nix develop -c cargo run -r --example excerpt
 nix develop -c cargo run -r --example search
 nix develop -c cargo run -r --example heading_search
 nix develop -c cargo run -r --example folding
