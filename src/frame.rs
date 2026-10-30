@@ -1,6 +1,6 @@
 use crate::folding::{FoldSegment, FoldState};
 use crate::{
-    Budget, Completion, Document, DocumentId, HeightIndex, LayoutError, LinkId, LinkInfo,
+    BlockId, Budget, Completion, Document, DocumentId, HeightIndex, LayoutError, LinkId, LinkInfo,
     RenderRun, Span, TileId, WorkLimit,
 };
 use crate::{FoldPlaceholder, FoldView};
@@ -19,6 +19,17 @@ pub trait LayoutSink {
 /// its rows in end_tile, just like text/objects, and retain its source mapping.
 pub trait FoldLayoutSink: LayoutSink {
     fn placeholder(&mut self, placeholder: FoldPlaceholder);
+    /// State-only reset after skipping a registered paragraph's hidden suffix,
+    /// before any following text. Also delivered when starting inside the tail
+    /// without its placeholder. Reset wrapping/paragraph-local state here; do
+    /// not add rows (the placeholder's owner accounts for its terminating line).
+    /// One object/recovery step, resumable independently of placeholder delivery.
+    fn paragraph_end(&mut self, _block: BlockId) {}
+}
+
+enum FoldEvent {
+    Placeholder(FoldPlaceholder),
+    ParagraphEnd(BlockId),
 }
 
 /// A resumable local layout pass. Source position, partial tile and sink state
@@ -41,6 +52,7 @@ pub struct LayoutPass {
     recovery_until: usize,
     folded: bool,
     fold_segment: Option<FoldSegment>,
+    paragraph_end: Option<BlockId>,
 }
 
 impl LayoutPass {
@@ -73,6 +85,7 @@ impl LayoutPass {
             recovery_until: start.0,
             folded: false,
             fold_segment: None,
+            paragraph_end: None,
         })
     }
 
@@ -105,7 +118,10 @@ impl LayoutPass {
             budget,
             sink,
             Some(&view.state),
-            |sink, placeholder| sink.placeholder(placeholder),
+            |sink, event| match event {
+                FoldEvent::Placeholder(p) => sink.placeholder(p),
+                FoldEvent::ParagraphEnd(block) => sink.paragraph_end(block),
+            },
         )
     }
 
@@ -185,7 +201,7 @@ impl LayoutPass {
         budget: &mut Budget,
         sink: &mut T,
         folds: Option<&FoldState>,
-        placeholder: fn(&mut T, FoldPlaceholder),
+        fold_event: fn(&mut T, FoldEvent),
     ) -> Result<Completion, LayoutError> {
         if self.document != document.id() {
             return Err(LayoutError::WrongDocument);
@@ -199,13 +215,18 @@ impl LayoutPass {
         if self.revision != document.revision() || self.view != heights.version() {
             return Err(LayoutError::StaleContinuation);
         }
-        if self.rows >= self.wanted {
-            return Ok(Completion::Covered);
-        }
-        if self.tile >= document.tile_count() {
-            return Ok(Completion::EndOfDocument);
-        }
         loop {
+            if let Some(block) = self.paragraph_end {
+                if !budget.charge(WorkLimit {
+                    objects: 1,
+                    recovery: usize::from(self.tile < self.recovery_until),
+                    ..Default::default()
+                }) {
+                    return Ok(Completion::BudgetExhausted);
+                }
+                fold_event(sink, FoldEvent::ParagraphEnd(block));
+                self.paragraph_end = None;
+            }
             if self.rows >= self.wanted {
                 return Ok(Completion::Covered);
             }
@@ -270,6 +291,9 @@ impl LayoutPass {
                     self.cursor = document
                         .tile(TileId(self.tile))
                         .map_or(document.source().len(), |s| s.start);
+                    if self.cursor == candidate.hidden.end {
+                        self.paragraph_end = folds.and_then(|f| f.paragraph(candidate.id));
+                    }
                     self.objects_ready = false;
                     continue;
                 }
@@ -311,15 +335,19 @@ impl LayoutPass {
                     }) {
                         return Ok(Completion::BudgetExhausted);
                     }
-                    placeholder(
+                    fold_event(
                         sink,
-                        FoldPlaceholder {
+                        FoldEvent::Placeholder(FoldPlaceholder {
                             candidate,
                             owner: TileId(self.tile),
-                        },
+                            paragraph: folds.and_then(|f| f.paragraph(candidate.id)),
+                        }),
                     );
                 }
                 self.cursor = candidate.hidden.end.min(span.end);
+                if self.cursor == candidate.hidden.end {
+                    self.paragraph_end = folds.and_then(|f| f.paragraph(candidate.id));
+                }
                 self.objects_ready = false;
                 continue;
             }

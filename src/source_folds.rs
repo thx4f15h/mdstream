@@ -1,8 +1,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{
-    Budget, Completion, Document, DocumentId, FoldCandidate, FoldId, FoldView, LayoutError, Span,
-    WorkLimit,
+    BlockId, BlockKind, Budget, Completion, Document, DocumentId, FoldCandidate, FoldId, FoldView,
+    LayoutError, Span, SyntaxState, WorkLimit,
 };
 
 /// Opaque, process-unique registration identity. It belongs to one FoldView,
@@ -101,6 +101,8 @@ pub struct SourceFoldRegistration {
     view: DocumentId,
     version: u64,
     source: Span,
+    hidden: Span,
+    paragraph: Option<BlockId>,
     endpoint: usize,
     started: bool,
     next: Option<FoldId>,
@@ -131,6 +133,8 @@ impl SourceFoldRegistration {
             view: view.heights().version().0,
             version: view.version(),
             source,
+            hidden: source,
+            paragraph: None,
             endpoint: 0,
             started: false,
             next: None,
@@ -138,6 +142,51 @@ impl SourceFoldRegistration {
             visited: 0,
             result: None,
         })
+    }
+
+    /// Register a bounded source-prefix preview of a closed top-level paragraph.
+    /// The candidate's source covers the whole block, summary is the retained
+    /// prefix, and hidden is the suffix. The resulting SourceFoldId is view-local;
+    /// its paragraph BlockId and fixed boundaries survive append and reset.
+    ///
+    /// `preview_bytes` includes hidden syntax and is rounded down to UTF-8 and
+    /// CRLF boundaries. Zero is allowed; a prefix covering the whole block is
+    /// rejected (there would be no suffix). This is not a display-line, grapheme
+    /// or terminal-width limit. Inline styles/mappings are not reparsed at the
+    /// cut. Summary display can separately use DisplayExcerpt.
+    ///
+    /// The entire paragraph reserves one disjoint source registration, including
+    /// its visible prefix. Remove it before changing the limit. Only sealed,
+    /// top-level Paragraph blocks inside source_fold_limit are accepted; pending
+    /// Setext/table candidates, container physical leaves and open paragraphs
+    /// require a later registration. O(log R), no prefix/body scan or allocation.
+    pub fn paragraph<S>(
+        document: &Document,
+        view: &FoldView<S>,
+        block: BlockId,
+        preview_bytes: usize,
+    ) -> Result<Self, LayoutError> {
+        view.check(document)?;
+        let entry = document.block(block).ok_or(LayoutError::InvalidRange)?;
+        if entry.kind != BlockKind::Paragraph
+            || entry.container.is_some()
+            || entry.state != SyntaxState::Sealed
+            || preview_bytes >= entry.source.len()
+        {
+            return Err(LayoutError::InvalidRange);
+        }
+        let mut task = Self::new(document, view, entry.source)?;
+        let mut cut = entry.source.start + preview_bytes;
+        while !document.source().is_char_boundary(cut) {
+            cut -= 1;
+        }
+        let bytes = document.source().as_bytes();
+        if cut > entry.source.start && bytes[cut - 1] == b'\r' && bytes[cut] == b'\n' {
+            cut -= 1;
+        }
+        task.hidden.start = cut;
+        task.paragraph = Some(block);
+        Ok(task)
     }
 
     /// One query/object per endpoint lookup, ancestor, path end or final insertion. Each
@@ -163,7 +212,12 @@ impl SourceFoldRegistration {
                 return Ok(self.progress(Completion::BudgetExhausted));
             }
             if self.endpoint == 2 {
-                self.result = Some(view.register_source_fold(self.source, self.parent));
+                self.result = Some(view.register_source_fold(
+                    self.source,
+                    self.hidden,
+                    self.parent,
+                    self.paragraph,
+                ));
                 self.version = view.version();
             } else if !self.started {
                 let offset = if self.endpoint == 0 {

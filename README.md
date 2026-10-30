@@ -1420,6 +1420,49 @@ R 个非空不相交注册使用 O(R) 空间（不超过源码字节数），删
 
 `cargo run -r --example source_folding` 演示百万字选区、后续追加、预算布局及源码锚点恢复。`tests/source_folding.rs` 覆盖 2400 组全量结构区间对照、1000 轮随机可见性/高度模型、240 次流式模型、千层注册暂停、4096 历史范围、百万字正文、UTF-8 分块/逐前缀、表格行双向交叉拒绝、批量/预览/导航和旧任务/测量拒绝。自动增长手工范围、手工嵌套、交叉拆分/优先级、重载后的业务身份持久化与终端选区 UI 仍待设计。
 
+## 长段落源码前缀预览折叠
+
+`SourceFoldRegistration::paragraph(document, view, block, preview_bytes)` 为已定型的顶层 `BlockKind::Paragraph` 注册前缀预览。它复用 `SourceFoldId`、预算注册和独立视图：`FoldCandidate::source` 是整个段落，`summary` 是保留的源码前缀，`hidden` 是余文。注册初始展开；成功后显式收起。`paragraph_fold_block` 查询注册绑定的稳定 `BlockId`，手工/已删除/其它视图 ID 返回 `None`。源码位置和窗口查询包含整个段落，实际隐藏查询只命中余文。
+
+```rust
+use mdtui3::*;
+let mut doc = Document::new();
+doc.append("visible prefix and a long remainder\n\n")?;
+let mut view = FoldView::new(&doc, 1)?;
+let mut task = SourceFoldRegistration::paragraph(&doc, &view, BlockId(0), 14)?;
+let id = loop {
+    let mut budget = Budget::new(WorkLimit {
+        queries: 1, objects: 1, ..Default::default()
+    });
+    if let Some(id) = task.advance(&doc, &mut view, &mut budget)?.id { break id; }
+};
+view.set_collapsed(&doc, id, true)?;
+let candidate = view.fold_candidate(&doc, id)?.unwrap();
+assert_eq!(doc.text(candidate.summary.unwrap()), Some("visible prefix"));
+assert_eq!(candidate.hidden.start, 14);
+let update = doc.append("following paragraph\n")?;
+view.apply(&doc, &update)?;
+assert_eq!(view.fold_candidate(&doc, id)?, Some(candidate));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+上限按原始源码 UTF-8 字节计，包含隐藏语法；向下对齐标量和 CRLF，允许 0，不接受覆盖整个段落的上限（没有可收起余文）。它不保证 N 个显示行或完整字素/单词/行内对象。截断保留已有样式与显示映射，不重新解释未显示的强调、代码、数学或链接尾部；额外的显示摘要用 `DisplayExcerpt` 限制源码、显示字节和 LF 行数。实体映射等仍沿用原始完整 replacement 范围；链接对象回调只交付元数据，宿主不得因此无预算读取整个隐藏标签。`LayoutPass` 保持原有 `RenderRun` 输入，实际显示规范化和终端列宽由接入方处理。
+
+只有 `Sealed`、无容器、且完整位于 `source_fold_limit()` 内的段落可以注册。未完成段落、可能变为 Setext/表格的输入、容器物理叶块及其它块类型返回 `InvalidRange`。空行等局部闭合即可注册，不要求整个文档 finish；后续追加、引用晚定义、finish 和 reset 不改变注册身份、前缀或段尾。源码不可编辑，改变预览上限须移除后重新注册，生成新 ID。
+
+整个段落包络占用一个不相交源码注册，包括仍可见的前缀；与手工范围重叠、重复注册均拒绝，与注册顺序和展开/预览状态无关。章节可以包含段落并隐藏其预览及占位，展开章节恢复段落原意愿；默认策略不自动发现或创建段落注册。All/Subtree/Siblings/Focus、临时展开预览、源码锚点和 Reveal 导航沿用 Source 身份及包络关系。表格、容器等不能出现在一个已定型顶层段落内部；继续使用端点路径验证保持结构范围不交叉，不改写语法父链。
+
+段中边界的排版契约由两次回调表达：
+
+- `FoldPlaceholder::paragraph == Some(block)` 表示收起的是该段落余文。占位接在当前可见前缀后，排版器在占位所属 `owner` tile 结束这一行并计入其高度，包括无换行 EOF；不要让隐藏尾部贡献高度。
+- 跳过余文后，`FoldLayoutSink::paragraph_end(block)` 在下一段可见内容之前交付。它只复位换行列和段落局部状态，不再增加高度；默认无操作适用于无段落状态的 sink，有状态排版器应实现。即使从隐藏尾部中途开始、没有收到占位，也会收到这个结束回调；远处累计绝对高度仍按原契约保持估计。
+
+占位和段尾恢复分别消耗 1 object，检查点重放期间另扣 recovery；两者之间预算耗尽保留待交付状态，不重复占位、不提前读取后文。跨 tile、同 tile 相邻段落和 EOF 使用同一流程。祖先折叠已隐藏整个段落时不产生额外的内层回调；展开或临时预览段落时消费原始内容。切换从隐藏起点惰性失效后续测量和检查点，旧任务不得继续写回。
+
+创建仅做索引及固定次数 UTF-8/CRLF 端点探测；注册逐步检查至多两条顶层章节链，游标 O(1)，不读取前缀/余文。R 个注册占 O(R)，查询和切换沿用 O(log R + log F + log T)；不修改解析器，不为后续追加枚举旧段落。布局只读取有界前缀和后续可见窗口，完整隐藏内部按范围跳过，段尾上下文恢复不依赖余文长度。
+
+`cargo run -r --example paragraph_folding` 演示百万字余文、12 列示例换行与追加后的独立段落。`tests/paragraph_folding.rs` 覆盖 640 组列宽/边界布局模型、1000 轮随机与 240 次流式可见性/高度模型、UTF-8 全切点/逐前缀、行内映射、百万字恢复、4096 个历史注册以及旧任务/测量拒绝。自动开放段落增长、容器跨叶块段落身份、自动长度策略、按逻辑/显示行数选择预览、媒体详情及完整终端排版仍待实现。
+
 ## 表格连续行范围折叠
 
 `FoldView::insert_table_rows(document, table, start..end)` 注册一个视图内的固定正文行范围，返回 `FoldId::TableRows(TableRowRange { table, start, end })`，初始展开。行号沿用 `Table::row`：第 0 行是表头；仅接受 `1 <= start < end <= rows.len()`，end 不含。表头、分隔行和范围外正文保留；范围内完整物理行（含容器前缀）合并成一个占位。摘要指向首个选中行，读取仍受 `summary_text` 或 `DisplayExcerpt` 的字节/帧预算限制。
@@ -1812,7 +1855,7 @@ assert_eq!(text, "first\nsecond\n");
 | `src/checkpoints.rs` | 有效检查点的范围失效和前驱查询 |
 | `src/table_preview.rs` | 共享行数/字节上限与 Budget 的表格前几行摘要 |
 | `src/table.rs` | 表格行/单元格、对齐、流式单元格解析和列宽提示 |
-| `src/source_folds.rs` | 手工/宿主固定源码范围身份、两端路径预算验证及窗口枚举 |
+| `src/source_folds.rs` | 手工范围/段落前缀预览身份、两端路径预算验证及窗口枚举 |
 | `src/headings.rs` | 标题 arena、全局/作用域六级索引及源码上下文边界 |
 | `src/heading_search.rs` | 有预算的标题显示名称检索、级别过滤和命中源码映射 |
 | `src/anchors.rs` | revision 绑定的有预算标题 slug、全局消歧和 fragment 解析 |
@@ -1850,6 +1893,7 @@ nix develop -c cargo run -r --example excerpt
 nix develop -c cargo run -r --example table_preview
 nix develop -c cargo run -r --example table_row_folding
 nix develop -c cargo run -r --example source_folding
+nix develop -c cargo run -r --example paragraph_folding
 nix develop -c cargo run -r --example search
 nix develop -c cargo run -r --example heading_search
 nix develop -c cargo run -r --example anchors

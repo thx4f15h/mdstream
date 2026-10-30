@@ -769,3 +769,17 @@ README/TODO 已同步。实际段落间距、其它容器/tab 规则、分类上
 验收通过：项目 devShell 的 `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 686 项、`cargo test --doc` 55 项、`cargo fmt --all -- --check` 和 `git diff --check`。`source_folding` 示例注册 2 帧、布局 6 帧/56 个计费字节跳过百万字，导航 1 帧恢复源码锚点；既有 `table_row_folding`、`folding`、`fold_batch` 示例通过。日志：`/tmp/mdtui3-source-folds-validation.log`。开放章节交叉与关闭代码 EOF 的失败证据分别保存在 `/tmp/mdtui3-source-folds-boundary-baseline.log`、`/tmp/mdtui3-source-folds-eof-baseline.log`。
 
 自动增长手工范围、尚未定型正文、手工嵌套、交叉拆分/优先级、重载后的业务身份映射、实际段内软换行/占位绘制及终端选区 UI 继续保留 TODO；本轮只标记上述固定范围核心完成。
+
+## 2026-10-30 已定型顶层段落有界预览折叠交付
+
+完成长段落折叠的独立子项：`SourceFoldRegistration::paragraph` 选择已定型顶层 Paragraph，以源码字节上限保留 UTF-8/CRLF 对齐前缀、固定收起余文。复用视图独立 `SourceFoldId` 并保存原 `BlockId`；候选 source 为整个段落、summary 为预览、hidden 为余文。局部闭合即可注册，后续追加/晚定义/finish/reset 不改变身份或范围；未完成/可能成为 Setext 或表格的段落、容器叶块及无余文的上限明确拒绝。源码保持只追加，未修改解析器、运行时依赖或 unsafe 约束。
+
+整个段落与手工范围共享不相交注册索引，包括仍可见的前缀；双向重叠/重复拒绝，章节父级、批量/预览/导航与独立视图保持原意愿。注册仍按两个端点及章节链共享预算原子完成；创建只有固定端点探测，注册不扫描前缀/余文，额外游标 O(1)，R 个注册存储 O(R)。4096 历史注册后 1000 次逐字追加无范围刷新或容器扫描；百万字追加不改写历史注册，布局不读取隐藏余文或其链接对象。
+
+段中边界单独接入排版：`FoldPlaceholder::paragraph` 指明占位需结束当前段落，终止行高度归属 owner tile；`FoldLayoutSink::paragraph_end` 在余文跳过后仅恢复段落/换行状态，不重复计高。该回调独立扣 object/recovery，可在占位后暂停且不会重复输出，跨 tile/EOF 和从隐藏区中途开始均可恢复后文，无需读取隐藏换行。父级已隐藏整个段落时不生成内层回调，展开/临时预览继续读原文。原始行内样式、实体/代码/链接源码映射保持，显示规范化和真实终端宽度仍由接入方处理。
+
+新增 15 项专用验收：640 组长度/前缀/换行/列宽布局对照、1000 轮随机与 240 次流式区间/高度模型、UTF-8 全切点/逐前缀、CRLF/无换行 EOF、行内边界逐字节截断、手工范围双向拒绝、零预算/原子注册/段尾暂停、百万字隐藏与检查点恢复、4096 历史注册、有界显示摘要、预览/批量/源码锚点/导航、晚定义及 Setext/表格、通知合并/重放、旧任务/测量/检查点拒绝。
+
+项目 devShell 验收全部通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 701 项、`cargo test --doc` 56 项、`cargo fmt --all -- --check` 和 `git diff --check`。`paragraph_folding` 示例 8 帧/47 个计费字节跳过百万字、产生一次段尾恢复；既有 `source_folding`、`folding`、`table_row_folding` 示例通过。完整日志：`/tmp/mdtui3-paragraph-folds-validation.log`；专项日志：`/tmp/mdtui3-paragraph-folds-targeted.log`。首轮一个手工测试选区本身跨章节边界，已修正测试输入；没有降级范围校验。
+
+README/TODO 已同步。开放段落自动增长、容器跨物理叶块段落、自动长度策略、逻辑/显示行数预览、完整字素/对象截断、媒体详情及完整终端排版继续保留 TODO；本轮只标记已定型顶层段落的源码前缀预览与段尾恢复核心完成。

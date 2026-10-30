@@ -146,6 +146,10 @@ impl FoldCandidate {
 pub struct FoldPlaceholder {
     pub candidate: FoldCandidate,
     pub owner: TileId,
+    /// A registered paragraph suffix ends this paragraph. The renderer should
+    /// finish its placeholder's line in `owner`, even when EOF has no newline.
+    /// Other fold kinds leave line/placeholder policy to the renderer.
+    pub paragraph: Option<BlockId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -258,7 +262,7 @@ pub(crate) struct FoldState {
     // queries without walking a table's rows or the other registered ranges.
     row_ranges: BTreeMap<usize, TableRowRange>,
     source_ranges: BTreeMap<usize, SourceFoldId>,
-    source_candidates: BTreeMap<SourceFoldId, FoldCandidate>,
+    source_candidates: BTreeMap<SourceFoldId, SourceCandidate>,
     // At most one disjoint source range ends at the old EOF. It can coexist
     // with a completed syntax/row boundary, so it needs its own refresh slot.
     source_boundary: Option<SourceFoldId>,
@@ -274,6 +278,12 @@ pub(crate) struct FoldState {
     // union has one shared mask; no ancestor is refreshed on ordinary append.
     open_ranges: BTreeSet<(usize, FoldId)>,
     open_tiles: Range<usize>,
+}
+
+#[derive(Clone, Copy)]
+struct SourceCandidate {
+    candidate: FoldCandidate,
+    paragraph: Option<BlockId>,
 }
 
 #[derive(Clone, Copy)]
@@ -491,6 +501,11 @@ impl Document {
 }
 
 impl FoldState {
+    pub(crate) fn paragraph(&self, id: FoldId) -> Option<BlockId> {
+        let FoldId::Source(id) = id else { return None };
+        self.source_candidates.get(&id)?.paragraph
+    }
+
     pub(crate) fn segment(&self, document: &Document, offset: usize) -> FoldSegment {
         let mut hidden = None;
         let mut heading = document.headings().root_current(offset);
@@ -819,7 +834,7 @@ impl<S> FoldView<S> {
 
     pub(crate) fn candidate(&self, document: &Document, id: FoldId) -> Option<FoldCandidate> {
         match id {
-            FoldId::Source(id) => self.state.source_candidates.get(&id).copied(),
+            FoldId::Source(id) => self.state.source_candidates.get(&id).map(|c| c.candidate),
             FoldId::TableRows(range) if !self.has_table_rows(document, range) => None,
             _ => document.fold_candidate(id),
         }
@@ -841,7 +856,7 @@ impl<S> FoldView<S> {
 
     fn source_at(&self, offset: usize) -> Option<FoldCandidate> {
         let (_, id) = self.state.source_ranges.range(..=offset).next_back()?;
-        let candidate = self.state.source_candidates[id];
+        let candidate = self.state.source_candidates[id].candidate;
         candidate
             .source
             .range()
@@ -851,7 +866,18 @@ impl<S> FoldView<S> {
 
     pub(crate) fn next_source_fold(&self, start: usize, end: usize) -> Option<FoldCandidate> {
         let (_, id) = self.state.source_ranges.range(start..end).next()?;
-        Some(self.state.source_candidates[id])
+        Some(self.state.source_candidates[id].candidate)
+    }
+
+    /// Stable paragraph block bound to a source registration, or None for a
+    /// manual/removed/other-view ID. O(log R), no body read.
+    pub fn paragraph_fold_block(
+        &self,
+        document: &Document,
+        id: SourceFoldId,
+    ) -> Result<Option<BlockId>, LayoutError> {
+        self.check(document)?;
+        Ok(self.state.paragraph(FoldId::Source(id)))
     }
 
     /// Active registrations only; removing a range releases its registry entries.
@@ -865,7 +891,9 @@ impl<S> FoldView<S> {
             .source_ranges
             .range(..source.end)
             .next_back()
-            .is_some_and(|(_, id)| self.state.source_candidates[id].source.end > source.start)
+            .is_some_and(|(_, id)| {
+                self.state.source_candidates[id].candidate.source.end > source.start
+            })
         {
             return Err(LayoutError::InvalidRange);
         }
@@ -886,18 +914,31 @@ impl<S> FoldView<S> {
             .then_some(candidate)
     }
 
-    pub(crate) fn register_source_fold(&mut self, source: Span, parent: Option<FoldId>) -> FoldId {
+    pub(crate) fn register_source_fold(
+        &mut self,
+        source: Span,
+        hidden: Span,
+        parent: Option<FoldId>,
+        paragraph: Option<BlockId>,
+    ) -> FoldId {
         let id = SourceFoldId::new();
         self.state.source_ranges.insert(source.start, id);
         self.state.source_candidates.insert(
             id,
-            FoldCandidate {
-                id: FoldId::Source(id),
-                parent,
-                source,
-                hidden: source,
-                summary: Some(source),
-                open: false,
+            SourceCandidate {
+                candidate: FoldCandidate {
+                    id: FoldId::Source(id),
+                    parent,
+                    source,
+                    hidden,
+                    summary: Some(if paragraph.is_some() {
+                        Span::new(source.start, hidden.start)
+                    } else {
+                        source
+                    }),
+                    open: false,
+                },
+                paragraph,
             },
         );
         self.version += 1;
@@ -912,9 +953,10 @@ impl<S> FoldView<S> {
         id: SourceFoldId,
     ) -> Result<Option<FoldChange>, LayoutError> {
         self.check(document)?;
-        let Some(candidate) = self.state.source_candidates.remove(&id) else {
+        let Some(entry) = self.state.source_candidates.remove(&id) else {
             return Ok(None);
         };
+        let candidate = entry.candidate;
         self.state.source_ranges.remove(&candidate.source.start);
         self.state
             .remove(document, &mut self.heights, FoldId::Source(id));
@@ -1352,7 +1394,7 @@ impl<S> FoldView<S> {
         }
         if let Some(id) = self.state.source_boundary.take() {
             self.range_visits += 1;
-            let candidate = self.state.source_candidates[&id];
+            let candidate = self.state.source_candidates[&id].candidate;
             self.state.refresh(document, &mut self.heights, candidate);
             dirty = Some(dirty.unwrap_or(usize::MAX).min(candidate.hidden.start));
         }
