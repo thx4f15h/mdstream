@@ -325,7 +325,7 @@ fn generated_replacement_and_escape_sequences_match_label_model() {
 }
 
 #[test]
-fn container_labels_stay_physical_while_deep_table_scope_is_preserved() {
+fn closed_container_labels_cancel_late_header_probes_in_deep_scopes() {
     for (open, prefix) in [
         ("> ".to_owned(), "> ".to_owned()),
         ("- ".repeat(250), " ".repeat(500)),
@@ -337,19 +337,19 @@ fn container_labels_stay_physical_while_deep_table_scope_is_preserved() {
             "x".repeat(2048)
         ))
         .unwrap();
-        assert_eq!(doc.links().len(), 1);
-        let local = *doc.link_info(LinkId(0)).unwrap();
+        assert_eq!(doc.links().len(), 2);
+        let local = *doc.link_info(LinkId(1)).unwrap();
         doc.append(&format!("|![tail](w)\n{prefix}-|-\n{prefix}v|z\n"))
             .unwrap();
         doc.finish();
-        assert_eq!(*doc.link_info(LinkId(0)).unwrap(), local);
-        assert_eq!(doc.links().len(), 2);
-        assert_eq!(doc.tables().len(), 1);
+        assert_eq!(*doc.link_info(LinkId(1)).unwrap(), local);
+        assert_eq!(doc.links().len(), 3);
+        assert!(doc.tables().is_empty());
+        assert_eq!(doc.link_destination(LinkId(0)), Some("u"));
         assert!(
-            doc.block(doc.tables()[0].block)
-                .unwrap()
-                .container
-                .is_some()
+            doc.blocks()
+                .iter()
+                .all(|b| b.container == doc.blocks()[0].container)
         );
     }
     compare_plain(&format!("![old\n{}|b\n> -|-\n", "x".repeat(1030)));

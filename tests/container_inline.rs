@@ -267,11 +267,13 @@ fn single_line_setext_promotion_preserves_committed_inline_semantics_then_closes
 }
 
 #[test]
-fn source_borrowing_objects_stay_single_line_without_replaying_failed_prefixes() {
+fn labels_continue_while_math_and_footnotes_keep_physical_boundaries() {
     let doc = parse(
         "> [cross\n> label](url)\n> ![image\n> label](img)\n> $*opaque\n> tail$\n> [^open\n> note]\n",
     );
-    assert!(doc.links().is_empty());
+    assert_eq!(doc.links().len(), 2);
+    assert_eq!(doc.link_destination(LinkId(0)), Some("url"));
+    assert_eq!(doc.link_destination(LinkId(1)), Some("img"));
     assert!(doc.maths().is_empty());
     assert!(doc.footnote_references().is_empty());
     assert!(

@@ -561,3 +561,19 @@ README、TODO 已同步，只标记本独立子项；继承链接等其它候选
 项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 488 项、`cargo test --doc` 41 项、`cargo fmt --all -- --check` 与 `git diff --check`。`cargo run -r --example link_headers` 验证百万字成功/失败及稳定 LinkId，预算预览 16 帧/107 个计费字节；既有 `math_headers`、`code_headers`、`container_inline` 示例通过。完整日志：`/tmp/mdtui3-link-headers-validation.log`。
 
 README、TODO 已同步，只将本独立子项标记完成；已闭合跨行语义撤销、容器跨行标签表示、多行目标/title、其余分类上限和终端 UI 保留待办。零运行时依赖与禁止 unsafe 的约束保持。
+
+## 2026-10-30 容器跨行链接与图片标签核心交付
+
+交付同一确切容器中跨物理行的链接/图片显示标签，支持显式、等价前缀和 lazy 正文续接，接入直接、shortcut、collapsed 和 full 引用形式。`LinkInfo.label` 保持绝对源码包络，现有显示片段与共享预算游标去除隐藏前缀，保留实体/代码替换映射和 LinkId；无需复制整段 label 或增加逐行映射数组。具体方言和示例见 [README](README.md#容器跨行链接与图片标签)。目标、title、full 引用后缀继续沿用单物理行规则；数学跨行去前缀表示及更完整块语义撤销仍在 TODO。
+
+实现依据：行内解析器已经只消费匹配容器后的正文，前缀已由注解隐藏。为引用匹配复用一个最多 1000 字节的原始正文缓冲（999 字节上限及一个潜在闭括号），超过上限后停止存储；关闭时只规范化有界正文，collapsed 后缀直接复用 SymbolId。直接链接/图片的显示标签不受此上限影响。候选被替换/终止不回放，作用域和块边界沿用现有序列规则；表头确认隔离旧标签，失败续接，旧标签在首管道前已闭合则取消探测。源码范围及物理叶块身份保持，暂定引用补全目标只更新同一对象，晚定义仍不遍历旧引用。
+
+新增 15 项验收：`tests/container_links.rs` 13 项、全切点/逐前缀快照 1 项、有界缓冲容量测试 1 项；扩充既有全切点和固定种子逐前缀样本。400 组输入对照无前缀解析和独立源码偏移模型；覆盖 Unicode/CRLF、实体/代码、转义/替换候选、边界/EOF/Setext、长表头确认/失败、引用长度上限、延迟定义及稳定对象通知。两个原“容器标签限单行”回归更新为跨行对象及闭合后取消表头探测，数学与脚注物理行边界继续验证。
+
+复杂度与资源验收：千层引用、250 层列表中百万字标签后的 1000 次逐字追加只增加 1000 个 inline bytes，不增加分类/标签规范化/祖先步骤或注解 arena 分配；闭合只消费新增 9 字节并做范围标记，少于 2000 次树访问。候选缓冲在百万字增长时容量不变，后续短标签复用容量。千层引用中 4096 条 lazy 短续行每行一次失配、无祖先扫描；两万条跨行引用的晚定义只规范化 3 字节、少于 1000 次树访问，不生成新链接。累计 O(n log n)、空间 O(n)，零运行时依赖且禁止 unsafe。
+
+共享预算验收覆盖逐标量/逐 tile/每步六字节显示映射、零预算原子暂停、显示搜索跨前缀命中及原始源码搜索；晚闭合拒绝旧游标/缓存/测量、清理相应检查点并保留折叠意愿，合并 Update 与重建一致。百万字图片标签收起时布局零正文/对象回调、零字节计费；分帧导航只展开目标路径，不读正文。
+
+项目 devShell 验收：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 503 项、`cargo test --doc` 42 项、`cargo fmt --all -- --check` 与 `git diff --check` 通过。`cargo run -r --example container_links` 验证晚定义、稳定图片及容器折叠，标签读取 4 帧/61 计费字节；既有 `container_inline`、`link_headers`、`container_lazy` 示例通过。验收日志：`/tmp/mdtui3-container-links-validation.log`。
+
+README、TODO 已同步，仅将容器跨行标签子项标记完成；数学内容表示、多行目标/title/full 引用后缀、更完整边界撤销、其它容器规则及终端 UI 继续保留后续。

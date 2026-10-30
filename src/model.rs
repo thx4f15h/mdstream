@@ -160,6 +160,9 @@ pub enum LinkKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LinkInfo {
     pub kind: LinkKind,
+    /// Raw source envelope, including any intervening container prefixes.
+    /// Read with Document::display_runs_in or the budgeted display_cursor and
+    /// omit HIDDEN runs for source-mapped label/alt text without those prefixes.
     pub label: Span,
     pub source: Span,
     /// Inline title without quotes; reference titles are resolved by Document.

@@ -195,6 +195,11 @@ pub(crate) struct Inline {
     math: Option<MathCandidate>,
     footnote: Option<usize>,
     bracket: Option<Bracket>,
+    // Raw payload only, without container prefixes. One extra byte lets a
+    // closing ']' complete an exactly MAX_LABEL_BYTES reference label. Direct
+    // labels remain unbounded source envelopes; never keep their whole text.
+    label: Vec<u8>,
+    label_overflow: bool,
     bang: Option<usize>,
     tail: Option<Tail>,
     escape: Option<usize>,
@@ -295,6 +300,13 @@ impl Inline {
     }
 
     fn byte(&mut self, byte: u8, pos: usize, effects: &mut Effects<'_>) {
+        if self.bracket.is_some() && !self.label_overflow {
+            if self.label.len() <= MAX_LABEL_BYTES {
+                self.label.push(byte);
+            } else {
+                self.label_overflow = true;
+            }
+        }
         // Only a subsequent byte in the same inline sequence confirms a break.
         // Sequence closure discards it, so terminal newlines stay plain.
         if let Some(line_break) = self.line_break.take() {
@@ -455,6 +467,8 @@ impl Inline {
             b'*' | b'_' | b'~' | b'`' | b'$' => self.start_run(byte, pos),
             b'!' => self.bang = Some(pos),
             b'[' => {
+                self.label.clear();
+                self.label_overflow = false;
                 self.bracket = Some(Bracket {
                     open: pos,
                     image: bang.filter(|at| *at + 1 == pos),
@@ -465,14 +479,22 @@ impl Inline {
                     // Even an overlong label can acquire a direct destination
                     // later. Cancel at its close, before any object is published.
                     self.header_crossed |= self.header_bracket == Some(open);
-                    let label = &effects.source[open + 1..pos];
                     let mut candidate = Candidate {
                         open,
                         close: pos,
                         link: None,
                         image,
                     };
-                    if let Some(symbol) = effects.references.intern(label, effects.work) {
+                    // The delimiter is ASCII, so a non-overflowed label ends
+                    // on a UTF-8 boundary even when feeds split physical lines.
+                    let symbol = (!self.label_overflow)
+                        .then(|| {
+                            let label =
+                                std::str::from_utf8(&self.label[..self.label.len() - 1]).unwrap();
+                            effects.references.intern(label, effects.work)
+                        })
+                        .flatten();
+                    if let Some(symbol) = symbol {
                         candidate.link = Some(effects.complete_link(
                             candidate,
                             LinkTarget::Reference(symbol),
@@ -645,12 +667,19 @@ impl Inline {
                     return false;
                 }
                 if byte == b']' {
-                    let label = if pos == start + 1 {
-                        &effects.source[candidate.open + 1..candidate.close]
+                    let symbol = if pos == start + 1 {
+                        // Reuse the already-normalized shortcut label. Its
+                        // source envelope may include hidden container prefixes.
+                        candidate.link.and_then(|id| match effects.links[id.0] {
+                            LinkTarget::Reference(symbol) => Some(symbol),
+                            _ => None,
+                        })
                     } else {
-                        &effects.source[start + 1..pos]
+                        effects
+                            .references
+                            .intern(&effects.source[start + 1..pos], effects.work)
                     };
-                    if let Some(symbol) = effects.references.intern(label, effects.work) {
+                    if let Some(symbol) = symbol {
                         effects.complete_link(
                             candidate,
                             LinkTarget::Reference(symbol),
@@ -674,11 +703,10 @@ impl Inline {
         }
     }
 
-    /// Source-borrowing labels/math cannot contain hidden container prefixes.
-    /// Their failed prefixes stay literal/opaque; never replay them. Delimiters,
-    /// code spans and the pending line break continue in the same exact scope.
+    /// Math still borrows contiguous raw content. Labels instead retain a
+    /// bounded payload buffer for reference lookup and use display runs for
+    /// their source-mapped text, so they continue in the same exact scope.
     pub fn end_container_line(&mut self) {
-        self.bracket = None;
         self.math = None;
     }
 
@@ -709,5 +737,30 @@ impl Inline {
         self.autolink = None;
         self.entity = None;
         self.cancel_header();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Document, LinkId};
+
+    #[test]
+    fn reference_payload_storage_stops_growing_and_is_reused_after_overflow() {
+        let mut doc = Document::new();
+        doc.append(&format!("> [{}", "x".repeat(2048))).unwrap();
+        let capacity = doc.inline.label.capacity();
+        assert!(capacity <= 2 * super::MAX_LABEL_BYTES);
+        assert_eq!(doc.inline.label.len(), super::MAX_LABEL_BYTES + 1);
+        assert!(doc.inline.label_overflow);
+        doc.append(&"x".repeat(1_000_000)).unwrap();
+        assert_eq!(doc.inline.label.capacity(), capacity);
+        assert_eq!(doc.inline.label.len(), super::MAX_LABEL_BYTES + 1);
+        doc.append("\n> end](u) [a\n> b][]\n").unwrap();
+        assert_eq!(doc.inline.label.capacity(), capacity);
+        assert!(!doc.inline.label_overflow);
+        assert_eq!(doc.inline.label, b"a\nb]");
+        assert_eq!(doc.link_destination(LinkId(0)), Some("u"));
+        assert_eq!(doc.references().len(), 1);
+        assert_eq!(doc.references()[0].label, "a b");
     }
 }

@@ -70,6 +70,10 @@ fn check_chunks(source: &str, boundaries: &[usize]) {
 #[test]
 fn every_single_split_for_small_constructs() {
     for source in [
+        "> - ![中&amp;\r\n> 🙂 `a\n b`][r]\n>   [r]: /u 't'\n",
+        "> [a\n> b][] ![x\n> y](u)\n> [a b]: /late\n",
+        "> [open\n> > nested](u)\n> [a\n> b|c\n> -|-\n",
+        "> [a\\]\n> `]` b](bad target)\n> [^a\n> b]\n",
         "- **中**\r\n  \r\n- 🙂\r\n",
         "> - a\n>   \n>   - b\n>     \n>     c\n> - d\n",
         "- ```\n  \n  ```\n  \n  tail\n",
@@ -327,6 +331,42 @@ fn inherited_headers_match_all_utf8_splits_and_live_prefix_snapshots() {
             whole.append(&source[..end]).unwrap();
             assert_eq!(snapshot(&live), snapshot(&whole), "prefix {end}");
             assert!(live.pending().len() <= BLOCK_LOOKAHEAD + 3);
+        }
+        live.finish();
+        let mut whole = Document::new();
+        whole.append(&source).unwrap();
+        whole.finish();
+        assert_eq!(snapshot(&live), snapshot(&whole));
+    }
+}
+
+#[test]
+fn container_labels_match_all_utf8_splits_and_live_prefixes() {
+    for source in [
+        format!("> - ![中&amp;\r\n>   {}🙂](u 'title')\n", "x".repeat(1030)),
+        format!("> [a\n> {}][]\n", "中".repeat(333)),
+        format!("> ![old\n> {}|end](u)\n> -|-\n", "x".repeat(1030)),
+        format!(
+            "> [old `\n> {}|end](u)\n> wrong\n> end`](u)\n",
+            "x".repeat(1030)
+        ),
+        format!(
+            "> ![old\n> {}|b\n> {}x|end](u)\n",
+            "x".repeat(1030),
+            "-".repeat(1030)
+        ),
+        "> - [a\r\n> b\nc][]\n>   [a b c]: /late\n".to_owned(),
+    ] {
+        for (at, _) in source.char_indices() {
+            check_chunks(&source, &[at]);
+        }
+        let mut live = Document::new();
+        for (at, c) in source.char_indices() {
+            let end = at + c.len_utf8();
+            live.append(&source[at..end]).unwrap();
+            let mut whole = Document::new();
+            whole.append(&source[..end]).unwrap();
+            assert_eq!(snapshot(&live), snapshot(&whole), "prefix {end}");
         }
         live.finish();
         let mut whole = Document::new();
@@ -597,6 +637,8 @@ fn deterministic_fuzz_chunk_invariance_and_source_coverage() {
 #[test]
 fn provisional_semantics_match_at_every_observed_prefix() {
     let parts = [
+        "> ![中&amp;\r\n> 🙂][ref]\n> [ref]: /late\n",
+        "> [a\n> b][]\n> [a b]: /u\n",
         "- **中**\r\n  \r\n- 🙂\r\n",
         "> - a\n>   \n>   - b\n>     \n>     c\n> - d\n",
         "> > **中\r\n> 🙂**\nmissing\n> # end\n",
