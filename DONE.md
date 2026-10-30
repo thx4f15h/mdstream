@@ -299,3 +299,17 @@
 项目 devShell 下 `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 258 项、`cargo test --doc` 24 项、`cargo fmt --all -- --check` 与 `git diff --check` 全通过。新增 `cargo run -r --example container_defaults` 演示预览中的新子节点、显式展开优先及批量展开后新条目仍默认收起：8 个预算帧展开已有节点，共初始化 5 个容器。原 `container_folding` 示例仍以 6 帧恢复源码位置 42。验收日志：`/tmp/mdtui3-container-defaults-validation.log`。README、TODO 已同步。
 
 本单元完成容器深度默认策略；按类型/任务完成状态筛选、内层章节独立折叠、实际摘要/容器排版与终端 UI，以及原有未实现容器语法继续保留 TODO。
+
+## 2026-10-30 容器内章节独立折叠交付
+
+`FoldId::Heading` 接入全部已识别容器内 ATX/单物理行 Setext，候选保留完整标题行、折叠正文及子章节；空正文没有占位。范围按确切作用域止于同级/更高级标题或容器边界，嵌套标题不截断外层。折叠父链先取同作用域父章节，否则为所属容器；子容器和表格挂在所在结构父作用域的当前章节下，没有本地标题时回退到容器。原始标题/容器结构关系不变。同起点前序、源码定位、预算导航、All/Subtree/Siblings/AtLevel/Focus、预览、独立视图和 `heading_levels` 新节点默认规则覆盖内层章节。
+
+内层章节复用容器稀疏最大终点树实现（模块改为 `fold_ranges`），按 HeadingId 单独索引。开放章节与容器共享一次完整 tile 尾部遮蔽，不随逐字追加更新所有开放叶子。新标题通过同作用域六级索引定位可能结束的旧章节；容器关闭只检查六个级别的末尾标题，已封闭/未收起的节点跳过。长 ATX 只移动一个隐藏起点；Setext 晚确认、待分类行边界回退、合并 Update 与 finish 固化精确范围。N 个新标题、E 个关闭容器的范围维护为 O((N + E + 1)(log H + log C + log F + log T))，默认初始化另按新对象计费；查询不扫描祖先，新增索引空间 O(H)，反复切换不存历史快照。`section_index_visits` / `section_index_nodes` 提供访问和存储证据。保持零运行时依赖、禁止 unsafe，apply 仍按实际事件消费，不承诺任意大 Update 的单帧时延。
+
+新增 `tests/container_sections.rs` 12 项验收，覆盖明确父链/最内层候选、保留标题和空章节、同 tile/同起点、父子意愿、独立视图、Setext 晚确认、流式待分类尾部、UTF-8 全切点和逐标量中间快照、合并更新/重复 finish、全部批量动作、默认/显式状态及预览/表格组合、预算原子性和旧任务/测量拒绝。240 次流式追加、切换、预览和 resize 对照独立线性区间/父链/高度模型；既有“不支持内层折叠”的回归同步升级为新行为验收。
+
+复杂度证据：500 个开放章节下百万字正文后的 1000 次逐字追加只增加 1000 次共享尾部检查，章节索引访问、解析标题/容器步骤均不增长；有限预算布局只输出一个占位、读取少于 16 字节标题，百万字正文不进入回调。一次关闭 500 层恰好增加 501 次范围访问。150 层交替章节/容器导航以每帧 1 query/1 object 打开 300 个必要节点，正文计费字节为 0；一个内层章节下的一万个标题在前后各 4 步中整段跳过，保留本章节标题。4096 个关闭章节的查询少于 40 个索引节点访问，反复切换不增加节点数。百万字 Setext 确认不增加行内扫描，索引访问少于 40 次。
+
+项目 devShell 中 `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 270 项、`cargo test --doc` 25 项、`cargo fmt --all -- --check` 与 `git diff --check` 全通过。新增 `cargo run -r --example container_sections`：追加访问共享章节尾部与表格共 2 个范围，6 帧恢复源码位置 56，兄弟章节仍收起；既有 `container_folding` 示例仍以 6 帧恢复源码位置 42。日志：`/tmp/mdtui3-container-sections-validation.log`。README 与 TODO 已同步。
+
+本单元完成容器内章节独立折叠核心。容器定义/代码块、多物理行 Setext、复杂续行与其它未实现方言、类型/任务默认策略、实际摘要/容器排版、表格行范围折叠和终端 UI 继续保留 TODO，不声明整个容器或折叠规划完成。

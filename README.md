@@ -178,7 +178,7 @@ assert_eq!(doc.container(item).unwrap().state, SyntaxState::Sealed);
 - 支持显式 `>`、`>>`、`> >`，以及 `-`/`+`/`*` 和 1..9 位数字加 `.`/`)` 列表；可混合嵌套。每层标记前允许 0..3 个 ASCII 空格，`>` 后最多消费一个可选空格。相同父级、相同缩进、相同 bullet/有序分隔符延续 List；改变数字只创建新 Item，改变标记类型创建新 List。
 - 列表标记后须为空格、tab 或完整行结束；消费标记后的全部水平空白。续行须用 ASCII 空格补足该 Item 从父前缀到正文的字节宽度（包含标记前缩进；空条目按标记末端宽度），再匹配子层。tab 只作为列表标记/任务后的分隔字节，每个算 1，不展开为 tab stop；不接受 tab 作为续行缩进。每个兄弟按自己的数字/空白宽度确定续行要求。
 - 引用续行必须重复 `>`；列表续行必须有足够缩进。不推断 lazy continuation。无前缀空行关闭全部容器；显式 `>` 空行保留引用，缩进足够的空行保留对应条目。缺失某层前缀只保留已经匹配的外层，内层关闭。空条目和空任务保留条目身份；任务只识别最内层新条目的正文开头，任务标记之后继续识别标题或普通行内正文。
-- 容器内叶块按物理行独立解析行内语法；强调、代码 span 及软/硬换行不跨这些叶块。容器内 ATX 和单物理行 Setext 标题及章节作用域见下节，表格识别及索引见[容器内表格](#容器内表格)。引用定义、围栏/缩进代码、分隔线仍作为正文，不生成对应块对象（仍按行内方言处理）。顶层表格分隔行确认、分隔线/Setext 和已打开围栏的优先级保持。列表/引用整段折叠见[容器折叠](#容器折叠)；容器内标题的独立折叠、tight/loose 及终端布局尚未接入。
+- 容器内叶块按物理行独立解析行内语法；强调、代码 span 及软/硬换行不跨这些叶块。容器内 ATX 和单物理行 Setext 标题及章节作用域见下节，表格识别及索引见[容器内表格](#容器内表格)。引用定义、围栏/缩进代码、分隔线仍作为正文，不生成对应块对象（仍按行内方言处理）。顶层表格分隔行确认、分隔线/Setext 和已打开围栏的优先级保持。列表/引用整段折叠见[容器折叠](#容器折叠)；容器内标题独立折叠见[容器内章节折叠](#容器内章节折叠)，tight/loose 及终端布局尚未接入。
 - 结构仅从既有 1024 字节分类前缀（UTF-8 边界最多额外 3 字节）识别。前缀中的完整 `>` 可以开层，列表/任务候选必须在前缀内有分隔符或完整行末；截断候选和前缀后的标记保留正文，不在后续追加中重新分类。深度受前缀字节限制；不声称支持无限深度或完整 CommonMark/GFM 容器规则。
 
 容器新增解析工作累计 O(n + 开闭次数)，容器/活动栈空间 O(n)；保留一层必定消费正长度前缀，失败只做一次退出并批量弹栈，列表续行共享空格扫描结果。整库仍累计 O(n log n)。`container_arena_stats` 统计节点和活动栈实际容量字节及 Vec 增长次数，不含标题索引/作用域、源码、分配器元数据或 Update。批量关闭和 EOF 仍可能一次处理整个活动栈；解析不承诺单次调用硬预算。有预算的查询不会枚举正文或子树。
@@ -211,7 +211,7 @@ assert_eq!(h.current(doc.source().find("outside").unwrap()), Some(HeadingId(0)))
 
 元数据只随新标题、作用域开闭和上下文切换增长：H 个标题、C 个容器、R 次上下文切换占 O(H + C + R) 空间，均为 O(n)。每个容器进入时从父作用域六个末尾 ID 捕获外层章节，开闭 O(1)，不复制路径；长行追加仅更新当前块/标题和共享末端。标题插入摊还 O(1)，结构查询最多六级二分，`current` 另外二分上下文边界；确认 Setext 的区间失效仍 O(log n)。容器关闭事件及 `new_headings` 改变派生章节范围，不因此给全部旧标题发送 `changed_headings` 事件；消费方应按这些索引/事件查询，不能只缓存旧范围。查询不读取标题文字，名称读取、搜索、slug 继续显式共享 Budget；解析本身仍是摊还保证，无单次调用硬预算。
 
-顶层章节折叠继续覆盖容器内容，内部 h1 不会截断它；Reveal 可按既有预算展开遮住内层标题的顶层章节。容器内标题目前不是独立 `FoldCandidate`：显式折叠、预览和以其为根的批量命令返回 `InvalidRange`，候选枚举及默认设置跳过它们，以保留最多六个开放折叠章节的契约。容器折叠使用下文的独立索引与共享尾部遮蔽；内层章节折叠仍需单独的增量消费设计。
+顶层与容器内章节均提供独立 `FoldCandidate`，候选枚举、默认设置、批量、预览及导航覆盖全部已识别标题。内层 h1 不会截断外层章节；折叠父链保留章节与容器的交替嵌套，区别于 `HeadingIndex::parent` 的同作用域标题关系。流式尾部与事件消费见[容器内章节折叠](#容器内章节折叠)。
 
 `cargo run -r --example container_headings` 展示晚确认、作用域切换及小预算 slug。测试覆盖 UTF-8 全切点/逐前缀、1200 行固定种子线性范围模型、千层嵌套、百万字 Setext 无回扫、500 个同时开放的章节作用域、共享预算搜索/slug/折叠导航。
 
@@ -242,9 +242,9 @@ assert!(!doc.fold_candidate(FoldId::Table(TableId(0))).unwrap().open);
 
 `Table.block` 指向保存确切容器 ID 的叶块；Table/source、delimiter 和 TableRow/source 包含完整物理行及容器前缀，TableCell/source 仅含去空白的单元格正文。`table_at` 覆盖前缀/分隔行，`row_at` 覆盖行前缀但不覆盖分隔行；按 ID/行列读取仍 O(1)，定位表/行仍 O(log B)/O(log R)。未分类尾部排除在结构索引外，已分类的超长行按追加增长；开放表格折叠暂覆盖 pending 尾部，边界确认后收回。列宽增长、行变化与表格创建沿用既有 Update，旧行不重扫。
 
-同一时间仍只有一张开放表格，整表折叠、默认收起、临时展开、导航和 TablePreview 直接复用现有接口；折叠父节点为确切容器，无容器时为当前顶层章节；内层标题仍不单独折叠。摘要的源码总上限和共享 Budget **包含隐藏容器前缀**；千层前缀也不能免费越过。正文追加只消费新字节，不遍历祖先；分隔行仅检查有界候选，空间不复制祖先链或创建空单元格矩阵，全库保持累计 O(n log n)、空间 O(n)。`container_bytes` 包含分隔行优先级检查。
+同一时间仍只有一张开放表格，整表折叠、默认收起、临时展开、导航和 TablePreview 直接复用现有接口；折叠父节点为确切作用域的当前章节，若尚无本地标题则为该容器（根作用域无标题时无父节点）。摘要的源码总上限和共享 Budget **包含隐藏容器前缀**；千层前缀也不能免费越过。正文追加只消费新字节，不遍历祖先；分隔行仅检查有界候选，空间不复制祖先链或创建空单元格矩阵，全库保持累计 O(n log n)、空间 O(n)。`container_bytes` 包含分隔行优先级检查。
 
-`cargo run -r --example container_tables` 演示流式确认、兄弟边界、默认整表收起和小预算摘要。`tests/container_tables.rs` 与折叠测试覆盖 UTF-8 全切点/逐前缀、独立范围模型、千层/百万字追加、超宽稀疏表、隐藏前缀预算和单占位跳过正文。实际表格排版、行范围折叠和内层章节折叠仍见 TODO。
+`cargo run -r --example container_tables` 演示流式确认、兄弟边界、默认整表收起和小预算摘要。`tests/container_tables.rs` 与折叠测试覆盖 UTF-8 全切点/逐前缀、独立范围模型、千层/百万字追加、超宽稀疏表、隐藏前缀预算和单占位跳过正文。实际表格排版及行范围折叠仍见 TODO。
 
 ## 表格、任务列表与图片
 
@@ -484,7 +484,7 @@ assert_eq!(matches[0].source, Span::new(0, doc.source().len()));
 
 ## 基础折叠
 
-`FoldView` 为每个视图保存独立的收起意愿、高度和检查点。当前支持顶层标题章节、围栏和缩进代码块、表格及显式 Quote/List/Item 容器：章节保留标题，正文及子章节变为一个占位；代码块、表格和容器整体变为占位，表格保留表头源码作为摘要。空章节不生成占位。父节点展开后恢复原来的子节点状态，源码、解析对象和 `Style::HIDDEN` 不变。
+`FoldView` 为每个视图保存独立的收起意愿、高度和检查点。当前支持顶层及容器内标题章节、围栏和缩进代码块、表格及显式 Quote/List/Item 容器：章节保留标题，正文及子章节变为一个占位；代码块、表格和容器整体变为占位，表格保留表头源码作为摘要。空章节不生成占位。父节点展开后恢复原来的子节点状态，源码、解析对象和 `Style::HIDDEN` 不变。
 
 ```rust
 use mdtui3::{Document, FoldView, FoldId, HeadingId, Budget, WorkLimit};
@@ -513,13 +513,13 @@ view.heights().viewport_budgeted(0..24, 0, &mut budget, &mut tiles);
 
 `LayoutPass::folded` / `advance_folded` 接收 `FoldLayoutSink`，复用已有有预算排版循环。每个可见占位只调用一次 `placeholder`，传入稳定 ID、隐藏源码、摘要区间及归属 tile；接入方将占位作为块边界绘制并在 `end_tile` 中计入其高度、重置必要的换行状态。回调只获得元数据，若要读取摘要，应另用共享 Budget。占位高度全部归属隐藏起点所在 tile；同一 tile 可有多个占位、标题和后继正文。隐藏内部的文字、图片和子占位不会交给回调。该接口仍使用 `RenderRun`，显示实体解码、终端宽度及真实软换行由接入方处理。完整示例见 `examples/folding.rs`。
 
-高度树独立保存基础高度/有效性与区间遮蔽计数。`height`、`prefix_rows`、`locate` 和视口查询返回折叠后的高度，`base_height` 返回遮蔽前的储存值；完整隐藏的内部 tile 无须逐个清零或恢复。每个占位及末端边界 tile 保持可检索，再按预算精确测量。单节点操作为 O(log H + log C + log F + log T)，顶层标题祖先最多六级，H/C/F/T 分别是标题、容器、已收起节点和 tile 数。父子交替收放、失效、基础高度变化、树增长及 O(1) resize 保留嵌套遮蔽。重复操作不保存历史快照，新增视图状态 O(F + C)，容器稀疏索引保留已访问位置，受 O(C) 上界约束；高度树仍为 O(T)。
+高度树独立保存基础高度/有效性与区间遮蔽计数。`height`、`prefix_rows`、`locate` 和视口查询返回折叠后的高度，`base_height` 返回遮蔽前的储存值；完整隐藏的内部 tile 无须逐个清零或恢复。每个占位及末端边界 tile 保持可检索，再按预算精确测量。单节点操作为 O(log H + log C + log F + log T)，顶层标题祖先最多六级，H/C/F/T 分别是标题、容器、已收起节点和 tile 数。父子交替收放、失效、基础高度变化、树增长及 O(1) resize 保留嵌套遮蔽。重复操作不保存历史快照，新增视图状态 O(F + C + H)，容器与内层章节稀疏索引保留已访问位置，分别受 O(C) / O(H) 上界约束；高度树仍为 O(T)。
 
 `set_collapsed` / `toggle` 返回源码变化范围和视图版本；从受影响边界起惰性过期后续高度与检查点，旧异步测量和布局继续任务会被拒绝。`view.measure` 验证本视图的测量及检查点依赖；`insert_checkpoint` 同时使下游布局失效。`reset` 保留折叠意愿与遮蔽，只重置基础估计和检查点。保留的高度仍可能是过期估计，展开后仅测量请求窗口；选择远处 tile 时默认局部近似，不能承诺精确绝对行号。`folded_from_checkpoint` 只接受本视图的有效起点及指定字节距离内的恢复，接入方恢复 sink 状态，恢复步骤也使用同一 Budget。
 
-每次 append/finish 或连续 Update 批处理后调用 `view.apply`，然后才能查询。对已有折叠，更新检查最多六个开放顶层章节和一个开放代码/表格块；开放容器共享一次尾部遮蔽更新，关闭容器按实际 close 事件处理。开启默认收起时还处理新增标题/块/表格/容器的元数据，不枚举历史折叠或开放容器祖先链。新 tile 在 apply 返回前继承遮蔽。开放容器/代码/表格的未分类行前缀暂属该范围，闭合/下一块确认后可以收回；Setext 晚确认也能缩短前一章节的范围。普通源码追加不会读取旧正文。重复应用不清掉新测量，错误文档或不连续更新在修改视图之前被拒绝。
+每次 append/finish 或连续 Update 批处理后调用 `view.apply`，然后才能查询。对已有折叠，更新检查最多六个开放顶层章节和一个开放代码/表格块；开放容器与内层章节共享一次尾部遮蔽更新；新标题和容器关闭各检查相关作用域的至多六个末尾章节，另检查一个可能增长的旧标题。开启默认收起时还处理新增标题/块/表格/容器的元数据，不枚举历史折叠或开放容器祖先链。新 tile 在 apply 返回前继承遮蔽。开放容器/内层章节/代码/表格的未分类行前缀暂属该范围，闭合/下一块确认后可以收回；Setext 晚确认也能缩短前一章节的范围。普通源码追加不会读取旧正文。重复应用不清掉新测量，错误文档或不连续更新在修改视图之前被拒绝。
 
-折叠导航、锚点恢复、有预算批量操作、临时展开和摘要读取见下文。目录 UI、摘要占位绘制、表格连续行范围折叠、内层章节折叠、容器类型/任务策略、手工交叉范围继续见 [TODO](TODO.md#折叠支持规划)。
+折叠导航、锚点恢复、有预算批量操作、临时展开和摘要读取见下文。目录 UI、摘要占位绘制、表格连续行范围折叠、容器类型/任务策略、手工交叉范围继续见 [TODO](TODO.md#折叠支持规划)。
 
 ### 整表折叠
 
@@ -547,7 +547,7 @@ assert_eq!(candidate.summary_text(&doc, 32, &mut budget), Some("| Name | Value |
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-表格的折叠父节点是确切容器，无容器时是当前顶层作用域章节；跳过尚无独立折叠候选的内层标题。父节点收放保留表格自身意愿。默认设置、批量命令、临时展开、源码锚点与书签复用现有契约，导航到隐藏单元格时逐帧展开必要的顶层章节、容器和表格。`Update.new_tables` 处理表头晚确认，包括已有段落块转成表格的情况；显式展开后追加行不会再次套用默认值。开放表格的待分类行前缀暂属表格，下一块确认时收回，EOF 封闭范围。最多六个章节和一个代码/表格块的开放范围上限保持不变。
+表格的折叠父节点是确切作用域的当前章节；该作用域还没有标题时挂在所属容器下，根作用域没有标题时无父节点。父节点收放保留表格自身意愿。默认设置、批量命令、临时展开、源码锚点与书签复用现有契约，导航到隐藏单元格时逐帧展开必要的顶层/内层章节、容器和表格。`Update.new_tables` 处理表头晚确认，包括已有段落块转成表格的情况；显式展开后追加行不会再次套用默认值。开放表格的待分类行前缀暂属表格，下一块确认时收回，EOF 封闭范围。最多六个顶层章节和一个代码/表格块仍单独刷新；任意多个开放内层章节与容器共用尾部，见下文。
 
 候选查询、切换及更新均不枚举行/列/单元格；排版直接跳过隐藏正文，占位高度只归属表格起点 tile。`examples/folding.rs` 演示百万字单元格收起后追加新行、读取表头前缀及有预算排版。前几行有界摘要读取见下文；连续行范围折叠和表格绘制仍是后续工作。
 
@@ -576,11 +576,42 @@ assert!(matches!(view.hidden_at(&doc, 4, &mut budget)?, FoldLookup::Hidden(c) if
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-容器父节点优先是结构父容器，根容器的父节点是所在顶层章节。表格挂在确切容器下；容器内标题仍不是独立候选，因此不会插入折叠父链。顶层章节覆盖容器，最外层已折叠容器覆盖子容器与表格的占位；展开父节点恢复孩子的本地意愿。`All`、`Subtree`、`Siblings`、`Focus`、临时展开、导航与源码锚点均包含容器。新容器默认展开；`FoldDefaults::container_depth` 可按结构深度初始化新节点的收起意愿，具体语义见下文。按类型或任务完成状态自动折叠仍在 TODO。
+容器的折叠父节点是其结构父容器作用域中的当前章节；没有本地章节时回退到结构父容器，根容器同理查询根章节。表格挂在确切作用域的当前章节下，没有本地标题时回退到所属容器。内层标题的折叠父节点是同作用域父章节，否则为所属容器。顶层章节覆盖容器，最外层已折叠容器覆盖子容器与表格的占位；展开父节点恢复孩子的本地意愿。`All`、`Subtree`、`Siblings`、`Focus`、临时展开、导航与源码锚点均包含容器。新容器默认展开；`FoldDefaults::container_depth` 可按结构深度初始化新节点的收起意愿，具体语义见下文。按类型或任务完成状态自动折叠仍在 TODO。
 
-视图以 ContainerId 的前序索引维护已折叠范围的最大终点，开放节点用开放终点标记，关闭时由 `Update.closed_containers` 写入固定终点。可见性查询先二分起点，再查询最外层遮蔽者，O(log C)，无需逐层读取祖先。全部开放容器位于同一条活动路径，完整 tile 的遮蔽并集只需一个共享范围；追加只更新这个并集，关闭的折叠容器转成固定遮蔽。未开启深度默认策略时，容器部分的 apply 成本为 O((E + 1)(log C + log F + log T))，E 为实际关闭事件数，不随仍开放的深度增长；这仍是按输入/事件消费的更新接口，没有任意大 Update 的单帧时延承诺。单次索引写入/查询有对数节点访问量，Vec 扩容沿用摊还保证。
+视图以 ContainerId 的前序索引维护已折叠范围的最大终点，开放节点用开放终点标记，关闭时由 `Update.closed_containers` 写入固定终点。可见性查询先二分起点，再查询最外层遮蔽者，O(log C)，无需逐层读取祖先。全部开放容器位于同一条活动路径，完整 tile 的遮蔽并集只需一个共享范围；追加只更新这个并集，关闭的折叠容器转成固定遮蔽。未开启深度默认策略时，容器部分的 apply 成本为 O((E + 1)(log H + log C + log F + log T))，E 为实际关闭事件数，不随仍开放的深度增长；这仍是按输入/事件消费的更新接口，没有任意大 Update 的单帧时延承诺。单次索引写入/查询有对数节点访问量，Vec 扩容沿用摊还保证。
 
-`container_index_visits` 计索引读写的节点访问量，`container_index_nodes` 计保留节点数；反复切换不新增历史快照，节点数不超过完整二叉索引的 O(C) 上界。`tests/container_folding.rs` 验证千层开放链、百万字正文、4096 个关闭兄弟、同起点父子、有预算深层导航、UTF-8 全切点/逐前缀和独立区间/高度模型。`cargo run -r --example container_folding` 展示流式追加、父预览、子意愿及按帧恢复单元格源码锚点。内层章节折叠、类型/任务默认策略、实际摘要/容器排版和终端 UI 继续独立推进。
+`container_index_visits` 计索引读写的节点访问量，`container_index_nodes` 计保留节点数；反复切换不新增历史快照，节点数不超过完整二叉索引的 O(C) 上界。`tests/container_folding.rs` 验证千层开放链、百万字正文、4096 个关闭兄弟、同起点父子、有预算深层导航、UTF-8 全切点/逐前缀和独立区间/高度模型。`cargo run -r --example container_folding` 展示流式追加、父预览、子意愿及按帧恢复单元格源码锚点。类型/任务默认策略、实际摘要/容器排版和终端 UI 继续独立推进。
+
+### 容器内章节折叠
+
+`FoldId::Heading` 包含显式 Quote/Item 内的 ATX 和单物理行 Setext。保留标题完整物理行（含容器前缀），正文及子章节替换为一个占位；空正文没有占位。范围止于同一确切作用域的同级/更高级标题或容器边界；嵌套作用域的标题不截断外层。`HeadingIndex::section` 保持已分类范围，开放的折叠候选暂包含未分类尾部，边界确认时收回。Setext 晚确认可回退前一章节末端；长 ATX 标题增长会移动隐藏起点，标题文字不被自己的折叠遮住。
+
+折叠父链按包含关系组合章节与容器：章节先找同作用域父标题，否则挂在所属容器；子容器先找其结构父作用域的当前标题，否则挂在结构父容器。表格同理。原始 `Container::parent` 和 `HeadingIndex::parent` 不变。`fold_candidate_at` 返回包含当前位置的最内层候选，标题仍可作为导航目标；Reveal 只展开遮住目标的祖先，不改变目标章节自身正文意愿。All/Subtree/Siblings/AtLevel/Focus、预览、源码锚点和默认 `heading_levels` 直接覆盖内层章节，默认只初始化新 ID。
+
+```rust
+use mdtui3::{Document, FoldView, FoldId, HeadingId, ContainerId, TableId};
+let mut doc = Document::new();
+doc.append("> # Guide\n> - ## Item\n>   a|b\n>   -|-\n>   x|y\n")?;
+let mut view = FoldView::new(&doc, 1)?;
+let guide = FoldId::Heading(HeadingId(0));
+let item = FoldId::Heading(HeadingId(1));
+assert_eq!(doc.fold_candidate(FoldId::Container(ContainerId(1))).unwrap().parent, Some(guide));
+assert_eq!(doc.fold_candidate(FoldId::Table(TableId(0))).unwrap().parent, Some(item));
+view.set_collapsed(&doc, item, true)?;
+view.set_collapsed(&doc, guide, true)?;
+let update = doc.append("> - ## Next\n>   body\nout\n")?;
+view.apply(&doc, &update)?;
+view.set_collapsed(&doc, guide, false)?;
+assert!(view.is_collapsed(item));
+assert!(!doc.fold_candidate(item).unwrap().open);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+内层章节使用按 HeadingId 排列的稀疏最大终点索引，开放终点为标记，查询时读取最新范围。它与容器索引分别定位最外层遮蔽者，再按源码前序比较，查询 O(log H + log C + log F)，不扫描祖先链。所有开放内层章节和容器都延伸到流末端，完整 tile 遮蔽并集只保存一个范围。普通正文追加只刷新共享尾部，不逐个写入开放章节；标题本身增长时只更新那一个隐藏起点。新标题检查同作用域至多六个可能结束的章节；容器关闭检查该作用域每级最后一个标题，跳过已经封闭或未收起的节点。合并 Update 仍从新标题及关闭事件恢复所有边界，不依赖逐次 apply。
+
+设 N 为新标题数、E 为关闭容器数，范围维护为 O((N + E + 1)(log H + log C + log F + log T))，默认初始化另按新对象计费。关闭大量节点仍按实际事件消费，无任意大更新的单帧时延承诺；解析累计复杂度及查询/排版共享 Budget 不变。新增索引空间 O(H)，反复切换不积累历史节点。`section_index_visits` / `section_index_nodes` 分别报告节点访问数和保留节点数；`range_visits` 包含事件触发的刷新。
+
+`tests/container_sections.rs` 用独立区间、父链和高度模型验证嵌套边界、同起点、同 tile、流式逐前缀/UTF-8 全切点、合并更新、批量、预览与表格组合。500 个开放章节和百万字正文下逐字追加没有章节索引写入；150 层交替章节/容器的导航每帧展开一个节点；4096 个关闭章节验证对数查询和节点复用。`cargo run -r --example container_sections` 演示共享尾部、预览保留子章节及精确源码恢复。实际摘要/容器排版、类型/任务默认策略、终端 UI 及未实现容器方言仍保留 TODO。
 
 ## 折叠导航与源码锚点
 
@@ -664,7 +695,7 @@ assert!(!view.is_collapsed(FoldId::Heading(HeadingId(1))));
 
 `FoldDefaults` 只规定**后续首次识别**的节点初始意愿：`heading_levels[0..6]` 对应 h1–h6，`code` 控制代码块，`table` 控制表格，`container_depth` 控制容器深度阈值，默认全部展开。`set_defaults` 为 O(1)，不追溯已有候选，不覆盖显式展开/收起；已有文档创建视图后仍全部展开，需要调整时使用批量命令。默认设置变化增加视图版本，但不改变当前布局；相同设置无操作。批量命令不修改默认设置，因此“全部展开”后新到来的标题仍按当前默认初始化。单节点收放继续保留子节点意愿；resize 保留默认设置和所有节点意愿。
 
-`view.apply` 通过 `Update.new_headings` / `new_blocks` / `new_tables` / `new_containers` 初始化新候选，Setext 和表格晚确认使用新 HeadingId/TableId，即使其块早已存在；重复应用不会重置意愿。`default_visits` 计量检查的新增标题/块/表格/容器元数据，`range_visits` 计量最多七个已有开放章节/代码/表格、一次共享容器尾部检查，以及实际关闭的已折叠容器。初始化成本计入新增对象事件，不宣称任意大 Update 的消费具有整帧硬预算；没有新的候选时，不回访历史节点或读取旧正文。合并 Update 在 apply 时统一使用当前默认设置；需要在流中切换默认值时，先应用切换前的更新。
+`view.apply` 通过 `Update.new_headings` / `new_blocks` / `new_tables` / `new_containers` 初始化新候选，Setext 和表格晚确认使用新 HeadingId/TableId，即使其块早已存在；重复应用不会重置意愿。`default_visits` 计量检查的新增标题/块/表格/容器元数据，`range_visits` 计量最多七个已有开放顶层章节/代码/表格、一次共享容器/内层章节尾部检查、事件触发的内层章节刷新（含一个可能增长的旧标题），以及实际关闭的已折叠容器。初始化成本计入新增对象事件，不宣称任意大 Update 的消费具有整帧硬预算；默认初始化在没有新候选时不回访历史节点或读取旧正文。合并 Update 在 apply 时统一使用当前默认设置；需要在流中切换默认值时，先应用切换前的更新。
 
 可运行示例：`cargo run -r --example fold_batch`。
 
@@ -693,7 +724,7 @@ assert!(view.is_collapsed(FoldId::Container(ContainerId(2))));
 
 策略只消费 `Update.new_containers`，包括同一合并更新内已打开又关闭的容器，以及物理行晚确认的节点。初始化与祖先是否收起或正在预览无关，每个节点保留自己的意愿；预览父节点期间新出现的深层子节点仍按阈值初始化。显式单节点、导航及批量操作修改已有选择；预览期间的显式操作更新预览结束时恢复的选择。更改/关闭默认策略、普通追加、关闭、finish、重复 apply 和 resize 都不会重新初始化已有 ID。`set_defaults` 不影响当前布局，变化会使旧视图任务失效，相同值无操作；合并更新统一使用 apply 当时的策略。
 
-启用策略时每个新容器检查一次已存深度，计入 `default_visits`，无论是否达到阈值；禁用时不访问这些元数据。设 N 为新增容器数，K 为达到阈值的个数，初始化额外成本为 O(N + K(log H + log C + log F + log T))，只增加 O(1) 策略字段，折叠状态沿用 O(F + C) 空间。没有新容器的普通追加不检查历史节点或开放祖先，仍只更新一次共享尾部。apply 按新增对象/开闭事件消费，不承诺任意大更新的单帧时延；查询、批量操作、预览和排版继续共用 Budget。测试覆盖千层/百万字逐字追加、4096 个历史兄弟、UTF-8 全切点/逐前缀及 240 次流式策略/显式操作的区间与高度模型。`cargo run -r --example container_defaults` 演示预览中的新子节点、显式展开优先及批量展开后新条目的默认收起。
+启用策略时每个新容器检查一次已存深度，计入 `default_visits`，无论是否达到阈值；禁用时不访问这些元数据。设 N 为新增容器数，K 为达到阈值的个数，初始化额外成本为 O(N + K(log H + log C + log F + log T))，只增加 O(1) 策略字段，折叠状态沿用 O(F + C + H) 空间（含内层章节索引）。没有新容器的普通追加不检查历史节点或开放祖先，仍只更新一次共享尾部。apply 按新增对象/开闭事件消费，不承诺任意大更新的单帧时延；查询、批量操作、预览和排版继续共用 Budget。测试覆盖千层/百万字逐字追加、4096 个历史兄弟、UTF-8 全切点/逐前缀及 240 次流式策略/显式操作的区间与高度模型。`cargo run -r --example container_defaults` 演示预览中的新子节点、显式展开优先及批量展开后新条目的默认收起。
 
 ## 表格前几行有界预览
 
@@ -878,7 +909,7 @@ assert_eq!(text, "first\nsecond\n");
 | `src/annotations.rs` | 区间样式、隐藏聚合、最新 revision |
 | `src/references.rs` | 有长度上限的标签规范化和 BTreeMap 符号表 |
 | `src/layout.rs` | lazy 高度与遮蔽树、viewport、锚点和过期测量拒绝 |
-| `src/folding.rs` / `src/container_folds.rs` / `src/frame.rs` | 章节/代码块/表格/容器候选、独立折叠视图、容器区间索引、预算排版和占位 |
+| `src/folding.rs` / `src/fold_ranges.rs` / `src/frame.rs` | 章节/代码块/表格/容器候选、独立折叠视图、容器/内层章节区间索引、预算排版和占位 |
 | `src/checkpoints.rs` | 有效检查点的范围失效和前驱查询 |
 | `src/table_preview.rs` | 共享行数/字节上限与 Budget 的表格前几行摘要 |
 | `src/table.rs` | 表格行/单元格、对齐、流式单元格解析和列宽提示 |
@@ -905,6 +936,7 @@ nix develop -c cargo run -r --example stream
 nix develop -c cargo run -r --example structure
 nix develop -c cargo run -r --example containers
 nix develop -c cargo run -r --example container_headings
+nix develop -c cargo run -r --example container_sections
 nix develop -c cargo run -r --example container_tables
 nix develop -c cargo run -r --example scaling
 nix develop -c cargo run -r --example budget

@@ -1,24 +1,22 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::ContainerId;
-
 #[derive(Default)]
 struct Node {
     children: [Option<usize>; 2],
     end: usize,
 }
 
-/// Sparse segment tree over preorder container IDs. A subtree's maximum end
-/// lets lookup skip closed siblings without walking any container ancestors.
+/// Sparse segment tree over source/preorder arena indices. A subtree's maximum
+/// end lets lookup skip closed siblings without walking any ancestors.
 /// Open leaves use usize::MAX; only close events change their endpoints.
-pub(crate) struct ContainerFolds {
+pub(crate) struct FoldRanges {
     nodes: Vec<Node>,
     root: usize,
     capacity: usize,
     visits: AtomicU64,
 }
 
-impl Default for ContainerFolds {
+impl Default for FoldRanges {
     fn default() -> Self {
         Self {
             nodes: vec![Node::default()],
@@ -29,7 +27,7 @@ impl Default for ContainerFolds {
     }
 }
 
-impl ContainerFolds {
+impl FoldRanges {
     pub fn visits(&self) -> u64 {
         self.visits.load(Ordering::Relaxed)
     }
@@ -38,8 +36,8 @@ impl ContainerFolds {
         self.nodes.len()
     }
 
-    pub fn set(&mut self, id: ContainerId, end: usize) {
-        while id.0 >= self.capacity {
+    pub fn set(&mut self, id: usize, end: usize) {
+        while id >= self.capacity {
             let root = self.nodes.len();
             self.nodes.push(Node {
                 children: [Some(self.root), None],
@@ -48,7 +46,7 @@ impl ContainerFolds {
             self.root = root;
             self.capacity *= 2;
         }
-        self.update(self.root, 0, self.capacity, id.0, end);
+        self.update(self.root, 0, self.capacity, id, end);
     }
 
     fn update(&mut self, node: usize, lo: usize, hi: usize, at: usize, end: usize) {
@@ -77,10 +75,9 @@ impl ContainerFolds {
     }
 
     /// First selected ID below `before` with end > offset. Preorder chooses the
-    /// outermost container even when several containers share one opener line.
-    pub fn covering(&self, before: usize, offset: usize) -> Option<ContainerId> {
+    /// outermost range even when several containers share one opener line.
+    pub fn covering(&self, before: usize, offset: usize) -> Option<usize> {
         self.find(self.root, 0, self.capacity, before, offset)
-            .map(ContainerId)
     }
 
     fn find(

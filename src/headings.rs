@@ -55,8 +55,18 @@ impl HeadingIndex {
     }
 
     fn current_in(&self, container: Option<ContainerId>, offset: usize) -> Option<HeadingId> {
-        let scope = self.scope(container);
-        scope
+        self.local_current(container, offset)
+            .or(self.scope(container).inherited)
+    }
+
+    // Unlike current(), folding must retain the intervening container in its
+    // parent chain, rather than jumping directly to an inherited outer heading.
+    pub(crate) fn local_current(
+        &self,
+        container: Option<ContainerId>,
+        offset: usize,
+    ) -> Option<HeadingId> {
+        self.scope(container)
             .levels
             .iter()
             .filter_map(|ids| {
@@ -65,7 +75,25 @@ impl HeadingIndex {
                     .map(|i| ids[i])
             })
             .max()
-            .or(scope.inherited)
+    }
+
+    /// At most six possible open sections at a scope's closing boundary.
+    pub(crate) fn scope_tails(&self, container: ContainerId) -> [Option<HeadingId>; 6] {
+        std::array::from_fn(|level| self.scopes[container.0].levels[level].last().copied())
+    }
+
+    /// Only same-scope sections at this or deeper levels can close here.
+    pub(crate) fn closing_before(&self, id: HeadingId) -> [Option<HeadingId>; 6] {
+        let h = self.entries[id.0];
+        std::array::from_fn(|level| {
+            if level + 1 < usize::from(h.level) {
+                return None;
+            }
+            let ids = &self.scope(h.container).levels[level];
+            ids.partition_point(|&previous| previous < id)
+                .checked_sub(1)
+                .map(|i| ids[i])
+        })
     }
 
     pub(crate) fn root_current(&self, offset: usize) -> Option<HeadingId> {

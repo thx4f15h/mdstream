@@ -202,12 +202,13 @@ pub(crate) struct FoldState {
     collapsed: BTreeMap<FoldId, Mask>,
     starts: BTreeSet<(usize, FoldId)>,
     // At most six root sections and the active code/table block need individual
-    // range refreshes. Containers use the separate shared tail below.
+    // range refreshes. Containers and scoped sections share the tail below.
     growing: BTreeSet<FoldId>,
-    containers: crate::container_folds::ContainerFolds,
-    // All open containers form a single ancestor chain. Their complete-tile
+    containers: crate::fold_ranges::FoldRanges,
+    sections: crate::fold_ranges::FoldRanges,
+    // Open containers and scoped sections all reach EOF. Their complete-tile
     // union has one shared mask; no ancestor is refreshed on ordinary append.
-    open_containers: BTreeSet<(usize, ContainerId)>,
+    open_ranges: BTreeSet<(usize, FoldId)>,
     open_tiles: Range<usize>,
 }
 
@@ -267,11 +268,7 @@ impl Document {
                 );
                 Some(FoldCandidate {
                     id: FoldId::Container(id),
-                    parent: container.parent.map(FoldId::Container).or_else(|| {
-                        self.headings()
-                            .root_current(source.start)
-                            .map(FoldId::Heading)
-                    }),
+                    parent: self.fold_parent(container.parent, source.start),
                     source,
                     hidden: source,
                     // A source reference only; summary_text still bounds reads.
@@ -282,19 +279,26 @@ impl Document {
             FoldId::Heading(id) => {
                 let headings = self.headings();
                 let heading = headings.get(id)?;
-                // Container heading folds need a separate bounded update model.
-                if heading.container.is_some() {
-                    return None;
-                }
                 let end = headings.section_end(id);
-                let source = headings.section(id, self.source().len())?;
+                let open = end.is_none()
+                    && !self.is_finished()
+                    && heading
+                        .container
+                        .is_none_or(|id| self.container(id).unwrap().state != SyntaxState::Sealed);
+                let mut source = headings.section(id, self.source().len())?;
+                if open {
+                    source.end = self.source().len();
+                }
                 Some(FoldCandidate {
                     id: FoldId::Heading(id),
-                    parent: headings.parent(id).map(FoldId::Heading),
+                    parent: headings
+                        .parent(id)
+                        .map(FoldId::Heading)
+                        .or(heading.container.map(FoldId::Container)),
                     source,
                     hidden: Span::new(heading.source.end, source.end),
                     summary: Some(heading.content),
-                    open: end.is_none() && !self.is_finished(),
+                    open,
                 })
             }
             FoldId::Code(id) => {
@@ -315,11 +319,7 @@ impl Document {
                 );
                 Some(FoldCandidate {
                     id: FoldId::Code(id),
-                    parent: block.container.map(FoldId::Container).or_else(|| {
-                        self.headings()
-                            .root_current(source.start)
-                            .map(FoldId::Heading)
-                    }),
+                    parent: self.fold_parent(block.container, source.start),
                     source,
                     hidden: source,
                     summary: info,
@@ -342,11 +342,7 @@ impl Document {
                 );
                 Some(FoldCandidate {
                     id: FoldId::Table(id),
-                    parent: block.container.map(FoldId::Container).or_else(|| {
-                        self.headings()
-                            .root_current(source.start)
-                            .map(FoldId::Heading)
-                    }),
+                    parent: self.fold_parent(block.container, source.start),
                     source,
                     hidden: source,
                     summary: Some(table.row(0)?.source),
@@ -354,6 +350,13 @@ impl Document {
                 })
             }
         }
+    }
+
+    fn fold_parent(&self, container: Option<ContainerId>, offset: usize) -> Option<FoldId> {
+        self.headings()
+            .local_current(container, offset)
+            .map(FoldId::Heading)
+            .or(container.map(FoldId::Container))
     }
 
     /// Innermost supported candidate, including an open container/code/table tail.
@@ -378,6 +381,12 @@ impl Document {
             .block_at(offset)
             .and_then(|id| self.block(id)?.container)
             .or_else(|| self.containers.inner());
+        if let Some(id) = self.headings().local_current(container, offset)
+            && let Some(candidate) = self.fold_candidate(FoldId::Heading(id))
+            && candidate.source.range().contains(&offset)
+        {
+            return Some(candidate);
+        }
         if let Some(id) = container
             && let Some(candidate) = self.fold_candidate(FoldId::Container(id))
             && candidate.source.range().contains(&offset)
@@ -414,7 +423,21 @@ impl FoldState {
                 .containers
                 .covering(document.containers.starting_before(offset + 1), offset)
         {
-            hidden = document.fold_candidate(FoldId::Container(id));
+            hidden = document.fold_candidate(FoldId::Container(ContainerId(id)));
+        }
+        if offset < document.source().len()
+            && let Some(id) = self.sections.covering(
+                document
+                    .headings()
+                    .entries()
+                    .partition_point(|h| h.source.start <= offset),
+                offset,
+            )
+            && let Some(candidate) = document.fold_candidate(FoldId::Heading(HeadingId(id)))
+            && candidate.hidden.range().contains(&offset)
+            && hidden.is_none_or(|outer| candidate.contains_candidate(&outer))
+        {
+            hidden = Some(candidate);
         }
         if hidden.is_none()
             && let Some(candidate) = document.fold_candidate_at(offset)
@@ -444,10 +467,9 @@ impl FoldState {
         heights.cover(mask.tiles.clone(), false);
         self.starts.remove(&(mask.candidate.hidden.start, id));
         self.growing.remove(&id);
-        if let FoldId::Container(container) = id {
-            self.containers.set(container, 0);
-            self.open_containers
-                .remove(&(mask.candidate.hidden.start, container));
+        if self.shared_range(document, id) {
+            self.range_index(id).set(Self::range_id(id), 0);
+            self.open_ranges.remove(&(mask.candidate.hidden.start, id));
             self.refresh_open_tiles(document, heights);
         }
         Some(mask)
@@ -455,15 +477,16 @@ impl FoldState {
 
     fn insert(&mut self, document: &Document, heights: &mut HeightIndex, candidate: FoldCandidate) {
         let hidden = candidate.hidden;
-        let open_container = matches!(candidate.id, FoldId::Container(_)) && candidate.open;
-        let tiles = if open_container {
+        let shared = self.shared_range(document, candidate.id);
+        let open_shared = shared && candidate.open;
+        let tiles = if open_shared {
             0..0
         } else {
             Self::interior(document, hidden)
         };
-        if let FoldId::Container(id) = candidate.id {
-            self.containers.set(
-                id,
+        if shared {
+            self.range_index(candidate.id).set(
+                Self::range_id(candidate.id),
                 if candidate.open {
                     usize::MAX
                 } else {
@@ -471,7 +494,7 @@ impl FoldState {
                 },
             );
             if candidate.open {
-                self.open_containers.insert((hidden.start, id));
+                self.open_ranges.insert((hidden.start, candidate.id));
                 self.refresh_open_tiles(document, heights);
             }
         }
@@ -479,15 +502,39 @@ impl FoldState {
             self.starts.insert((hidden.start, candidate.id));
         }
         heights.cover(tiles.clone(), true);
-        if candidate.open && !open_container {
+        if candidate.open && !open_shared {
             self.growing.insert(candidate.id);
         }
         self.collapsed
             .insert(candidate.id, Mask { candidate, tiles });
     }
 
+    fn shared_range(&self, document: &Document, id: FoldId) -> bool {
+        match id {
+            FoldId::Container(_) => true,
+            FoldId::Heading(id) => document.headings().get(id).unwrap().container.is_some(),
+            _ => false,
+        }
+    }
+
+    fn range_id(id: FoldId) -> usize {
+        match id {
+            FoldId::Container(id) => id.0,
+            FoldId::Heading(id) => id.0,
+            _ => unreachable!(),
+        }
+    }
+
+    fn range_index(&mut self, id: FoldId) -> &mut crate::fold_ranges::FoldRanges {
+        match id {
+            FoldId::Container(_) => &mut self.containers,
+            FoldId::Heading(_) => &mut self.sections,
+            _ => unreachable!(),
+        }
+    }
+
     fn refresh_open_tiles(&mut self, document: &Document, heights: &mut HeightIndex) {
-        let tiles = self.open_containers.first().map_or(0..0, |&(start, _)| {
+        let tiles = self.open_ranges.first().map_or(0..0, |&(start, _)| {
             Self::interior(document, Span::new(start, document.source().len()))
         });
         if self.open_tiles != tiles {
@@ -517,8 +564,14 @@ impl FoldState {
         heights: &mut HeightIndex,
         candidate: FoldCandidate,
     ) {
+        let shared = self.shared_range(document, candidate.id);
         let mask = self.collapsed.get_mut(&candidate.id).unwrap();
-        let tiles = Self::interior(document, candidate.hidden);
+        let old = mask.candidate;
+        let tiles = if shared && candidate.open {
+            0..0
+        } else {
+            Self::interior(document, candidate.hidden)
+        };
         if mask.tiles != tiles {
             heights.cover(mask.tiles.clone(), false);
             heights.cover(tiles.clone(), true);
@@ -540,9 +593,22 @@ impl FoldState {
             self.growing.remove(&candidate.id);
         }
         mask.candidate = candidate;
-        if let FoldId::Container(id) = candidate.id {
-            self.containers.set(id, candidate.hidden.end);
-            self.open_containers.remove(&(candidate.hidden.start, id));
+        if shared {
+            if old.open != candidate.open || !candidate.open {
+                self.range_index(candidate.id).set(
+                    Self::range_id(candidate.id),
+                    if candidate.open {
+                        usize::MAX
+                    } else {
+                        candidate.hidden.end
+                    },
+                );
+            }
+            self.open_ranges.remove(&(old.hidden.start, candidate.id));
+            if candidate.open {
+                self.open_ranges
+                    .insert((candidate.hidden.start, candidate.id));
+            }
         }
     }
 }
@@ -600,8 +666,9 @@ impl<S> FoldView<S> {
     pub fn version(&self) -> u64 {
         self.version
     }
-    /// Existing section/code/table refreshes, shared container-tail checks and
-    /// collapsed container close events, independent of body size and open depth.
+    /// Existing root section/code/table refreshes, shared tail checks and event-
+    /// driven scoped-section/container refreshes; independent of body size and
+    /// still-open depth. Title growth refreshes at most one scoped heading.
     pub fn range_visits(&self) -> u64 {
         self.range_visits
     }
@@ -612,6 +679,14 @@ impl<S> FoldView<S> {
     /// Retained sparse index nodes, bounded by O(container_count), not toggles.
     pub fn container_index_nodes(&self) -> usize {
         self.state.containers.node_count()
+    }
+    /// Scoped-section index visits; ordinary body growth performs no writes.
+    pub fn section_index_visits(&self) -> u64 {
+        self.state.sections.visits()
+    }
+    /// Retained sparse nodes, bounded by O(heading_count), not toggles.
+    pub fn section_index_nodes(&self) -> usize {
+        self.state.sections.node_count()
     }
     /// Local choice, including the choice temporarily overridden by preview.
     /// Use hidden_at to query actual visibility under ancestors and preview.
@@ -645,10 +720,7 @@ impl<S> FoldView<S> {
         // Validate IDs in O(1), before charging or changing the old preview.
         if let Some(id) = target {
             let valid = match id {
-                FoldId::Heading(id) => document
-                    .headings()
-                    .get(id)
-                    .is_some_and(|heading| heading.container.is_none()),
+                FoldId::Heading(id) => document.headings().get(id).is_some(),
                 FoldId::Code(id) => document
                     .block(id)
                     .is_some_and(|block| matches!(block.kind, BlockKind::Code { .. })),
@@ -810,6 +882,26 @@ impl<S> FoldView<S> {
         Ok(())
     }
 
+    fn refresh_section(&mut self, document: &Document, id: HeadingId, dirty: &mut Option<usize>) {
+        let id = FoldId::Heading(id);
+        let Some(mask) = self.state.collapsed.get(&id) else {
+            return;
+        };
+        if !mask.candidate.open {
+            return;
+        }
+        self.range_visits += 1;
+        let old = mask.candidate;
+        let new = document.fold_candidate(id).unwrap();
+        self.state.refresh(document, &mut self.heights, new);
+        *dirty = Some(
+            dirty
+                .unwrap_or(usize::MAX)
+                .min(old.hidden.start)
+                .min(new.hidden.start),
+        );
+    }
+
     /// Consume each consecutive append/finish (or one merged batch) before any
     /// query. New tiles inherit all open folds before this call returns.
     pub fn apply(&mut self, document: &Document, update: &Update) -> Result<(), LayoutError> {
@@ -825,7 +917,7 @@ impl<S> FoldView<S> {
         for (slot, &id) in growing.iter_mut().zip(&self.state.growing) {
             *slot = Some(id);
         }
-        let mut dirty = self.state.open_containers.first().map(|&(start, _)| start);
+        let mut dirty = self.state.open_ranges.first().map(|&(start, _)| start);
         if dirty.is_some() {
             self.range_visits += 1; // One shared tail, independent of open depth.
         }
@@ -835,6 +927,32 @@ impl<S> FoldView<S> {
                 let new = document.fold_candidate(FoldId::Container(id)).unwrap();
                 self.state.refresh(document, &mut self.heights, new);
                 dirty = Some(dirty.unwrap_or(usize::MAX).min(new.hidden.start));
+            }
+            // Six level tails, not every heading ever seen in this scope.
+            for heading in document.headings().scope_tails(id).into_iter().flatten() {
+                self.refresh_section(document, heading, &mut dirty);
+            }
+        }
+        for index in update.new_headings.clone() {
+            let id = HeadingId(index);
+            if document.headings().get(id).unwrap().container.is_some() {
+                for previous in document.headings().closing_before(id).into_iter().flatten() {
+                    self.refresh_section(document, previous, &mut dirty);
+                }
+            }
+        }
+        // Only the previous last title can grow. Later headings are new to this
+        // view. Body-only growth changes the shared end, never the index leaves.
+        if let Some(index) = update.new_headings.start.checked_sub(1) {
+            let id = HeadingId(index);
+            let heading = document.headings().get(id).unwrap();
+            if heading.container.is_some()
+                && let Some(mask) = self.state.collapsed.get(&FoldId::Heading(id))
+                && mask.candidate.open
+                && (mask.candidate.hidden.start != heading.source.end
+                    || mask.candidate.hidden.is_empty())
+            {
+                self.refresh_section(document, id, &mut dirty);
             }
         }
         self.state.refresh_open_tiles(document, &mut self.heights);
@@ -864,9 +982,7 @@ impl<S> FoldView<S> {
             for index in update.new_headings.clone() {
                 self.default_visits += 1;
                 let heading = document.headings().get(HeadingId(index)).unwrap();
-                if heading.container.is_none()
-                    && self.defaults.heading_levels[usize::from(heading.level - 1)]
-                {
+                if self.defaults.heading_levels[usize::from(heading.level - 1)] {
                     let candidate = document
                         .fold_candidate(FoldId::Heading(HeadingId(index)))
                         .unwrap();

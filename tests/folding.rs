@@ -1055,7 +1055,10 @@ fn container_table_folds_keep_container_parent_retract_boundaries_and_restore_in
             doc.block(doc.tables()[0].block).unwrap().container.unwrap()
         ))
     );
-    assert!(doc.fold_candidate(heading(1)).is_none());
+    assert_eq!(
+        doc.fold_candidate(heading(1)).unwrap().parent,
+        Some(FoldId::Container(ContainerId(0)))
+    );
     assert!(view.is_collapsed(table));
     assert_eq!(render(&doc, &mut view, true).text, "Root\ninner\n[fold]\n");
     let end = doc.source().len();

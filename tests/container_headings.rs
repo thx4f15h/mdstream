@@ -393,17 +393,16 @@ fn deep_title_search_anchors_and_root_fold_navigation_share_tiny_budgets() {
     let update = doc.finish();
     view.apply(&doc, &update).unwrap();
     let inner = HeadingId(1);
-    assert!(doc.fold_candidate(FoldId::Heading(inner)).is_none());
-    assert_eq!(
-        view.set_collapsed(&doc, FoldId::Heading(inner), true),
-        Err(LayoutError::InvalidRange)
-    );
+    assert!(doc.fold_candidate(FoldId::Heading(inner)).is_some());
+    assert!(view.is_collapsed(FoldId::Heading(inner)));
     let mut empty = Budget::new(WorkLimit::default());
     assert_eq!(
-        view.set_preview(&doc, Some(FoldId::Heading(inner)), &mut empty),
-        Err(LayoutError::InvalidRange)
+        view.set_preview(&doc, Some(FoldId::Heading(inner)), &mut empty)
+            .unwrap()
+            .completion,
+        Completion::BudgetExhausted
     );
-    assert!(matches!(
+    assert!(
         FoldBatch::new(
             &doc,
             &view,
@@ -411,9 +410,9 @@ fn deep_title_search_anchors_and_root_fold_navigation_share_tiny_budgets() {
                 root: FoldId::Heading(inner),
                 collapsed: true
             }
-        ),
-        Err(LayoutError::InvalidRange)
-    ));
+        )
+        .is_ok()
+    );
     let mut anchors = HeadingAnchors::new(&doc);
     let mut search = HeadingSearch::new(&doc, "same", 6).unwrap();
     let mut hits = Vec::new();
@@ -463,6 +462,7 @@ fn deep_title_search_anchors_and_root_fold_navigation_share_tiny_budgets() {
     }
     assert!(reached);
     assert!(!view.is_collapsed(FoldId::Heading(HeadingId(0))));
+    assert!(view.is_collapsed(FoldId::Heading(inner)));
     assert!(view.is_collapsed(FoldId::Heading(HeadingId(2))));
     assert!(view.range_visits() <= 7);
 }
@@ -493,7 +493,8 @@ fn many_open_heading_scopes_do_not_add_per_append_or_fold_work() {
     }
     assert_eq!(doc.work().heading_steps, before.heading_steps);
     assert_eq!(doc.work().container_steps, before.container_steps);
-    assert_eq!(view.range_visits() - visits, 1000);
+    // One root range and one shared scoped tail, independent of 500 scopes.
+    assert_eq!(view.range_visits() - visits, 2000);
     let before = doc.work();
     let update = doc.append("\n# done\n").unwrap();
     view.apply(&doc, &update).unwrap();

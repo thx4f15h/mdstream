@@ -77,10 +77,7 @@ impl FoldBatch {
             | FoldBatchAction::Siblings { target: id, .. }
             | FoldBatchAction::Focus { target: id } => {
                 let valid = match id {
-                    FoldId::Heading(id) => document
-                        .headings()
-                        .get(id)
-                        .is_some_and(|heading| heading.container.is_none()),
+                    FoldId::Heading(id) => document.headings().get(id).is_some(),
                     FoldId::Code(id) => document
                         .block(id)
                         .is_some_and(|block| matches!(block.kind, BlockKind::Code { .. })),
