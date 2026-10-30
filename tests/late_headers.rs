@@ -197,7 +197,7 @@ fn ordinary_long_lines_keep_immediate_semantics_and_container_continuity() {
 }
 
 #[test]
-fn inherited_inline_state_remains_explicitly_out_of_scope() {
+fn open_cross_line_state_remains_explicitly_out_of_scope() {
     for prefix in ["", "> "] {
         let source = format!(
             "{prefix}*prior\n{prefix}end*{}|b\n{prefix}-|-\n",

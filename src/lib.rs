@@ -488,6 +488,8 @@ impl Document {
                 candidate.header.content.end = cursor;
                 if let Some(block) = candidate.header.block {
                     self.blocks[block.0].source.end = cursor;
+                } else if candidate.header.paragraph_end.is_some() {
+                    self.blocks[self.current.unwrap().0].source.end = cursor;
                 }
                 self.containers.end = cursor;
                 self.headings.parsed_end = cursor;
@@ -966,18 +968,24 @@ impl Document {
         if table_text && (complete || allow_long_header) {
             summary.feed(&self.source[content.range()], &mut self.work);
         }
-        // Only a fresh inline sequence is identical to the first table cell.
-        // An inherited paragraph state may already have changed old semantics;
-        // it still requires an early pipe to opt into deferred consumption.
+        // A continuation is safe to consume as a cell only if its pending
+        // newline is the sole cross-line effect. Other inherited candidates
+        // keep the ordinary parser; no published semantics can be revoked.
+        let inherited = self
+            .containers
+            .inner()
+            .map_or(paragraph, |scope| self.container_inline == Some(scope));
         let eager = table_text
             && !complete
             && allow_long_header
             && !summary.pipe
-            && self
-                .containers
-                .inner()
-                .map_or(!paragraph, |scope| self.container_inline != Some(scope));
+            && (!inherited || self.inline.can_isolate_line());
         if eager || (summary.pipe && (!complete || summary.columns().is_some())) {
+            let leading_break = if eager && inherited {
+                self.inline.isolate_line()
+            } else {
+                None
+            };
             let block = if paragraph && self.containers.inner().is_none() {
                 None
             } else {
@@ -991,6 +999,12 @@ impl Document {
                     self.new_block(span, kind, update)
                 })
             };
+            let paragraph_end = if eager && block.is_none() {
+                let end = &mut self.blocks[self.current.unwrap().0].source.end;
+                Some(std::mem::replace(end, span.end))
+            } else {
+                None
+            };
             let header = table::HeaderCandidate {
                 block,
                 source: span,
@@ -998,6 +1012,8 @@ impl Document {
                 container: self.containers.inner(),
                 columns: summary.columns().unwrap_or(0),
                 parsed_end: if eager { content.end } else { content.start },
+                leading_break,
+                paragraph_end,
             };
             if complete {
                 self.table_header = Some(header);
@@ -1343,6 +1359,9 @@ impl Document {
         } else if !candidate.summary.pipe {
             // No pipe arrived: this was ordinary streaming text all along.
             // Do not add a whole-line annotation or revisit its semantics.
+            if let Some(line_break) = candidate.header.leading_break {
+                line_break.commit(&mut self.effects(update));
+            }
             if candidate.header.container.is_some() {
                 let block = candidate.header.block.unwrap();
                 self.container_title =
@@ -1355,6 +1374,9 @@ impl Document {
     }
 
     fn feed_header(&mut self, header: table::HeaderCandidate, update: &mut Update) {
+        if let Some(line_break) = header.leading_break {
+            line_break.commit(&mut self.effects(update));
+        }
         if header.block.is_none() {
             self.blocks[self.current.unwrap().0].source.end = header.source.end;
         }
@@ -1375,6 +1397,9 @@ impl Document {
         let id = TableId(self.tables.len());
         let first_cell =
             (header.parsed_end > header.content.start).then(|| std::mem::take(&mut self.inline));
+        if let Some(end) = header.paragraph_end {
+            self.blocks[self.current.unwrap().0].source.end = end;
+        }
         let block = header
             .block
             .unwrap_or_else(|| self.new_block(header.source, BlockKind::Table { id }, update));

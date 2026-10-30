@@ -151,10 +151,25 @@ struct Bracket {
     image: Option<usize>,
 }
 
-struct LineBreak {
+pub(crate) struct LineBreak {
     newline: Span,
     hidden: Span,
     hard: bool,
+}
+
+impl LineBreak {
+    pub fn commit(self, effects: &mut Effects<'_>) {
+        effects.mark(
+            self.newline,
+            if self.hard {
+                Style::HARD_BREAK
+            } else {
+                Style::SOFT_BREAK
+            },
+            None,
+        );
+        effects.hide(self.hidden);
+    }
 }
 
 enum Tail {
@@ -192,6 +207,31 @@ pub(crate) struct Inline {
 }
 
 impl Inline {
+    /// At this boundary the pending break is the only effect that could reach
+    /// the preceding line. Inspect fixed state, never walk the delimiter stack.
+    pub fn can_isolate_line(&self) -> bool {
+        self.previous == Some(b'\n')
+            && self.stack.is_empty()
+            && self.run.is_none()
+            && self.code.is_none()
+            && self.math.is_none()
+            && self.footnote.is_none()
+            && self.bracket.is_none()
+            && self.bang.is_none()
+            && self.tail.is_none()
+            && self.escape.is_none()
+            && self.spaces.is_none()
+            && !self.carriage
+            && self.autolink.is_none()
+            && self.entity.is_none()
+    }
+
+    pub fn isolate_line(&mut self) -> Option<LineBreak> {
+        debug_assert!(self.can_isolate_line());
+        self.previous = None;
+        self.line_break.take()
+    }
+
     pub fn feed(&mut self, span: Span, effects: &mut Effects<'_>) {
         for pos in span.range() {
             let byte = effects.source.as_bytes()[pos];
@@ -205,16 +245,7 @@ impl Inline {
         // Only a subsequent byte in the same inline sequence confirms a break.
         // Sequence closure discards it, so terminal newlines stay plain.
         if let Some(line_break) = self.line_break.take() {
-            effects.mark(
-                line_break.newline,
-                if line_break.hard {
-                    Style::HARD_BREAK
-                } else {
-                    Style::SOFT_BREAK
-                },
-                None,
-            );
-            effects.hide(line_break.hidden);
+            line_break.commit(effects);
         }
         if let Some(run) = &mut self.run {
             if byte == run.byte {

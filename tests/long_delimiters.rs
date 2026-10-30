@@ -277,12 +277,13 @@ fn confirmation_invalidates_layout_and_fold_updates_can_be_merged() {
 }
 
 #[test]
-fn late_header_pipe_requires_fresh_inline_state_and_other_limits_remain() {
+fn late_header_pipe_requires_isolatable_inline_state_and_other_limits_remain() {
     for prefix in ["", "> "] {
         let source = format!("{prefix}{}|b\n{prefix}-|-\n", "x".repeat(BLOCK_LOOKAHEAD));
         assert_eq!(parse(&source).tables().len(), 1);
+        assert_eq!(parse(&format!("{prefix}prior\n{source}")).tables().len(), 1);
         assert!(
-            parse(&format!("{prefix}prior\n{source}"))
+            parse(&format!("{prefix}*prior\n{source}"))
                 .tables()
                 .is_empty()
         );

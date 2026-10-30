@@ -188,7 +188,7 @@ pub struct Work {
     pub tree_visits: u64,
     pub table_bytes: u64,
     /// Bytes summarized for prospective headers. Each eligible line byte is
-    /// inspected once. A fresh first-cell prefix can be parsed immediately;
+    /// inspected once. An isolated first-cell prefix can be parsed immediately;
     /// the suffix is deferred until success or fallback, never replayed.
     pub table_header_bytes: u64,
     /// Bytes examined by long table-separator probes, once per candidate byte.
