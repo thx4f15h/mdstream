@@ -263,6 +263,8 @@ pub(crate) struct FoldState {
     row_ranges: BTreeMap<usize, TableRowRange>,
     source_ranges: BTreeMap<usize, SourceFoldId>,
     source_candidates: BTreeMap<SourceFoldId, SourceCandidate>,
+    // The sole open top-level paragraph, even if expanded or previewed.
+    open_paragraph: Option<SourceFoldId>,
     // At most one disjoint source range ends at the old EOF. It can coexist
     // with a completed syntax/row boundary, so it needs its own refresh slot.
     source_boundary: Option<SourceFoldId>,
@@ -628,7 +630,7 @@ impl FoldState {
             self.starts.insert((hidden.start, candidate.id));
         }
         heights.cover(tiles.clone(), true);
-        if candidate.open && !open_shared {
+        if candidate.open && !open_shared && !matches!(candidate.id, FoldId::Source(_)) {
             self.growing.insert(candidate.id);
         }
         self.collapsed
@@ -638,7 +640,10 @@ impl FoldState {
 
     fn track_fixed_boundary(&mut self, document: &Document, candidate: FoldCandidate) {
         if let FoldId::Source(id) = candidate.id {
-            if candidate.hidden.end == document.source().len() && !document.is_finished() {
+            if !candidate.open
+                && candidate.hidden.end == document.source().len()
+                && !document.is_finished()
+            {
                 self.source_boundary = Some(id);
             } else if self.source_boundary == Some(id) {
                 self.source_boundary = None;
@@ -920,6 +925,7 @@ impl<S> FoldView<S> {
         hidden: Span,
         parent: Option<FoldId>,
         paragraph: Option<BlockId>,
+        open: bool,
     ) -> FoldId {
         let id = SourceFoldId::new();
         self.state.source_ranges.insert(source.start, id);
@@ -936,11 +942,15 @@ impl<S> FoldView<S> {
                     } else {
                         source
                     }),
-                    open: false,
+                    open,
                 },
                 paragraph,
             },
         );
+        if open {
+            debug_assert!(self.state.open_paragraph.is_none());
+            self.state.open_paragraph = Some(id);
+        }
         self.version += 1;
         FoldId::Source(id)
     }
@@ -958,6 +968,9 @@ impl<S> FoldView<S> {
         };
         let candidate = entry.candidate;
         self.state.source_ranges.remove(&candidate.source.start);
+        if self.state.open_paragraph == Some(id) {
+            self.state.open_paragraph = None;
+        }
         self.state
             .remove(document, &mut self.heights, FoldId::Source(id));
         if self.preview() == Some(FoldId::Source(id)) {
@@ -1371,6 +1384,45 @@ impl<S> FoldView<S> {
         );
     }
 
+    fn refresh_paragraph(&mut self, document: &Document, dirty: &mut Option<usize>) {
+        let Some(id) = self.state.open_paragraph else {
+            return;
+        };
+        self.range_visits += 1;
+        let entry = self.state.source_candidates[&id];
+        let old = entry.candidate;
+        let next = document.open_paragraph_source(entry.paragraph.unwrap());
+        if let Some((source, open)) = next
+            && source.end > old.hidden.start
+        {
+            let new = FoldCandidate {
+                source,
+                hidden: Span::new(old.hidden.start, source.end),
+                open,
+                ..old
+            };
+            self.state.source_candidates.get_mut(&id).unwrap().candidate = new;
+            if !open {
+                self.state.open_paragraph = None;
+            }
+            if self.state.collapsed.contains_key(&old.id) {
+                // Refresh even for an unchanged endpoint: a formerly EOF tile
+                // may now include visible bytes following the closed paragraph.
+                self.state.refresh(document, &mut self.heights, new);
+                *dirty = Some(dirty.unwrap_or(usize::MAX).min(old.hidden.start));
+            }
+        } else {
+            self.state.remove(document, &mut self.heights, old.id);
+            self.state.source_candidates.remove(&id);
+            self.state.source_ranges.remove(&old.source.start);
+            self.state.open_paragraph = None;
+            if self.preview() == Some(old.id) {
+                self.preview = None;
+            }
+            *dirty = Some(dirty.unwrap_or(usize::MAX).min(old.hidden.start));
+        }
+    }
+
     /// Consume each consecutive append/finish (or one merged batch) before any
     /// query. New tiles inherit all open folds before this call returns.
     pub fn apply(&mut self, document: &Document, update: &Update) -> Result<(), LayoutError> {
@@ -1381,6 +1433,8 @@ impl<S> FoldView<S> {
             return Ok(());
         }
         crate::apply_layout_update(document, update, &mut self.heights, &mut self.checkpoints)?;
+        let mut dirty = None;
+        self.refresh_paragraph(document, &mut dirty);
         // Six root sections, one code/math/table, and at most one disjoint range
         // containing the sole incomplete table row. No historical range scan.
         debug_assert!(self.state.growing.len() <= 8);
@@ -1388,8 +1442,8 @@ impl<S> FoldView<S> {
         for (slot, &id) in growing.iter_mut().zip(&self.state.growing) {
             *slot = Some(id);
         }
-        let mut dirty = self.state.open_ranges.first().map(|&(start, _)| start);
-        if dirty.is_some() {
+        if let Some(&(start, _)) = self.state.open_ranges.first() {
+            dirty = Some(dirty.unwrap_or(usize::MAX).min(start));
             self.range_visits += 1; // One shared tail, independent of open depth.
         }
         if let Some(id) = self.state.source_boundary.take() {

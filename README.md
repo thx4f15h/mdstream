@@ -1628,7 +1628,7 @@ assert_eq!(view.fold_candidate(&doc, id)?, Some(candidate));
 
 上限按原始源码 UTF-8 字节计，包含隐藏语法；向下对齐标量和 CRLF，允许 0，不接受覆盖整个段落的上限（没有可收起余文）。它不保证 N 个显示行或完整字素/单词/行内对象。截断保留已有样式与显示映射，不重新解释未显示的强调、代码、数学或链接尾部；额外的显示摘要用 `DisplayExcerpt` 限制源码、显示字节和 LF 行数。实体映射等仍沿用原始完整 replacement 范围；链接对象回调只交付元数据，宿主不得因此无预算读取整个隐藏标签。`LayoutPass` 保持原有 `RenderRun` 输入，实际显示规范化和终端列宽由接入方处理。
 
-只有 `Sealed`、无容器、且完整位于 `source_fold_limit()` 内的段落可以注册。未完成段落、可能变为 Setext/表格的输入、容器物理叶块及其它块类型返回 `InvalidRange`。空行等局部闭合即可注册，不要求整个文档 finish；后续追加、引用晚定义、finish 和 reset 不改变注册身份、前缀或段尾。源码不可编辑，改变预览上限须移除后重新注册，生成新 ID。
+`paragraph` 只接受 `Sealed`、无容器、且完整位于 `source_fold_limit()` 内的段落。未完成段落、可能变为 Setext/表格的输入、容器物理叶块及其它块类型返回 `InvalidRange`。空行等局部闭合即可注册，不要求整个文档 finish；后续追加、引用晚定义、finish 和 reset 不改变注册身份、前缀或段尾。源码不可编辑，改变预览上限须移除后重新注册，生成新 ID。
 
 整个段落包络占用一个不相交源码注册，包括仍可见的前缀；与手工范围重叠、重复注册均拒绝，与注册顺序和展开/预览状态无关。章节可以包含段落并隐藏其预览及占位，展开章节恢复段落原意愿；默认策略不自动发现或创建段落注册。All/Subtree/Siblings/Focus、临时展开预览、源码锚点和 Reveal 导航沿用 Source 身份及包络关系。表格、容器等不能出现在一个已定型顶层段落内部；继续使用端点路径验证保持结构范围不交叉，不改写语法父链。
 
@@ -1641,7 +1641,43 @@ assert_eq!(view.fold_candidate(&doc, id)?, Some(candidate));
 
 创建仅做索引及固定次数 UTF-8/CRLF 端点探测；注册逐步检查至多两条顶层章节链，游标 O(1)，不读取前缀/余文。R 个注册占 O(R)，查询和切换沿用 O(log R + log F + log T)；不修改解析器，不为后续追加枚举旧段落。布局只读取有界前缀和后续可见窗口，完整隐藏内部按范围跳过，段尾上下文恢复不依赖余文长度。
 
-`cargo run -r --example paragraph_folding` 演示百万字余文、12 列示例换行与追加后的独立段落。`tests/paragraph_folding.rs` 覆盖 640 组列宽/边界布局模型、1000 轮随机与 240 次流式可见性/高度模型、UTF-8 全切点/逐前缀、行内映射、百万字恢复、4096 个历史注册以及旧任务/测量拒绝。自动开放段落增长、容器跨叶块段落身份、自动长度策略、按逻辑/显示行数选择预览、媒体详情及完整终端排版仍待实现。
+`cargo run -r --example paragraph_folding` 演示百万字余文、12 列示例换行与追加后的独立段落。`tests/paragraph_folding.rs` 覆盖 640 组列宽/边界布局模型、1000 轮随机与 240 次流式可见性/高度模型、UTF-8 全切点/逐前缀、行内映射、百万字恢复、4096 个历史注册以及旧任务/测量拒绝。开放顶层段落增长见下方；容器跨叶块段落身份、自动长度策略、按逻辑/显示行数选择预览、媒体详情及完整终端排版仍待实现。
+
+### 开放顶层段落的前缀折叠
+
+`SourceFoldRegistration::open_paragraph(document, view, block, preview_bytes)` 显式注册当前尚未封口的顶层段落。它使用同样的稳定 `SourceFoldId`/`BlockId`、UTF-8/CRLF 前缀、两端路径共享预算、初始展开和整段不相交预留；上限须小于当前块已分类源码长度。短行尚未分类时没有可注册的段落，宿主可以等待换行或达到现有 `BLOCK_LOOKAHEAD` 窗口后重试；无需为了折叠调用 `finish()`。容器物理叶块、已封口段落和其它块类型不接受，已封口段落沿用 `paragraph`。
+
+```rust
+use mdtui3::*;
+let mut doc = Document::new();
+doc.append("visible prefix and body\n")?;
+let mut view = FoldView::new(&doc, 1)?;
+let mut task = SourceFoldRegistration::open_paragraph(&doc, &view, BlockId(0), 14)?;
+let id = loop {
+    let mut budget = Budget::new(WorkLimit {
+        queries: 1, objects: 1, ..Default::default()
+    });
+    if let Some(id) = task.advance(&doc, &mut view, &mut budget)?.id { break id; }
+};
+view.set_collapsed(&doc, id, true)?;
+let update = doc.append("streamed continuation")?;
+view.apply(&doc, &update)?;
+let candidate = view.fold_candidate(&doc, id)?.unwrap();
+assert!(candidate.open);
+assert_eq!(candidate.hidden, Span::new(14, doc.source().len()));
+let update = doc.append("\n===\nfollowing\n")?;
+view.apply(&doc, &update)?;
+// The same BlockId is now a heading; the paragraph choice has been removed.
+assert!(view.fold_candidate(&doc, id)?.is_none());
+assert!(!view.is_collapsed(id));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+活动时 `source.end`/`hidden.end` 暂定为当前源码 EOF，包含下一行尚未分类的输入；`summary` 和 `hidden.start` 固定。每次追加/finish 或合并通知后先 `apply`：普通增长保持 ID、折叠与临时预览意愿；空行、块中断或 EOF 封口后冻结为最终段落范围。若末行迟确认为表头，旧段落可能收缩；只有最终段尾仍大于固定截断点才保留注册。整块变成 Setext/表格或收缩后不再有隐藏余文时，原子移除注册、折叠意愿和临时预览；旧 ID 永不复用，不自动转交给新标题或表格。宿主通过 `fold_candidate == None` 或 `paragraph_fold_block == None` 观察失效；新语法对象继续按其自身默认策略初始化。
+
+段尾回调依然表示这次布局已跳过的折叠尾部，即使文档尚未结束；追加使旧布局任务过期，宿主重建局部布局。收起范围增长、收缩或删除从原隐藏起点失效高度/检查点，过期测量和注册/枚举/导航任务均拒绝。展开及预览期间也维护活动范围，退出预览时使用最新边界；部分 tile 继续保留前缀/占位和后续可见内容，`paragraph_end` 的 object/recovery 预算及恢复规则保持不变。手工范围与整段预留不相交，章节祖先、批量和源码导航复用现有组合。
+
+最多一个顶层段落活动，视图只保留一个更新槽；每次通知只查原 BlockId 和该注册，O(log R + log F + log T)，不扫描历史注册、正文或祖先。封口/移除后退出槽，旧 EOF tile 沿用一次性边界校正；每个视图状态独立。解析器和语法索引没有新增工作。15 项专项验收覆盖 384 组独立换行布局、240 轮流式区间/高度模型、UTF-8 全切点/逐前缀及合并通知、各种迟确认/失败、百万字增长与恢复、4096 历史注册、千层容器边界、预算暂停和旧任务拒绝。`paragraph_folding` release 示例现在先注册并收起开放段落，再追加百万字及后续段落。容器跨叶块身份、自动发现/长度默认策略、按显示行数截断、完整对象边界与终端排版仍在 TODO。
 
 ## 表格连续行范围折叠
 

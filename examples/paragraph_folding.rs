@@ -1,4 +1,4 @@
-//! Keep a bounded paragraph prefix, skip a million bytes, and resume wrapping.
+//! Fold an open paragraph, follow a million-byte append, and resume wrapping.
 use mdtui3::*;
 
 #[derive(Default)]
@@ -68,18 +68,22 @@ fn frame() -> Budget {
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut doc = Document::new();
-    doc.append("A long paragraph: ")?;
-    doc.append(&"x".repeat(1_000_000))?;
-    doc.append("\n\n")?;
+    doc.append("A long paragraph: body\n")?;
     let mut view = FoldView::new(&doc, 1)?;
-    let mut registration = SourceFoldRegistration::paragraph(&doc, &view, BlockId(0), 18)?;
+    let mut registration = SourceFoldRegistration::open_paragraph(&doc, &view, BlockId(0), 18)?;
     let id = loop {
         if let Some(id) = registration.advance(&doc, &mut view, &mut frame())?.id {
             break id;
         }
     };
     view.set_collapsed(&doc, id, true)?;
+    let update = doc.append(&"x".repeat(1_000_000))?;
+    view.apply(&doc, &update)?;
+    assert!(view.fold_candidate(&doc, id)?.unwrap().open);
+    let update = doc.append("\n\n")?;
+    view.apply(&doc, &update)?;
     let candidate = view.fold_candidate(&doc, id)?.unwrap();
+    assert!(!candidate.open);
     let update = doc.append("Next paragraph starts here.\n")?;
     view.apply(&doc, &update)?;
     assert_eq!(view.fold_candidate(&doc, id)?, Some(candidate));

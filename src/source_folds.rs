@@ -6,8 +6,9 @@ use crate::{
 };
 
 /// Opaque, process-unique registration identity. It belongs to one FoldView,
-/// survives append/reset, and is never reused after removal. Hosts can associate
-/// their own selection/object keys with it without changing document syntax.
+/// remains stable while registered (including append/reset), and is never reused
+/// after removal. Hosts can associate their own selection/object keys with it
+/// without changing document syntax.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SourceFoldId(usize);
 
@@ -45,6 +46,27 @@ impl Document {
             end = end.min(header.header.source.start);
         }
         end
+    }
+
+    // A single active top-level paragraph can still grow or change kind. Its
+    // pending line is provisional, just like an open code/table fold's tail.
+    pub(crate) fn open_paragraph_source(&self, block: BlockId) -> Option<(Span, bool)> {
+        let entry = self.block(block)?;
+        if entry.kind != BlockKind::Paragraph || entry.container.is_some() {
+            return None;
+        }
+        let open = entry.state != SyntaxState::Sealed && !self.is_finished();
+        Some((
+            Span::new(
+                entry.source.start,
+                if open {
+                    self.source().len()
+                } else {
+                    entry.source.end
+                },
+            ),
+            open,
+        ))
     }
 }
 
@@ -84,15 +106,16 @@ pub struct SourceFoldProgress {
     pub visited: usize,
 }
 
-/// Validate and atomically register one fixed, nonempty UTF-8 source interval.
+/// Validate and atomically register one nonempty UTF-8 source interval.
 /// Source registrations must be disjoint (including while expanded/previewed).
 /// Syntax/registered-row ranges may contain it or be contained by it; crossings
 /// are rejected. No syntax parents are rewritten. The source candidate's parent
 /// is its innermost enclosing syntax source range at registration.
 ///
-/// Only Document::source_fold_limit's prefix is accepted. Both anchors have
-/// left affinity: later source never joins this interval, even at the old EOF.
-/// Edits require removal and a new ID. Until completion no view state changes;
+/// `new` and `paragraph` only accept Document::source_fold_limit's prefix;
+/// their anchors have left affinity, including at the old EOF. `open_paragraph`
+/// follows the active paragraph and may be removed on late structural changes.
+/// Changing the prefix requires removal and a new ID. Until completion no view state changes;
 /// cancellation, an error or stale document/view leaves no partial registration.
 /// O(1) task storage; two ancestor paths, never all candidates or covered bytes.
 pub struct SourceFoldRegistration {
@@ -103,6 +126,7 @@ pub struct SourceFoldRegistration {
     source: Span,
     hidden: Span,
     paragraph: Option<BlockId>,
+    open: bool,
     endpoint: usize,
     started: bool,
     next: Option<FoldId>,
@@ -135,6 +159,7 @@ impl SourceFoldRegistration {
             source,
             hidden: source,
             paragraph: None,
+            open: false,
             endpoint: 0,
             started: false,
             next: None,
@@ -158,8 +183,8 @@ impl SourceFoldRegistration {
     /// The entire paragraph reserves one disjoint source registration, including
     /// its visible prefix. Remove it before changing the limit. Only sealed,
     /// top-level Paragraph blocks inside source_fold_limit are accepted; pending
-    /// Setext/table candidates, container physical leaves and open paragraphs
-    /// require a later registration. O(log R), no prefix/body scan or allocation.
+    /// Setext/table candidates and open paragraphs can use `open_paragraph`;
+    /// container physical leaves are unsupported. O(log R), no body scan.
     pub fn paragraph<S>(
         document: &Document,
         view: &FoldView<S>,
@@ -187,6 +212,64 @@ impl SourceFoldRegistration {
         task.hidden.start = cut;
         task.paragraph = Some(block);
         Ok(task)
+    }
+
+    /// Register the current top-level paragraph with a fixed source-byte prefix
+    /// and a suffix that follows append. The prefix must leave at least one
+    /// already classified byte; UTF-8/CRLF rounding matches [`Self::paragraph`].
+    /// Unclassified trailing input provisionally joins the hidden suffix.
+    ///
+    /// `FoldView::apply` keeps the ID and choice on growth/ordinary closure. A
+    /// late table may retract the suffix; if it removes the entire suffix, or
+    /// the block becomes a Setext heading/table, apply removes the registration,
+    /// choice and preview. It does not transfer them to the new syntax object.
+    /// Query `FoldView::fold_candidate` after apply to observe removal. Closed
+    /// paragraphs use [`Self::paragraph`]; container leaves are not accepted.
+    ///
+    /// One active registration is reconciled per update, including while
+    /// expanded/previewed. No historical registrations, body bytes or ancestors
+    /// are revisited. The whole provisional source range reserves the interval;
+    /// manual registrations remain disjoint. Registration itself shares the
+    /// usual endpoint-path budget and is atomic/revision-bound.
+    pub fn open_paragraph<S>(
+        document: &Document,
+        view: &FoldView<S>,
+        block: BlockId,
+        preview_bytes: usize,
+    ) -> Result<Self, LayoutError> {
+        view.check(document)?;
+        let (source, open) = document
+            .open_paragraph_source(block)
+            .ok_or(LayoutError::InvalidRange)?;
+        let entry = document.block(block).unwrap();
+        if !open || document.current != Some(block) || preview_bytes >= entry.source.len() {
+            return Err(LayoutError::InvalidRange);
+        }
+        view.validate_source_span(source)?;
+        let mut cut = source.start + preview_bytes;
+        while !document.source().is_char_boundary(cut) {
+            cut -= 1;
+        }
+        let bytes = document.source().as_bytes();
+        if cut > source.start && bytes[cut - 1] == b'\r' && bytes[cut] == b'\n' {
+            cut -= 1;
+        }
+        Ok(Self {
+            document: document.id(),
+            revision: document.revision(),
+            view: view.heights().version().0,
+            version: view.version(),
+            source,
+            hidden: Span::new(cut, source.end),
+            paragraph: Some(block),
+            open: true,
+            endpoint: 0,
+            started: false,
+            next: None,
+            parent: None,
+            visited: 0,
+            result: None,
+        })
     }
 
     /// One query/object per endpoint lookup, ancestor, path end or final insertion. Each
@@ -217,6 +300,7 @@ impl SourceFoldRegistration {
                     self.hidden,
                     self.parent,
                     self.paragraph,
+                    self.open,
                 ));
                 self.version = view.version();
             } else if !self.started {

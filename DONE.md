@@ -935,3 +935,19 @@ README/TODO 已同步，仅标记此独立子项。显式目标/引用后缀、�
 独立报告：`nix develop -c cargo nextest run --test gfm_tasks --no-fail-fast --success-output immediate`；夹具复核：`python3 scripts/generate_gfm_tasks.py /path/to/gfm.html --check`。项目 devShell 验收全部通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 **800 项**、`cargo test --doc` **63 项**、`cargo fmt --all -- --check`、夹具复核及 `git diff --check`。完整日志 `/tmp/mdtui3-gfm-tasks-validation.log`；独立评分和分块日志 `/tmp/mdtui3-gfm-tasks-targeted.log`；独立来源核验及篡改拒绝 `/tmp/mdtui3-gfm-tasks-fixture-check.log`。
 
 本单元完成官方任务列表章节评分。两个输入均为 ASCII、20/44 字节、最多两层列表，不能据此推断完整任务标记空白、空内容、多行/有序/loose 任务、任意深度、Unicode 或长输入合规。其它标准范围和交互绘制继续保留 TODO；复选框 HTML 仅为评分投影。解析核心及预算/复杂度契约未改动，保持零运行时依赖及禁止 unsafe。
+
+## 2026-10-30 开放顶层段落有界前缀折叠交付
+
+完成开放段落折叠的独立子项：`SourceFoldRegistration::open_paragraph` 显式注册当前已分类但尚未封口的顶层 Paragraph。复用视图独立 SourceFoldId、原 BlockId、源码字节上限、UTF-8/CRLF 对齐与两个端点路径的共享预算；注册原子完成且初始展开，整段包络与其它源码注册保持不相交。原有 `paragraph` 固定范围接口及源码只追加语义保持，未更改解析器、运行时依赖或 unsafe 约束。
+
+活动候选的尾部暂定到源码 EOF，包含未分类末行；前缀与隐藏起点固定。逐次/合并 `apply` 保留增长、普通闭合和 reset 下的身份、收起与临时预览意愿；封口后冻结到实际段尾。晚表头从原段落分离时收缩范围，仍有余文才保留；整块改型为 Setext/表格或收缩后余文消失则移除注册、意愿及预览，旧 ID 不复用，不将选择自动转交新结构。宿主查询候选/paragraph_fold_block 的 None 观察移除；后续可以显式注册新段落。
+
+视图只有一个活动顶层段落更新槽，展开/临时预览期间同样维护；每次通知只按 BlockId 查元数据和更新一个注册，O(log R + log F + log T)，不枚举历史范围、祖先或正文。普通封口/移除退出槽，EOF tile 的一次性校正保持。4096 历史注册加一个百万字开放段落，追加只计一次 range_visits；百万字后再逐字追加 1000 次恰好刷新 1000 次，input/inline 各增长 1000，分类与容器计数不增长。退出段落进入千层引用后，再追加百万字及 1000 字不刷新旧段落或遍历容器祖先。
+
+保留段中占位和段尾状态恢复的独立计费：placeholder 计入 owner tile，paragraph_end 只重置换行上下文；开放 EOF、范围收缩、远处隐藏内部起步和检查点恢复均不回放隐藏正文。收起范围变化从固定隐藏起点失效高度/检查点；文档/视图版本拒绝旧测量、注册、枚举和布局任务。章节、手工范围、批量、预览与 Reveal 导航继续组合，移除注册释放预留区间。
+
+新增 15 项专项验收：384 组独立标量换行布局/EOF/tile 边界模型、240 轮（480 次追加）区间/高度模型、UTF-8 全切点及逐前缀、CRLF/失败候选、Setext/整表改型与晚表头收缩、展开/收起/预览三种移除状态、原子注册与零预算、占位后段尾暂停、共享 recovery 恢复、百万字/4096 历史注册/千层容器、晚定义与行内闭合、源码导航/批量、手工预留与通知合并/重放。已有段落 1000 轮随机及其它折叠测试全部保留并通过。专项首轮修正两处测试输入假设：未定义 shortcut 标签沿用现有隐藏方括号语义；千层引用使用 1000 个连续 `>`，避免空格前缀超出既定 1024 字节分类窗口，没有更改解析期望或扩大方言。
+
+项目 devShell 验收全部通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 815 项、`cargo test --doc` 64 项、`cargo fmt --all -- --check` 及 `git diff --check`。更新的 `paragraph_folding` release 示例先收起开放段落再追加百万字，8 帧/47 计费字节、一次段尾恢复；既有 `source_folding`、`folding`、`table_row_folding` 示例通过。完整日志：`/tmp/mdtui3-open-paragraph-validation.log`；专项日志：`/tmp/mdtui3-open-paragraph-targeted2.log`、`/tmp/mdtui3-open-paragraph-targeted3.log`（后者的千层测试输入修正已由完整验收复核）。
+
+README/TODO 已同步，只勾选显式开放顶层段落前缀折叠。容器跨物理叶块段落身份、自动发现/长度默认策略、逻辑/显示行数预览、完整字素/对象截断、媒体详情、通用手工范围增长和终端 UI 继续保留 TODO。
