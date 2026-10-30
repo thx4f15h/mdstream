@@ -2096,4 +2096,23 @@ nix develop -c cargo nextest run --test commonmark_atx --no-fail-fast --success-
 python3 scripts/generate_commonmark_atx.py /path/to/spec.json --check
 ```
 
+[CommonMark 0.31.2 Setext headings](https://spec.commonmark.org/0.31.2/#setext-headings) 的完整章节（80–106，共 27 例）由 `tests/commonmark_setext.rs` 独立评分。`tests/fixtures/commonmark_setext.rs` 同样逐字固定官方 Markdown/HTML、规范行号、作者、CC BY-SA 4.0 许可及完整来源 SHA-256；`scripts/generate_commonmark_setext.py` 从本地固定来源生成并复核，不使用本库输出作为标准期望。
+
+| 分类 | 样例 | 当前判定 |
+| --- | --- | --- |
+| 支持（22） | 80–81、83、86、88、90–106 | 标题级别、文字/强调、块优先级、引用及列表边界符合这些样例的官方期望 |
+| 刻意差异（2） | 85、87 | 85：现有缩进代码在空行处封口，产生两个代码块；87：缩进代码可中断段落。均是上文已记录的代码方言，完整规则仍待扩展 |
+| 未支持（3） | 82、84、89 | Setext 首尾空白尚未裁剪：82 保留开头空格和末尾 tab，84 保留标题缩进，89 保留末尾两个空格；这些是待修复缺口 |
+
+Setext 投影只覆盖这些样例涉及的块、根引用、根无序 tight 列表及强调；根据公开容器父关系保持容器边界，只有相邻、同一容器且带已发布软/硬换行的正文物理叶块才合并。块类型、标题索引/级别/范围、内部换行、空格/tab 和代码末尾 LF 均保留；只省略结构空行及非代码块的一个物理末尾 LF。不会合并空行两侧的代码块、重新解析 Markdown、按样例编号修正投影或 `trim` 输出；这不是通用 HTML 渲染器，也不宣称其它容器形态已评分。样例 91 的 HTML 形状文本按普通文字处理，不能据此宣称支持 HTML。
+
+非支持项同时检查官方差异和独立当前观察值，改善或回归均要求审查分类。全部 27 例另以 533 个单切点、506 个逐字符前缀验证块/标题/容器身份、源码映射、样式及待分类范围；EOF 后再与固定分类结果对照。投影敏感性覆盖空格/tab、强调、级别、容器边界、内部软/硬换行及代码空行分块。这些短样例不替代长输入、预算及复杂度验收；本次评分没有改动解析核心。
+
+独立报告及夹具复核：
+
+```bash
+nix develop -c cargo nextest run --test commonmark_setext --no-fail-fast --success-output immediate
+python3 scripts/generate_commonmark_setext.py /path/to/spec.json --check
+```
+
 后续修复需保留官方输入/预期，更新当前观察与分类、汇总和 TODO；禁止通过忽略样例、裁剪空白或替换官方期望提升评分。

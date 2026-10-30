@@ -889,3 +889,14 @@ README/TODO 已同步，仅标记此独立子项。显式目标/引用后缀、�
 项目 devShell 验收全部通过：cargo check --all-targets、cargo clippy --all-targets -- -D warnings、debug/release cargo nextest run --no-fail-fast 各 780 项、cargo test --doc 62 项、cargo fmt --all -- --check、官方夹具摘要与生成结果 --check、git diff --check。anchors、container_headings、heading_search 三个相关 release 示例通过；新增 README 示例演示长空白与跨追加 CRLF。完整日志 `/tmp/mdtui3-atx-whitespace-validation.log`；独立评分与专项日志 `/tmp/mdtui3-atx-whitespace-targeted.log`、`/tmp/mdtui3-atx-whitespace-regression.log`；修改前两项失败基线 `/tmp/mdtui3-atx-whitespace-baseline.log`。
 
 本单元完成 ATX 原始空白与长尾缀需求。分类前缀上限、完整缩进/容器规则、其它 CommonMark/GFM 范围及终端 UI 继续保留 TODO。
+
+## 2026-10-30 CommonMark Setext 标准样例评分交付
+
+- [x] **固定完整官方章节**：`tests/fixtures/commonmark_setext.rs` 收录 CommonMark 0.31.2 Setext headings 的全部 27 例（80–106），逐字保存 Markdown 与 HTML，包括空格、tab 和 LF；附 John MacFarlane / CC BY-SA 4.0 归属、规范行号和完整 `spec.json` SHA-256。`scripts/generate_commonmark_setext.py` 只读另行下载的本地来源，校验固定摘要及章节成员后生成或 `--check`，来源被改动时拒绝；构建与测试不联网。
+- [x] **独立分类和可重复报告**：`tests/commonmark_setext.rs` 对照官方 HTML，当前 **22 支持、2 刻意差异、3 未支持**。支持 80–81、83、86、88、90–106；85/87 分别沿用空行终止缩进代码、缩进代码中断段落的已记录方言；82/84/89 暴露 Setext 标题缩进及尾随 space/tab 未裁剪的缺口。非支持项另存当前观察值，同时断言仍不同于官方、且当前行为未改变；改善与回归都必须审查分类，不自动提高分数。
+- [x] **保留待评分语义**：测试投影检查块类型/顺序、标题级别和索引范围、显示文字/强调、根引用及根无序 tight 列表边界。同容器物理正文叶块只按已发布软/硬换行合并；空行两侧的代码块保持分离。仅省略结构空行和非代码块的一个物理末尾 LF，保留内部换行、所有空格/tab 和代码 LF；不 `trim`、不重解析 Markdown、不接收样例编号做特殊修正。投影是该章节测试适配器，不是库 HTML 渲染器；样例 91 不能作为支持 HTML 的证明。
+- [x] **流式及适配器验收**：全部 533 个单切点和 506 个逐字符前缀检查块/标题/容器稳定身份、源码范围及显示映射/样式、待分类范围，EOF 后与固定分类结果对照。独立敏感性检查覆盖空格/tab、强调、标题级别、内部软/硬换行、引用/列表边界及代码空行分块，避免适配器把待修复差异抹掉。
+
+独立运行：`nix develop -c cargo nextest run --test commonmark_setext --no-fail-fast --success-output immediate`；夹具复核：`python3 scripts/generate_commonmark_setext.py /path/to/spec.json --check`。3 项新增测试全部通过。项目 devShell 的 `cargo check --all-targets`、clippy `-D warnings`、debug/release nextest 各 **783 项**、**62 项文档测试**、格式检查、ATX/Setext 夹具复核及 `git diff --check` 通过。完整日志 `/tmp/mdtui3-commonmark-setext-validation.log`，独立分类与分块日志 `/tmp/mdtui3-commonmark-setext-targeted.log`，初始公开语义观察 `/tmp/mdtui3-commonmark-setext-inspect.log`；另以独立 Python 读取逐对核验 27 份官方输入/HTML 并验证来源摘要篡改被拒绝。
+
+本次完成评分而非全部语法支持，没有修改解析核心、依赖或终端 UI。Setext 首尾空白（82、84、89）明确保留 TODO；完整缩进/空行规则、分类长度上限、其余 CommonMark/GFM 范围及终端 UI 继续保留，短标准样例不替代已有长输入和预算/复杂度验收。
