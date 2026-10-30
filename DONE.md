@@ -313,3 +313,21 @@
 项目 devShell 中 `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 270 项、`cargo test --doc` 25 项、`cargo fmt --all -- --check` 与 `git diff --check` 全通过。新增 `cargo run -r --example container_sections`：追加访问共享章节尾部与表格共 2 个范围，6 帧恢复源码位置 56，兄弟章节仍收起；既有 `container_folding` 示例仍以 6 帧恢复源码位置 42。日志：`/tmp/mdtui3-container-sections-validation.log`。README 与 TODO 已同步。
 
 本单元完成容器内章节独立折叠核心。容器定义/代码块、多物理行 Setext、复杂续行与其它未实现方言、类型/任务默认策略、实际摘要/容器排版、表格行范围折叠和终端 UI 继续保留 TODO，不声明整个容器或折叠规划完成。
+
+## 2026-10-30 定界数学核心交付
+
+`$…$` / `$$…$$` 使用完整美元串的精确长度配对；长度超过 2 的串、不同长度和转义定界符有确定的原文语义，无嵌套、货币/空白启发式或 TeX 校验。沿用既有代码/目标优先级与块/单元格边界，两种形式均可跨同一顶层段落的普通换行；display 是展示类型提示，不建立独立块。明确保留容器逐物理行和表格管道优先等方言边界。
+
+闭合后发布稳定 `MathId`、`MathKind` 和完整 source / 原始 content 区间；`Style::MATH` 标记内容，定界符隐藏，Structure 及区间失效覆盖旧 tile 和测量。美元串等待非美元 lookahead 或行内作用域结束才确认，不提前发布可撤销对象。未闭合输入保持原文、单遍消费，块结束或 EOF 丢弃候选且不回扫内部语法。`Update.new_maths` 支持连续更新、merge 和缓冲区复用，空追加与重复 finish 不重复报告；已有区间不随追加变化。
+
+`maths_in` 游标在首个预算步骤中二分定位，之后逐对象 O(1)，每次检查计 1 query / 1 object，不读正文。`math_content` 每步返回最多 TILE_BYTES 个原始 UTF-8 字节，计实际字节及 1 query / 1 object，预算不足不移动；两者 O(1) 状态、借用文档防止消费期间发生 revision 变化。与既有消费者共享预算，可暂停/继续/丢弃，不复制完整公式。通用 LayoutPass 保留 MATH 文字回退；实际 TeX 对象布局仍待后续接入。
+
+解析增加一个常数大小候选，每个美元串只决议一次（`Work::math_steps`），内容沿用 `inline_bytes` 单遍扫描；闭合只做常数次 O(log n) 区间标记。新增对象空间 O(M)，全库保持累计 O(n log n)、空间 O(n)，零运行时依赖且禁止 unsafe；单次 append/Vec 扩容仍是摊还契约。
+
+新增 `tests/math.rs` 11 项验收：精确/不同/超长串、空白与货币规则、奇偶反斜线、opaque 内容、代码/链接/实体/外层样式组合、CRLF/普通换行/Setext/标题/容器/单元格边界、失败及 EOF、延迟闭合与稳定身份、合并/复用更新、禁用样式尺寸策略时的旧测量拒绝、共享预算与 UTF-8 原子恢复、无效区间、4096 个对象的独立窗口相交模型。既有全 UTF-8 切点、逐前缀与固定种子 fuzz 快照加入数学元数据和语法。
+
+复杂度证据：百万字开放数学后的 1000 次逐字追加只增加 1000 个 inline bytes，分类计数与美元串决议次数不增长；追加 `$$ ` 闭合只消费 3 字节、决议 1 次，区间树访问少于 1000 次。1024/4096/16384 规模的密集失配美元串、长美元串和转义候选逐字追加后 EOF 不扫描旧正文，annotation 节点少于 32。百万字公式仅用 16 bytes 的共享预算读取首片段；收起所在章节后布局只读少于 16 字节标题、生成一个占位，公式正文未进入回调。
+
+项目 devShell 下 `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 281 项、`cargo test --doc` 26 项、`cargo fmt --all -- --check` 及 `git diff --check` 全通过。`cargo run -r --example math` 展示流式确认、共享对象预算和 5 帧 / 16 字节读取原始公式；未闭合尾部不新增对象。验收日志：`/tmp/mdtui3-math-validation.log`。README 与 TODO 已同步。
+
+本单元交付定界数学区间和预算消费核心；独立数学块、其他定界方言、TeX 解析/排版、实际数学对象回调、脚注及终端 UI 继续保留待办，不宣称完整数学 Markdown 扩展兼容。

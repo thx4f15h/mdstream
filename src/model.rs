@@ -123,6 +123,8 @@ impl Style {
     pub const HARD_BREAK: Self = Self(32);
     /// An ordinary line break within continuing inline content (on the LF).
     pub const SOFT_BREAK: Self = Self(64);
+    /// Raw content of a confirmed dollar-delimited math object.
+    pub const MATH: Self = Self(128);
 
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
@@ -191,6 +193,8 @@ pub struct Work {
     /// Heading scope opens/closes, classified context checks and heading inserts.
     /// Each step performs at most six index operations; no ancestor/body scans.
     pub heading_steps: u64,
+    /// Maximal dollar runs resolved once, including mismatches and literal runs.
+    pub math_steps: u64,
 }
 
 /// Actual Vec arena capacity and allocation/reallocation calls. Allocator headers,
@@ -218,6 +222,8 @@ pub struct Update {
     /// Column width hints changed; invalidate layout of this table lazily.
     pub tables_changed: Vec<TableId>,
     pub new_links: Range<usize>,
+    /// Confirmed math objects only; their source/content never grow or retract.
+    pub new_maths: Range<usize>,
     pub new_containers: Range<usize>,
     /// Exact close events, innermost first; no event per growing ancestor.
     pub closed_containers: Vec<crate::ContainerId>,
@@ -359,6 +365,7 @@ impl Update {
         self.new_blocks.end = next.new_blocks.end;
         self.new_tiles.end = next.new_tiles.end;
         self.new_links.end = next.new_links.end;
+        self.new_maths.end = next.new_maths.end;
         self.new_headings.end = next.new_headings.end;
         self.new_tables.end = next.new_tables.end;
         self.new_containers.end = next.new_containers.end;

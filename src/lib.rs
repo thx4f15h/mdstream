@@ -39,6 +39,7 @@ mod headings;
 mod history;
 mod inline;
 mod layout;
+mod math;
 mod model;
 mod navigation;
 mod references;
@@ -76,6 +77,7 @@ pub use layout::{
     Anchor, HeightIndex, HeightState, LayoutError, Measurement, ViewportCursor, ViewportPage,
     VisibleTile,
 };
+pub use math::{Math, MathChunk, MathContent, MathId, MathKind, MathObjects};
 pub use model::*;
 pub use navigation::{NavAction, Navigator, ScrollTarget};
 pub use references::MAX_LABEL_BYTES;
@@ -152,6 +154,7 @@ pub struct Document {
     containers: containers::Containers,
     links: Vec<LinkTarget>,
     link_info: Vec<LinkInfo>,
+    maths: Vec<Math>,
     headings: HeadingIndex,
     tables: Vec<Table>,
     table_header: Option<table::HeaderCandidate>,
@@ -520,6 +523,7 @@ impl Document {
             rows_changed,
             changes,
             new_links: self.links.len()..self.links.len(),
+            new_maths: self.maths.len()..self.maths.len(),
             new_containers: self.containers.len()..self.containers.len(),
             closed_containers,
             container_end: self.containers.end,
@@ -535,6 +539,7 @@ impl Document {
         update.new_headings.end = self.headings.entries().len();
         update.new_tables.end = self.tables.len();
         update.new_links.end = self.links.len();
+        update.new_maths.end = self.maths.len();
         update.new_containers.end = self.containers.len();
         update.container_end = self.containers.end;
         if update.base_revision != update.revision {
@@ -576,6 +581,7 @@ impl Document {
             references: &mut self.references,
             links: &mut self.links,
             link_info: &mut self.link_info,
+            maths: &mut self.maths,
             update,
             work: &mut self.work,
         }

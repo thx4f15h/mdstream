@@ -832,6 +832,43 @@ loop {
 
 捕获书签只做 O(log B + log H) 的索引查询，每个书签/任务占 O(1) 空间。历史共 O(J) 空间，J 为保留条目数；Vec 容量保留历史峰值，追加摊还 O(1)，扩容可能复制现有条目，不承诺追加历史的硬时延。`cargo run -r --example history` 演示返回折叠代码、追加与 resize 后恢复、前进和历史边界。`tests/history.rs` 包含固定种子 2000 次操作模型、同 tile 重复标题、普通滚动、分支截断、身份/过期/取消、流式语义变化和百万字隐藏路径验证。
 
+## 定界数学核心
+
+数学使用本库明确限定的美元符号方言，不声明与某个数学 Markdown 扩展兼容：完整且未转义的 `$` 串长度为 1 时打开 inline 候选，为 2 时打开 display 候选；遇到相同长度的串才闭合。长度大于 2 的串在外部为普通文字，在候选内为原始内容；不同长度不嵌套、不切分匹配。没有空白、数字或货币启发式，例如 `$5 and $10` 会识别 `5 and `。`$$` 单独出现是未闭合 display opener，连续 `$$$$` 是文字，无法表示空公式；空白内容允许。
+
+代码 span/代码块、链接目标及 title、引用定义、正在消费的自动链接等既有上下文先于数学。数学内容内不解析强调、实体、链接、代码或另一个数学对象；原始反斜线保留，一个反斜线使紧随的一个字节不参与定界，连续反斜线按奇偶处理。外部 `\$` 仍是既有标点转义，内部 `$a\$b$` 内容为 `a\$b`。外层强调/链接 label 可以包含数学，显示 run 可同时带这些样式/链接。
+
+两种候选均可跨同一顶层段落的普通换行，但不跨块或表格单元格边界。`$$` 只是对象的展示类型提示，不是独立数学块：空行、标题、Setext、表格、围栏等仍先按块规则分类，管道仍先按表格规则分列；显式容器和标题沿用当前逐物理行的行内作用域。表格中的 `\|` 不分列，数学内容区间仍包含原始反斜线。`MathContent` 返回原始 CRLF；通用显示读取仍采用既有 CR 隐藏规则。块分类的 1 KiB 前缀缓冲、表头候选的延迟解析仍适用。
+
+只有闭合确认才分配稳定 `MathId` 和 `Math { kind, source, content }`，source 包含两端定界符、content 排除定界符。确认时内容标 `Style::MATH`，定界符标 HIDDEN，并发布范围失效及 Structure 变更，即使调用方关闭样式尺寸失效，旧测量仍被拒绝。尚未确认时既有显示通道呈现原始内容；块结束/EOF 未闭合时保留原文、丢弃候选，不重放期间跳过的行内语法。美元串需等下一非美元字节或行内作用域结束才确定长度；流式尾部 `$x$` 在追加更多美元符号前不能提前发布对象。
+
+`Update.new_maths` 只报告新确认 ID 范围，支持 merge、append_into/finish_into、空追加和重复 finish。确认后的区间不会因后续追加、Setext 转换或容器关闭而变更；`maths()` / `math(id)` 借用元数据。`maths_in(range)` 创建 O(1) 游标，第一次 advance 在扣费后用 O(log M) 索引定位重叠对象，后续逐项 O(1)，完整对象按 source 与窗口相交判断；空范围不输出。每次检查（含终止查找）计 1 query / 1 object，不读正文，预算不足时不推进，完成后重复读取免费。
+
+`math_content(id)` 创建 O(1) 原始内容游标，每次 advance 最多读取 `TILE_BYTES` 个 UTF-8 字节，计实际返回字节和 1 query / 1 object。下一标量放不下时原子暂停，4 bytes 足以推进任意标量；与其它消费者共用 Budget。没有复制完整公式，也不执行 TeX 校验、布局或字体塑形。两个游标均借用文档，Rust 借用保证消费期间不能追加；释放后可用稳定 ID 建新游标。通用 `LayoutPass` 仍将数学作为带 MATH 样式的文字回退，实际数学对象布局由后续消费方在预算下接入；收起的章节/容器继续跳过其数学正文。
+
+```rust
+use mdtui3::*;
+let mut doc = Document::new();
+doc.append("value $中🙂 + x_1$ and $$y^2$$\n")?;
+doc.finish();
+assert_eq!(doc.maths().len(), 2);
+let mut objects = doc.maths_in(Span::new(0, doc.source().len())).unwrap();
+let mut budget = Budget::new(WorkLimit {
+    queries: 2, objects: 2, bytes: 4, ..Default::default()
+});
+let (id, math) = objects.advance(&mut budget).unwrap().unwrap();
+assert_eq!(math.kind, MathKind::Inline);
+let mut content = doc.math_content(id).unwrap();
+assert_eq!(content.advance(&mut budget).unwrap().unwrap().text, "中");
+assert_eq!(content.advance(&mut budget), Err(Completion::BudgetExhausted));
+// 用下一帧的新预算继续；也可以丢弃游标，取消读取。
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+解析只增加一个 O(1) 候选；每个美元串只决议一次（`Work::math_steps`），所有正文只走既有单遍 `inline_bytes` 消费。闭合做常数次 O(log n) 区间标记，不查正文；额外对象存储 O(M)，全库保持累计 O(n log n)、空间 O(n)。Vec 扩容及批量解析仍是摊还保证，不承诺单次 append 的硬时延。`tests/math.rs` 和现有分块/fuzz 快照验证方言、预算、失败输入、百万字晚闭合及索引模型；`cargo run -r --example math` 演示流式确认与逐帧原始内容读取。
+
+后续仍保留独立数学块、`\(...\)` / `\[...\]` 等额外定界方言、TeX 解析/排版和实际对象回调接入；脚注是另一个尚未实现的核心项。
+
 ## 明确支持的 Markdown 方言
 
 - 段落与空行；ATX 标题；Setext 标题；分隔线。
@@ -845,6 +882,7 @@ loop {
 - CRLF 的 CR 隐藏，LF 保留。裸 CR 按原文处理。
 - 同块行内软换行、双空格/反斜线硬换行的结构化标记。
 - 显示语义读取支持实体/数字字符引用及已闭合代码 span 空白规范化，映射和上下文限制见上一节。
+- `$…$` / `$$…$$` 数学内容区间和预算读取，具体规则及未实现边界见[定界数学核心](#定界数学核心)。
 
 取舍：
 
@@ -854,7 +892,7 @@ loop {
 - URL 和 title 各最多 4096 字节，左括号后的链接后缀候选最多 8256 字节（包括空白和闭合右括号）。支持平衡括号和转义定界，但返回的 destination/title 是原文；不提供多行目标/title、URL 解码或安全过滤。后缀失败时保留原文及已有 shortcut 引用，不回扫后缀中的其它语法。
 - 引用定义、Setext、分隔线、闭合 fence 必须在块分类前缀内完成。超长候选行按普通内容/代码处理；超长 opening fence 的 info 只保留已分类前缀，其余该行隐藏。超长标题末尾的 closing hashes 不再回看识别。
 - 自动链接候选最多 4096 字节，URI scheme 为 2..32 个 ASCII 字符；email 按 CommonMark 0.31.2 的 ASCII 地址规则。失败或 EOF 未完成的候选不重放内部行内语法；新自动链接中止未完成的外层方括号候选，保持链接源码有序且不重叠。返回原始 URI，不做 percent encoding。
-- 不处理 HTML、GFM 裸 URL 自动链接、脚注、数学公式等额外语义。它们可能包含上述方言仍能识别的普通行内标记。HTML 不在当前需求范围。
+- 不处理 HTML、GFM 裸 URL 自动链接、脚注等额外语义。它们可能包含上述方言仍能识别的普通行内标记。数学仅提供上述定界核心，不解析 TeX。HTML 不在当前需求范围。
 - 支持只追加，不支持任意位置编辑、撤回已有源码或移除定义。文档销毁会释放 O(n) 状态，这是一次性清理成本。
 
 ## 有界显示摘要
@@ -902,6 +940,7 @@ assert_eq!(text, "first\nsecond\n");
 | `src/block.rs` | 有界块分类 |
 | `src/containers.rs` | 显式容器 arena、活动栈、共享开放末端与有预算祖先查询 |
 | `src/inline.rs` | 单遍分隔符、代码和链接状态机 |
+| `src/math.rs` | 定界数学元数据、窗口索引与共享预算原文读取 |
 | `src/destination.rs` | 链接/定义共享的有界目标及 title 状态机 |
 | `src/display.rs` / `src/entity.rs` | 显示片段、替代文本源码映射、预算游标及字符引用解码 |
 | `src/excerpt.rs` | 限制源码/输出字节和逻辑行数的有预算显示摘要 |

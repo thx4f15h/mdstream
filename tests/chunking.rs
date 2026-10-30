@@ -11,6 +11,7 @@ struct Snapshot {
     link_info: Vec<mdtui3::LinkInfo>,
     headings: Vec<mdtui3::Heading>,
     tables: Vec<mdtui3::Table>,
+    maths: Vec<mdtui3::Math>,
     runs: Vec<(Span, Option<mdtui3::BlockId>, Style, Option<mdtui3::LinkId>)>,
     display: Vec<(Span, Option<Span>, String)>,
 }
@@ -32,6 +33,7 @@ fn snapshot(doc: &Document) -> Snapshot {
             .collect(),
         headings: doc.headings().entries().to_vec(),
         tables: doc.tables().to_vec(),
+        maths: doc.maths().to_vec(),
         runs: doc
             .runs_in(Span::new(0, doc.source().len()))
             .unwrap()
@@ -75,6 +77,8 @@ fn every_single_split_for_small_constructs() {
         "intro\na | b\n-- | --\nx | y\n",
         "- [ ] todo\n- [X] done\n![alt](img) ![x][ref]\n",
         "> - [x] task\r\n>   > nested\n>   continuation\n> - sibling\n\nplain\n",
+        "$x$ $$中🙂 \\alpha$$ $$$literal$$$ $a\\$b$ $open\n\n$next$\n",
+        "| $h$ | h2 |\n| -- | -- |\n| $a | b$ |\n",
     ] {
         for (i, _) in source.char_indices() {
             check_chunks(source, &[i]);
@@ -89,6 +93,7 @@ fn every_inline_split_after_lookahead_exercises_live_parser_states() {
         "![alt](a(b) 'title') [b][key]\n\n[key]: /u (title)\n",
         "a  \r\nb\\\r\nc\\\\\nd\n",
         "[a](bad target) `a  \nb`\n",
+        "$x$ $$中🙂 \\alpha$$ $a$$b$ $$$literal$$$ $unclosed",
     ] {
         let prefix = "x".repeat(BLOCK_LOOKAHEAD);
         let source = format!("{prefix}{suffix}");
@@ -133,7 +138,7 @@ fn streaming_unicode_table_rows_match_single_chunk_input() {
 fn deterministic_fuzz_chunk_invariance_and_source_coverage() {
     let alphabet = [
         "a", " ", "\n", "\r", "*", "_", "`", "~", "[", "]", "(", ")", "\\", ":", "#", ">", "-",
-        "é", "🙂", "|", "!", "<", ">", "\"", "'", "\t", "&",
+        "é", "🙂", "|", "!", "<", ">", "\"", "'", "\t", "&", "$",
     ];
     let mut state = 0x1234_5678_u64;
     let mut random = || {
@@ -182,6 +187,7 @@ fn provisional_semantics_match_at_every_observed_prefix() {
         "`unfinished ",
         "&amp; &#x1f642; &NotEqualTilde; &bad*ok*; ",
         "` a\r\nb ` ",
+        "$x$ $$中🙂 &amp; \\alpha$$ $a$$b$ $unclosed\n\n",
         "> - item\n>   > quote\n> - sibling\n  - nested list\n    continuation\n",
     ];
     let mut state = 981_u64;

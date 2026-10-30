@@ -12,6 +12,7 @@ pub(crate) struct Effects<'a> {
     pub references: &'a mut References,
     pub links: &'a mut Vec<LinkTarget>,
     pub link_info: &'a mut Vec<LinkInfo>,
+    pub maths: &'a mut Vec<crate::Math>,
     pub update: &'a mut Update,
     pub work: &'a mut Work,
 }
@@ -128,6 +129,11 @@ struct Code {
     all_spaces: bool,
 }
 
+struct MathCandidate {
+    open: Span,
+    escaped: bool,
+}
+
 #[derive(Clone, Copy)]
 struct Candidate {
     open: usize,
@@ -168,6 +174,7 @@ pub(crate) struct Inline {
     last: [Option<usize>; 5],
     run: Option<Run>,
     code: Option<Code>,
+    math: Option<MathCandidate>,
     bracket: Option<Bracket>,
     bang: Option<usize>,
     tail: Option<Tail>,
@@ -211,6 +218,16 @@ impl Inline {
                 return;
             }
             self.finish_run(Some(byte), effects);
+        }
+        if let Some(math) = &mut self.math {
+            if math.escaped {
+                math.escaped = false;
+            } else if byte == b'\\' {
+                math.escaped = true;
+            } else if byte == b'$' {
+                self.start_run(byte, pos);
+            }
+            return;
         }
         if let Some(code) = &mut self.code {
             if byte == b'`' {
@@ -315,7 +332,7 @@ impl Inline {
                 self.bracket = None;
             }
             b'\\' => self.escape = Some(pos),
-            b'*' | b'_' | b'~' | b'`' => self.start_run(byte, pos),
+            b'*' | b'_' | b'~' | b'`' | b'$' => self.start_run(byte, pos),
             b'!' => self.bang = Some(pos),
             b'[' => {
                 self.bracket = Some(Bracket {
@@ -360,6 +377,38 @@ impl Inline {
             return;
         };
         effects.work.delimiter_steps += 1;
+        if run.byte == b'$' {
+            effects.work.math_steps += 1;
+            if let Some(math) = &self.math {
+                let open = math.open;
+                if open.len() == run.source.len() {
+                    let content = Span::new(open.end, run.source.start);
+                    effects.maths.push(crate::Math {
+                        kind: if open.len() == 1 {
+                            crate::MathKind::Inline
+                        } else {
+                            crate::MathKind::Display
+                        },
+                        source: Span::new(open.start, run.source.end),
+                        content,
+                    });
+                    // The parser never decodes, copies or revisits the body.
+                    effects.mark(content, Style::MATH, None);
+                    effects.hide(open);
+                    effects.hide(run.source);
+                    effects
+                        .update
+                        .change(Span::new(open.start, run.source.end), ChangeKind::Structure);
+                    self.math = None;
+                }
+            } else if run.source.len() <= 2 {
+                self.math = Some(MathCandidate {
+                    open: run.source,
+                    escaped: false,
+                });
+            }
+            return;
+        }
         if run.byte == b'`' {
             if let Some(code) = &mut self.code {
                 let open = code.open;
@@ -511,6 +560,7 @@ impl Inline {
         self.stack.clear();
         self.last = [None; 5];
         self.code = None;
+        self.math = None;
         self.bracket = None;
         self.bang = None;
         self.tail = None;
