@@ -15,6 +15,7 @@ struct Snapshot {
     math_payloads: Vec<Vec<(Span, String)>>,
     math_block_payloads: Vec<Vec<(Span, String)>>,
     footnotes: Vec<mdtui3::Footnote>,
+    footnote_payloads: Vec<Vec<(Span, String)>>,
     footnote_references: Vec<mdtui3::FootnoteReference>,
     runs: Vec<(Span, Option<mdtui3::BlockId>, Style, Option<mdtui3::LinkId>)>,
     display: Vec<(Span, Option<Span>, String)>,
@@ -64,6 +65,17 @@ fn snapshot(doc: &Document) -> Snapshot {
             })
             .collect(),
         footnotes: doc.footnotes().to_vec(),
+        footnote_payloads: (0..doc.footnotes().len())
+            .filter_map(|i| {
+                let mut cursor = doc.footnote_payload(mdtui3::FootnoteId(i))?;
+                let mut budget = mdtui3::Budget::new(mdtui3::WorkLimit::unlimited());
+                let mut chunks = Vec::new();
+                while let Some(chunk) = cursor.advance(&mut budget).unwrap() {
+                    chunks.push((chunk.source, chunk.text.to_owned()));
+                }
+                Some(chunks)
+            })
+            .collect(),
         footnote_references: doc.footnote_references().to_vec(),
         runs: doc
             .runs_in(Span::new(0, doc.source().len()))
@@ -97,6 +109,12 @@ fn check_chunks(source: &str, boundaries: &[usize]) {
 #[test]
 fn every_single_split_for_small_constructs() {
     for source in [
+        "[^n]\n[^n]: 中\r\n    🙂&amp;\r\n\r\n    last\r\nafter\n",
+        "> - [^n]: first\n>       > # raw\n>   \n>       last\n> - [^n]: duplicate\n>       ignored\n",
+        "- [^n]:\n  \n      second\n  \n  tail\n- next\n",
+        "> > [^n]: first\n> >     second\n>     parent\n> > [^m]: child\n    outside\n",
+        "[^n]: first\n   short\n[^n]: duplicate\n    [^m]: raw\n[^m]:real",
+        "[^n]:\n    last\r",
         "$$\r\n中🙂 &amp;\\alpha\r\n\n$$\r\nafter\n",
         "> - $$\n>   中\r\n>   > - literal\n>   \n>   $$\n> out\n",
         "> > $$\n> > inner\n> $$\n> outer\n> $$",
@@ -828,6 +846,33 @@ fn math_blocks_match_all_utf8_splits_and_live_prefixes_at_classification_limit()
             "> - $$\r\n>   {}\r\n>   $${}\n>   {ending}",
             "中🙂".repeat(150),
             " ".repeat(BLOCK_LOOKAHEAD)
+        );
+        for (at, _) in source.char_indices() {
+            check_chunks(&source, &[at]);
+        }
+        let mut live = Document::new();
+        for (at, c) in source.char_indices() {
+            let end = at + c.len_utf8();
+            live.append(&source[at..end]).unwrap();
+            let mut whole = Document::new();
+            whole.append(&source[..end]).unwrap();
+            assert_eq!(snapshot(&live), snapshot(&whole), "prefix {end}");
+        }
+        live.finish();
+        let mut whole = Document::new();
+        whole.append(&source).unwrap();
+        whole.finish();
+        assert_eq!(snapshot(&live), snapshot(&whole));
+    }
+}
+
+#[test]
+fn footnote_blocks_match_all_utf8_splits_and_live_prefixes_at_classification_limit() {
+    for ending in [">   \r\n>       last\r\n> - sibling\n", ">   tail\n", ""] {
+        let source = format!(
+            "[^n]\n> - [^n]: {}\r\n>       {}\r\n{ending}",
+            "中🙂".repeat(150),
+            "🙂中".repeat(150)
         );
         for (at, _) in source.char_indices() {
             check_chunks(&source, &[at]);

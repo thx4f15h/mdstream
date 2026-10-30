@@ -407,14 +407,14 @@ assert!(!doc.fold_candidate(id).unwrap().open);
 
 ## 容器内定义
 
-显式 Quote/Item 内支持既有单行链接定义 `[label]: destination title` 和脚注定义 `[^label]: body`。先匹配容器前缀、列表续行缩进及新条目的任务标记，再允许至多三个前导 ASCII 空格；四格缩进和已有围栏优先，代码里的定义保持字面内容。`BlockKind::Definition` / `FootnoteDefinition` 保存原有符号，`Block.container` 记录最内层容器，`source` 覆盖完整物理行和前缀。目标/title 与脚注 content 均是借用源码的绝对区间。任务信息仍从 Item 读取。
+显式 Quote/Item 内支持单行链接定义 `[label]: destination title` 和可延续的脚注定义 `[^label]: body`。定义起始行先匹配容器前缀、列表续行缩进及新条目的任务标记，再允许至多三个前导 ASCII 空格；四格缩进和已有围栏优先，代码里的定义保持字面内容。`BlockKind::Definition` / `FootnoteDefinition` 保存原有符号，`Block.container` 记录最内层容器，`source` 覆盖完整物理行和前缀，脚注块可跨多行。目标/title 与脚注 content 均是借用源码的绝对区间。任务信息仍从 Item 读取。
 
 定义的**符号作用域是整个文档**：根、嵌套、兄弟条目和已经关闭的容器共享链接符号表，也共享独立的脚注符号表；不创建局部命名空间或按祖先查找。每种符号的首个有效定义获胜，后续重复定义仍产生隐藏块但不覆盖、不改变符号版本。链接标签沿用最多 999 字节、Unicode 空白折叠及转小写；脚注标签沿用区分大小写的字母数字/下划线/连字符规则。脚注编号仍按全局首次引用顺序分配，定义先到不占号。容器结束或折叠不删除定义，任意位置的引用链接、引用图片及脚注都能解析到它。
 
 - 链接定义必须连同目标、可选 title 和行末在含容器前缀的 1 KiB 分类窗口内完成（UTF-8 最多延长三个字节）。短行等 LF/EOF 才发布；超过窗口后按普通容器正文消费，不因晚来的行尾再确认。裸目标、尖括号目标及三种 title 沿用顶层方言。
-- 脚注只要求合法 `[^label]:` 位于分类前缀内，正文可无限流式增长。冒号后前缀内已有的一个 space/tab 可被省略，其余原样保留；正文不解析 Markdown、链接、数学或嵌套脚注。未分类短行仍显示原文；确认后整行隐藏，长行保存 Growing 定义，LF/EOF 封为 Sealed。CRLF 去掉末端 CR/LF，分块中的裸 CR 暂时属于正文。
-- 定义仅占一个物理行，不吞下一行的缩进、空行、兄弟或外层内容；缺前缀按既有规则关闭容器，下一行独立分类。定义可以中断普通正文或同容器表格，即使目标/脚注正文含 `|`；表格单元格内的片段、标题正文和行内代码等仍按自己的上下文处理。定义不会作为下一条 Setext 下划线的标题候选。
-- 非法/超长标签、目标/title 失败、未完成候选沿用普通行内处理，可能创建未解析引用，但不创建有效定义。不回放长行已消费的前缀；无效的纯空白链接标签也保留容器前缀隐藏和独立叶块边界，不并入外层段落。多行目标/title、脚注多段正文和更完整的容器续行规则仍未实现。
+- 脚注只要求合法 `[^label]:` 位于分类前缀内，正文可无限流式增长。冒号后前缀内已有的一个 space/tab 可被省略，其余原样保留；正文不解析 Markdown、链接、数学或嵌套脚注。未分类短行仍显示原文；确认后整个定义隐藏，保持 Growing 直到非续行边界或 EOF。同容器路径下的四空格续行、空行分段和去前缀读取见[脚注核心](#脚注核心)。CRLF 只从当前正文包络末端去掉，内部换行原样保留。
+- 链接定义仅占一个物理行；脚注续行必须显式匹配原容器路径，缺前缀、兄弟或外层内容终止定义并按既有规则分类。定义可以中断普通正文或同容器表格，即使目标/脚注正文含 `|`；表格单元格内的片段、标题正文和行内代码等仍按自己的上下文处理。定义不会作为下一条 Setext 下划线的标题候选。
+- 非法/超长标签、目标/title 失败、未完成候选沿用普通行内处理，可能创建未解析引用，但不创建有效定义。不回放长行已消费的前缀；无效的纯空白链接标签也保留容器前缀隐藏和独立叶块边界，不并入外层段落。多行目标/title、脚注正文 Markdown 排版和更完整的容器续行规则仍未实现。
 
 ```rust
 use mdtui3::{Budget, Document, FootnoteReferenceId, FootnoteTarget, LinkId, WorkLimit};
@@ -434,7 +434,7 @@ assert_eq!(body.advance(&mut budget).unwrap().unwrap().text, "原始 **正文**"
 
 晚定义沿用 `LinkId -> SymbolId` 和 `FootnoteReferenceId -> FootnoteId` 间接寻址，只改当前符号及版本，发出 `references_changed` / `footnotes_changed` 和从 first_use 起的保守范围失效；不访问历史引用对象，不给旧链接逐个发 changed 事件。脚注增长/封口及新块使用原有 Update，支持批量合并；DependencyKey、旧布局 ticket 拒绝与独立折叠意愿保持不变。定义的语法隐藏独立于视图折叠，展开祖先也不使定义正文可见；脚注正文另用共享 Budget 的原文游标读取，实际脚注区排版仍待接入。
 
-实现复用现有全局符号表和单行状态机，无新增持久化索引或祖先副本。有界标签寻址 O(log S)，长脚注追加只更新当前块/符号和共享解析末端；容器匹配按实际前缀/开闭节点计费。累计解析 O(n log n)、空间 O(n) 不变，不承诺大 append 或 EOF 批量闭合的单帧硬时延。`tests/container_definitions.rs` 与分块测试覆盖两万处旧引用晚定义、千层容器百万字增长、250 层列表、4096 个历史符号、400 组首定义/物理范围模型、通知重建/合并和共享预算；隐藏百万字定义的布局正文回调和字节计费均为零。`cargo run -r --example container_definitions` 演示全局晚定义、容器折叠及逐帧脚注读取。
+实现复用现有全局符号表和流式行状态机，不复制祖先；多行脚注额外记录去前缀所需的有序间隙，见[脚注核心](#脚注核心)。有界标签寻址 O(log S)，长脚注追加只更新当前块/符号和共享解析末端；容器匹配按实际前缀/开闭节点计费。累计解析 O(n log n)、空间 O(n) 不变，不承诺大 append 或 EOF 批量闭合的单帧硬时延。`tests/container_definitions.rs` 与分块测试覆盖两万处旧引用晚定义、千层容器百万字增长、250 层列表、4096 个历史符号、400 组首定义/物理范围模型、通知重建/合并和共享预算；隐藏百万字定义的布局正文回调和字节计费均为零。`cargo run -r --example container_definitions` 演示全局晚定义、容器折叠及逐帧脚注读取。
 
 ## 容器内表格
 
@@ -1408,11 +1408,13 @@ assert_eq!(output, "中 + \\alpha\r\n🙂");
 
 ## 脚注核心
 
-支持 `[^label]` 与顶层或显式容器内的单物理行 `[^label]: body`。label 为 1..999 个 UTF-8 字节，由 `char::is_alphanumeric` 接受的 Unicode 标量、ASCII `_`、`-` 组成；区分大小写、不做 Unicode 规范化，不支持空白、转义、实体或其它标点。脚注与普通引用链接使用独立命名空间；`[^` 定义前缀保留给脚注，非法定义不会成为普通链接定义。这里只定义本库方言，不承诺其它 Markdown 脚注扩展的全部行为。
+支持 `[^label]` 与顶层或显式容器内的多行、多段 `[^label]: body` 定义。label 为 1..999 个 UTF-8 字节，由 `char::is_alphanumeric` 接受的 Unicode 标量、ASCII `_`、`-` 组成；区分大小写、不做 Unicode 规范化，不支持空白、转义、实体或其它标点。脚注与普通引用链接使用独立命名空间；`[^` 定义前缀保留给脚注，非法定义不会成为普通链接定义。这里只定义本库方言，不承诺其它 Markdown 脚注扩展的全部行为。
 
-定义允许至多三个前导空格，冒号后可紧接正文，也可省略恰好一个 space/tab；其余空白原样保留。空正文有效。正文是原始单物理行区间，不解析 Markdown、数学或嵌套脚注；排除行尾 LF/CRLF，裸 CR 保留。后续缩进/空行不延续定义。第一个合法定义生效，后续同标签定义隐藏但不覆盖正文。顶层和容器内共用文档全局脚注符号，围栏和缩进代码优先；定义可以结束段落或表格。容器前缀、边界和晚定义规则见[容器内定义](#容器内定义)，多行、多段定义仍待实现。
+定义起始行允许至多三个前导空格，冒号后可紧接正文，也可省略恰好一个 space/tab；其余空白原样保留。空正文有效。正文是不解析 Markdown、数学或嵌套脚注的原始源码包络；排除最后一个物理行的 LF/CRLF，保留内部换行、裸 CR、续行缩进和容器前缀。第一个合法定义生效，后续同标签定义连同续行一起隐藏，但不覆盖正文或改变该符号版本。顶层和容器内共用文档全局脚注符号；定义起始处围栏和缩进代码优先，定义可结束段落或表格。容器前缀和晚定义规则见[容器内定义](#容器内定义)。
 
-沿用 1 KiB 块分类前缀：短行在 LF/EOF 分类，长行到达前缀上限时确认定义，后续正文单遍追加，无正文长度上限。`FootnoteDefinition { block, content, state }` 先为 Growing，在 LF/EOF 变为 Sealed；未到 LF 的 CR 暂属正文，后续 LF 到来时只调整尾端。引用在行内解析器读到 `]` 时确认，不等待定义、不转换成后续直接链接；未分类行仍暂时显示原文。`[^` 候选不跨物理行、块或单元格，失败、超限、EOF 未闭合时不回放已消费前缀，不分配符号或编号；拒绝字节继续按普通行内规则处理。
+续行先匹配定义的确切容器路径，不允许 lazy 省略或打开新容器；列表需先消费该 Item 原有的续行缩进。剩余正文以至少四个 ASCII 空格开头时延续定义，并仅去掉这四个空格，与起始行的零到三个前导空格无关。tab 不代替这四个空格。已完成的纯 space/tab 空白行也可延续，不要求额外四格，但仍必须匹配容器路径；已有四格则去掉四格，其余空白原样保留。空行直接归入定义，允许多段和连续空行，末尾空行也不撤销。正文中的 `#`、`>`、列表、表格、围栏和另一个 `[^label]:` 均为字面内容，不创建嵌套结构。遇到非续行、路径失配或兄弟条目时封口，然后只分类当前有界前缀；之前正文不回放。脚注内部空行不影响外层列表间距，末尾空行后出现同 Item 的其它子块或兄弟条目则沿用原有 loose 规则，不传播到祖先。
+
+沿用 1 KiB 块分类前缀：短行在 LF/EOF 分类，长行到达前缀上限时确认定义或续行，后续正文单遍追加，无正文长度上限。定义标记、完整容器路径及续行必需的四格须在该窗口内；尚未完整的超长纯 tab 行不视为空行分隔符。`FootnoteDefinition { block, content, state }` 与其唯一稳定叶块在 LF 后仍为 Growing，遇非续行边界或 EOF 才变为 Sealed。未分类的短行不加入正文包络；未到 LF 的 CR 暂属正文，后续 LF 到来时只调整尾端。引用在行内解析器读到 `]` 时确认，不等待定义、不转换成后续直接链接；未分类行仍暂时显示原文。`[^` 标签候选本身不跨物理行、块或单元格，失败、超限、EOF 未闭合时不回放已消费前缀，不分配符号或编号；拒绝字节继续按普通行内规则处理。
 
 行内代码、数学、链接目标/title、引用链接后缀和自动链接等正在消费的上下文先于脚注。`\[^x]` 不创建引用，`![^x]` 沿用普通引用图片，`[text][^x]` 沿用普通引用链接；不支持嵌套链接 label 的特殊脚注语义，遵守已有单括号候选规则。脚注 label 自身不解析行内标记，外层强调仍可覆盖整个标记。标题、显式容器正文及表格单元格均可包含脚注引用。
 
@@ -1421,6 +1423,26 @@ assert_eq!(output, "中 + \\alpha\r\n🙂");
 `Update.new_footnotes` / `new_footnote_references` 报告新增范围，`footnotes_changed` 报告编号分配、定义确认、增长和封口，可有重复 ID，支持 merge 和复用缓冲。每符号 revision 按新增定义源码字节和编号/开闭事件递增，与 append 分块无关；全局 `TileKey.footnote_revision` 保守失效。`DependencyKey` 按预算捕获并校验当前 tile 的脚注符号版本，未定义目标另检查 EOF，无关定义可保留直接语义缓存。晚定义/增长只用符号的 first_use 发出 Structure 范围变化，旧高度及后续检查点按既有区间协议失效，不枚举历史引用；关闭尺寸策略也不能忽略这类对象语义变更。首次 finish 对存在脚注引用的文档发布保守范围失效并改变全局脚注版本，保证 Unresolved → Missing 不漏通知；这一转换不逐符号发事件，消费者也需观察 `is_finished()`。
 
 `footnote_references_in(range)` 构造 O(1) 借用游标，首个 advance 在扣费后 O(log R) 定位重叠标记，其后每项 O(1)。每个结果和终止查询各计 1 query / 1 object，不读取 label/body；空范围与完成后的重复读取免费。`resolve_footnote` 每次计 1 query / 1 object / 1 dependency，无效 ID 返回 None。`footnote_content(id)` 构造 O(1) 原文游标，advance 每次最多 TILE_BYTES 个 UTF-8 字节，计实际返回字节及 1 query / 1 object。所有接口共用调用方 Budget；不足时不推进且不扣费，4 bytes 足以读取任意标量。游标借用文档，消费期间不能追加；释放后可按稳定 ID 重建。
+
+`footnote_payload(id)` 返回同类型的去前缀游标，省略已匹配的容器前缀和续行四格，保留原始 LF/CRLF、实体拼写、反斜线及其它空白。每个 `FootnoteChunk.source` 是连续消费的原始区间；`text` 借用该区间或在省略前缀时为空。前缀片段仍计实际源码 bytes、1 query、1 object，不能免费跳过任意多层。构造 O(1)，首个成功 advance 付费后 O(log G) 定位全局有序间隙索引，其后每步 O(1)，没有正文复制或祖先遍历。原文和去前缀接口均仅读取已确认范围，不自动排版段落。
+
+```rust
+use mdtui3::{Budget, Document, FootnoteId, SyntaxState, WorkLimit};
+let mut doc = Document::new();
+doc.append("> - [^n]: first\r\n>       中🙂\r\n>   \r\n>       last\r\n")?;
+assert_eq!(doc.footnote(FootnoteId(0)).unwrap().definition.unwrap().state, SyntaxState::Growing);
+doc.finish();
+let mut cursor = doc.footnote_payload(FootnoteId(0)).unwrap();
+let mut text = String::new();
+loop {
+    let mut frame = Budget::new(WorkLimit { queries: 1, objects: 1, bytes: 4, ..Default::default() });
+    let Some(chunk) = cursor.advance(&mut frame).unwrap() else { break };
+    assert_eq!(frame.used().bytes, chunk.source.len());
+    text.push_str(chunk.text);
+}
+assert_eq!(text, "first\r\n中🙂\r\n\r\nlast");
+# Ok::<(), mdtui3::Finished>(())
+```
 
 ```rust
 use mdtui3::{Budget, Document, FootnoteReferenceId, FootnoteTarget, WorkLimit};
@@ -1438,7 +1460,7 @@ let mut body = doc.footnote_content(second.symbol).unwrap();
 assert_eq!(body.advance(&mut budget).unwrap().unwrap().text, "原始 **正文**");
 ```
 
-解析器只保留一个 O(1) 行内候选；有界 label 使用 BTreeMap 确定性 O(log S) 符号寻址，编号/定义/增长均只更新当前符号。额外存储 O(S + R)，全库维持累计 O(n log n)、空间 O(n)，Vec 扩容仍为摊还保证。`Work.footnote_steps` 统计符号操作与定义增长/封口，`footnote_label_bytes` 统计实际 intern 的有界标签，正文与失败候选的检查分别计入已有 input/classified/inline 字节计数。两万次旧引用后定义只做三次符号步骤；百万字定义后逐字追加不回扫正文。窗口索引、分块/fuzz、预算、通知和缓存验收见 `tests/footnotes.rs`、`tests/chunking.rs`；`cargo run -r --example footnotes` 演示晚定义和逐帧正文读取。
+解析器只保留一个 O(1) 行内候选及当前定义的末尾空行标记；有界 label 使用 BTreeMap 确定性 O(log S) 符号寻址，编号/定义/增长均只更新当前符号。每个成功定义的带前缀续行至多记录一个间隙，重复定义不留间隙，额外存储 O(S + R + G)；全库维持累计 O(n log n)、空间 O(n)，Vec 扩容仍为摊还保证。`Work.footnote_steps` 统计符号操作与定义增长/封口，`footnote_label_bytes` 统计实际 intern 的有界标签，正文与失败候选检查计入已有 input/classified/inline 字节计数。两万次旧引用后首行定义只做两次符号步骤，后续每次增长或封口各一次；千层容器中百万字续行后的逐字追加不回扫正文、祖先或历史引用。读取/存储、400 组范围模型、240 次流式折叠高度模型、UTF-8 分块、预算及缓存验收见 `tests/footnote_blocks.rs`、`tests/footnotes.rs`、`tests/chunking.rs`；`cargo run -r --example footnote_blocks` 演示多段映射读取与折叠保持，原 `footnotes` 示例继续演示晚定义。解析不承诺任意大 append/finish 的单次硬时延。
 
 通用显示与 LayoutPass 仍原样显示 `[^label]` 标记，并隐藏顶层及容器内定义；脚注编号上标、文末脚注区、定义正文 Markdown 排版、双向跳转/返回及对象回调仍待接入，读取核心不自动展开或排版脚注区。
 
@@ -1456,7 +1478,7 @@ assert_eq!(body.advance(&mut budget).unwrap().unwrap().text, "原始 **正文**"
 - 同块行内软换行、双空格/反斜线硬换行的结构化标记。
 - 显示语义读取支持实体/数字字符引用及已闭合代码 span 空白规范化，映射和上下文限制见上一节。
 - `$…$` / `$$…$$` 数学内容区间和预算读取，具体规则及未实现边界见[定界数学核心](#定界数学核心)。
-- `[^label]` 引用、顶层及容器内单物理行脚注定义、稳定编号及有预算读取，方言与布局边界见[脚注核心](#脚注核心)。
+- `[^label]` 引用、顶层及容器内多行多段脚注定义、稳定编号及有预算原文/去前缀读取，方言与布局边界见[脚注核心](#脚注核心)。
 
 取舍：
 

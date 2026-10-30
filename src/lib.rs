@@ -853,6 +853,9 @@ impl Document {
         self.work.classified_bytes += span.len() as u64;
         self.containers.end = span.end;
         self.headings.parsed_end = span.end;
+        if self.continue_footnote(span, complete, update) {
+            return;
+        }
         let mut header = self.table_header.take();
         if header.as_ref().is_some_and(|h| h.container.is_none()) {
             let root_header = header.take().unwrap();
@@ -1080,7 +1083,7 @@ impl Document {
             let line = StreamingLine {
                 block: id,
                 inline: false,
-                standalone: true,
+                standalone: false,
                 hidden: true,
                 table: false,
             };

@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use crate::{
-    BlockId, Budget, ChangeKind, Completion, Document, Span, SyntaxState, TILE_BYTES, Update, Work,
-    WorkLimit,
+    BlockId, BlockKind, Budget, ChangeKind, Completion, Document, Span, StreamingLine, SyntaxState,
+    TILE_BYTES, Update, Work, WorkLimit, block,
 };
 
 /// Maximum UTF-8 bytes in a case-sensitive alphanumeric/underscore/hyphen label.
@@ -26,7 +26,9 @@ pub struct FootnoteReference {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FootnoteDefinition {
     pub block: BlockId,
-    /// Raw single-line body, without the optional one space/tab or final CRLF.
+    /// Raw body envelope, without the opener or final LF/CRLF. Includes internal
+    /// line endings, container prefixes and continuation indentation; use
+    /// Document::footnote_payload to omit the latter two without decoding text.
     pub content: Span,
     pub state: SyntaxState,
 }
@@ -73,6 +75,10 @@ pub(crate) struct Footnotes {
     names: BTreeMap<String, FootnoteId>,
     pub entries: Vec<Footnote>,
     pub references: Vec<FootnoteReference>,
+    // Source-ordered continuation prefixes of winning definitions only.
+    gaps: Vec<Span>,
+    // Only the active definition can defer a blank separating list children.
+    trailing_blank: bool,
     numbered: usize,
     pub revision: u64,
 }
@@ -127,6 +133,7 @@ impl Footnotes {
         work: &mut Work,
     ) {
         work.footnote_steps += 1;
+        self.trailing_blank = false;
         if self.entries[symbol.0].definition.is_some() {
             return;
         }
@@ -188,6 +195,68 @@ impl Footnotes {
 }
 
 impl Document {
+    /// Match the existing explicit path before ordinary block classification.
+    /// A failed probe seals the definition; its bounded prefix is then classified
+    /// normally, without replaying any previously committed body.
+    pub(crate) fn continue_footnote(
+        &mut self,
+        span: Span,
+        complete: bool,
+        update: &mut Update,
+    ) -> bool {
+        let Some(id) = self.current else {
+            return false;
+        };
+        let BlockKind::FootnoteDefinition { symbol } = self.blocks[id.0].kind else {
+            return false;
+        };
+        let prefix = self.containers.delimiter_prefix(
+            &self.source,
+            span,
+            self.blocks[id.0].container,
+            &mut self.work,
+        );
+        let mut blank = false;
+        let payload = prefix.and_then(|prefix| {
+            let body = &self.source.as_bytes()[prefix..block::body_end(&self.source, span)];
+            blank = complete && body.iter().all(|b| matches!(b, b' ' | b'\t'));
+            if body.starts_with(b"    ") {
+                Some(prefix + 4)
+            } else if blank {
+                Some(prefix)
+            } else {
+                None
+            }
+        });
+        let Some(payload) = payload else {
+            if self.footnotes.trailing_blank {
+                // Internal blank paragraphs do not loosen a surrounding list.
+                // A trailing blank followed by another child/sibling does.
+                self.containers
+                    .observe_payload(true, span.start, &mut self.work, update);
+            }
+            self.close_current(update);
+            return false;
+        };
+        self.footnotes.trailing_blank = blank;
+        if payload > span.start && self.footnotes.entries[symbol.0].definition.unwrap().block == id
+        {
+            self.footnotes.gaps.push(Span::new(span.start, payload));
+        }
+        let line = StreamingLine {
+            block: id,
+            inline: false,
+            standalone: false,
+            hidden: true,
+            table: false,
+        };
+        self.extend_line(line, span, update);
+        if !complete {
+            self.streaming = Some(line);
+        }
+        true
+    }
+
     pub fn footnotes(&self) -> &[Footnote] {
         &self.footnotes.entries
     }
@@ -249,7 +318,20 @@ impl Document {
         Some(FootnoteContent {
             source: self.source(),
             remaining: self.footnote(id)?.definition?.content,
+            gaps: &[],
+            gap: None,
         })
+    }
+
+    /// O(1) mapped reader of a definition's committed body. Omits matched
+    /// container prefixes and four-space continuation indentation, preserving
+    /// all other raw spelling and internal LF/CRLF. Each omitted fragment has
+    /// empty text but still charges source bytes, one query and one object.
+    /// First successful advance locates gaps in O(log G); later steps are O(1).
+    pub fn footnote_payload(&self, id: FootnoteId) -> Option<FootnoteContent<'_>> {
+        let mut cursor = self.footnote_content(id)?;
+        cursor.gaps = &self.footnotes.gaps;
+        Some(cursor)
     }
 }
 
@@ -294,13 +376,17 @@ impl FootnoteReferences<'_> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FootnoteChunk<'a> {
+    /// Consumed source, including omitted prefix fragments in payload mode.
     pub source: Span,
+    /// Borrows exactly source, or is empty for an omitted prefix fragment.
     pub text: &'a str,
 }
 
 pub struct FootnoteContent<'a> {
     source: &'a str,
     remaining: Span,
+    gaps: &'a [Span],
+    gap: Option<usize>,
 }
 
 impl<'a> FootnoteContent<'a> {
@@ -308,8 +394,9 @@ impl<'a> FootnoteContent<'a> {
         self.remaining.start
     }
 
-    /// At most TILE_BYTES UTF-8 bytes, one query/object per chunk. Four bytes
-    /// suffice for progress; exhaustion preserves position and charges nothing.
+    /// At most TILE_BYTES source UTF-8 bytes, one query/object per chunk,
+    /// including empty prefix fragments. Four bytes suffice for progress;
+    /// exhaustion preserves position and charges nothing.
     pub fn advance(
         &mut self,
         budget: &mut Budget,
@@ -332,6 +419,22 @@ impl<'a> FootnoteContent<'a> {
         if end == self.remaining.start {
             return Err(Completion::BudgetExhausted);
         }
+        // The lookup is paid only on a call guaranteed to make progress.
+        let mut gap = self
+            .gap
+            .unwrap_or_else(|| self.gaps.partition_point(|g| g.end <= self.remaining.start));
+        let mut omitted = false;
+        if let Some(g) = self.gaps.get(gap) {
+            if self.remaining.start < g.start {
+                end = end.min(g.start);
+            } else {
+                end = end.min(g.end);
+                omitted = true;
+                if end == g.end {
+                    gap += 1;
+                }
+            }
+        }
         let source = Span::new(self.remaining.start, end);
         let charged = budget.charge(WorkLimit {
             queries: 1,
@@ -341,9 +444,48 @@ impl<'a> FootnoteContent<'a> {
         });
         debug_assert!(charged);
         self.remaining.start = end;
+        self.gap = Some(gap);
         Ok(Some(FootnoteChunk {
             source,
-            text: &self.source[source.range()],
+            text: if omitted {
+                ""
+            } else {
+                &self.source[source.range()]
+            },
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Document;
+
+    #[test]
+    fn prefix_storage_tracks_lines_without_copying_body_or_duplicate_definitions() {
+        let mut doc = Document::new();
+        doc.append(&format!("> [^n]: first\n>     {}", "x".repeat(1_000_000)))
+            .unwrap();
+        assert_eq!(doc.footnotes.gaps.len(), 1);
+        let gaps = doc.footnotes.gaps.capacity();
+        let blocks = doc.blocks.capacity();
+        let symbols = doc.footnotes.entries.capacity();
+        for _ in 0..1000 {
+            doc.append("x").unwrap();
+        }
+        assert_eq!(doc.footnotes.gaps.len(), 1);
+        assert_eq!(doc.footnotes.gaps.capacity(), gaps);
+        assert_eq!(doc.blocks.capacity(), blocks);
+        assert_eq!(doc.footnotes.entries.capacity(), symbols);
+        doc.append("\n>\n>     last\n> [^n]: duplicate\n>     ignored\n> [^m]: new\n>     last\n")
+            .unwrap();
+        assert_eq!(doc.footnotes.gaps.len(), 4);
+        assert!(
+            doc.footnotes
+                .gaps
+                .windows(2)
+                .all(|g| g[0].end <= g[1].start)
+        );
+        assert_eq!(doc.blocks.len(), 3);
+        assert_eq!(doc.footnotes.entries.len(), 2);
     }
 }

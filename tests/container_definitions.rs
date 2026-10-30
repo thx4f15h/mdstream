@@ -265,7 +265,7 @@ fn late_container_definitions_do_not_visit_old_link_or_footnote_occurrences() {
     assert!(update.new_footnote_references.is_empty());
     assert_eq!(update.references_changed, [SymbolId(0)]);
     assert_eq!(doc.work().label_bytes - before.label_bytes, 1);
-    assert_eq!(doc.work().footnote_steps - before.footnote_steps, 3);
+    assert_eq!(doc.work().footnote_steps - before.footnote_steps, 2);
     assert_eq!(
         doc.work().footnote_label_bytes - before.footnote_label_bytes,
         1
@@ -361,15 +361,20 @@ fn nested_list_definition_prefixes_are_linear_and_symbol_history_adds_no_refresh
             .collect::<String>(),
     )
     .unwrap();
+    let last = doc.footnotes().last().unwrap().definition.unwrap();
     let before = doc.work();
     let update = doc
         .append("> [r]: /duplicate\n> [^f]: duplicate\n")
         .unwrap();
     assert!(update.references_changed.is_empty());
-    assert!(update.footnotes_changed.is_empty());
+    // The last historical definition seals once; duplicates still do not write.
+    let BlockKind::FootnoteDefinition { symbol } = doc.block(last.block).unwrap().kind else {
+        unreachable!()
+    };
+    assert_eq!(update.footnotes_changed, [symbol]);
     assert_eq!(doc.work().label_bytes - before.label_bytes, 1);
     assert_eq!(doc.work().footnote_steps - before.footnote_steps, 3);
-    assert_eq!(doc.work().container_steps - before.container_steps, 2);
+    assert_eq!(doc.work().container_steps - before.container_steps, 3);
     assert_eq!(doc.work().inline_bytes, before.inline_bytes);
     assert!(doc.work().classified_bytes - before.classified_bytes < 100);
 }

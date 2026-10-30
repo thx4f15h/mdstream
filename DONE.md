@@ -636,3 +636,17 @@ README、TODO 已同步，仅将容器跨行数学内容子项标记完成；数
 项目 devShell 验收：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run` 各 556 项、`cargo test --doc` 46 项、`cargo fmt --all -- --check` 和 `git diff --check` 通过。`cargo run -r --example math_blocks` 读取 5 帧/34 源码字节、导航 4 帧；既有 `math`、`container_math`、`container_code` 示例通过。完整日志：`/tmp/mdtui3-math-block-validation.log`；流式高度模型捕获并修复当前 EOF 末 tile 遮蔽，失败证据 `/tmp/mdtui3-math-block-model.log`。
 
 README、TODO 已同步，只标记独立数学块核心完成；额外数学定界方言、TeX 解析/排版与实际对象回调、分类上限扩展、其余容器/脚注语义和终端 UI 继续保留待办。
+
+## 2026-10-30 脚注多行多段定义核心交付
+
+完成顶层及显式 Quote/Item 内脚注定义的四空格续行、空行分段和有预算源码映射读取。起始行沿用 `[^label]: body` 方言；续行显式匹配同一容器路径，再消费恰好四个 ASCII 空格，空白行可省略额外四格。tab 不替代续行缩进，缺前缀、兄弟条目、非续行或 EOF 封口；内部标记和定义形状保持字面内容。保留文档全局首定义优先、首次引用编号和稳定对象身份，重复定义的全部续行隐藏但不覆盖原符号。定义和唯一叶块在 LF 后仍为 Growing，边界或 EOF 才 Sealed，未分类短行不提前加入正文。末尾空行直接归入定义，不回撤已发布范围；内部空行不使外层列表 loose，真正分隔其它子块/兄弟的末尾空行以一个待定标记延续原有间距规则。
+
+`FootnoteDefinition.content` 是排除最后一个 LF/CRLF 的原始源码包络，保留内部换行、缩进和容器前缀。新增 `Document::footnote_payload`，与原文 `footnote_content` 共用 `FootnoteContent` / `FootnoteChunk`；去掉容器前缀和续行四格，保留实体、反斜线和其它空白。每个片段提供完整源码映射，省略前缀时返回空 text，仍扣实际源码 bytes、1 query、1 object。构造 O(1)，首次成功读取 O(log G) 定位有序间隙，其后每步 O(1)，最大 TILE_BYTES，预算不足不推进或扣费，四字节可前进任意 UTF-8 标量。
+
+新增 17 项验收：`tests/footnote_blocks.rs` 15 项、全量分块快照 1 项和内部存储 1 项。覆盖起始缩进/续行、空正文、多段/末尾空行、CRLF/裸 CR/EOF、未完成输入、非法与超长候选、确切容器路径、字面标记、代码/数学/表格优先级、首定义/重复定义、稳定对象和块身份、增量通知重建/合并、旧缓存/测量/搜索拒绝、共享预算和折叠意愿；分块快照新增去前缀映射及短样本，UTF-8 全切点和逐前缀均一致。原有单行测试仅更新因 LF 后不再封口而改变的状态、事件和计数，原有列表间距回归保留。
+
+复杂度与资源验收：千层引用中百万字续行后的 1000 次追加，分类/行内/容器/章节步骤及折叠索引访问不增加，每次只做一次当前脚注增长；间隙、符号和块 arena 容量不增长。两万旧引用的晚定义首行仅两次符号步骤，三条续行各一次；4096 条续行只检查实际路径，4096 历史定义后追加只处理当前旧封口和新定义。250 层列表前缀线性匹配，400 组独立物理行范围/内容模型及 240 次流式区间/高度模型通过。收起百万字多段定义的布局零正文回调、零字节计费。成功定义每个带前缀续行至多一个间隙，重复定义不保存间隙；累计解析 O(n log n)、空间 O(n)、零运行时依赖和禁止 unsafe 保持，不承诺任意 append/finish 的单次硬时延。
+
+项目 devShell 验收：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run` 各 573 项、`cargo test --doc` 47 项、`cargo fmt --all -- --check` 和 `git diff --check` 通过。`cargo run -r --example footnote_blocks` 以 6 帧/61 源码字节完成读取并保持折叠；既有 `footnotes`、`container_definitions`、`list_tightness` 示例通过。完整日志：`/tmp/mdtui3-footnote-block-validation.log`，失败基线：`/tmp/mdtui3-footnote-block-baseline.log`；模型与相关回归日志：`/tmp/mdtui3-footnote-block-model.log`、`/tmp/mdtui3-footnote-block-chunking.log`。
+
+README、TODO 已同步；固定四空格/显式路径方言已完成，分类前缀上限、lazy/tab 等更完整续行规则、定义正文 Markdown 解析/排版、编号上标、脚注区、双向跳转/返回和实际对象回调继续保留待办，终端 UI 留待后续阶段。

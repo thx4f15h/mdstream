@@ -368,7 +368,8 @@ fn late_definition_touches_one_symbol_without_visiting_twenty_thousand_old_refer
     let before = doc.work();
     let old = doc.footnote_references().to_vec();
     let update = doc.append("[^x]: late body\n").unwrap();
-    assert_eq!(doc.work().footnote_steps - before.footnote_steps, 3);
+    // Intern + define; the definition remains open for indented continuation.
+    assert_eq!(doc.work().footnote_steps - before.footnote_steps, 2);
     assert_eq!(
         doc.work().footnote_label_bytes - before.footnote_label_bytes,
         1
@@ -402,10 +403,10 @@ fn million_byte_definition_growth_and_unclosed_candidates_have_linear_work() {
     let before = doc.work();
     doc.append("\r").unwrap();
     doc.append("\n").unwrap();
-    assert_eq!(doc.work().footnote_steps - before.footnote_steps, 3);
+    assert_eq!(doc.work().footnote_steps - before.footnote_steps, 2);
     let body = doc.footnote(FootnoteId(0)).unwrap().definition.unwrap();
     assert_eq!(body.content.len(), 1_001_000);
-    assert_eq!(body.state, SyntaxState::Sealed);
+    assert_eq!(body.state, SyntaxState::Growing);
     assert_eq!(doc.next_visible(body.content.start), None);
     let mut reader = doc.footnote_content(FootnoteId(0)).unwrap();
     let mut budget = Budget::new(WorkLimit {
