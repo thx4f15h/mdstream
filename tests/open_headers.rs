@@ -168,7 +168,7 @@ fn published_cross_line_closure_abandons_probe_even_if_stack_regrows() {
         for padding in [0, 1020, 2048] {
             let prior = format!("{prefix}*prior  \r\n");
             let body = format!(
-                "{prefix}{}end* *new **new __new {}",
+                "{prefix}{}end*next *new **new __new {}",
                 "x".repeat(padding),
                 "y".repeat(1100)
             );
@@ -325,7 +325,8 @@ fn generated_openers_tables_and_rejections_match_independent_range_model() {
         ));
         let delimiter_end = source.len();
         source.push_str(&format!("{prefix}v|z\n"));
-        if i % 3 != 0 && i % 5 != 0 {
+        // The close-only old pair is now isolatable; only bad separators fail.
+        if i % 5 != 0 {
             expected.push((
                 Span::new(start, source.len()),
                 Span::new(delimiter_start, delimiter_end),

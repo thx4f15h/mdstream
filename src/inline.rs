@@ -118,6 +118,20 @@ struct Delimiter {
     previous: Option<usize>,
 }
 
+struct EmphasisPair {
+    open: Span,
+    close: Span,
+    style: Style,
+}
+
+impl EmphasisPair {
+    fn commit(self, effects: &mut Effects<'_>) {
+        effects.mark(Span::new(self.open.end, self.close.start), self.style, None);
+        effects.hide(self.open);
+        effects.hide(self.close);
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Run {
     byte: u8,
@@ -212,9 +226,13 @@ pub(crate) struct Inline {
     line_break: Option<LineBreak>,
     autolink: Option<usize>,
     entity: Option<usize>,
-    // A late header can inherit emphasis openers until one actually closes.
-    // Track that event, not just stack length (which may grow again).
+    // Inherited openers can close without affecting the independent cell's
+    // delimiter machine when the closer cannot open and pops no local opener.
+    // Isolate only these pairs until the header succeeds or fails. Each pair
+    // consumes an old opener, so this storage/work is amortized over input.
+    header_pairs: Vec<EmphasisPair>,
     header_floor: usize,
+    // Other crossings still cancel, even if the stack subsequently regrows.
     header_crossed: bool,
     // Labels are not opaque: preserve local effects, but never reuse a label
     // that started on a preceding line as part of the first table cell.
@@ -257,6 +275,7 @@ impl Inline {
 
     pub fn isolate_line(&mut self) -> Option<LineBreak> {
         debug_assert!(self.can_isolate_line());
+        debug_assert!(self.header_pairs.is_empty());
         self.header_floor = self.stack.len();
         self.header_crossed = false;
         self.header_bracket = self.bracket.map(|b| b.open);
@@ -269,7 +288,15 @@ impl Inline {
         self.header_crossed
     }
 
-    pub fn cancel_header(&mut self) {
+    pub fn cancel_header(&mut self, effects: &mut Effects<'_>) {
+        effects.work.delimiter_steps += self.header_pairs.len() as u64;
+        for pair in self.header_pairs.drain(..) {
+            pair.commit(effects);
+        }
+        self.clear_header();
+    }
+
+    fn clear_header(&mut self) {
         self.header_floor = 0;
         self.header_crossed = false;
         self.header_bracket = None;
@@ -284,6 +311,8 @@ impl Inline {
     /// finish its pending run: that could publish a cross-line mapping/object.
     pub fn confirm_header(&mut self, work: &mut Work) -> bool {
         debug_assert!(!self.header_crossed);
+        work.delimiter_steps += self.header_pairs.len() as u64;
+        self.header_pairs.clear();
         if self.header_opaque {
             work.delimiter_steps += self.stack.len() as u64;
             *self = Self::default();
@@ -304,7 +333,7 @@ impl Inline {
         {
             self.bracket = None;
         }
-        self.cancel_header();
+        self.clear_header();
         true
     }
 
@@ -640,16 +669,32 @@ impl Inline {
             return;
         }
         if can_close && let Some(index) = self.last[kind] {
-            self.header_crossed |= index < self.header_floor;
+            let inherited = index < self.header_floor;
+            // Without an old opener this close-only run would be literal and
+            // leave the local stack intact. No replay, shadow stack or object
+            // rollback is needed for this independently verifiable subset.
+            let isolate = inherited
+                && !self.header_crossed
+                && !can_open
+                && self.stack.len() == self.header_floor;
+            self.header_crossed |= inherited && !isolate;
             let open = self.stack[index].source;
             while self.stack.len() > index {
                 let delimiter = self.stack.pop().unwrap();
                 self.last[delimiter.kind] = delimiter.previous;
                 effects.work.delimiter_steps += 1;
             }
-            effects.mark(Span::new(open.end, run.source.start), style, None);
-            effects.hide(open);
-            effects.hide(run.source);
+            self.header_floor = self.header_floor.min(self.stack.len());
+            let pair = EmphasisPair {
+                open,
+                close: run.source,
+                style,
+            };
+            if isolate {
+                self.header_pairs.push(pair);
+            } else {
+                pair.commit(effects);
+            }
         } else if can_open {
             let index = self.stack.len();
             self.stack.push(Delimiter {
@@ -769,13 +814,41 @@ impl Inline {
         self.line_break = None;
         self.autolink = None;
         self.entity = None;
-        self.cancel_header();
+        self.cancel_header(effects);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{Document, LinkId};
+
+    #[test]
+    fn isolated_emphasis_storage_tracks_consumed_openers_not_body_or_history() {
+        let mut doc = Document::new();
+        doc.append(&format!(
+            "> {}\n> {}",
+            "*old ".repeat(4096),
+            "end* ".repeat(4096)
+        ))
+        .unwrap();
+        assert!(doc.inline.stack.is_empty());
+        assert_eq!(doc.inline.header_pairs.len(), 4096);
+        let capacity = doc.inline.header_pairs.capacity();
+        let before = doc.work();
+        doc.append(&"x".repeat(1_000_000)).unwrap();
+        assert_eq!(doc.inline.header_pairs.capacity(), capacity);
+        assert_eq!(doc.work().delimiter_steps, before.delimiter_steps);
+        doc.append("\n").unwrap();
+        assert!(doc.inline.header_pairs.is_empty());
+        assert_eq!(doc.work().delimiter_steps - before.delimiter_steps, 4096);
+        for _ in 0..200 {
+            doc.append(&format!("> *old\n> end* {}\n", "x".repeat(1030)))
+                .unwrap();
+            assert!(doc.inline.header_pairs.is_empty());
+            assert_eq!(doc.inline.header_pairs.capacity(), capacity);
+        }
+        assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+    }
 
     #[test]
     fn reference_payload_storage_stops_growing_and_is_reused_after_overflow() {

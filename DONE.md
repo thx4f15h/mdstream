@@ -783,3 +783,19 @@ README/TODO 已同步。实际段落间距、其它容器/tab 规则、分类上
 项目 devShell 验收全部通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 701 项、`cargo test --doc` 56 项、`cargo fmt --all -- --check` 和 `git diff --check`。`paragraph_folding` 示例 8 帧/47 个计费字节跳过百万字、产生一次段尾恢复；既有 `source_folding`、`folding`、`table_row_folding` 示例通过。完整日志：`/tmp/mdtui3-paragraph-folds-validation.log`；专项日志：`/tmp/mdtui3-paragraph-folds-targeted.log`。首轮一个手工测试选区本身跨章节边界，已修正测试输入；没有降级范围校验。
 
 README/TODO 已同步。开放段落自动增长、容器跨物理叶块段落、自动长度策略、逻辑/显示行数预览、完整字素/对象截断、媒体详情及完整终端排版继续保留 TODO；本轮只标记已定型顶层段落的源码前缀预览与段尾恢复核心完成。
+
+## 2026-10-30 旧强调可隔离闭合的晚管道长表头核心交付
+
+按本单元允许的独立子项交付：顶层或同一显式 Quote/Item 续行，旧 `*`、`**`、`_`、`__`、`~~` opener 在首管道前由只能闭合的 run 结束，且不会弹出本行未闭合 opener 时，可继续识别晚管道长表头。保持已有分类窗口、块优先级和作用域规则。完整方言及可运行片段见 [README](README.md#表格任务列表与图片)。
+
+先复现两项失败基线：原实现拒绝这种表头，并立即发布跨行样式。现有单调注解不能直接删除跨行样式而保留重叠标记；本子项使用隔离策略。独立首单元格中，close-only run 没有本行 opener 可匹配，也不能自己开启，所以它应为字面内容、局部栈保持不变。原状态正常弹出旧栈，只暂存配对的两个源码区间及 style；本行局部样式、实体、代码、链接、数学及脚注继续即时发布。探测期间仅这些跨行样式/定界符隐藏及原有前序换行等待判定，没有延迟全部普通长行。
+
+确认表格时丢弃暂存配对并移除剩余旧 opener，直接复用首单元格状态和已发布对象。分隔行失败、无管道行 LF/EOF、作用域退出或随后不可隔离闭合时，按原端点提交每对一次；正常范围失效拒绝旧缓存、测量及读取/搜索任务。不会重放正文、克隆 delimiter 栈、撤销对象或重编号。双向 run（如 `end*next`）、会弹出本行 opener 的配对及已闭合代码/数学/标签仍保持普通即时解析并取消该行探测；后者先提交此前隔离的配对。
+
+复杂度依据：每对必定消费一个旧 opener，保存和提交/丢弃各至多一次；确认或失败计入 `delimiter_steps`。额外空间 O(实际消费的旧 opener 数)，注解仍为 O(log n) 区间操作，全库累计 O(n log n)/空间 O(n)。首管道前和失败路径的 `inline_bytes <= source().len()`；成功只做既有单元格边界扫描，不重复解析已消费前缀。千层引用的百万字增长不增加 delimiter、分类、容器、祖先或章节扫描，注解/容器容量不变；4096 对配对在判定时恰好增加 4096 个 delimiter_steps，1000 次尾部追加不遍历配对，4096 历史链接保持身份。内部存储验证百万字追加不增加配对容量，之后 200 轮无管道续行复用同一缓冲、不积累历史配对。解析调用仍为摊还保证，不承诺单次硬时延。
+
+新增 13 项验收：`tests/closed_headers.rs` 11 项、UTF-8 全切点/逐前缀快照 1 项、内部存储 1 项。覆盖五种标记及软/硬换行、显式列表/引用、旧栈跨类型弹出和本行重开、120 组 flanking/局部栈模型、400 组长分隔行成功/晚失败范围模型、独立早管道语义对照、CRLF/EOF/Setext/作用域退出、稳定 BlockId/LinkId/MathId/脚注编号、合并 Update、共享预算原子暂停、预览/搜索源码映射与章节/容器/表格折叠。折叠百万字正文零读取。原拒绝测试明确改用双向标记保留拒绝覆盖，旧范围模型同时接受此次新增的 close-only 情形，未删除失败约束。
+
+项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 714 项、`cargo test --doc` 57 项、`cargo fmt --all -- --check` 和 `git diff --check`。新示例 `cargo run -r --example closed_headers` 验证百万字失败提交与成功丢弃、稳定链接和共享预算摘要，后者 17 帧/119 个计费字节；既有 open/inherited/late/long headers、long_delimiters、code/math/link headers 示例均通过。完整日志 `/tmp/mdtui3-closed-headers-validation.log`；两项失败基线 `/tmp/mdtui3-closed-headers-baseline.log`；专项 `/tmp/mdtui3-closed-headers-targeted.log` 与 `/tmp/mdtui3-closed-headers-chunking.log`。
+
+README、TODO 只标记本子项；无法隔离的旧强调闭合、通用已发布样式撤销、其它候选/分类上限、更完整容器语义和终端 UI 继续保留待办。零运行时依赖与禁止 unsafe 保持。

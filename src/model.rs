@@ -200,6 +200,8 @@ pub struct Work {
     /// is bounded by table_bytes; failed candidates never replay the prefix.
     /// A partially consumed container tab adds at most three virtual-space visits.
     pub inline_bytes: u64,
+    /// Run resolution, opener pushes/pops/rebasing, and isolated cross-line
+    /// emphasis pairs committed or discarded once when a header resolves.
     pub delimiter_steps: u64,
     pub label_bytes: u64,
     pub tree_visits: u64,

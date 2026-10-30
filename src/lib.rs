@@ -713,6 +713,12 @@ impl Document {
         self.inline = inline;
     }
 
+    fn cancel_header(&mut self, update: &mut Update) {
+        let mut inline = std::mem::take(&mut self.inline);
+        inline.cancel_header(&mut self.effects(update));
+        self.inline = inline;
+    }
+
     fn close_current(&mut self, update: &mut Update) {
         self.container_inline = None;
         self.container_title = None;
@@ -1034,8 +1040,8 @@ impl Document {
         if table_text && (complete || allow_long_header) {
             summary.feed(&self.source[content.range()], &mut self.work);
         }
-        // Emphasis openers may be retained while probing: if any inherited
-        // opener closes, abandon the probe and keep its published semantics.
+        // Emphasis openers and separable close-only pairs may be retained while
+        // probing. Other inherited pairs cancel with their original semantics.
         // Inherited code/math remains opaque until confirmation, or cancels the
         // probe when it closes. Labels retain local effects and cancel on an
         // inherited closing bracket, including labels too long for references.
@@ -1463,7 +1469,7 @@ impl Document {
     fn reject_streaming_header(&mut self, header: table::HeaderCandidate, update: &mut Update) {
         // A cross-line pair/object was published, or an inherited label closed.
         // Resume text once, including any suffix after a pipe in this chunk.
-        self.inline.cancel_header();
+        self.cancel_header(update);
         if let Some(line_break) = header.leading_break {
             line_break.commit(&mut self.effects(update));
         }
@@ -1508,7 +1514,7 @@ impl Document {
         } else if !candidate.summary.pipe {
             // No pipe arrived: this was ordinary streaming text all along.
             // Do not add a whole-line annotation or revisit its semantics.
-            self.inline.cancel_header();
+            self.cancel_header(update);
             if let Some(line_break) = candidate.header.leading_break {
                 line_break.commit(&mut self.effects(update));
             }
@@ -1522,7 +1528,7 @@ impl Document {
     }
 
     fn feed_header(&mut self, header: table::HeaderCandidate, update: &mut Update) {
-        self.inline.cancel_header();
+        self.cancel_header(update);
         if let Some(line_break) = header.leading_break {
             line_break.commit(&mut self.effects(update));
         }

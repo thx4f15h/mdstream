@@ -154,11 +154,13 @@ fn ordinary_long_lines_publish_content_immediately_and_defer_only_leading_break(
 
 #[test]
 fn open_cross_line_candidates_keep_their_existing_semantics() {
+    // Close-only emphasis now has an isolated path; bidirectional closers
+    // retain this test's immediate-publication and rejection contract.
     for prefix in ["", "> "] {
         for (open, close, style) in [
-            ("*open", "end* ", Style::EMPHASIS),
-            ("**open", "end** ", Style::STRONG),
-            ("~~open", "end~~ ", Style::STRIKE),
+            ("*open", "end*next ", Style::EMPHASIS),
+            ("**open", "end**next ", Style::STRONG),
+            ("~~open", "end~~next ", Style::STRIKE),
             ("`open", "end` ", Style::CODE),
         ] {
             let prior = format!("{prefix}{open}\n");
