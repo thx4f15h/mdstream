@@ -108,6 +108,8 @@ pub enum BlockKind {
 pub struct Block {
     pub source: Span,
     pub kind: BlockKind,
+    /// For container text, Sealed marks a completed physical line, not a closed
+    /// inline sequence. Later text can confirm styles; Setext can promote it.
     pub state: SyntaxState,
     pub container: Option<crate::ContainerId>,
 }

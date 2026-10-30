@@ -52,22 +52,16 @@ impl DisplayIndex {
 
     /// Only inspect the endpoints: the inline scanner maintains all-spaces as
     /// bytes arrive, so closing a huge span never rereads its body.
-    pub fn code(&mut self, source: Span, text: &str, all_spaces: bool) {
+    pub fn code(&mut self, source: Span, text: &str, all_spaces: bool, last: Span) {
         if source.is_empty() {
             return;
         }
         let bytes = text.as_bytes();
         let trim =
-            !all_spaces && code_space(bytes[source.start]) && code_space(bytes[source.end - 1]);
+            !all_spaces && code_space(bytes[source.start]) && code_space(bytes[last.end - 1]);
         let leading_end = source.start
             + if trim {
                 1 + usize::from(bytes[source.start..source.end].starts_with(b"\r\n"))
-            } else {
-                0
-            };
-        let trailing_start = source.end
-            - if trim {
-                1 + usize::from(bytes[source.start..source.end].ends_with(b"\r\n"))
             } else {
                 0
             };
@@ -75,7 +69,8 @@ impl DisplayIndex {
             source,
             Kind::Code {
                 leading: Span::new(source.start, leading_end),
-                trailing: Span::new(trailing_start, source.end),
+                // Any gap after `last` is an already-hidden container prefix.
+                trailing: Span::new(if trim { last.start } else { source.end }, source.end),
             },
         );
     }

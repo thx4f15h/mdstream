@@ -71,6 +71,10 @@ fn check_chunks(source: &str, boundaries: &[usize]) {
 fn every_single_split_for_small_constructs() {
     for source in [
         "**a _b_ c**",
+        "> - [x] **中\r\n>   _🙂_**\\\r\n>   next\n> - sibling\n",
+        "> ` 中\r\n> 🙂\r\n> ` &amp;\n> $open\n> end$ [open\n> label](u)\n",
+        "> *one\n> two*|three\n> ---\n> *a|b\n> c*|d\n> -|-\n",
+        "> *a\n> > b*\n> c*\n>\n> **d\n> e**\n",
         "[r] [^中]\n> - [x] [r]: <a b> '说明'\r\n>   [^中]: **raw**\r\n> - [r]: /duplicate\n[^中]: duplicate\n",
         "> [ ]: /bad\n> ---\n> [bad]: <bad<target>\n> [^bad label]: raw\n> [^e]:\n> [^open",
         "> h|h\n> -|-\n> [r]: /a|b\n> [^f]: a|b\n> [r] [^f]\n",
@@ -152,6 +156,30 @@ fn container_code_character_chunks_cross_classification_and_crlf_boundaries() {
 }
 
 #[test]
+fn container_inline_long_lines_match_every_live_prefix_and_bytewise_completion() {
+    for delimiter in ["**", "`", "$$"] {
+        let prefix = format!("> - {delimiter}{}", "中🙂".repeat(150));
+        let tail = format!("\r\n>   next{delimiter}\\\r\n>   end\n> - *a\n>   b*|c\n>   ---\n");
+        let source = format!("{prefix}{tail}");
+        let mut streamed = Document::new();
+        streamed.append(&prefix).unwrap();
+        let mut start = prefix.len();
+        for (offset, c) in tail.char_indices() {
+            let end = prefix.len() + offset + c.len_utf8();
+            streamed.append(&source[start..end]).unwrap();
+            let mut whole = Document::new();
+            whole.append(&source[..end]).unwrap();
+            assert_eq!(snapshot(&streamed), snapshot(&whole), "prefix {end}");
+            start = end;
+        }
+        check_chunks(
+            &source,
+            &source.char_indices().map(|(i, _)| i).collect::<Vec<_>>(),
+        );
+    }
+}
+
+#[test]
 fn streaming_unicode_table_rows_match_single_chunk_input() {
     let source = format!(
         "intro\n| h1 | h2 |\n| :-- | --: |\n| {} | ![图](img) |\r\n| `x\\|y` | [link][key] |\n\n[key]: /target\n",
@@ -203,6 +231,9 @@ fn deterministic_fuzz_chunk_invariance_and_source_coverage() {
 fn provisional_semantics_match_at_every_observed_prefix() {
     let parts = [
         "**a _b_ c** ",
+        "> **a\n> b**\r\n> ` 中\r\n> 🙂\r\n> `\n",
+        "> *a\n> b*|c\n> ---\n> [open\n> label](u)\n",
+        "> a\\\r\n> b\n> $open\n> end$\n>\n",
         "> - [x] [key]: /late 'title'\n>   [^中]: raw body\r\n> - [^中]: duplicate\n",
         "> [ ]: /bad\n> ---\n> [^open\n",
         "[^中] [^missing]\n\n[^中]: raw **body**\r\n",

@@ -173,6 +173,8 @@ pub struct Document {
     annotations: Annotations,
     display: display::DisplayIndex,
     inline: Inline,
+    // Inline continuity is independent of the physical leaf-block identity.
+    container_inline: Option<ContainerId>,
     current: Option<BlockId>,
     fence: Option<Fence>,
     line_start: usize,
@@ -622,6 +624,7 @@ impl Document {
     }
 
     fn close_current(&mut self, update: &mut Update) {
+        self.container_inline = None;
         let mut inline = std::mem::take(&mut self.inline);
         inline.finish(&mut self.effects(update));
         self.inline = inline;
@@ -636,6 +639,20 @@ impl Document {
 
     fn new_block(&mut self, span: Span, kind: BlockKind, update: &mut Update) -> BlockId {
         self.close_current(update);
+        self.push_block(span, kind, update)
+    }
+
+    fn new_container_text(&mut self, span: Span, kind: BlockKind, update: &mut Update) -> BlockId {
+        if self.container_inline.is_some() && self.container_inline == self.containers.inner() {
+            self.blocks[self.current.take().unwrap().0].state = SyntaxState::Sealed;
+        } else {
+            self.close_current(update);
+        }
+        self.container_inline = self.containers.inner();
+        self.push_block(span, kind, update)
+    }
+
+    fn push_block(&mut self, span: Span, kind: BlockKind, update: &mut Update) -> BlockId {
         let id = BlockId(self.blocks.len());
         self.blocks.push(Block {
             source: span,
@@ -785,7 +802,11 @@ impl Document {
                     Line::Container { kind, .. } => kind,
                     _ => BlockKind::Paragraph,
                 };
-                Some(self.new_block(span, kind, update))
+                Some(if self.containers.inner().is_some() {
+                    self.new_container_text(span, kind, update)
+                } else {
+                    self.new_block(span, kind, update)
+                })
             };
             self.table_header = Some(table::HeaderCandidate {
                 block,
@@ -858,7 +879,7 @@ impl Document {
                 return;
             }
             // An invalid normalized label is ordinary text in its original
-            // container, with the same prefix hiding and standalone boundary.
+            // container, with the same prefix hiding and inline continuity.
             classification = container_line.map_or(Line::Text, |line| Line::Container {
                 prefix: line.prefix,
                 kind: line.kind,
@@ -966,7 +987,6 @@ impl Document {
                 self.new_block(span, BlockKind::Heading { level }, update)
             }
             Line::Container { prefix, kind } => {
-                standalone = true;
                 payload.start = prefix;
                 let blank = complete
                     && self.source[prefix..body_end]
@@ -974,12 +994,17 @@ impl Document {
                         .all(|b| b.is_ascii_whitespace());
                 inline = !blank;
                 container_text = !blank;
+                standalone = blank;
                 let kind = if blank && kind == BlockKind::Paragraph {
                     BlockKind::Blank
                 } else {
                     kind
                 };
-                self.new_block(span, kind, update)
+                if blank {
+                    self.new_block(span, kind, update)
+                } else {
+                    self.new_container_text(span, kind, update)
+                }
             }
             Line::Rule => {
                 standalone = true;
@@ -1100,6 +1125,15 @@ impl Document {
         }
         if line.standalone {
             self.close_current(update);
+        } else if line.inline && self.container_inline.is_some() {
+            self.end_container_text(line.block);
+        }
+    }
+
+    fn end_container_text(&mut self, block: BlockId) {
+        self.blocks[block.0].state = SyntaxState::Sealed;
+        if self.source.as_bytes()[self.blocks[block.0].source.end - 1] == b'\n' {
+            self.inline.end_container_line();
         }
     }
 
@@ -1116,7 +1150,7 @@ impl Document {
         self.mark(header.source, Style::default(), update);
         self.feed(header.content, update);
         if header.container.is_some() {
-            self.close_current(update);
+            self.end_container_text(header.block.unwrap());
         }
     }
 
@@ -1131,6 +1165,13 @@ impl Document {
         let block = header
             .block
             .unwrap_or_else(|| self.new_block(header.source, BlockKind::Table { id }, update));
+        if header.container.is_some() {
+            // A pending header has not consumed inline bytes. Confirmation
+            // discards the preceding paragraph state before parsing its cells.
+            self.close_current(update);
+            self.current = Some(block);
+            self.blocks[block.0].state = SyntaxState::Growing;
+        }
         self.blocks[block.0].kind = BlockKind::Table { id };
         self.blocks[block.0].source.end = delimiter.end;
         self.tables

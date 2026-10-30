@@ -128,6 +128,8 @@ struct Run {
 struct Code {
     open: Span,
     all_spaces: bool,
+    // Last payload byte (or CRLF); container prefixes are never payload.
+    last: Span,
 }
 
 struct MathCandidate {
@@ -200,8 +202,8 @@ impl Inline {
     }
 
     fn byte(&mut self, byte: u8, pos: usize, effects: &mut Effects<'_>) {
-        // Only a subsequent byte in the same inline block confirms a break.
-        // Block closure discards this candidate, so terminal newlines stay plain.
+        // Only a subsequent byte in the same inline sequence confirms a break.
+        // Sequence closure discards it, so terminal newlines stay plain.
         if let Some(line_break) = self.line_break.take() {
             effects.mark(
                 line_break.newline,
@@ -236,6 +238,10 @@ impl Inline {
                 self.start_run(byte, pos);
             } else {
                 code.all_spaces &= crate::display::code_space(byte);
+                code.last = Span::new(
+                    pos - usize::from(byte == b'\n' && self.previous == Some(b'\r')),
+                    pos + 1,
+                );
             }
             return;
         }
@@ -446,7 +452,7 @@ impl Inline {
                     let content = Span::new(open.end, run.source.start);
                     effects
                         .display
-                        .code(content, effects.source, code.all_spaces);
+                        .code(content, effects.source, code.all_spaces, code.last);
                     effects.update.change(content, ChangeKind::Text);
                     effects.mark(Span::new(open.end, run.source.start), Style::CODE, None);
                     effects.hide(open);
@@ -454,11 +460,13 @@ impl Inline {
                     self.code = None;
                 } else {
                     code.all_spaces = false;
+                    code.last = run.source;
                 }
             } else {
                 self.code = Some(Code {
                     open: run.source,
                     all_spaces: true,
+                    last: Span::new(run.source.end, run.source.end),
                 });
             }
             return;
@@ -574,6 +582,14 @@ impl Inline {
         if let Some(id) = candidate.link {
             effects.link_info[id.0].state = SyntaxState::Sealed;
         }
+    }
+
+    /// Source-borrowing labels/math cannot contain hidden container prefixes.
+    /// Their failed prefixes stay literal/opaque; never replay them. Delimiters,
+    /// code spans and the pending line break continue in the same exact scope.
+    pub fn end_container_line(&mut self) {
+        self.bracket = None;
+        self.math = None;
     }
 
     pub fn finish(&mut self, effects: &mut Effects<'_>) {

@@ -390,3 +390,19 @@
 项目 devShell 下 `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 334 项、`cargo test --doc` 30 项、`cargo fmt --all -- --check` 及 `git diff --check` 全部通过。`cargo run -r --example container_definitions` 演示全局晚定义、稳定编号和容器折叠，脚注正文 6 帧 / 32 字节读取完成。验收日志：`/tmp/mdtui3-container-definitions-validation.log`、`/tmp/mdtui3-container-definitions-release.log`。
 
 保留边界：仍采用显式容器与既有 1 KiB 分类前缀；链接多行目标/title、脚注多行/多段及正文 Markdown 排版、脚注区/上标/双向跳转、完整容器续行规则和终端 UI 继续待办。本轮没有新增局部符号作用域或改变现有方言长度上限。
+
+## 2026-10-30 容器内行内续行核心交付
+
+同一确切 `ContainerId` 的显式非空正文续行现在共享强调、加粗、删除线、代码 span 和软/硬换行状态。物理叶块仍保留独立 `BlockId`、源码范围及容器身份；换行封闭本行范围，稍后的 closer 通过区间标记确认旧行样式。前缀只由容器匹配器消费并保持隐藏，不构造去前缀正文副本，也不为每个叶块或祖先复制行内状态。
+
+边界与失败方言已写入 [README](README.md#容器内行内续行)：进入/退出容器、兄弟切换、空白正文及已识别标题/代码/定义/表格中断序列；回到外层不恢复旧状态。未决表头只保存前序状态，失败/EOF 时一次性消费其有界正文，成功时先清理状态再按独立单元格解析。单行 Setext 只提升最近物理叶块，保留之前已经确认的跨行样式及换行，下划线终止未闭合状态，不回滚或合并旧行。跨行链接标签/数学仍待去前缀内容表示；它们在容器 LF 处丢弃未完成候选，失败前缀不重放，单行对象及 EOF 语义保持。
+
+代码 span 增加最后一个实际正文 byte/CRLF 区间；all-spaces 忽略前缀，闭合仅检查端点，正确去除规范化后的首尾一个空白并保留源码包络映射。显示查询、摘要、DependencyKey、旧测量拒绝及检查点失效复用既有范围协议；Budget 包含隐藏前缀和 CRLF lookaround，耗尽可原子暂停并继续。跨行闭合不改变容器/章节折叠意愿，逐次及合并 Update 均可消费。
+
+新增 15 项测试（`tests/container_inline.rs` 14 项、`tests/chunking.rs` 1 项），并扩展 UTF-8 全切点/逐前缀及固定种子分块样本。覆盖混合引用/列表/任务、容器切换和块边界、失败/确认表头、非法定义回退、Setext 晚提升、CRLF/末端换行、代码空白与逐标量源码映射、单行对象、EOF、长行分类上限、增量失效和共享预算。400 组生成作用域输入对照独立可见文本/样式模型；原定义及表格回退测试更新为明确的续行预期，原有解析、显示、折叠、脚注和数学回归全部通过。
+
+复杂度证据：千层引用的百万字未闭合强调/代码各追加 1000 次单字，仅增加 1000 inline bytes，分类和祖先计数不增长；下一显式行闭合只增加 6 inline bytes、至多 3 次分隔符步骤和少于 1500 次区间树访问。250 层列表续行恰好匹配 250 个活动帧（每帧拥有一个 List/Item 对），空格串计数线性；4096 个未闭合 opener 后追加一个正文字符不访问旧栈或祖先，EOF 仅弹出这 4096 个候选且不读取旧正文。新增持久状态为一个容器 ID 和一个代码末端区间，全库仍为累计解析 O(n log n)、空间 O(n)、零运行时依赖及 `forbid(unsafe_code)`；解析/EOF 维持摊还契约。
+
+项目 devShell 验收全部通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 349 项、`cargo test --doc` 31 项、`cargo fmt --all -- --check` 与 `git diff --check`。`cargo run -r --example container_inline` 用 19 帧 / 437 个计费字节读取跨行显示文本，保留六个物理叶块与条目折叠状态。日志：`/tmp/mdtui3-container-inline-validation.log`、`/tmp/mdtui3-container-inline-release.log`。
+
+本单元交付显式正文的跨行行内衔接核心；跨行链接/图片标签及数学内容映射、多物理行 Setext、需要撤销已确认样式的更完整规则、lazy continuation、tight/loose、tab/分类上限扩展和终端 UI 继续保留 TODO，不声明完整容器或 CommonMark 兼容。

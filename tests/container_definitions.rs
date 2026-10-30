@@ -172,7 +172,7 @@ fn invalid_labels_and_destinations_keep_container_prefixes_and_leaf_boundaries()
     assert!(
         doc.runs_in(Span::new(0, doc.source().len()))
             .unwrap()
-            .all(|r| !r.style.contains(Style::EMPHASIS))
+            .any(|r| r.style.contains(Style::EMPHASIS))
     );
 }
 

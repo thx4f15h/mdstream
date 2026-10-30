@@ -171,12 +171,12 @@ fn failed_headers_keep_inline_setext_and_following_candidate_semantics() {
         doc.source().find("> second").unwrap()
     );
     assert_eq!(visible(&doc, doc.blocks()[0].source), "first|candidate\n");
-    // Container inline state stays local to a physical row, including fallback.
+    // A failed header joins the same-container inline sequence exactly once.
     let doc = parse("> *open|b\n> close*\n");
     assert!(
         doc.runs_in(Span::new(0, doc.source().len()))
             .unwrap()
-            .all(|r| !r.style.contains(Style::EMPHASIS))
+            .any(|r| r.style.contains(Style::EMPHASIS))
     );
 }
 
