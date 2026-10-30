@@ -1,13 +1,19 @@
-use std::ops::Range;
+use std::{num::NonZeroUsize, ops::Range};
 
 use crate::{Document, DocumentId, LayoutError, TileId, Update};
 
 struct Node<S> {
-    children: [Option<usize>; 2],
+    children: [Option<NonZeroUsize>; 2],
     valid: usize,
     state: Option<S>,
     tile: Option<TileId>,
     version: u64,
+}
+
+impl<S> Node<S> {
+    fn child(&self, side: usize) -> Option<usize> {
+        self.children[side].map(|index| index.get() - 1)
+    }
 }
 
 impl<S> Default for Node<S> {
@@ -128,7 +134,7 @@ impl<S> CheckpointIndex<S> {
         while self.capacity <= tile.0 {
             let root = self.nodes.len();
             self.push_node(Node {
-                children: [Some(self.root), None],
+                children: [NonZeroUsize::new(self.root + 1), None],
                 valid: self.nodes[self.root].valid,
                 state: None,
                 tile: None,
@@ -160,10 +166,10 @@ impl<S> CheckpointIndex<S> {
             }
             let mid = lo + (hi - lo) / 2;
             if tile.0 < mid {
-                id = node.children[0]?;
+                id = node.child(0)?;
                 hi = mid;
             } else {
-                id = node.children[1]?;
+                id = node.child(1)?;
                 lo = mid;
             }
         }
@@ -324,17 +330,17 @@ impl<S> CheckpointIndex<S> {
         // before reviving a single path, or insertion would resurrect old states.
         if self.nodes[id].valid == 0 {
             for child in self.nodes[id].children.into_iter().flatten() {
-                self.nodes[child].valid = 0;
+                self.nodes[child.get() - 1].valid = 0;
             }
         }
         let mid = lo + (hi - lo) / 2;
         let side = usize::from(tile >= mid);
-        let child = match self.nodes[id].children[side] {
+        let child = match self.nodes[id].child(side) {
             Some(child) => child,
             None => {
                 let child = self.nodes.len();
                 self.push_node(Node::default());
-                self.nodes[id].children[side] = Some(child);
+                self.nodes[id].children[side] = NonZeroUsize::new(child + 1);
                 child
             }
         };
@@ -352,7 +358,7 @@ impl<S> CheckpointIndex<S> {
             .children
             .into_iter()
             .flatten()
-            .map(|child| self.nodes[child].valid)
+            .map(|child| self.nodes[child.get() - 1].valid)
             .sum();
     }
 
@@ -367,7 +373,7 @@ impl<S> CheckpointIndex<S> {
         }
         let mid = lo + (hi - lo) / 2;
         for (side, start, end) in [(0, lo, mid), (1, mid, hi)] {
-            if let Some(child) = self.nodes[id].children[side] {
+            if let Some(child) = self.nodes[id].child(side) {
                 self.remove(child, start, end, range.clone());
             }
         }
@@ -383,12 +389,12 @@ impl<S> CheckpointIndex<S> {
             return node.state.as_ref().map(|state| (TileId(lo), state));
         }
         let mid = lo + (hi - lo) / 2;
-        if let Some(right) = node.children[1]
+        if let Some(right) = node.child(1)
             && let Some(found) = self.find(right, mid, hi, at)
         {
             return Some(found);
         }
-        node.children[0].and_then(|left| self.find(left, lo, mid, at))
+        node.child(0).and_then(|left| self.find(left, lo, mid, at))
     }
 }
 

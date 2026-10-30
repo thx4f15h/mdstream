@@ -1,0 +1,75 @@
+Fri Oct 30 15:07:18 UTC 2026
+ark
+Linux ark 6.18.54 #1-NixOS SMP PREEMPT_DYNAMIC Fri Sep 25 14:35:54 UTC 2026 x86_64 GNU/Linux
+/home/ajen/gits/mdtui3
+47bc3f3a2d69f70da1750986436ce04457db9f67
+ M src/annotations.rs
+ M src/checkpoints.rs
+ M src/lib.rs
+?? examples/storage.rs
+?? scripts/measure-storage.sh
+?? tests/storage.rs
+?? tests/support/storage.rs
+rustc 1.99.1 (58cf8f9c3 2026-10-13)
+binary: rustc
+commit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67
+commit-date: 2026-10-13
+host: x86_64-unknown-linux-gnu
+release: 1.99.1
+LLVM version: 23.1.1
+cargo 1.99.1 (5f94df478 2026-08-27)
+base_bytes=4096 queries=64 repetitions=3
+c45839979d7301e8347ffc849047e7d1290bc5e5975bfe7c09635b9761b06593  flake.lock
+9c714c1c2f37b631bcd998227f56396a154415d761b19b62a992abd6fd1afa47  src/annotations.rs
+1f4b0b3f02550c93a55c8829a1d05694ad37b2f218ba7fe1ce190d06a7bba20a  src/checkpoints.rs
+346818ffcd905ff99543d8fc66a303819270b4ba29f47602b7e78634001ee6c3  src/lib.rs
+d82c4aba7ce97d2577cd9d4a6b5eec9aea8de6251e8656e9815db413efdba4ac  examples/storage.rs
+721f87850e6b4cebcd397a0e2373408b92075b04cfde91fd5403c0c1248b7824  tests/support/storage.rs
+caf66f505bded2c3179425b73cab9ee0773c8d6a446e4a3e2d534480692d47b8  scripts/measure-storage.sh
+Architecture:                            x86_64
+CPU op-mode(s):                          32-bit, 64-bit
+Address sizes:                           48 bits physical, 48 bits virtual
+Byte Order:                              Little Endian
+CPU(s):                                  16
+On-line CPU(s) list:                     0-15
+Vendor ID:                               AuthenticAMD
+Model name:                              AMD Ryzen 7 255 w/ Radeon 780M Graphics
+CPU family:                              25
+Model:                                   117
+Thread(s) per core:                      2
+Core(s) per socket:                      8
+Socket(s):                               1
+Stepping:                                2
+Microcode version:                       0xa70520a
+Frequency boost:                         enabled
+CPU(s) scaling MHz:                      70%
+CPU max MHz:                             4966.6401
+CPU min MHz:                             405.4400
+BogoMIPS:                                7585.93
+Flags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good amd_lbr_v2 nopl xtopology nonstop_tsc cpuid extd_apicid aperfmperf rapl pni pclmulqdq monitor ssse3 fma cx16 sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand lahf_lm cmp_legacy svm extapic cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw ibs skinit wdt tce topoext perfctr_core perfctr_nb bpext perfctr_llc mwaitx cpuid_fault cpb cat_l3 cdp_l3 hw_pstate ssbd mba perfmon_v2 ibrs ibpb stibp ibrs_enhanced vmmcall fsgsbase bmi1 avx2 smep bmi2 erms invpcid cqm rdt_a avx512f avx512dq rdseed adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local user_shstk avx512_bf16 clzero irperf xsaveerptr rdpru wbnoinvd cppc arat npt lbrv svm_lock nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold vgif x2avic v_spec_ctrl vnmi avx512vbmi umip pku ospke avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq rdpid overflow_recov succor smca fsrm flush_l1d amd_lbr_pmc_freeze
+Virtualization:                          AMD-V
+L1d cache:                               256 KiB (8 instances)
+L1i cache:                               256 KiB (8 instances)
+L2 cache:                                8 MiB (8 instances)
+L3 cache:                                16 MiB (1 instance)
+NUMA node(s):                            1
+NUMA node0 CPU(s):                       0-15
+Vulnerability Gather data sampling:      Not affected
+Vulnerability Ghostwrite:                Not affected
+Vulnerability Indirect target selection: Not affected
+Vulnerability Itlb multihit:             Not affected
+Vulnerability L1tf:                      Not affected
+Vulnerability Mds:                       Not affected
+Vulnerability Meltdown:                  Not affected
+Vulnerability Mmio stale data:           Not affected
+Vulnerability Old microcode:             Not affected
+Vulnerability Reg file data sampling:    Not affected
+Vulnerability Retbleed:                  Not affected
+Vulnerability Spec rstack overflow:      Mitigation; Safe RET
+Vulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl
+Vulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization
+Vulnerability Spectre v2:                Mitigation; Enhanced / Automatic IBRS; IBPB conditional; STIBP always-on; PBRSB-eIBRS Not affected; BHI Not affected
+Vulnerability Srbds:                     Not affected
+Vulnerability Tsa:                       Mitigation; Clear CPU buffers
+Vulnerability Tsx async abort:           Not affected
+Vulnerability Vmscape:                   Mitigation; IBPB before exit to userspace

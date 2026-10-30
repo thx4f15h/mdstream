@@ -1058,3 +1058,14 @@ README/TODO 已同步。稀疏索引验证不保证接近 2 GiB 的真实文档/
 - 验收：项目 devShell `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 **887 项通过**、`cargo test --doc` **67 项通过**、`cargo fmt --all -- --check`；脚本语法、CSV 重复计数/字段及 `git diff --check` 通过。完整日志 `/tmp/mdtui3-performance-validation.log`，专项 `/tmp/mdtui3-performance-targeted.log`，原始三轮与环境 `/tmp/mdtui3-performance-matrix-final/`。
 
 边界：按 Unicode 标量计列的合成消费器不代表实际终端排版；部分高密度帧会耗尽预算，分位数不冒充完整视口完成时延。记录的是指定公开存储的容量与扩容次数，不是总堆/RSS/峰值，解析仍无单次 append 硬时延保证。多平台性能、全部语法组合、完整内存统计、真实缓存依赖链及终端 UI 继续保留；现有独立模型和 32 位验收保持。
+
+## 2026-10-30 存储压缩与缓存回收测量交付
+
+- [x] **可复跑存储实验**：`examples/storage.rs`、共享 `tests/support/storage.rs` 和 `scripts/measure-storage.sh` 覆盖三规模纯文本/密集语法/容器、语义窗口与整篇栈、视口输出新建/复用、三种检查点 payload 表示及稀疏位置的 filled/clear/drain/refill。脚本保存环境/源码哈希/权威 target 目录，拒绝覆盖和非法参数，核对重复非时间指标；[方法与结果](docs/storage.md)、[原始 CSV](docs/storage-baseline.csv) 和[环境](docs/storage-environment.txt) 随库保存。
+- [x] **查询 scratch 可观测性**：`Runs::scratch_stats()` O(1) 返回待处理帧、实际容量及分配/扩容调用，不读取正文或修改查询结果。64 次 dense 窗口查询共 192 次栈分配/扩容、单次峰值 1,152 字节；plain 为 64 次/288 字节。百万字与全篇查询证明栈按深度增长；不把此单栈统计当作全部临时分配。现有 `viewport_into` 预热后 64 次查询容量增长为零，新建 Vec 为 64，结果相同。
+- [x] **有证据的最小压缩**：检查点子索引改用下标 + 1 的 `Option<NonZeroUsize>`，保留树形、身份、版本和所有公开操作语义。x86_64 的 Vec payload 节点从 88 到 72 字节，2,048 个稀疏状态 arena 从 2,883,584 到 2,359,296 字节（下降 18.2%）；内联数组/Box 节点也各减少 16 字节。前后一轮/三轮共 2,928 条指标、324 个阶段，60 个尺寸/容量值改变，其余非时间字段（含访问数、节点数、回收帧数和校验值）全部相同，不声称耗时提速。
+- [x] **回收收益与边界**：clear 一次访问、不析构；2,048 个 Vec/Box 状态经分帧 drain 及调用方显式丢弃释放 524,288 字节外部 payload。31 节点/帧时，相邻/稀疏树分别扫描 4,095/17,444 节点、133/563 帧；arena 不缩容、相同位置 refill 不新增 arena 分配。独立二分区间集合/深度模型、BTreeMap 前驱及析构计数验证零/非对称预算、部分回收、旧 token 拒绝与 32 次 clear/refill，不把 Budget 当作用户析构时间上界。
+
+验收：新增 `tests/storage.rs` 7 项测试；项目 devShell 的 check、clippy、debug/release nextest 各 894 项、67 项文档测试、fmt、脚本语法、原始 CSV/指纹/源码哈希复核及 diff 检查通过。同一套 check、clippy、debug/release 各 894 项与 67 项文档测试在真实 i686 目标通过。三轮每轮 81 阶段的全部非时间字段一致；CLI 非法参数和拒绝覆盖检查通过。
+
+完整日志：`/tmp/mdtui3-storage-validation.log`、`/tmp/mdtui3-storage-index32.log`；专项与三轮驱动：`/tmp/mdtui3-storage-targeted-final.log`；原始目录：`/tmp/mdtui3-storage-measurements/`；独立前后/哈希核验：`/tmp/mdtui3-storage-artifacts.log`；CLI：`/tmp/mdtui3-storage-cli.log`。查询 scratch 复用有分配收益线索，语义/修订拆分和大型状态叶存储也有容量优化空间，但尚无实现与端到端对照；历史树节点回收、完整堆/RSS 峰值、其它 ABI/跨机器性能及终端 UI 继续保留。保持零运行时依赖与禁止 unsafe。

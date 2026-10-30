@@ -1715,6 +1715,15 @@ impl Runs<'_> {
     pub fn annotation_visits(&self) -> u64 {
         self.marks.visits
     }
+
+    /// Pending annotation stack frames, retained Vec capacity bytes and actual
+    /// allocation/growth calls for this iterator. Capacity never shrinks during
+    /// iteration, so its final value is also this stack's peak. Excludes the
+    /// document, allocator overhead and inline iterator state. Each new query
+    /// owns a fresh stack; this method does not allocate or traverse the tree.
+    pub fn scratch_stats(&self) -> ArenaStats {
+        self.marks.scratch_stats()
+    }
 }
 
 impl<'a> Iterator for Runs<'a> {

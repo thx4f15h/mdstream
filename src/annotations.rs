@@ -246,6 +246,7 @@ impl Annotations {
         Segments {
             tree: self,
             query: span,
+            allocations: u64::from(!stack.is_empty()),
             stack,
             visits: 0,
         }
@@ -265,7 +266,18 @@ pub(crate) struct Segments<'a> {
     tree: &'a Annotations,
     query: Span,
     stack: Vec<Frame>,
+    allocations: u64,
     pub visits: u64,
+}
+
+impl Segments<'_> {
+    pub fn scratch_stats(&self) -> crate::ArenaStats {
+        crate::ArenaStats {
+            nodes: self.stack.len(),
+            capacity_bytes: self.stack.capacity() * std::mem::size_of::<Frame>(),
+            allocation_calls: self.allocations,
+        }
+    }
 }
 
 impl Iterator for Segments<'_> {
@@ -283,6 +295,9 @@ impl Iterator for Segments<'_> {
                     for (side, start, end) in [(1, mid, frame.span.end), (0, frame.span.start, mid)]
                     {
                         if start < self.query.end && self.query.start < end {
+                            if self.stack.len() == self.stack.capacity() {
+                                self.allocations += 1;
+                            }
                             self.stack.push(Frame {
                                 node: node.child(side),
                                 span: Span::new(start, end),

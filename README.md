@@ -2299,7 +2299,7 @@ nix develop .#index32 -c bash scripts/check-index32.sh
 
 `annotation_arena_stats`、高度树/检查点的 `arena_stats`、高度依赖树的 `dependency_arena_stats` 返回 Vec 容量字节数、节点数与实际容量增长分配次数。统计不包含 allocator 元数据、碎片、其它 String/Vec 或用户状态的间接堆分配。`scaling` 示例同时记录操作计数、查询分位数与容量；`one_byte_reused` 对照复用通知缓冲的逐字符输入。
 
-2026-10-30 在 ark 上的 release 样本：524,286 字节密集标记产生 854,391 个语义节点；子索引改用 `Option<NonZeroUsize>` 后，节点大小由 88 降至 72 字节，对应 arena 容量由 92,274,688 降至 75,497,472 字节（约 18.2%）。写入访问数 8,010,100、固定视口查询访问数 13,022 均未改变，分配次数同为 20。缩小了节点常数，没有增加全树压缩过程。峰值 arena 容量等于当前容量，因为该 arena 不缩容；这不是整个进程峰值内存。语义/修订存储拆分与查询 scratch 复用尚未实施。
+2026-10-30 在 ark 上的 release 样本：524,286 字节密集标记产生 854,391 个语义节点；子索引改用 `Option<NonZeroUsize>` 后，节点大小由 88 降至 72 字节，对应 arena 容量由 92,274,688 降至 75,497,472 字节（约 18.2%）。写入访问数 8,010,100、固定视口查询访问数 13,022 均未改变，分配次数同为 20。缩小了节点常数，没有增加全树压缩过程。峰值 arena 容量等于当前容量，因为该 arena 不缩容；这不是整个进程峰值内存。语义/修订存储拆分与查询 scratch 复用尚未实施。 后续 [存储与回收实验](docs/storage.md) 提供三规模可复跑容量/分配测量、查询栈 `Runs::scratch_stats()`、检查点 clear/drain/refill 对照及优化决策；已将检查点子索引同样压缩，Vec 状态节点在本机由 88 降至 72 字节。回收只释放移出后由调用方丢弃的外部 payload，保留树 arena；不声称总堆统计或硬内存上限。
 
 标准样例固定为 [CommonMark 0.31.2 autolinks](https://spec.commonmark.org/0.31.2/#autolinks)，离线夹具保存在 `tests/fixtures/commonmark_autolinks.rs`，保留上游 CC BY-SA 4.0 归属信息。19 个样例中，18 个在源码文本/目标语义上符合；606 为刻意差异：失败候选内部的反斜线不重新解析。URI percent encoding 属输出层，因此对照时归一化目标编码。其它已评分子集见下文，其余 CommonMark/GFM 范围未评分；现有容器展平、强调/代码回退和语法长度限制仍按上文方言约定，不以自比较分块测试充当完整规范合规率。
 
