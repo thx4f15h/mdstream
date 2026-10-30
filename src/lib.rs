@@ -973,7 +973,8 @@ impl Document {
         // Emphasis openers may be retained while probing: if any inherited
         // opener closes, abandon the probe and keep its published semantics.
         // Inherited code/math remains opaque until confirmation, or cancels the
-        // probe when it closes. Other opaque candidates remain unsupported.
+        // probe when it closes. Labels retain local effects and cancel on an
+        // inherited closing bracket, including labels too long for references.
         let inherited = self
             .containers
             .inner()
@@ -1354,8 +1355,8 @@ impl Document {
     }
 
     fn reject_streaming_header(&mut self, header: table::HeaderCandidate, update: &mut Update) {
-        // A cross-line pair, mapping or math object has been published. Resume text
-        // once, including any suffix after a pipe in this same input chunk.
+        // A cross-line pair/object was published, or an inherited label closed.
+        // Resume text once, including any suffix after a pipe in this chunk.
         self.inline.cancel_header();
         if let Some(line_break) = header.leading_break {
             line_break.commit(&mut self.effects(update));

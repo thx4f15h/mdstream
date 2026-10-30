@@ -545,3 +545,19 @@ README、TODO 已同步，只将“只继承换行”的子项记为已交付。
 项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 475 项、`cargo test --doc` 40 项、`cargo fmt --all -- --check` 与 `git diff --check`。`cargo run -r --example math_headers` 验证百万字成功/失败与稳定 MathId，预览 19 帧/127 个计费字节；既有 `code_headers`、`math`、`container_inline` 示例通过。完整日志：`/tmp/mdtui3-math-headers-validation.log`。
 
 README、TODO 已同步，只标记本独立子项；继承链接等其它候选、已发布跨行语义撤销、容器数学跨行表示、其余分类上限和终端 UI 继续保留待办。零运行时依赖与禁止 unsafe 的约束保持。
+
+## 2026-10-30 旧链接或图片标签尚未闭合的晚管道长表头核心交付
+
+本单元交付顶层段落继承未闭合 `[...` / `![...` 标签时的晚管道长表头，支持与旧强调、代码 span、数学候选组合。确认时旧标签不得进入首单元格；失败、无管道、EOF 和块中断沿用原候选及原块规则。容器标签仍在物理行末终止，其去前缀跨行内容表示、多行目标/title 和已闭合跨行语义撤销继续保留 TODO。方言及可运行片段见 [README](README.md#表格任务列表与图片)。
+
+模型依据：标签闭合前不发布依赖该左括号的链接对象，本行强调、实体、代码、数学及替换标签的对象可即时发布。因此只增加一个旧左括号源码偏移；成功时清除仍与该位置相同的候选，并复用当前首单元格状态与全部已发布对象。新 `[` 替换、`<` 丢弃旧候选沿用原方言，当前行新标签不被清除；旧图片的 `!` 不影响新标签或后续单元格。若首管道前未转义 `]` 关闭旧标签，则永久取消本行探测，即使标签已超过 999 字节且尚无 LinkId，也不能让其后潜在的直接目标跨越表格边界。关闭后重新开启标签不恢复探测。
+
+旧强调/代码/数学的闭合事件继续取消探测；继承代码/数学仍 opaque 的成功路径沿用一次当前表头独立解析，其余标签路径直接复用已消费前缀。失败只消费延迟后缀并一次提交前序换行；不复制正文、克隆栈、回扫标签或撤销对象。新增状态 O(1)，普通标签路径实测 `inline_bytes <= source().len()`；叠加 opaque 候选时沿用 `inline_bytes <= source().len() + table_bytes`。累计 O(n log n)、空间 O(n)，单次确认/失败仍是摊还契约，不承诺硬时延。
+
+新增 13 项验收：`tests/link_headers.rs` 12 项与 `tests/chunking.rs` 1 项。基线先复现未闭合标签阻止表头确认（`/tmp/mdtui3-link-headers-baseline.log`）。确认对照早管道独立单元格路径，失败对照无管道普通正文；200 组标签替换/转义组合对照独立闭合模型，400 组成功/取消/长分隔行失败对照源码范围模型。UTF-8 全切点及逐标量中间快照覆盖 CRLF、硬换行、旧标签闭合后重开、当前行标签、代码/数学组合、长分隔行失败、Setext、EOF 和容器边界。原数学测试中“旧标签阻止隔离”的边界更新为本次支持的组合验收。
+
+复杂度与资源验收：百万字旧图片标签后的当前行再分批增长百万字，仅增加新增字节的行内/表头摘要计数；分类、标签规范化、delimiter、容器/标题步骤和注解/容器 arena 容量均不变。确认及失败都不重读这段前缀。4096 个旧 opener 经 200 轮失败/无管道续行不增加栈或标签规范化步骤，最终只清理一次；4096 个即时链接/数学/脚注及 4096 列在确认时不重复发布，旧对象身份不变。千层引用与 250 层列表保持标签物理行边界及表格作用域；共享预算摘要零预算不推进、每帧最多 8 字节。旧测量拒绝、TileKey 失效、合并 Update 和两个独立折叠视图一致性通过。
+
+项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 488 项、`cargo test --doc` 41 项、`cargo fmt --all -- --check` 与 `git diff --check`。`cargo run -r --example link_headers` 验证百万字成功/失败及稳定 LinkId，预算预览 16 帧/107 个计费字节；既有 `math_headers`、`code_headers`、`container_inline` 示例通过。完整日志：`/tmp/mdtui3-link-headers-validation.log`。
+
+README、TODO 已同步，只将本独立子项标记完成；已闭合跨行语义撤销、容器跨行标签表示、多行目标/title、其余分类上限和终端 UI 保留待办。零运行时依赖与禁止 unsafe 的约束保持。

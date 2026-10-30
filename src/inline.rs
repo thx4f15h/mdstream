@@ -208,19 +208,21 @@ pub(crate) struct Inline {
     // Track that event, not just stack length (which may grow again).
     header_floor: usize,
     header_crossed: bool,
+    // Labels are not opaque: preserve local effects, but never reuse a label
+    // that started on a preceding line as part of the first table cell.
+    header_bracket: Option<usize>,
     // Inherited code or math keeps this line opaque until table confirmation.
     // Its prefix has no published effects and needs a fresh cell parser then.
     header_opaque: bool,
 }
 
 impl Inline {
-    /// Only emphasis openers, code/math and the pending break may reach the preceding
-    /// line. Inspect fixed state, never walk or clone the delimiter stack.
+    /// Emphasis openers, code/math, a label and the pending break may reach the
+    /// preceding line. Inspect fixed state, never walk or clone the stack.
     pub fn can_isolate_line(&self) -> bool {
         self.previous == Some(b'\n')
             && self.run.is_none()
             && self.footnote.is_none()
-            && self.bracket.is_none()
             && self.bang.is_none()
             && self.tail.is_none()
             && self.escape.is_none()
@@ -234,6 +236,7 @@ impl Inline {
         debug_assert!(self.can_isolate_line());
         self.header_floor = self.stack.len();
         self.header_crossed = false;
+        self.header_bracket = self.bracket.map(|b| b.open);
         self.header_opaque = self.code.is_some() || self.math.is_some();
         self.previous = None;
         self.line_break.take()
@@ -246,6 +249,7 @@ impl Inline {
     pub fn cancel_header(&mut self) {
         self.header_floor = 0;
         self.header_crossed = false;
+        self.header_bracket = None;
         self.header_opaque = false;
     }
 
@@ -270,6 +274,12 @@ impl Inline {
                 delimiter.previous = self.last[delimiter.kind];
                 self.last[delimiter.kind] = Some(index);
             }
+        }
+        if self
+            .bracket
+            .is_some_and(|b| Some(b.open) == self.header_bracket)
+        {
+            self.bracket = None;
         }
         self.cancel_header();
         true
@@ -452,6 +462,9 @@ impl Inline {
             }
             b']' => {
                 if let Some(Bracket { open, image }) = self.bracket.take() {
+                    // Even an overlong label can acquire a direct destination
+                    // later. Cancel at its close, before any object is published.
+                    self.header_crossed |= self.header_bracket == Some(open);
                     let label = &effects.source[open + 1..pos];
                     let mut candidate = Candidate {
                         open,

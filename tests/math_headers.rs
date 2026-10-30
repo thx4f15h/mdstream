@@ -381,8 +381,7 @@ fn containers_keep_physical_line_math_boundaries_and_existing_table_semantics() 
     }
     let source = format!("old $$\n{}|b\n> -|-\n", "x".repeat(1030));
     assert!(parse(&source).tables().is_empty());
-    let source = format!("[old $$ prior\n{}|b\n-|-\n", "x".repeat(1030));
-    compare_plain(&source); // A retained link label still prevents isolation.
+    compare_header("[old $$ prior\n", &format!("{}|b\n", "x".repeat(1030)));
     let doc = parse("h|h\n-|-\n$open|$next$\n");
     assert_eq!(doc.maths().len(), 1);
     assert_eq!(doc.text(doc.maths()[0].content), Some("next"));
