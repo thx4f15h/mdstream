@@ -493,7 +493,9 @@ impl Document {
                 }
                 self.containers.end = cursor;
                 self.headings.parsed_end = cursor;
-                if self.source.as_bytes()[cursor - 1] == b'\n' {
+                if self.inline.header_crossed() {
+                    self.reject_streaming_header(candidate.header, update);
+                } else if self.source.as_bytes()[cursor - 1] == b'\n' {
                     self.finish_header(candidate, update);
                     self.line_start = cursor;
                 } else {
@@ -968,9 +970,9 @@ impl Document {
         if table_text && (complete || allow_long_header) {
             summary.feed(&self.source[content.range()], &mut self.work);
         }
-        // A continuation is safe to consume as a cell only if its pending
-        // newline is the sole cross-line effect. Other inherited candidates
-        // keep the ordinary parser; no published semantics can be revoked.
+        // Emphasis openers may be retained while probing: if any inherited
+        // opener closes, abandon the probe and keep its published semantics.
+        // Opaque inherited candidates still use the ordinary parser.
         let inherited = self
             .containers
             .inner()
@@ -1015,11 +1017,6 @@ impl Document {
                 leading_break,
                 paragraph_end,
             };
-            if complete {
-                self.table_header = Some(header);
-            } else {
-                self.streaming_header = Some(table::StreamingHeader { header, summary });
-            }
             self.mark(span, Style::default(), update);
             self.mark(Span::new(span.start, content.start), Style::HIDDEN, update);
             let end = block::body_end(&self.source, span);
@@ -1028,6 +1025,13 @@ impl Document {
             }
             if eager {
                 self.feed(content, update);
+            }
+            if self.inline.header_crossed() {
+                self.reject_streaming_header(header, update);
+            } else if complete {
+                self.table_header = Some(header);
+            } else {
+                self.streaming_header = Some(table::StreamingHeader { header, summary });
             }
             return;
         }
@@ -1348,6 +1352,37 @@ impl Document {
         }
     }
 
+    fn reject_streaming_header(&mut self, header: table::HeaderCandidate, update: &mut Update) {
+        // A cross-line pair has already been published. Resume ordinary text
+        // once, including any suffix after a pipe in this same input chunk.
+        self.inline.cancel_header();
+        if let Some(line_break) = header.leading_break {
+            line_break.commit(&mut self.effects(update));
+        }
+        let block = self.current.unwrap();
+        if header.container.is_some() {
+            self.container_title = Some((block, header.content));
+        }
+        let line = StreamingLine {
+            block,
+            inline: true,
+            standalone: false,
+            hidden: false,
+            table: false,
+        };
+        self.extend_line(
+            line,
+            Span::new(header.parsed_end, header.content.end),
+            update,
+        );
+        if self.source.as_bytes()[header.source.end - 1] == b'\n' {
+            self.end_line(line, update);
+            self.line_start = header.source.end;
+        } else {
+            self.streaming = Some(line);
+        }
+    }
+
     fn finish_header(&mut self, mut candidate: table::StreamingHeader, update: &mut Update) {
         let end = block::body_end(&self.source, candidate.header.source);
         if end + 2 == candidate.header.source.end {
@@ -1359,6 +1394,7 @@ impl Document {
         } else if !candidate.summary.pipe {
             // No pipe arrived: this was ordinary streaming text all along.
             // Do not add a whole-line annotation or revisit its semantics.
+            self.inline.cancel_header();
             if let Some(line_break) = candidate.header.leading_break {
                 line_break.commit(&mut self.effects(update));
             }
@@ -1374,6 +1410,7 @@ impl Document {
     }
 
     fn feed_header(&mut self, header: table::HeaderCandidate, update: &mut Update) {
+        self.inline.cancel_header();
         if let Some(line_break) = header.leading_break {
             line_break.commit(&mut self.effects(update));
         }
@@ -1395,6 +1432,9 @@ impl Document {
         update: &mut Update,
     ) {
         let id = TableId(self.tables.len());
+        if header.parsed_end > header.content.start {
+            self.inline.confirm_header(&mut self.work);
+        }
         let first_cell =
             (header.parsed_end > header.content.start).then(|| std::mem::take(&mut self.inline));
         if let Some(end) = header.paragraph_end {

@@ -337,6 +337,55 @@ fn inherited_headers_match_all_utf8_splits_and_live_prefix_snapshots() {
 }
 
 #[test]
+fn open_headers_match_all_utf8_splits_and_live_prefix_snapshots() {
+    for source in [
+        format!(
+            "*prior  \r\n**中** [h](u) {}|end*\r\n-|-\n",
+            "中🙂".repeat(150)
+        ),
+        format!(
+            "> - [x] ~~prior\\\r\n>   `中` {}~~|b\r\n>   -|-\r\n",
+            "x".repeat(1030)
+        ),
+        format!(
+            "> *prior\n> **local {}|end*\r\n> wrong\n> ---\n",
+            "x".repeat(1030)
+        ),
+        format!("**prior\n{}\n===\n", "x".repeat(1030)),
+        format!("> *prior\n> {}\n> next*\n", "x".repeat(1030)),
+        format!("*prior\n{}|b", "x".repeat(1030)),
+        format!("*prior\n{}", "x".repeat(1030)),
+        format!(
+            "> *prior  \n> {}|b\n> {}x|end*\n",
+            "x".repeat(1030),
+            "-".repeat(1030)
+        ),
+        format!("> *prior\n> end* *new {}|b\n> -|-\n", "x".repeat(1030)),
+        format!("> *prior\n> {}end* *new|b\r\n> -|-\n", "x".repeat(1030)),
+        format!("> *prior\n> {}\\|escaped|b\n> -|-\n", "x".repeat(1021)),
+        format!("> *prior\n> {}|end*\n-|-\n", "x".repeat(1030)),
+    ] {
+        for (at, _) in source.char_indices() {
+            check_chunks(&source, &[at]);
+        }
+        let mut live = Document::new();
+        for (at, c) in source.char_indices() {
+            let end = at + c.len_utf8();
+            live.append(&source[at..end]).unwrap();
+            let mut whole = Document::new();
+            whole.append(&source[..end]).unwrap();
+            assert_eq!(snapshot(&live), snapshot(&whole), "prefix {end}");
+            assert!(live.pending().len() <= BLOCK_LOOKAHEAD + 3);
+        }
+        live.finish();
+        let mut whole = Document::new();
+        whole.append(&source).unwrap();
+        whole.finish();
+        assert_eq!(snapshot(&live), snapshot(&whole));
+    }
+}
+
+#[test]
 fn late_headers_match_all_utf8_splits_and_live_prefix_snapshots() {
     for source in [
         format!(

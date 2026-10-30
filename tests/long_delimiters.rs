@@ -282,8 +282,13 @@ fn late_header_pipe_requires_isolatable_inline_state_and_other_limits_remain() {
         let source = format!("{prefix}{}|b\n{prefix}-|-\n", "x".repeat(BLOCK_LOOKAHEAD));
         assert_eq!(parse(&source).tables().len(), 1);
         assert_eq!(parse(&format!("{prefix}prior\n{source}")).tables().len(), 1);
+        assert_eq!(
+            parse(&format!("{prefix}*prior\n{source}")).tables().len(),
+            1
+        );
+        // Inherited opaque code still cannot become an independent cell.
         assert!(
-            parse(&format!("{prefix}*prior\n{source}"))
+            parse(&format!("{prefix}`prior\n{source}"))
                 .tables()
                 .is_empty()
         );

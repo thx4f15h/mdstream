@@ -204,14 +204,17 @@ pub(crate) struct Inline {
     line_break: Option<LineBreak>,
     autolink: Option<usize>,
     entity: Option<usize>,
+    // A late header can inherit emphasis openers until one actually closes.
+    // Track that event, not just stack length (which may grow again).
+    header_floor: usize,
+    header_crossed: bool,
 }
 
 impl Inline {
-    /// At this boundary the pending break is the only effect that could reach
-    /// the preceding line. Inspect fixed state, never walk the delimiter stack.
+    /// Only emphasis openers and the pending break may reach the preceding
+    /// line. Inspect fixed state, never walk or clone the delimiter stack.
     pub fn can_isolate_line(&self) -> bool {
         self.previous == Some(b'\n')
-            && self.stack.is_empty()
             && self.run.is_none()
             && self.code.is_none()
             && self.math.is_none()
@@ -228,8 +231,36 @@ impl Inline {
 
     pub fn isolate_line(&mut self) -> Option<LineBreak> {
         debug_assert!(self.can_isolate_line());
+        self.header_floor = self.stack.len();
+        self.header_crossed = false;
         self.previous = None;
         self.line_break.take()
+    }
+
+    pub fn header_crossed(&self) -> bool {
+        self.header_crossed
+    }
+
+    pub fn cancel_header(&mut self) {
+        self.header_floor = 0;
+        self.header_crossed = false;
+    }
+
+    /// On success discard inherited openers, retaining the first cell's live
+    /// candidates and already published objects. Each surviving opener is
+    /// rebased only once, when this inline sequence becomes a table cell.
+    pub fn confirm_header(&mut self, work: &mut Work) {
+        debug_assert!(!self.header_crossed);
+        if self.header_floor != 0 {
+            work.delimiter_steps += self.stack.len() as u64;
+            self.stack.drain(..self.header_floor);
+            self.last = [None; 5];
+            for (index, delimiter) in self.stack.iter_mut().enumerate() {
+                delimiter.previous = self.last[delimiter.kind];
+                self.last[delimiter.kind] = Some(index);
+            }
+        }
+        self.cancel_header();
     }
 
     pub fn feed(&mut self, span: Span, effects: &mut Effects<'_>) {
@@ -520,6 +551,7 @@ impl Inline {
             return;
         }
         if can_close && let Some(index) = self.last[kind] {
+            self.header_crossed |= index < self.header_floor;
             let open = self.stack[index].source;
             while self.stack.len() > index {
                 let delimiter = self.stack.pop().unwrap();
@@ -649,5 +681,6 @@ impl Inline {
         self.line_break = None;
         self.autolink = None;
         self.entity = None;
+        self.cancel_header();
     }
 }

@@ -501,3 +501,17 @@ README、TODO 只将本子项记为已交付。已有段落或同一容器续行
 项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 437 项、`cargo test --doc` 37 项、`cargo fmt --all -- --check` 和 `git diff --check`。`cargo run -r --example inherited_headers` 验证百万字失败回退与成功预览，后者 16 帧/110 个计费字节；既有 `late_headers`、`long_headers`、`long_delimiters`、`container_inline`、`container_lazy` 示例均通过。完整日志：`/tmp/mdtui3-inherited-validation.log`。
 
 README、TODO 已同步，只将“只继承换行”的子项记为已交付。继承未闭合跨行候选的晚管道表头、其它分类上限、完整容器语义和终端 UI 仍保留待办，不声称整个继承状态方向完成。
+
+## 2026-10-30 旧强调尚未闭合的晚管道长表头核心交付
+
+本单元按账本允许的独立子项交付：顶层段落或同一 Quote/Item 显式续行继承未闭合 `*`、`**`、`_`、`__`、`~~` opener 时，只要旧 opener 尚未在首个未转义管道前闭合，就支持晚管道长表头。保留分类窗口、确切容器路径、短行/早管道、lazy 和块中断边界。代码/数学/链接等继承候选，以及已发布跨行强调的撤销仍在 TODO；没有宣称整个未闭合跨行候选方向完成。
+
+模型与实现：未闭合强调只保存候选、尚不影响当前字节；当前行内部配对及对象可即时发布。分类时 O(1) 保存栈边界、隔离前序待确认换行；正常消费中记录是否真正闭合过边界以前的 opener，不能只比较栈长，因为弹栈后可能重新增长。若发生旧配对，当前行一次切回普通流式解析，提交原换行并消费尚未处理的后缀，不再启动表头候选。若确认表格，一次移除继承栈前缀并重建当前行 opener 前驱下标，将剩余 Inline 移入首单元格；首管道前待定的 delimiter run 按单元格末端结算。失败/EOF/无管道只取消探测记录、恢复原换行并继续原栈。确认丢弃的是未发布的候选，不撤销已发布样式，不重放或重建对象；LinkId、MathId、脚注引用和首次编号保持。
+
+每个行内字节最多消费一次，每个合格摘要字节一次；表格确认仍有一次单元格边界扫描。成功删除/重建 opener 计入 `delimiter_steps`，每个 opener 仅在所属序列成为单元格时处理一次；失败及无管道续行不遍历历史栈。只增加固定大小栈边界/闭合事件字段，不克隆栈、不复制源码，维持累计 O(n log n)、空间 O(n)。确认和回退不承诺单次硬预算；显示、预览、折叠继续共用已有 Budget、Update 和范围失效协议。
+
+新增 12 项测试：`tests/open_headers.rs` 11 项与 `tests/chunking.rs` 1 项。五种 delimiter 和局部代码/数学/链接状态对照既有全延迟早管道路径；失败/EOF 对照普通正文。512 组局部配对/交叉/转义输入对照独立路径，400 组成功/失败/取消探测输入对照表格范围模型。UTF-8 全切点及逐标量中间快照涵盖 CRLF、待定 run、栈重新增长、无管道、长分隔行失败与容器作用域失配。另覆盖即时对象、稳定 ID/增量范围、原块范围、旧测量拒绝、合并 Update、容器/表格折叠与共享预算。既有长分隔行测试将旧强调未闭合的拒绝断言改为接受，并保留继承代码拒绝；原跨行强调闭合和 opaque 候选回归继续通过。
+
+复杂度与资源验收：千层引用下百万字增长只增加新字节摘要/行内计数，分类、delimiter、容器/标题步骤及注解/容器 arena 容量不变；确认/失败不重读首单元格语义。4096 个旧 opener 经 200 轮长候选失败/无管道续行，delimiter 计数不增加，最终确认只清理一次 4096 项。250 层列表、4096 个链接/数学/脚注及 4096 列保持确切作用域，确认没有额外符号工作。预算摘要零预算不推进，8 字节逐帧读取能够完成。
+
+项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 449 项、`cargo test --doc` 38 项、`cargo fmt --all -- --check` 和 `git diff --check`。`cargo run -r --example open_headers` 演示百万字失败恢复和成功表头，摘要 16 帧/110 个计费字节；既有 `inherited_headers`、`late_headers`、`long_headers`、`long_delimiters`、`container_inline`、`container_lazy` 示例均通过。完整日志：`/tmp/mdtui3-open-headers-validation.log`。README、TODO 已同步，零运行时依赖与 `forbid(unsafe_code)` 保持；其余继承候选和跨行语义撤销、其它分类上限、完整容器语义与终端 UI 继续保留待办。

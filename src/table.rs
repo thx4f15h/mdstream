@@ -88,8 +88,8 @@ pub(crate) struct HeaderCandidate {
     pub content: Span,
     pub container: Option<ContainerId>,
     pub columns: usize,
-    // An isolated inline sequence can already have consumed the first-cell prefix.
-    // Reuse that state on confirmation; never publish its objects twice.
+    // The first-cell prefix may already be consumed. Inherited emphasis openers
+    // are discarded on confirmation; published semantics and objects are reused.
     pub parsed_end: usize,
     pub leading_break: Option<crate::inline::LineBreak>,
     // An eager root continuation grows its paragraph until table confirmation.
