@@ -187,6 +187,9 @@ pub struct Work {
     pub label_bytes: u64,
     pub tree_visits: u64,
     pub table_bytes: u64,
+    /// Bytes examined by long table-separator probes, once per candidate byte.
+    /// A failed probe's source is subsequently consumed once as ordinary text.
+    pub table_candidate_bytes: u64,
     pub autolink_bytes: u64,
     /// Bounded entity candidate bytes examined at semicolon; feed bytes are
     /// already included in inline_bytes.

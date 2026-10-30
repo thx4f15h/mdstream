@@ -90,6 +90,103 @@ pub(crate) struct HeaderCandidate {
     pub columns: usize,
 }
 
+/// A long separator keeps only one finite-state cell and at most the bounded
+/// header's column count. Each candidate byte is examined once; no source copy.
+pub(crate) struct DelimiterCandidate {
+    pub prefix: Span,
+    columns: usize,
+    alignments: Vec<Alignment>,
+    cell: DelimiterCell,
+    started: bool,
+    pipe: bool,
+}
+
+#[derive(Clone, Copy)]
+enum DelimiterCell {
+    Empty,
+    Left,
+    Dashes(bool),
+    Right(bool),
+    Space(Alignment),
+}
+
+impl DelimiterCell {
+    fn alignment(self) -> Option<Alignment> {
+        match self {
+            Self::Dashes(false) => Some(Alignment::Default),
+            Self::Dashes(true) => Some(Alignment::Left),
+            Self::Right(false) => Some(Alignment::Right),
+            Self::Right(true) => Some(Alignment::Center),
+            Self::Space(alignment) => Some(alignment),
+            Self::Empty | Self::Left => None,
+        }
+    }
+}
+
+impl DelimiterCandidate {
+    pub fn new(prefix: Span, columns: usize) -> Self {
+        Self {
+            prefix,
+            columns,
+            alignments: Vec::new(),
+            cell: DelimiterCell::Empty,
+            started: false,
+            pipe: false,
+        }
+    }
+
+    pub fn feed(&mut self, text: &str, work: &mut crate::Work) -> bool {
+        for byte in text.bytes() {
+            work.table_candidate_bytes += 1;
+            if byte.is_ascii_whitespace() {
+                if !matches!(self.cell, DelimiterCell::Empty) {
+                    let Some(alignment) = self.cell.alignment() else {
+                        return false;
+                    };
+                    self.cell = DelimiterCell::Space(alignment);
+                }
+                continue;
+            }
+            if byte == b'|' {
+                self.pipe = true;
+                if self.started && !self.push_cell() {
+                    return false;
+                }
+                self.cell = DelimiterCell::Empty;
+            } else {
+                self.cell = match (byte, self.cell) {
+                    (b':', DelimiterCell::Empty) => DelimiterCell::Left,
+                    (b'-', DelimiterCell::Empty) => DelimiterCell::Dashes(false),
+                    (b'-', DelimiterCell::Left) => DelimiterCell::Dashes(true),
+                    (b'-', DelimiterCell::Dashes(left)) => DelimiterCell::Dashes(left),
+                    (b':', DelimiterCell::Dashes(left)) => DelimiterCell::Right(left),
+                    _ => return false,
+                };
+            }
+            self.started = true;
+        }
+        true
+    }
+
+    fn push_cell(&mut self) -> bool {
+        let Some(alignment) = self.cell.alignment() else {
+            return false;
+        };
+        if self.alignments.len() == self.columns {
+            return false;
+        }
+        self.alignments.push(alignment);
+        true
+    }
+
+    pub fn finish(mut self) -> Option<Vec<Alignment>> {
+        if !matches!(self.cell, DelimiterCell::Empty) && !self.push_cell() {
+            return None;
+        }
+        (self.pipe && self.alignments.len() == self.columns).then_some(self.alignments)
+    }
+}
+
 /// Used only on a bounded prospective header/separator, never on old body rows.
 pub(crate) fn split(source: &str, span: Span) -> Option<Vec<Span>> {
     let text = &source[span.range()];
@@ -305,5 +402,39 @@ impl RowParser {
         effects.update.row_changed(self.table, self.row);
         self.complete = true;
         table.rows[self.row].complete = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn streaming_delimiter_matches_bounded_grammar_exhaustively() {
+        // Independent existing split/trim parser is the oracle. Enumerate all
+        // six-byte combinations, including empty cells and internal whitespace.
+        let alphabet = b"-:| \t\rx";
+        for mut value in 0..7_usize.pow(6) {
+            let mut bytes = [b' '; 6];
+            for byte in &mut bytes {
+                *byte = alphabet[value % 7];
+                value /= 7;
+            }
+            let text = std::str::from_utf8(&bytes).unwrap();
+            for columns in 1..=3 {
+                let mut candidate = DelimiterCandidate::new(Span::new(0, 6), columns);
+                let mut work = crate::Work::default();
+                let actual = candidate
+                    .feed(text, &mut work)
+                    .then(|| candidate.finish())
+                    .flatten();
+                assert_eq!(
+                    actual,
+                    delimiter(text, Span::new(0, 6), columns),
+                    "{text:?}"
+                );
+                assert!(work.table_candidate_bytes <= 6);
+            }
+        }
     }
 }

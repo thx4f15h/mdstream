@@ -162,6 +162,41 @@ impl Containers {
         self.active.last().map(|a| a.inner())
     }
 
+    /// Read-only probe of the bounded physical prefix. A long separator may
+    /// retain exactly the header's path, never create siblings or use lazy text.
+    pub fn delimiter_prefix(
+        &self,
+        source: &str,
+        span: Span,
+        scope: Option<ContainerId>,
+        work: &mut Work,
+    ) -> Option<usize> {
+        if scope != self.inner() {
+            return None;
+        }
+        let mut prefix = Prefix::new(source, span, false);
+        let mut matched = true;
+        for frame in &self.active {
+            work.container_steps += 1;
+            matched = match *frame {
+                Active::Quote(_) => prefix.quote(),
+                Active::List { content_indent, .. } => {
+                    if prefix.spaces() >= content_indent {
+                        prefix.pos += content_indent;
+                        true
+                    } else {
+                        false
+                    }
+                }
+            };
+            if !matched {
+                break;
+            }
+        }
+        work.container_bytes += prefix.inspected;
+        matched.then_some(prefix.pos)
+    }
+
     pub fn stats(&self) -> ArenaStats {
         ArenaStats {
             nodes: self.nodes.len(),

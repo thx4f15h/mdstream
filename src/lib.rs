@@ -166,6 +166,7 @@ pub struct Document {
     headings: HeadingIndex,
     tables: Vec<Table>,
     table_header: Option<table::HeaderCandidate>,
+    table_delimiter: Option<table::DelimiterCandidate>,
     // One physical inline payload can become a container Setext heading on the
     // next explicit line. Its text is never copied or reparsed on confirmation.
     container_title: Option<(BlockId, Span)>,
@@ -284,9 +285,12 @@ impl Document {
     }
 
     /// A bounded provisional line prefix, already included in the tiles as raw
-    /// text. It is classified at newline, EOF, or the lookahead limit.
+    /// text. It is classified at newline, EOF, or the lookahead limit. A long
+    /// separator probe retains this bounded prefix while its raw tail grows.
     pub fn pending(&self) -> Span {
-        if self.streaming.is_some() {
+        if let Some(delimiter) = &self.table_delimiter {
+            delimiter.prefix
+        } else if self.streaming.is_some() {
             Span::new(self.source.len(), self.source.len())
         } else {
             Span::new(self.line_start, self.source.len())
@@ -439,7 +443,25 @@ impl Document {
         let end = self.source.len();
         let mut cursor = old_end;
         while cursor < end {
-            if let Some(line) = self.streaming {
+            if let Some(mut delimiter) = self.table_delimiter.take() {
+                let start = cursor;
+                while cursor < end {
+                    let newline = self.source.as_bytes()[cursor] == b'\n';
+                    cursor += 1;
+                    self.work.input_bytes += 1;
+                    if newline {
+                        break;
+                    }
+                }
+                let complete = self.source.as_bytes()[cursor - 1] == b'\n';
+                if !delimiter.feed(&self.source[start..cursor], &mut self.work) {
+                    self.reject_long_delimiter(delimiter.prefix, cursor, complete, update);
+                } else if complete {
+                    self.finish_long_delimiter(delimiter, cursor, update);
+                } else {
+                    self.table_delimiter = Some(delimiter);
+                }
+            } else if let Some(line) = self.streaming {
                 let start = cursor;
                 while cursor < end {
                     let newline = self.source.as_bytes()[cursor] == b'\n';
@@ -462,7 +484,11 @@ impl Document {
                 let limit = cursor - self.line_start >= BLOCK_LOOKAHEAD
                     && self.source.is_char_boundary(cursor);
                 if newline || limit {
-                    self.commit_line(Span::new(self.line_start, cursor), newline, update);
+                    let span = Span::new(self.line_start, cursor);
+                    if !newline && self.probe_long_delimiter(span) {
+                        continue;
+                    }
+                    self.commit_line(span, newline, update);
                     if newline {
                         self.line_start = cursor;
                     }
@@ -488,7 +514,9 @@ impl Document {
         }
         self.revision += 1;
         update.revision = self.revision;
-        if let Some(line) = self.streaming.take() {
+        if let Some(delimiter) = self.table_delimiter.take() {
+            self.finish_long_delimiter(delimiter, self.source.len(), update);
+        } else if let Some(line) = self.streaming.take() {
             self.end_line(line, update);
         } else if self.line_start < self.source.len() {
             self.commit_line(Span::new(self.line_start, self.source.len()), true, update);
@@ -678,6 +706,73 @@ impl Document {
         for i in new_start..self.containers.len() {
             let container = self.containers.get(ContainerId(i)).unwrap();
             self.headings.open_scope(container.parent, &mut self.work);
+        }
+    }
+
+    fn probe_long_delimiter(&mut self, span: Span) -> bool {
+        let Some(header) = &self.table_header else {
+            return false;
+        };
+        let Some(start) =
+            self.containers
+                .delimiter_prefix(&self.source, span, header.container, &mut self.work)
+        else {
+            return false;
+        };
+        let mut delimiter = table::DelimiterCandidate::new(span, header.columns);
+        if !delimiter.feed(&self.source[start..span.end], &mut self.work) {
+            return false;
+        }
+        self.table_delimiter = Some(delimiter);
+        true
+    }
+
+    fn finish_long_delimiter(
+        &mut self,
+        delimiter: table::DelimiterCandidate,
+        end: usize,
+        update: &mut Update,
+    ) {
+        let prefix = delimiter.prefix;
+        if let Some(columns) = delimiter.finish() {
+            let span = Span::new(prefix.start, end);
+            self.containers.end = end;
+            self.headings.parsed_end = end;
+            let loosened_start = update.loosened_lists.len();
+            self.containers
+                .observe_payload(false, span.start, &mut self.work, update);
+            for index in loosened_start..update.loosened_lists.len() {
+                let list = self.containers.get(update.loosened_lists[index]).unwrap();
+                self.mark(list.source, Style::default(), update);
+            }
+            self.container_title = None;
+            let header = self.table_header.take().unwrap();
+            self.confirm_table(header, span, columns, update);
+            self.line_start = end;
+        } else {
+            self.reject_long_delimiter(prefix, end, true, update);
+        }
+    }
+
+    fn reject_long_delimiter(
+        &mut self,
+        prefix: Span,
+        end: usize,
+        complete: bool,
+        update: &mut Update,
+    ) {
+        // Reclassify only the original bounded prefix, using the same incomplete
+        // line rules as before this extension. Consume the delayed suffix once;
+        // it cannot become another header/probe or trigger a full-line retry.
+        self.commit_line(prefix, false, update);
+        let line = self.streaming.unwrap();
+        if end > prefix.end {
+            self.extend_line(line, Span::new(prefix.end, end), update);
+        }
+        if complete {
+            self.end_line(line, update);
+            self.streaming = None;
+            self.line_start = end;
         }
     }
 

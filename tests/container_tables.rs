@@ -273,19 +273,19 @@ fn every_utf8_cut_and_live_prefix_preserves_tables_and_display() {
 }
 
 #[test]
-fn classification_limit_counts_container_prefix_and_never_retries_long_candidates() {
+fn header_limit_counts_container_prefix_but_delimiters_can_stream() {
     let prefix = ">".repeat(BLOCK_LOOKAHEAD - 4);
     let accepted = parse(&format!("{prefix}a|b\n{prefix}-|-\n"));
     assert_eq!(accepted.tables().len(), 1);
     let prefix = ">".repeat(BLOCK_LOOKAHEAD - 3);
     let rejected = parse(&format!("{prefix}a|b\n{prefix}-|-\n"));
     assert!(rejected.tables().is_empty());
-    for source in [
-        format!("> {}|b\n> -|-\n", "x".repeat(BLOCK_LOOKAHEAD)),
-        format!("> a|b\n> {}|-\n", "-".repeat(BLOCK_LOOKAHEAD)),
+    for (source, tables) in [
+        (format!("> {}|b\n> -|-\n", "x".repeat(BLOCK_LOOKAHEAD)), 0),
+        (format!("> a|b\n> {}|-\n", "-".repeat(BLOCK_LOOKAHEAD)), 1),
     ] {
         let doc = parse(&source);
-        assert!(doc.tables().is_empty());
+        assert_eq!(doc.tables().len(), tables);
         assert!(doc.work().classified_bytes <= 2 * source.len() as u64);
         assert!(doc.work().inline_bytes <= source.len() as u64);
     }

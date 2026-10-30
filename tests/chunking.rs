@@ -164,6 +164,37 @@ fn container_code_character_chunks_cross_classification_and_crlf_boundaries() {
 }
 
 #[test]
+fn long_table_delimiters_match_all_splits_live_prefixes_and_eof() {
+    for prefix in ["", "> - ", "> "] {
+        let continuation = if prefix == "> - " { ">   " } else { prefix };
+        for tail in ["|-:\r\n", "|-🙂\r\n", "|", "|-\n> out\n"] {
+            let source = format!(
+                "{prefix}**中**|🙂\n{continuation}{}{}",
+                "-".repeat(1030),
+                tail
+            );
+            for (at, _) in source.char_indices() {
+                check_chunks(&source, &[at]);
+            }
+            let mut streamed = Document::new();
+            for (at, c) in source.char_indices() {
+                let end = at + c.len_utf8();
+                streamed.append(&source[at..end]).unwrap();
+                let mut whole = Document::new();
+                whole.append(&source[..end]).unwrap();
+                assert_eq!(snapshot(&streamed), snapshot(&whole), "prefix {end}");
+                assert!(streamed.pending().len() <= BLOCK_LOOKAHEAD + 3);
+            }
+            streamed.finish();
+            let mut whole = Document::new();
+            whole.append(&source).unwrap();
+            whole.finish();
+            assert_eq!(snapshot(&streamed), snapshot(&whole));
+        }
+    }
+}
+
+#[test]
 fn container_inline_long_lines_match_every_live_prefix_and_bytewise_completion() {
     for delimiter in ["**", "`", "$$"] {
         let prefix = format!("> - {delimiter}{}", "中🙂".repeat(150));

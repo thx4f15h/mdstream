@@ -436,3 +436,20 @@
 项目 devShell 验收全部通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 379 项、`cargo test --doc` 33 项、`cargo fmt --all -- --check` 和 `git diff --check`。`cargo run -r --example list_tightness` 验证两个列表的晚确定通知，6 帧读取 5 个容器并完成路径查询。日志：`/tmp/mdtui3-list-tightness-validation.log`。
 
 本单元交付有独立价值的显式方言 tight/loose 元数据与失效核心；跨无前缀空行保持列表身份、嵌套末尾空行传播、更完整缩进/块边界、实际段落间距和终端 UI 保留 TODO，不声明整个容器语义已完成。
+
+
+## 2026-10-30 长表格分隔行识别核心交付
+
+本单元交付语法上限扩展的独立子项：紧邻既有有界表头的顶层及显式容器分隔行不再受 1 KiB 长度限制。保持原有管道、列数、ASCII 空白与左右单冒号方言，允许任意长连字符/空白及窗口之后的首管道；LF/EOF 才最终确认，CRLF 可跨分块。长行开始只读匹配表头的确切容器路径，不新开容器、不接受兄弟或 lazy 续行；确认后复用稳定 BlockId/TableId、行/单元格索引和增量通知。规则见 [README](README.md#表格任务列表与图片)。
+
+算法只保存一个单元格有限状态和至多有界表头列数个对齐值，候选正文保留在原始 String 中，不复制增长中的尾部。`pending()` 仍至多 1024 + 3 字节，探测时返回原始分类前缀；其后原文可由片段读取，尚未形成块/表，容器和章节的已解析末端暂留表头处。新增 `Work.table_candidate_bytes` 统计逐字节探测；成功确认只解析有界表头、一次范围隐藏分隔行，不回读长分隔行。
+
+失败只重新分类原有有界前缀，沿用不完整行规则；延迟长尾普通消费一次后进入既有流式路径，不再尝试表头、Setext、定义或容器重分类。**有界的是分类回退窗口与重试次数，单次晚失败仍可能消费长尾，不是硬时延/字节预算保证。** 每个探测字节至多检查一次、普通正文至多解析一次，附加识别存储 O(表头列数)，全库累计 O(n log n)、空间 O(n)、零运行时依赖及禁止 unsafe 保持。
+
+新增 15 项验收：`tests/long_delimiters.rs` 13 项、`tests/chunking.rs` 1 项、识别器语法对照 1 项。原有长表头拒绝测试保留，原长分隔行拒绝断言改为接受。验证覆盖首尾管道/四种对齐、CRLF/EOF、列数不足/溢出/空单元格/晚 Unicode 失败、显式混合嵌套/任务/兄弟/lazy/代码边界、原段落与缩进代码回退、稳定范围、旧测量和缓存键、Update 合并、章节父关系与折叠、预算原子暂停及摘要跳过长分隔行。117649 种六字节候选 × 3 种列数（352947 组）对照原有独立 split/trim 语法；UTF-8 全切点与逐前缀快照一致；400 组有效/无效输入对照独立表/分隔/正文行范围模型。
+
+复杂度验收：千层引用的百万字成功/失败探测，每次追加只增长新增字节的探测计数，分类、行内、祖先及标题计数不变；确认只读有界表头，晚失败分类输入至多 2 × 1024 字节，后续 1000 次逐字追加不再探测或分类旧尾部。250 层列表匹配线性并保持 500 个容器身份；400 列分隔行及失败后 20000 个多余单元格不积累候选矩阵。共享 Budget 的摘要按行索引跳过百万字分隔行，不按分隔行长度计费。
+
+项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 394 项、`cargo test --doc` 34 项、`cargo fmt --all -- --check` 和 `git diff --check`。`cargo run -r --example long_delimiters` 检查 1000008 个分隔行字节，13 帧/72 个计费字节读取表头与正文摘要（跨帧读取窗口可重叠）。日志：`/tmp/mdtui3-long-delimiters-validation.log`、`/tmp/mdtui3-long-delimiters-release.log`。
+
+本单元未移除表头长度上限；长表头成功后的单元格语义提交、失败后的前序行内状态恢复，以及其它 Setext/fence/容器分类上限继续保留 TODO。未实现终端 UI，也不声明整个语法上限方向已完成。
