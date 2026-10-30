@@ -178,7 +178,7 @@ assert_eq!(doc.container(item).unwrap().state, SyntaxState::Sealed);
 - 支持显式 `>`、`>>`、`> >`，以及 `-`/`+`/`*` 和 1..9 位数字加 `.`/`)` 列表；可混合嵌套。每层标记前允许 0..3 个 ASCII 空格，`>` 后最多消费一个可选空格。相同父级、相同缩进、相同 bullet/有序分隔符延续 List；改变数字只创建新 Item，改变标记类型创建新 List。
 - 列表标记后须为空格、tab 或完整行结束；消费标记后的全部水平空白。续行须用 ASCII 空格补足该 Item 从父前缀到正文的字节宽度（包含标记前缩进；空条目按标记末端宽度），再匹配子层。tab 只作为列表标记/任务后的分隔字节，每个算 1，不展开为 tab stop；不接受 tab 作为续行缩进。每个兄弟按自己的数字/空白宽度确定续行要求。
 - 引用续行必须重复 `>`；列表续行必须有足够缩进。不推断 lazy continuation。无前缀空行关闭全部容器；显式 `>` 空行保留引用，缩进足够的空行保留对应条目。缺失某层前缀只保留已经匹配的外层，内层关闭。空条目和空任务保留条目身份；任务只识别最内层新条目的正文开头，任务标记之后继续识别标题或普通行内正文。
-- 容器内叶块按物理行独立解析行内语法；强调、代码 span 及软/硬换行不跨这些叶块。容器内 ATX 和单物理行 Setext 标题及章节作用域见下节。表格、引用定义、围栏/缩进代码、分隔线仍作为正文，不生成对应块对象（仍按行内方言处理）。顶层表格分隔行确认、分隔线/Setext 和已打开围栏的优先级保持。列表/引用的整段折叠、容器内标题的独立折叠、tight/loose 及终端布局尚未接入。
+- 容器内叶块按物理行独立解析行内语法；强调、代码 span 及软/硬换行不跨这些叶块。容器内 ATX 和单物理行 Setext 标题及章节作用域见下节，表格识别及索引见[容器内表格](#容器内表格)。引用定义、围栏/缩进代码、分隔线仍作为正文，不生成对应块对象（仍按行内方言处理）。顶层表格分隔行确认、分隔线/Setext 和已打开围栏的优先级保持。列表/引用的整段折叠、容器内标题的独立折叠、tight/loose 及终端布局尚未接入。
 - 结构仅从既有 1024 字节分类前缀（UTF-8 边界最多额外 3 字节）识别。前缀中的完整 `>` 可以开层，列表/任务候选必须在前缀内有分隔符或完整行末；截断候选和前缀后的标记保留正文，不在后续追加中重新分类。深度受前缀字节限制；不声称支持无限深度或完整 CommonMark/GFM 容器规则。
 
 容器新增解析工作累计 O(n + 开闭次数)，容器/活动栈空间 O(n)；保留一层必定消费正长度前缀，失败只做一次退出并批量弹栈，列表续行共享空格扫描结果。整库仍累计 O(n log n)。`container_arena_stats` 统计节点和活动栈实际容量字节及 Vec 增长次数，不含标题索引/作用域、源码、分配器元数据或 Update。批量关闭和 EOF 仍可能一次处理整个活动栈；解析不承诺单次调用硬预算。有预算的查询不会枚举正文或子树。
@@ -214,6 +214,37 @@ assert_eq!(h.current(doc.source().find("outside").unwrap()), Some(HeadingId(0)))
 顶层章节折叠继续覆盖容器内容，内部 h1 不会截断它；Reveal 可按既有预算展开遮住内层标题的顶层章节。容器内标题目前不是独立 `FoldCandidate`：显式折叠、预览和以其为根的批量命令返回 `InvalidRange`，候选枚举及默认设置跳过它们，以保留最多六个开放折叠章节的契约。容器和内层章节折叠仍需单独的增量消费设计。
 
 `cargo run -r --example container_headings` 展示晚确认、作用域切换及小预算 slug。测试覆盖 UTF-8 全切点/逐前缀、1200 行固定种子线性范围模型、千层嵌套、百万字 Setext 无回扫、500 个同时开放的章节作用域、共享预算搜索/slug/折叠导航。
+
+## 容器内表格
+
+显式 Quote/Item 的普通正文行可以成为表头；紧接的完整物理行只有在**同一最内层 ContainerId** 中，且列数与分隔单元格有效时才确认表格。识别先匹配已有引用前缀/条目续行，再验证分隔行：`> a|b` 后的 `> - | -` 是表格，分隔行优先于新开子列表；`- a|b` 后的 `- -|-` 已换到兄弟 Item，不能确认旧表头。顶层的分隔行优先级保持。
+
+```rust
+use mdtui3::{BlockId, Document, FoldId, TableId};
+let mut doc = Document::new();
+doc.append("> - a|b\n")?;
+let item = doc.block(BlockId(0)).unwrap().container;
+assert!(doc.tables().is_empty());
+let update = doc.append(">   - | -\n>   x|y\n> - sibling\n")?;
+assert_eq!(update.new_tables, 0..1);
+let table = doc.table(TableId(0)).unwrap();
+assert_eq!(table.block, BlockId(0));
+assert_eq!(doc.block(table.block).unwrap().container, item);
+assert_eq!(doc.text(table.cell(1, 0).unwrap().source), Some("x"));
+assert_eq!(table.source.end, doc.source().find("> - sibling").unwrap());
+assert!(!doc.fold_candidate(FoldId::Table(TableId(0))).unwrap().open);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+表头和分隔行沿用下节的管道语法：至少一个未转义管道、可选首尾管道、列数相同，分隔单元格为一个以上 `-` 和可选左右单个 `:`，去掉 ASCII 首尾空白；分隔行不另外限制前导空格。分类上限计入整个物理行的容器前缀，两行都须在既有 1024 字节窗口内完成（UTF-8 边界最多额外 3 字节）。超长候选不在后续追加中重试；正文行没有该长度上限。表头暂保留原文内容，容器前缀已隐藏；分隔行失败或 EOF 无分隔行时只解析一次行内内容，并恢复普通容器叶块/单行 Setext 语义。尚未确认的容器表头块为 Growing，确认时保留 BlockId 并产生 `new_tables`。
+
+正文只接纳同一容器中的普通文字行，允许无管道的稀疏行。空行、标题、代码/定义/分隔线形式的行，进入子容器、离开容器或换兄弟条目都会终止表格；回到外层后不恢复旧表。未支持的内层块仍按容器正文字面规则处理，围栏形式不会开启容器内代码模式。单元格行内状态按行/列隔离，前缀不进入单元格；任务信息留在 Item 上。没有新增 lazy continuation、跨行行内语义或完整 GFM 兼容承诺。
+
+`Table.block` 指向保存确切容器 ID 的叶块；Table/source、delimiter 和 TableRow/source 包含完整物理行及容器前缀，TableCell/source 仅含去空白的单元格正文。`table_at` 覆盖前缀/分隔行，`row_at` 覆盖行前缀但不覆盖分隔行；按 ID/行列读取仍 O(1)，定位表/行仍 O(log B)/O(log R)。未分类尾部排除在结构索引外，已分类的超长行按追加增长；开放表格折叠暂覆盖 pending 尾部，边界确认后收回。列宽增长、行变化与表格创建沿用既有 Update，旧行不重扫。
+
+同一时间仍只有一张开放表格，整表折叠、默认收起、临时展开、导航和 TablePreview 直接复用现有接口；折叠父节点为当前顶层作用域章节，容器和内层标题仍不单独折叠。摘要的源码总上限和共享 Budget **包含隐藏容器前缀**；千层前缀也不能免费越过。正文追加只消费新字节，不遍历祖先；分隔行仅检查有界候选，空间不复制祖先链或创建空单元格矩阵，全库保持累计 O(n log n)、空间 O(n)。`container_bytes` 包含分隔行优先级检查。
+
+`cargo run -r --example container_tables` 演示流式确认、兄弟边界、默认整表收起和小预算摘要。`tests/container_tables.rs` 与折叠测试覆盖 UTF-8 全切点/逐前缀、独立范围模型、千层/百万字追加、超宽稀疏表、隐藏前缀预算和单占位跳过正文。实际表格排版、行范围折叠和容器折叠仍见 TODO。
 
 ## 表格、任务列表与图片
 
@@ -516,7 +547,7 @@ assert_eq!(candidate.summary_text(&doc, 32, &mut budget), Some("| Name | Value |
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-表格的父节点是当前章节；父章节收放保留表格自身意愿。默认设置、批量命令、临时展开、源码锚点与书签复用现有契约，导航到隐藏单元格时仅展开必要的章节和表格。`Update.new_tables` 处理表头晚确认，包括已有段落块转成表格的情况；显式展开后追加行不会再次套用默认值。开放表格的待分类行前缀暂属表格，下一块确认时收回，EOF 封闭范围。最多六个章节和一个代码/表格块的开放范围上限保持不变。
+表格的折叠父节点是当前顶层作用域章节（包括容器内表格，跳过尚无独立折叠候选的内层标题）；父章节收放保留表格自身意愿。默认设置、批量命令、临时展开、源码锚点与书签复用现有契约，导航到隐藏单元格时仅展开必要的章节和表格。`Update.new_tables` 处理表头晚确认，包括已有段落块转成表格的情况；显式展开后追加行不会再次套用默认值。开放表格的待分类行前缀暂属表格，下一块确认时收回，EOF 封闭范围。最多六个章节和一个代码/表格块的开放范围上限保持不变。
 
 候选查询、切换及更新均不枚举行/列/单元格；排版直接跳过隐藏正文，占位高度只归属表格起点 tile。`examples/folding.rs` 演示百万字单元格收起后追加新行、读取表头前缀及有预算排版。前几行有界摘要读取见下文；连续行范围折叠和表格绘制仍是后续工作。
 
@@ -816,6 +847,7 @@ nix develop -c cargo run -r --example stream
 nix develop -c cargo run -r --example structure
 nix develop -c cargo run -r --example containers
 nix develop -c cargo run -r --example container_headings
+nix develop -c cargo run -r --example container_tables
 nix develop -c cargo run -r --example scaling
 nix develop -c cargo run -r --example budget
 nix develop -c cargo run -r --example display

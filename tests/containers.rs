@@ -125,7 +125,11 @@ fn blanks_explicit_continuations_empty_tasks_and_other_unsupported_inner_blocks(
     assert_eq!(b[2].container, Some(item));
     assert_eq!(b[3].container, Some(item));
     assert_eq!(doc.headings().entries().len(), 2);
-    assert!(doc.tables().is_empty());
+    assert_eq!(doc.tables().len(), 1);
+    assert_eq!(
+        doc.block(doc.tables()[0].block).unwrap().container,
+        Some(item)
+    );
     assert!(b.iter().all(|b| !matches!(b.kind, BlockKind::Code { .. })));
     let blank = source.find("\n\n").unwrap() + 1;
     assert_eq!(doc.container(item).unwrap().source.end, blank);

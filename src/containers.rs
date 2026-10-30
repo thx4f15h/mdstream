@@ -100,6 +100,7 @@ pub(crate) struct ContainerOptions {
     pub complete: bool,
     pub root_markers: bool,
     pub paragraph: Option<ContainerId>,
+    pub table_header: Option<(ContainerId, usize)>,
 }
 
 pub(crate) struct ContainerLine {
@@ -201,6 +202,7 @@ impl Containers {
             complete,
             root_markers,
             paragraph,
+            table_header,
         } = options;
         let mut prefix = Prefix::new(source, span, complete);
         let mut keep = 0;
@@ -270,6 +272,19 @@ impl Containers {
         }
         self.close_to(keep, span.start, work, update);
         while !self.active.is_empty() || root_markers {
+            // Only a delimiter in the header's exact retained scope wins over
+            // a new list marker (e.g. `> - | -`). Sibling items already changed
+            // identity above. Inspect at most one bounded payload per line.
+            if complete
+                && let Some((scope, columns)) = table_header
+                && Some(scope) == self.inner()
+            {
+                let payload = Span::new(prefix.pos, span.end);
+                prefix.inspected += payload.len() as u64;
+                if crate::table::delimiter(source, payload, columns).is_some() {
+                    break;
+                }
+            }
             let indent = prefix.spaces();
             if indent > 3 {
                 break;

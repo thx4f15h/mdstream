@@ -628,38 +628,35 @@ impl Document {
         self.work.classified_bytes += span.len() as u64;
         self.containers.end = span.end;
         self.headings.parsed_end = span.end;
-        if let Some(header) = self.table_header.take() {
-            if complete && let Some(columns) = table::delimiter(&self.source, span, header.columns)
+        let mut header = self.table_header.take();
+        if header.as_ref().is_some_and(|h| h.container.is_none()) {
+            let root_header = header.take().unwrap();
+            if complete
+                && let Some(columns) = table::delimiter(&self.source, span, root_header.columns)
             {
-                let id = TableId(self.tables.len());
-                let block = header.block.unwrap_or_else(|| {
-                    self.new_block(header.source, BlockKind::Table { id }, update)
-                });
-                self.blocks[block.0].kind = BlockKind::Table { id };
-                self.blocks[block.0].source.end = span.end;
-                self.tables
-                    .push(Table::new(block, header.source, span, columns));
-                self.start_table_row(id, header.source, true, update);
-                self.tables[id.0].source.end = span.end;
-                self.mark(
-                    Span::new(header.source.start, span.end),
-                    Style::default(),
-                    update,
-                );
-                self.mark(span, Style::HIDDEN, update);
+                self.confirm_table(root_header, span, columns, update);
                 return;
             }
-            self.feed_header(header, update);
+            self.feed_header(root_header, update);
         }
-        let previous_title = self.container_title.take();
-        let paragraph = self
-            .current
-            .is_some_and(|id| self.blocks[id.0].kind == BlockKind::Paragraph);
+        let previous_title = self.container_title.take().or_else(|| {
+            header.as_ref().map(|h| {
+                (
+                    h.block.unwrap(),
+                    Span::new(h.content.start, block::body_end(&self.source, h.content)),
+                )
+            })
+        });
+        let paragraph = self.current.is_some_and(|id| {
+            self.blocks[id.0].kind == BlockKind::Paragraph && self.blocks[id.0].container.is_none()
+        });
         let mut classification =
             block::classify(&self.source, span, complete, self.fence, paragraph);
+        let mut content = span;
+        let mut table_text = matches!(classification, Line::Text);
         if self.fence.is_none() {
             // Preserve root-level rule/Setext precedence. The inner payload
-            // recognizes headings; other container block syntax stays literal.
+            // recognizes headings/tables; other container syntax stays literal.
             let root_markers = matches!(
                 classification,
                 Line::Indented { .. } | Line::Text | Line::Blank
@@ -673,6 +670,7 @@ impl Document {
                     complete,
                     root_markers,
                     paragraph: previous_title.and_then(|(id, _)| self.blocks[id.0].container),
+                    table_header: header.as_ref().map(|h| (h.container.unwrap(), h.columns)),
                 },
                 &mut self.work,
                 update,
@@ -684,43 +682,63 @@ impl Document {
                 let same_scope = previous_title
                     .is_some_and(|(id, _)| self.blocks[id.0].container == self.containers.inner());
                 let inner = Span::new(line.prefix, span.end);
+                content = inner;
                 self.work.classified_bytes += inner.len() as u64;
-                classification =
-                    match block::classify(&self.source, inner, complete, None, same_scope) {
-                        heading @ (Line::Heading { .. } | Line::Setext(_)) => heading,
-                        _ => Line::Container {
-                            prefix: line.prefix,
-                            kind: line.kind,
-                        },
-                    };
+                let inner_classification =
+                    block::classify(&self.source, inner, complete, None, same_scope);
+                table_text = matches!(inner_classification, Line::Text);
+                classification = match inner_classification {
+                    heading @ (Line::Heading { .. } | Line::Setext(_)) => heading,
+                    _ => Line::Container {
+                        prefix: line.prefix,
+                        kind: line.kind,
+                    },
+                };
             }
+        }
+        if let Some(header) = header {
+            if header.container == self.containers.inner()
+                && complete
+                && let Some(columns) = table::delimiter(&self.source, content, header.columns)
+            {
+                self.confirm_table(header, span, columns, update);
+                return;
+            }
+            self.feed_header(header, update);
         }
         if let Some(block) = self.current
             && let BlockKind::Table { id } = self.blocks[block.0].kind
         {
-            if matches!(classification, Line::Text) {
+            if table_text && self.blocks[block.0].container == self.containers.inner() {
                 self.blocks[block.0].source.end = span.end;
                 self.mark(span, Style::default(), update);
-                self.start_table_row(id, span, complete, update);
+                self.start_table_row(id, span, content.start, complete, update);
                 return;
             }
             self.close_current(update);
         }
         if complete
-            && matches!(classification, Line::Text)
-            && let Some(cells) = table::split(&self.source, span)
+            && table_text
+            && let Some(cells) = table::split(&self.source, content)
         {
-            let block = if paragraph {
+            let block = if paragraph && self.containers.inner().is_none() {
                 None
             } else {
-                Some(self.new_block(span, BlockKind::Paragraph, update))
+                let kind = match classification {
+                    Line::Container { kind, .. } => kind,
+                    _ => BlockKind::Paragraph,
+                };
+                Some(self.new_block(span, kind, update))
             };
             self.table_header = Some(table::HeaderCandidate {
                 block,
                 source: span,
+                content,
+                container: self.containers.inner(),
                 columns: cells.len(),
             });
             self.mark(span, Style::default(), update);
+            self.mark(Span::new(span.start, content.start), Style::HIDDEN, update);
             let end = block::body_end(&self.source, span);
             if end + 2 == span.end {
                 self.mark(Span::new(end, end + 1), Style::HIDDEN, update);
@@ -991,16 +1009,53 @@ impl Document {
             self.blocks[self.current.unwrap().0].source.end = header.source.end;
         }
         self.mark(header.source, Style::default(), update);
-        self.feed(header.source, update);
+        self.feed(header.content, update);
+        if header.container.is_some() {
+            self.close_current(update);
+        }
     }
 
-    fn start_table_row(&mut self, id: TableId, span: Span, complete: bool, update: &mut Update) {
+    fn confirm_table(
+        &mut self,
+        header: table::HeaderCandidate,
+        delimiter: Span,
+        columns: Vec<Alignment>,
+        update: &mut Update,
+    ) {
+        let id = TableId(self.tables.len());
+        let block = header
+            .block
+            .unwrap_or_else(|| self.new_block(header.source, BlockKind::Table { id }, update));
+        self.blocks[block.0].kind = BlockKind::Table { id };
+        self.blocks[block.0].source.end = delimiter.end;
+        self.tables
+            .push(Table::new(block, header.source, delimiter, columns));
+        self.start_table_row(id, header.source, header.content.start, true, update);
+        self.tables[id.0].source.end = delimiter.end;
+        self.mark(
+            Span::new(header.source.start, delimiter.end),
+            Style::default(),
+            update,
+        );
+        self.mark(delimiter, Style::HIDDEN, update);
+    }
+
+    fn start_table_row(
+        &mut self,
+        id: TableId,
+        span: Span,
+        content_start: usize,
+        complete: bool,
+        update: &mut Update,
+    ) {
         self.table_row = Some(table::RowParser::new(
             id,
             &mut self.tables[id.0],
             span.start,
+            content_start,
         ));
-        self.feed_table_row(span, update);
+        self.mark(Span::new(span.start, content_start), Style::HIDDEN, update);
+        self.feed_table_row(Span::new(content_start, span.end), update);
         let line = StreamingLine {
             block: self.tables[id.0].block,
             inline: false,

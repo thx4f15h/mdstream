@@ -1024,3 +1024,125 @@ fn table_preview_restores_latest_range_after_append_close_and_resize() {
         "A\n[fold]\nNext\nvisible\n"
     );
 }
+
+#[test]
+fn container_table_folds_keep_root_parent_retract_boundaries_and_restore_intent() {
+    let mut doc = Document::new();
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    view.set_defaults(FoldDefaults {
+        table: true,
+        ..Default::default()
+    });
+    for chunk in ["# Root\n> ## inner\n> - a|b\n", ">   -|-\n", ">   x|y\n"] {
+        let update = doc.append(chunk).unwrap();
+        view.apply(&doc, &update).unwrap();
+    }
+    let table = FoldId::Table(TableId(0));
+    assert_eq!(doc.fold_candidate(table).unwrap().parent, Some(heading(0)));
+    assert!(doc.fold_candidate(heading(1)).is_none());
+    assert!(view.is_collapsed(table));
+    assert_eq!(render(&doc, &mut view, true).text, "Root\ninner\n[fold]\n");
+    let end = doc.source().len();
+    let update = doc.append("> - sibling").unwrap();
+    view.apply(&doc, &update).unwrap();
+    assert_eq!(
+        doc.fold_candidate(table).unwrap().source.end,
+        doc.source().len()
+    );
+    assert_eq!(render(&doc, &mut view, true).text, "Root\ninner\n[fold]\n");
+    let update = doc.append("\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    assert_eq!(doc.fold_candidate(table).unwrap().source.end, end);
+    assert!(!doc.fold_candidate(table).unwrap().open);
+    assert_eq!(
+        render(&doc, &mut view, true).text,
+        "Root\ninner\n[fold]\nsibling\n"
+    );
+    view.set_collapsed(&doc, heading(0), true).unwrap();
+    assert_eq!(render(&doc, &mut view, true).text, "Root\n[fold]\n");
+    view.set_collapsed(&doc, heading(0), false).unwrap();
+    assert!(view.is_collapsed(table));
+    view.set_preview(&doc, Some(table), &mut Budget::new(WorkLimit::unlimited()))
+        .unwrap();
+    assert_eq!(
+        render(&doc, &mut view, true).text,
+        "Root\ninner\nab\nxy\nsibling\n"
+    );
+    view.reset(3).unwrap();
+    let update = doc.finish();
+    view.apply(&doc, &update).unwrap();
+    view.set_preview(&doc, None, &mut Budget::new(WorkLimit::unlimited()))
+        .unwrap();
+    assert_eq!(
+        render(&doc, &mut view, true).text,
+        "Root\ninner\n[fold]\nsibling\n"
+    );
+    let target = doc.tables()[0].cell(1, 0).unwrap().source.start;
+    view.set_collapsed(&doc, heading(0), true).unwrap();
+    let mut navigation = FoldNavigation::new(
+        &doc,
+        &view,
+        &Navigator::new(),
+        NavAction::Source(target),
+        FoldNavigationPolicy::Reveal,
+        10,
+    )
+    .unwrap();
+    let mut reached = false;
+    for _ in 0..20 {
+        let mut budget = Budget::new(WorkLimit {
+            queries: 1,
+            objects: 1,
+            ..Default::default()
+        });
+        if let Some(result) = navigation
+            .advance(&doc, &mut view, &mut budget)
+            .unwrap()
+            .target
+        {
+            assert_eq!(result.source, Some(target));
+            reached = true;
+            break;
+        }
+    }
+    assert!(reached);
+    assert!(!view.is_collapsed(heading(0)));
+    assert!(!view.is_collapsed(table));
+}
+
+#[test]
+fn deep_container_table_fold_skips_million_byte_body_with_one_placeholder() {
+    let prefix = ">".repeat(900);
+    let mut doc = Document::new();
+    doc.append(&format!(
+        "{prefix}a|b\n{prefix}-|-\n{prefix}{}|z\n",
+        "x".repeat(1_000_000)
+    ))
+    .unwrap();
+    let table = FoldId::Table(TableId(0));
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    view.set_collapsed(&doc, table, true).unwrap();
+    let visits = view.range_visits();
+    let update = doc.append(&format!("{prefix}next|row\n")).unwrap();
+    view.apply(&doc, &update).unwrap();
+    assert_eq!(view.range_visits() - visits, 1);
+    let mut pass = LayoutPass::folded(&doc, &view, TileId(0), 20).unwrap();
+    let mut sink = Sink::default();
+    let mut budget = Budget::new(WorkLimit {
+        queries: 30,
+        tiles: 2,
+        bytes: 64,
+        objects: 10,
+        ..Default::default()
+    });
+    assert_eq!(
+        pass.advance_folded(&doc, &mut view, &mut budget, &mut sink)
+            .unwrap(),
+        Completion::EndOfDocument
+    );
+    assert_eq!(sink.text, "[fold]\n");
+    assert_eq!(sink.placeholders.len(), 1);
+    assert_eq!(sink.bytes, 0);
+    assert!(sink.tiles <= 1);
+    assert!(budget.used().bytes <= 64);
+}

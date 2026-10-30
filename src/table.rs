@@ -1,5 +1,5 @@
 use crate::inline::{Effects, Inline};
-use crate::{BlockId, ChangeKind, Span, Style, TableId};
+use crate::{BlockId, ChangeKind, ContainerId, Span, Style, TableId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Alignment {
@@ -24,6 +24,7 @@ pub struct TableCell {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TableRow {
+    /// Whole physical line, including any hidden container prefix.
     pub source: Span,
     /// Only physically present cells up to the schema width. Missing cells are
     /// implicit empty cells, avoiding rows * columns allocation for sparse rows.
@@ -33,6 +34,7 @@ pub struct TableRow {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Table {
+    /// The block owns the table's exact container identity.
     pub block: BlockId,
     pub source: Span,
     pub delimiter: Span,
@@ -83,6 +85,8 @@ impl Table {
 pub(crate) struct HeaderCandidate {
     pub block: Option<BlockId>,
     pub source: Span,
+    pub content: Span,
+    pub container: Option<ContainerId>,
     pub columns: usize,
 }
 
@@ -167,12 +171,12 @@ pub(crate) struct RowParser {
 }
 
 impl RowParser {
-    pub fn new(id: TableId, table: &mut Table, start: usize) -> Self {
+    pub fn new(id: TableId, table: &mut Table, start: usize, content_start: usize) -> Self {
         let row = table.rows.len();
         table.rows.push(TableRow {
             source: Span::new(start, start),
             cells: vec![TableCell {
-                source: Span::new(start, start),
+                source: Span::new(content_start, content_start),
             }],
             complete: false,
         });
@@ -180,9 +184,9 @@ impl RowParser {
             table: id,
             row,
             column: 0,
-            start,
+            start: content_start,
             content_start: None,
-            content_end: start,
+            content_end: content_start,
             escaped: false,
             leading: true,
             after_pipe: false,
