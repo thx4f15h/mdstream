@@ -972,7 +972,7 @@ impl Document {
         }
         // Emphasis openers may be retained while probing: if any inherited
         // opener closes, abandon the probe and keep its published semantics.
-        // Inherited code remains opaque until confirmation, or cancels the
+        // Inherited code/math remains opaque until confirmation, or cancels the
         // probe when it closes. Other opaque candidates remain unsupported.
         let inherited = self
             .containers
@@ -1354,7 +1354,7 @@ impl Document {
     }
 
     fn reject_streaming_header(&mut self, header: table::HeaderCandidate, update: &mut Update) {
-        // A cross-line pair or code mapping has been published. Resume text
+        // A cross-line pair, mapping or math object has been published. Resume text
         // once, including any suffix after a pipe in this same input chunk.
         self.inline.cancel_header();
         if let Some(line_break) = header.leading_break {
@@ -1455,7 +1455,7 @@ impl Document {
             .push(Table::new(block, header.source, delimiter, columns));
         // RowParser still scans the header once for cell boundaries, whitespace
         // and escaped pipes (also inside code), skipping reusable semantics.
-        // An inherited code prefix had no cell semantics; parse those here once.
+        // An inherited code/math prefix had no cell semantics; parse those here once.
         self.start_table_row(
             id,
             header.source,

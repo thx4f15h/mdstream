@@ -529,3 +529,19 @@ README、TODO 已同步，只将“只继承换行”的子项记为已交付。
 资源与复杂度验收：千层引用中保留百万字前序代码，再分 1000 次追加百万字候选，仅增加新字节的摘要/行内计数；分类、delimiter、容器/标题计数与注解/容器 arena 容量不变。成功只重新消费当前候选行；失败只消费 10 个剩余字节。4096 个旧强调 opener 经 200 轮失败/无管道续行不增加 delimiter 步骤，最终代码映射与普通模型一致；250 层列表、4096 个旧 opener、4096 组链接/数学/脚注及 4096 列在确认时各处理一次。零预算摘要不推进，8 字节分帧读取可完成。
 
 项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 462 项、`cargo test --doc` 39 项、`cargo fmt --all -- --check` 和 `git diff --check`。新示例 `cargo run -r --example code_headers` 验证百万字失败恢复与成功表头，预算摘要 15 帧/101 个计费字节；既有 `open_headers`、`inherited_headers`、`late_headers`、`long_headers`、`long_delimiters`、`container_inline`、`container_lazy` 示例均通过。日志：`/tmp/mdtui3-code-headers-validation.log`、`/tmp/mdtui3-code-headers-release.log`。README、TODO 已同步，零运行时依赖与 `forbid(unsafe_code)` 保持。
+
+## 2026-10-30 旧数学尚未闭合的晚管道长表头核心交付
+
+本单元交付顶层段落继承未闭合 `$` / `$$` 候选时的晚管道长表头，可伴随旧强调栈；继承未清除链接标签等其它状态仍不参与。首管道前若旧数学已经闭合，保留其稳定 MathId、原始区间和即时样式，取消当前行探测，即使新候选随后开启也不恢复。容器数学仍在物理行末终止，其去前缀跨行内容表示继续留待后续。完整方言与示例见 [README](README.md#表格任务列表与图片)。
+
+模型依据：旧数学尚未闭合时只更新美元串及转义状态，正文保持 opaque，不发布当前行内的数学、链接、脚注或强调。因此可沿用代码候选的固定大小探测标志：首管道前继续即时消费原候选，从首管道起延迟后缀；成功丢弃原 Inline 及待定美元串，不结算跨行对象，再由已有 RowParser 独立消费当前表头并分配对象一次。失败/无管道/EOF 继续原状态及未消费后缀；块中断沿用既有规则。旧对象身份及首次脚注编号不变，无对象撤销、正文复制、栈克隆或历史索引重建。
+
+每个合格正文摘要字节一次，失败时每个行内字节一次；成功仅额外解析当前表头，其源码范围互不重叠，全部计入 `inline_bytes`，实际满足 `inline_bytes <= source().len() + table_bytes`。不读前序数学正文，候选额外状态 O(1)，总空间 O(n)、累计解析 O(n log n)；确认、回退和 EOF 保持摊还契约，不承诺单次硬时延。共享预算对象/内容游标、显示摘要及折叠沿用既有接口。
+
+新增 13 项验收：`tests/math_headers.rs` 12 项与 `tests/chunking.rs` 1 项。先在基线复现未闭合数学拒绝表头，再验证实现通过；基线日志 `/tmp/mdtui3-math-headers-baseline.log`。确认语义对照全延迟早管道路径，失败对照无管道普通正文；338 组美元串/转义输入对照独立闭合模型，400 组成功/失败/取消探测输入对照表格范围模型。UTF-8 全切点及逐标量快照覆盖 CRLF、待定美元串、已闭合后重开、失败长分隔行、EOF、Setext 和容器边界。另覆盖原段落范围恢复、增量对象范围、稳定 MathId/LinkId/脚注编号、旧测量拒绝、合并 Update 与表格折叠。
+
+复杂度与资源验收：前序百万字数学正文后的当前表头再增长百万字，只增加新增字节的行内/摘要计数；分类、数学/delimiter、容器/标题步骤及注解/容器 arena 容量不变。成功只额外消费当前表头，失败不重读；4096 个旧 opener 经 200 轮失败/无管道长行不增加数学或 delimiter 步骤，最终仅清理一次。4096 个延迟链接/数学/脚注和 4096 列仅在确认时发布，数学窗口与 UTF-8 内容读取共用预算且零预算不推进；摘要每帧最多 8 字节。千层引用和 250 层列表验证原数学物理行边界及稳定容器内表格语义。
+
+项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 475 项、`cargo test --doc` 40 项、`cargo fmt --all -- --check` 与 `git diff --check`。`cargo run -r --example math_headers` 验证百万字成功/失败与稳定 MathId，预览 19 帧/127 个计费字节；既有 `code_headers`、`math`、`container_inline` 示例通过。完整日志：`/tmp/mdtui3-math-headers-validation.log`。
+
+README、TODO 已同步，只标记本独立子项；继承链接等其它候选、已发布跨行语义撤销、容器数学跨行表示、其余分类上限和终端 UI 继续保留待办。零运行时依赖与禁止 unsafe 的约束保持。
