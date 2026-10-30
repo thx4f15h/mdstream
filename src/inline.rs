@@ -294,6 +294,10 @@ pub(crate) struct Inline {
     // As with code, isolate at most one inherited math closure. Do not allocate
     // a MathId until failure: success reparses the independent current row.
     header_math: Option<MathPair>,
+    // A closed inherited shortcut keeps using the bounded label buffer. Delay
+    // both the LinkId and symbol/first_use effects until failure. A suffix or
+    // new inline syntax cancels before it can overwrite the label or emit links.
+    header_link: Option<Candidate>,
 }
 
 impl Inline {
@@ -332,6 +336,7 @@ impl Inline {
         debug_assert!(self.header_pairs.is_empty());
         debug_assert!(self.header_code.is_none());
         debug_assert!(self.header_math.is_none());
+        debug_assert!(self.header_link.is_none());
         self.header_floor = self.stack.len();
         self.header_crossed = false;
         self.header_bracket = self.bracket.map(|b| b.open);
@@ -345,6 +350,17 @@ impl Inline {
     }
 
     pub fn cancel_header(&mut self, effects: &mut Effects<'_>) {
+        if let Some(candidate) = self.header_link.take() {
+            effects.work.delimiter_steps += 1;
+            let candidate = self.shortcut(candidate, effects);
+            if let Some(Tail::After(waiting)) = &mut self.tail {
+                // No suffix has been consumed yet. Preserve the same ID if
+                // the rejecting byte now starts a direct/full/collapsed tail.
+                *waiting = candidate;
+            } else {
+                self.seal_candidate(candidate, effects);
+            }
+        }
         if let Some(pair) = self.header_code.take() {
             effects.work.delimiter_steps += 1;
             pair.commit(effects);
@@ -379,6 +395,10 @@ impl Inline {
         self.header_pairs.clear();
         work.delimiter_steps += u64::from(self.header_code.take().is_some());
         work.math_steps += u64::from(self.header_math.take().is_some());
+        if self.header_link.take().is_some() {
+            work.delimiter_steps += 1;
+            self.tail = None;
+        }
         if self.header_opaque {
             work.delimiter_steps += self.stack.len() as u64;
             *self = Self::default();
@@ -453,14 +473,17 @@ impl Inline {
             }
             self.finish_run(Some(byte), effects);
         }
-        if (self.header_code.is_some() || self.header_math.is_some())
+        if ((self.header_code.is_some()
+            || self.header_math.is_some()
+            || self.header_link.is_some())
             && matches!(
                 byte,
                 b'&' | b'<' | b'\\' | b'*' | b'_' | b'~' | b'`' | b'$' | b'!' | b'[' | b']'
-            )
+            ))
+            || (self.header_link.is_some() && self.tail.is_some() && byte == b'(')
         {
             // Flush before this byte can publish a source-ordered replacement
-            // or math object later in the same feed. Rejection is permanent
+            // or object, or start an explicit link tail. Rejection is permanent
             // for this line, even if its next opaque candidate is open at '|'.
             self.cancel_header(effects);
             self.header_crossed = true;
@@ -622,37 +645,39 @@ impl Inline {
             }
             b']' => {
                 if let Some(Bracket { open, image }) = self.bracket.take() {
-                    // Even an overlong label can acquire a direct destination
-                    // later. Cancel at its close, before any object is published.
-                    self.header_crossed |= self.header_bracket == Some(open);
                     let mut candidate = Candidate {
                         open,
                         close: pos,
                         link: None,
                         image,
                     };
-                    // The delimiter is ASCII, so a non-overflowed label ends
-                    // on a UTF-8 boundary even when feeds split physical lines.
-                    let symbol = (!self.label_overflow)
-                        .then(|| {
-                            let label =
-                                std::str::from_utf8(&self.label[..self.label.len() - 1]).unwrap();
-                            effects.references.intern(label, effects.work)
-                        })
-                        .flatten();
-                    if let Some(symbol) = symbol {
-                        candidate.link = Some(effects.complete_link(
-                            candidate,
-                            LinkTarget::Reference(symbol),
-                            None,
-                            None,
-                        ));
+                    if self.header_bracket == Some(open) && !self.header_crossed {
+                        debug_assert!(self.header_link.is_none());
+                        self.header_link = Some(candidate);
+                    } else {
+                        candidate = self.shortcut(candidate, effects);
                     }
                     self.tail = Some(Tail::After(candidate));
                 }
             }
             _ => {}
         }
+    }
+
+    fn shortcut(&self, mut candidate: Candidate, effects: &mut Effects<'_>) -> Candidate {
+        // The closing ASCII delimiter leaves a UTF-8 boundary. The buffer is
+        // capped and excludes container prefixes; never rescan the envelope.
+        let symbol = (!self.label_overflow)
+            .then(|| {
+                let label = std::str::from_utf8(&self.label[..self.label.len() - 1]).unwrap();
+                effects.references.intern(label, effects.work)
+            })
+            .flatten();
+        if let Some(symbol) = symbol {
+            candidate.link =
+                Some(effects.complete_link(candidate, LinkTarget::Reference(symbol), None, None));
+        }
+        candidate
     }
 
     fn start_run(&mut self, byte: u8, pos: usize) {
@@ -892,6 +917,45 @@ impl Inline {
 #[cfg(test)]
 mod tests {
     use crate::{Document, LinkId};
+
+    #[test]
+    fn isolated_shortcut_reuses_bounded_label_storage_and_releases_on_resolution() {
+        let mut doc = Document::new();
+        doc.append(&format!("> a ![old\n> end] {}", "x".repeat(1030)))
+            .unwrap();
+        let candidate = doc.inline.header_link.unwrap();
+        let label = doc.inline.label.clone();
+        let capacity = doc.inline.label.capacity();
+        let before = doc.work();
+        doc.append(&"x".repeat(1_000_000)).unwrap();
+        assert_eq!(doc.inline.header_link.unwrap().open, candidate.open);
+        assert_eq!(doc.inline.header_link.unwrap().close, candidate.close);
+        assert_eq!(doc.inline.label, label);
+        assert_eq!(doc.inline.label.capacity(), capacity);
+        assert_eq!(doc.work().label_bytes, before.label_bytes);
+        assert!(doc.references().is_empty());
+        doc.append("\n").unwrap();
+        assert!(doc.inline.header_link.is_none());
+        assert_eq!(doc.work().delimiter_steps - before.delimiter_steps, 1);
+        assert_eq!(doc.work().label_bytes - before.label_bytes, 7);
+        for i in 0..200 {
+            doc.append(&format!("> a ![old\n> end] {}", "x".repeat(1030)))
+                .unwrap();
+            assert!(doc.inline.header_link.is_some());
+            doc.append(match i % 4 {
+                0 => "\n",
+                1 => "|b\n> -|-\n\n",
+                2 => "|b\n> wrong\n",
+                _ => "[new](u)\n",
+            })
+            .unwrap();
+            assert!(doc.inline.header_link.is_none());
+            // Table confirmation moves the first-cell parser out; ordinary
+            // fallback reuses this buffer. Neither path retains history.
+            assert!(doc.inline.label.capacity() <= capacity);
+        }
+        assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+    }
 
     #[test]
     fn isolated_math_stores_only_endpoints_and_releases_them_on_resolution() {

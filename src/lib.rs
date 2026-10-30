@@ -1042,9 +1042,9 @@ impl Document {
         }
         // Emphasis openers and separable close-only pairs may be retained while
         // probing. Other inherited pairs cancel with their original semantics.
-        // Inherited code stays isolated through an inert suffix after closure;
-        // math cancels on closure. Labels retain local effects and cancel on an
-        // inherited closing bracket, including labels too long for references.
+        // Inherited code/math and shortcut labels stay isolated through an
+        // inert suffix after closure. Labels retain local effects; their link
+        // objects and reference side effects wait for the header decision.
         let inherited = self
             .containers
             .inner()
@@ -1467,7 +1467,7 @@ impl Document {
     }
 
     fn reject_streaming_header(&mut self, header: table::HeaderCandidate, update: &mut Update) {
-        // A cross-line pair/object was published, or an inherited label closed.
+        // A cross-line pair/object could not remain isolated.
         // Resume text once, including any suffix after a pipe in this chunk.
         self.cancel_header(update);
         if let Some(line_break) = header.leading_break {

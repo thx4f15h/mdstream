@@ -831,3 +831,19 @@ README/TODO 已同步，仅标记上述独立子项。闭合后带其它行内�
 项目 devShell 全部通过：cargo check --all-targets、cargo clippy --all-targets -- -D warnings、debug/release cargo nextest run --no-fail-fast 各 739 项、cargo test --doc 59 项、cargo fmt --all -- --check 和 git diff --check。新 closed_math_headers 示例验证百万字成功丢弃/失败提交、稳定 MathId 及预算预览（14 帧/96 个计费源码字节）；既有 math_headers、closed_code_headers、closed_headers、container_math、link_headers 示例通过。完整日志 `/tmp/mdtui3-closed-math-headers-validation.log`；初始两项失败基线 `/tmp/mdtui3-closed-math-headers-baseline.log`；专项 `/tmp/mdtui3-closed-math-headers-targeted.log`。
 
 README/TODO 已同步，仅标记上述独立子项。闭合后带其它行内语法的数学表头、通用已发布对象/样式撤销、其它分类/容器限制及终端 UI 继续保留 TODO。零运行时依赖与禁止 unsafe 保持。
+
+## 2026-10-30 旧链接图片 shortcut 可隔离闭合的晚管道长表头核心交付
+
+本单元交付顶层或同一显式 Quote/Item 续行中，旧链接/图片标签已在首管道前闭合、闭合后只有普通文本/空白及不启动语法的标点的 shortcut 子项。分类窗口、短行/早管道、lazy/部分 tab 当前表头及块优先级保持既有方言。直接目标、full/collapsed 引用后缀和闭合后其它行内语法仍取消探测，边界见 [README](README.md#表格任务列表与图片)。
+
+先复现两项失败基线：旧实现立即分配跨行 LinkId、规范化引用并更新首引用位置，随后拒绝此类表头。为避免撤销已发布对象和引用副作用，本次只保存一个 Candidate，并复用原有 MAX_LABEL_BYTES + 1 字节有界标签缓冲；不提前登记符号、first_use、链接样式或括号隐藏。成功丢弃 shortcut，直接复用当前单元格前缀的行内状态、样式和对象；失败、无管道行末、EOF、Setext 或作用域退出时提交一次。标签保持原始源码包络，规范化只读已去前缀的缓冲；空白/超长标签沿用无引用对象的规则。
+
+紧接闭合括号的显式后缀、或后来的语法起始字节，先提交原 shortcut 并取消该行探测。尚未开始的 Tail 恢复同一个 LinkId，后续直接目标/title 或引用后缀更新原对象；非法/未完成后缀仍走原方言。新语法处理前完成提交，因此标签缓冲不会先被覆盖，后续链接不会先于旧源码对象入 arena。已定义但从未使用的符号在成功路径上仍无 first_use；失败保留去前缀匹配及晚定义，首定义优先与现有间接寻址不变。范围通知拒绝旧缓存、测量、显示游标和搜索任务，合并 Update 与逐次应用的折叠视图一致。
+
+额外状态 O(1)，无正文复制、旧样式/对象撤销或前缀重解析；提交/丢弃各只处理一次候选并计入 delimiter_steps，失败的有界规范化计入 label_bytes。累计 O(n log n)/空间 O(n)，不承诺单次判定硬时延。千层引用中的百万字长尾只增加一次 inline_bytes/table_header_bytes，无标签、分类、分隔符、容器或章节/祖先重查，注解和容器容量不变；成功/失败判定的新增行内扫描均小于 12 字节。250 层列表中的 4096 历史链接、4096 旧 opener、4096 当前公式和 4096 列保留对象身份并复用已解析语义。两万旧引用之后晚定义只规范化 7 个标签字节；内部测试验证百万字期间端点和缓冲不变、200 轮成功/失败/取消不积累历史状态。
+
+新增 14 项验收：tests/closed_link_headers.rs 12 项、UTF-8 全切点/逐前缀快照 1 项、内部状态 1 项。覆盖四种作用域/两个标签类型/三个闭合位置的早管道对照、400 组范围/长分隔行模型、16 种取消后缀、CRLF/EOF/Setext/作用域退出、空白及精确长度上限、部分 tab 源码映射、共享预算暂停/恢复、稳定 BlockId/LinkId/MathId、通知合并和旧任务失效。摘要、显示搜索及百万字容器折叠保持有界，折叠正文和对象零读取。原 200 组替换/转义模型只增加可隔离 shortcut 接受分支，保留其余拒绝断言。
+
+项目 devShell 全部通过：cargo check --all-targets、cargo clippy --all-targets -- -D warnings、debug/release cargo nextest run --no-fail-fast 各 753 项、cargo test --doc 60 项、cargo fmt --all -- --check 和 git diff --check。新 closed_link_headers 示例验证百万字成功丢弃/失败晚定义、稳定图片 ID 和预算预览（14 帧/94 个计费源码字节）。完整日志 `/tmp/mdtui3-closed-link-headers-validation.log`；初始两项失败基线 `/tmp/mdtui3-closed-link-headers-baseline.log`。
+
+README/TODO 已同步，仅标记此独立子项。显式目标/引用后缀、闭合后其它行内语法、通用已发布对象/引用副作用撤销、其余分类/容器限制及终端 UI 继续保留待办。零运行时依赖与禁止 unsafe 保持。

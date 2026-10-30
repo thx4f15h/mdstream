@@ -285,22 +285,22 @@ fn repeated_failed_probes_keep_old_stack_and_label_without_traversal() {
 
 // The existing label dialect keeps one opener: a new '[' replaces it, an
 // unescaped ']' closes it. This model deliberately has no parser state or IDs.
-fn closes_old_label(prefix: &str) -> bool {
+fn closes_old_label(prefix: &str) -> Option<usize> {
     let mut old = true;
     let mut escaped = false;
-    for b in prefix.bytes() {
+    for (at, b) in prefix.bytes().enumerate() {
         if escaped {
             escaped = false;
         } else {
             match b {
                 b'\\' => escaped = true,
                 b'[' => old = false,
-                b']' if old => return true,
+                b']' if old => return Some(at + 1),
                 _ => {}
             }
         }
     }
-    false
+    None
 }
 
 #[test]
@@ -314,7 +314,14 @@ fn generated_replacement_and_escape_sequences_match_label_model() {
                 let prior = format!("a {marker} prior\n");
                 let prefix = format!("{}{a}{b}", "x".repeat(1030));
                 let header = format!("{prefix}|b\n");
-                if closes_old_label(&prefix) {
+                // A closed shortcut followed only by ordinary text now stays
+                // eligible. Explicit tails and new syntax still reject it.
+                let rejected = closes_old_label(&prefix).is_some_and(|end| {
+                    let suffix = &prefix[end..];
+                    suffix.starts_with('(')
+                        || suffix.contains(['&', '<', '\\', '*', '_', '~', '`', '$', '!', '[', ']'])
+                });
+                if rejected {
                     compare_plain(&format!("{prior}{header}-|-\n"));
                 } else {
                     compare_header(&prior, &header);
