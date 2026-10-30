@@ -1,79 +1,43 @@
-use mdtui3::{Document, HeightIndex};
-use std::{hint::black_box, time::Instant};
+//! Elapsed times are observations, never test thresholds.
+#[path = "../tests/support/performance.rs"]
+mod performance;
 
-fn main() {
-    println!(
-        "case,bytes,parse_ms,inline_bytes,delimiter_steps,tree_visits,annotation_nodes,annotation_capacity_bytes,annotation_allocations,height_capacity_bytes,viewport_median_us,viewport_p95_us,query_visits"
-    );
-    for size in [65_536, 131_072, 262_144, 524_288] {
-        for case in [
-            "one_byte_appends",
-            "one_byte_reused",
-            "dense_markup",
-            "deep_openers",
-            "late_references",
-        ] {
-            let source = match case {
-                "one_byte_appends" | "one_byte_reused" => "x".repeat(size),
-                "dense_markup" => "*a* **b** ~~c~~ [d](e) `f`\n".repeat(size / 27),
-                "deep_openers" => format!("*a {}z*\n", "_b ".repeat(size / 3)),
-                _ => format!("{}\n\n[key]: /destination\n", "[key] ".repeat(size / 6)),
-            };
-            let mut doc = Document::new();
-            let start = Instant::now();
-            if case == "one_byte_appends" {
-                for _ in 0..size {
-                    black_box(doc.append("x").unwrap());
-                }
-            } else if case == "one_byte_reused" {
-                let mut update = mdtui3::Update::default();
-                for _ in 0..size {
-                    doc.append_into("x", &mut update).unwrap();
-                    black_box(&update);
-                }
-            } else {
-                black_box(doc.append(&source).unwrap());
+use performance::{CASES, measure};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    if args.len() > 2 {
+        return Err("usage: scaling [base_bytes=65536] [samples=31]".into());
+    }
+    let base = args.first().map_or(Ok(65_536), |s| s.parse::<usize>())?;
+    let samples = args.get(1).map_or(Ok(31), |s| s.parse::<usize>())?;
+    if !(1024..=4_194_304).contains(&base) || !(3..=10_000).contains(&samples) {
+        return Err("base_bytes must be 1024..=4194304; samples must be 3..=10000".into());
+    }
+    let mut header = false;
+    for size in [base, base * 2, base * 4] {
+        for case in CASES {
+            let columns = measure(case, size, samples).columns();
+            if !header {
+                println!(
+                    "{}",
+                    columns
+                        .iter()
+                        .map(|(k, _)| k.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                );
+                header = true;
             }
-            black_box(doc.finish());
-            let elapsed = start.elapsed();
-            let mut heights = HeightIndex::default();
-            heights.rebuild(&doc).unwrap();
-            let top = (doc.tile_count() / 2) as u128;
-            let mut query_visits = 0;
-            let mut samples = Vec::with_capacity(31);
-            // Warm the queried region once, then report distribution rather than
-            // treating one cold query as a stable benchmark or a test threshold.
-            for iteration in 0..32 {
-                let start = Instant::now();
-                query_visits = 0;
-                for tile in heights.viewport(top..top + 24, 2, 32) {
-                    let mut runs = doc.runs(tile.tile).unwrap();
-                    for run in runs.by_ref() {
-                        black_box(run);
-                    }
-                    query_visits += runs.annotation_visits();
-                }
-                if iteration > 0 {
-                    samples.push(start.elapsed().as_secs_f64() * 1_000_000.0);
-                }
-            }
-            samples.sort_by(f64::total_cmp);
-            let work = doc.work();
             println!(
-                "{case},{},{:.3},{},{},{},{},{},{},{},{:.3},{:.3},{}",
-                source.len(),
-                elapsed.as_secs_f64() * 1000.0,
-                work.inline_bytes,
-                work.delimiter_steps,
-                work.tree_visits,
-                doc.annotation_node_count(),
-                doc.annotation_arena_stats().capacity_bytes,
-                doc.annotation_arena_stats().allocation_calls,
-                heights.arena_stats().capacity_bytes,
-                samples[15],
-                samples[29],
-                query_visits
+                "{}",
+                columns
+                    .into_iter()
+                    .map(|(_, v)| v)
+                    .collect::<Vec<_>>()
+                    .join(",")
             );
         }
     }
+    Ok(())
 }

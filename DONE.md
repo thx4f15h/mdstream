@@ -1048,3 +1048,13 @@ README/TODO 已同步。完成可复现语法生成和失败缩减，不将自�
 - 两种字长的 11 项专项：`/tmp/mdtui3-index32-targeted-final.log`；ELF 核验：`/tmp/mdtui3-index32-elf.log`。
 
 README/TODO 已同步。稀疏索引验证不保证接近 2 GiB 的真实文档/密集 arena 可分配；OOM/分配失败恢复、进程级身份耗尽、u64 revision/序列/计数器绕回及其它 32 位 ABI/无 64 位原子的平台未实测。更广性能矩阵、其余语法边界及终端 UI 继续保留 TODO。
+
+## 2026-10-30 核心性能矩阵交付
+
+- `scaling` 扩展为 17 个固定场景：1/64/4096/整块 append 与 Update 复用、稀疏/密集标记、中文/emoji/组合音标/ZWJ/CRLF 字节流、宽稀疏表、强调/代码/数学晚闭合、晚引用、深 opener、反复 resize 和高度修正。基准与测试共用驱动，解析核心和公共 API 未改动，维持零运行时依赖与禁止 unsafe。
+- `scripts/measure-performance.sh` 在项目 devShell 内按新目录保存环境、Git 状态、工具链/flake/源码哈希、Cargo metadata 和逐进程 CSV。输出 schema 2 包括完整解析计数、闭合增量、实际公开 arena/表格 Vec/scratch 容量、吞吐、共享预算消费及 nearest-rank p50/p95/p99/max。测量边界、部分帧与容量遗漏项明确记录在 [性能矩阵](docs/performance.md)。
+- 默认三轮 17 × 3 规模共 153 行、4,743 个查询样本已保存在 [原始 CSV](docs/performance-baseline.csv)；跨进程所有非时间字段逐项一致。百万字专项验证晚闭合只消费 2 个新 inline 字节，晚定义仅规范化一个 3 字节标签；稀疏表单元格数为 columns + rows。resize 每次一个索引访问、不改变 arena；高度修正沿对数路径更新，65/130 轮复用固定工作集节点。
+- 9 项新验收覆盖完整语义快照及 UTF-8 字节切分、固定指纹/重复输出、三规模 n/log n 计数界、宽表物理存储、百万字迟确认、两次查询/恢复/文本对象消费/测量共享预算、resize/修正和离屏增长、分位数定义。复杂度断言不依赖任何机器时间阈值。
+- 验收：项目 devShell `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 **887 项通过**、`cargo test --doc` **67 项通过**、`cargo fmt --all -- --check`；脚本语法、CSV 重复计数/字段及 `git diff --check` 通过。完整日志 `/tmp/mdtui3-performance-validation.log`，专项 `/tmp/mdtui3-performance-targeted.log`，原始三轮与环境 `/tmp/mdtui3-performance-matrix-final/`。
+
+边界：按 Unicode 标量计列的合成消费器不代表实际终端排版；部分高密度帧会耗尽预算，分位数不冒充完整视口完成时延。记录的是指定公开存储的容量与扩容次数，不是总堆/RSS/峰值，解析仍无单次 append 硬时延保证。多平台性能、全部语法组合、完整内存统计、真实缓存依赖链及终端 UI 继续保留；现有独立模型和 32 位验收保持。
