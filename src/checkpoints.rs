@@ -33,8 +33,9 @@ impl<S> Default for Node<S> {
 /// Invalidating a range only clears subtree counts; looking up a predecessor
 /// skips invalid subtrees in O(log maximum tile index), even after millions of
 /// cached states become stale. Invalid states are retained until overwritten or
-/// this index is dropped, so invalidation never runs an unbounded number of user
-/// destructors. Memory depends on positions ever cached, not invalidation count.
+/// explicitly drained/compacted or this index is dropped, so invalidation never
+/// runs an unbounded number of user destructors. Without explicit compaction,
+/// memory depends on positions ever cached, not invalidation count.
 pub struct CheckpointIndex<S> {
     identity: DocumentId,
     serial: u64,
@@ -125,12 +126,40 @@ impl<S> CheckpointIndex<S> {
         self.visits
     }
 
+    /// Take ownership for resumable, read-only maintenance. Valid payloads and
+    /// tokens survive; stale payloads are returned by `advance`. No tree scan or
+    /// payload destruction happens here. Finish before applying further updates.
+    pub fn into_compaction(self) -> CheckpointCompaction<S> {
+        let destination = Self {
+            identity: self.identity,
+            serial: self.serial,
+            document: self.document,
+            revision: self.revision,
+            ..Self::default()
+        };
+        let root = self.root;
+        CheckpointCompaction {
+            source: self,
+            destination,
+            stack: vec![root],
+            scratch_allocations: 1,
+            visited: 0,
+            moved: 0,
+            retired: 0,
+        }
+    }
+
     /// Tile indices must be below `isize::MAX`, matching HeightIndex's maximum
     /// length and keeping the exclusive power-of-two capacity representable.
     pub fn insert(&mut self, tile: TileId, state: S) -> Result<Option<S>, LayoutError> {
         if tile.0 >= isize::MAX as usize {
             return Err(LayoutError::InvalidRange);
         }
+        self.serial += 1;
+        Ok(self.insert_versioned(tile, state, self.serial))
+    }
+
+    fn insert_versioned(&mut self, tile: TileId, state: S, version: u64) -> Option<S> {
         while self.capacity <= tile.0 {
             let root = self.nodes.len();
             self.push_node(Node {
@@ -143,8 +172,7 @@ impl<S> CheckpointIndex<S> {
             self.root = root;
             self.capacity *= 2;
         }
-        self.serial += 1;
-        Ok(self.set(self.root, 0, self.capacity, tile.0, state))
+        self.set(self.root, 0, self.capacity, tile.0, (state, version))
     }
 
     pub fn token(&self, tile: TileId) -> Option<CheckpointToken> {
@@ -318,13 +346,13 @@ impl<S> CheckpointIndex<S> {
         update.validate(document, self.document, self.revision)
     }
 
-    fn set(&mut self, id: usize, lo: usize, hi: usize, tile: usize, state: S) -> Option<S> {
+    fn set(&mut self, id: usize, lo: usize, hi: usize, tile: usize, state: (S, u64)) -> Option<S> {
         self.visits += 1;
         if hi - lo == 1 {
             self.nodes[id].valid = 1;
             self.nodes[id].tile = Some(TileId(tile));
-            self.nodes[id].version = self.serial;
-            return self.nodes[id].state.replace(state);
+            self.nodes[id].version = state.1;
+            return self.nodes[id].state.replace(state.0);
         }
         // A cleared parent hides potentially stale children. Clear their counts
         // before reviving a single path, or insertion would resurrect old states.
@@ -395,6 +423,175 @@ impl<S> CheckpointIndex<S> {
             return Some(found);
         }
         node.child(0).and_then(|left| self.find(left, lo, mid, at))
+    }
+}
+
+/// A cache owned by a paused compaction. Queries see the union of the old and
+/// new trees; writes and document updates resume after `finish`. Dropping this
+/// task drops the cache (including remaining payloads), just like dropping an
+/// index. Keep the task to pause without destruction. No `S: Clone` is required.
+///
+/// Each advance step charges one object and one query: either a DFS node visit
+/// (a live leaf also performs two O(log T) tree operations), or one retired node.
+/// For N historical nodes and L live states the complete pass costs
+/// O(N + L log T), with O(log T) traversal scratch. Existing Vec growth remains
+/// amortized; allocator work and caller-owned payload destruction are not time
+/// bounded. The old arena remains allocated until its last node is retired,
+/// so peak storage includes both arenas. There is no whole-tree final copy.
+pub struct CheckpointCompaction<S> {
+    source: CheckpointIndex<S>,
+    destination: CheckpointIndex<S>,
+    stack: Vec<usize>,
+    scratch_allocations: u64,
+    visited: usize,
+    moved: usize,
+    retired: usize,
+}
+
+/// Separate arena capacities and work counters for explicit cache maintenance.
+/// External payload heaps and the caller's output Vec are not included.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CheckpointCompactionStats {
+    pub source: crate::ArenaStats,
+    pub destination: crate::ArenaStats,
+    pub scratch: crate::ArenaStats,
+    pub visited: usize,
+    pub moved: usize,
+    pub retired: usize,
+    /// Cumulative tree work, including work before compaction began.
+    pub mutation_visits: u64,
+}
+
+impl<S> CheckpointCompaction<S> {
+    pub fn len(&self) -> usize {
+        self.destination.len()
+            + if self.stack.is_empty() {
+                0
+            } else {
+                self.source.len()
+            }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Same O(log T) predecessor semantics while either tree owns live states.
+    pub fn previous(&self, tile: TileId) -> Option<(TileId, &S)> {
+        let new = self.destination.previous(tile);
+        let old = if self.stack.is_empty() {
+            None
+        } else {
+            self.source.previous(tile)
+        };
+        match (old, new) {
+            (Some(a), Some(b)) => Some(if a.0 > b.0 { a } else { b }),
+            (a, b) => a.or(b),
+        }
+    }
+
+    pub fn get(&self, tile: TileId) -> Option<&S> {
+        self.previous(tile)
+            .filter(|(id, _)| *id == tile)
+            .map(|(_, state)| state)
+    }
+
+    pub fn token(&self, tile: TileId) -> Option<CheckpointToken> {
+        self.destination.token(tile).or_else(|| {
+            if self.stack.is_empty() {
+                None
+            } else {
+                self.source.token(tile)
+            }
+        })
+    }
+
+    pub fn validates(&self, token: CheckpointToken) -> bool {
+        self.token(token.tile) == Some(token)
+    }
+
+    pub fn stats(&self) -> CheckpointCompactionStats {
+        CheckpointCompactionStats {
+            source: self.source.arena_stats(),
+            destination: self.destination.arena_stats(),
+            scratch: crate::ArenaStats {
+                nodes: self.stack.len(),
+                capacity_bytes: self.stack.capacity() * std::mem::size_of::<usize>(),
+                allocation_calls: self.scratch_allocations,
+            },
+            visited: self.visited,
+            moved: self.moved,
+            retired: self.retired,
+            mutation_visits: self.source.visits + self.destination.visits,
+        }
+    }
+
+    /// Move live states, then pop historical nodes one at a time. Append stale
+    /// payloads to `out`; never clear it or invoke their destructors. Zero or
+    /// asymmetric insufficient budget leaves the next step wholly untouched.
+    /// Covered is repeatable with no further work. Output order is unspecified.
+    pub fn advance(&mut self, budget: &mut crate::Budget, out: &mut Vec<S>) -> crate::Completion {
+        while !self.stack.is_empty() || !self.source.nodes.is_empty() {
+            if !budget.charge(crate::WorkLimit {
+                objects: 1,
+                queries: 1,
+                ..Default::default()
+            }) {
+                return crate::Completion::BudgetExhausted;
+            }
+            self.source.visits += 1;
+            if let Some(id) = self.stack.pop() {
+                self.visited += 1;
+                let node = &mut self.source.nodes[id];
+                // Counts below an invalid ancestor may be stale. Never descend
+                // through it, even when its descendants still claim validity.
+                if node.valid == 0 {
+                    continue;
+                }
+                if let Some(state) = node.state.take() {
+                    let tile = node.tile.expect("live checkpoint leaf");
+                    let version = node.version;
+                    self.source
+                        .invalidate(tile.0..tile.0 + 1)
+                        .expect("valid tile");
+                    let replaced = self.destination.insert_versioned(tile, state, version);
+                    debug_assert!(replaced.is_none());
+                    self.moved += 1;
+                } else {
+                    for child in node.children.into_iter().rev().flatten() {
+                        if self.stack.len() == self.stack.capacity() {
+                            self.scratch_allocations += 1;
+                        }
+                        self.stack.push(child.get() - 1);
+                    }
+                }
+            } else {
+                let mut node = self.source.nodes.pop().expect("remaining retired node");
+                if let Some(state) = node.state.take() {
+                    out.push(state);
+                }
+                self.retired += 1;
+                if self.source.nodes.is_empty() {
+                    // len is zero: release the allocation without scanning or
+                    // dropping N empty Option<S> slots in a single final step.
+                    self.source.nodes = Vec::new();
+                }
+            }
+        }
+        crate::Completion::Covered
+    }
+
+    /// Return the writable index only after all historical nodes are retired.
+    /// An unfinished task is returned unchanged for further budgeted work.
+    /// Reset any old `drain_before` arena cursor to zero after compaction.
+    #[allow(clippy::result_large_err)] // Return the owned task without a new heap allocation.
+    pub fn finish(mut self) -> Result<CheckpointIndex<S>, Self> {
+        if !self.stack.is_empty() || !self.source.nodes.is_empty() {
+            return Err(self);
+        }
+        self.destination.visits += self.source.visits;
+        self.destination.allocations += self.source.allocations;
+        Ok(self.destination)
     }
 }
 

@@ -61,7 +61,9 @@ pub use autolink::MAX_AUTOLINK_BYTES;
 pub use block::{BLOCK_LOOKAHEAD, MAX_FENCE_LENGTH};
 pub use budget::{Budget, Completion, WorkLimit};
 pub use cache::{CacheValidity, DependencyKey, SourceSnapshot};
-pub use checkpoints::{CheckpointIndex, CheckpointToken};
+pub use checkpoints::{
+    CheckpointCompaction, CheckpointCompactionStats, CheckpointIndex, CheckpointToken,
+};
 pub use containers::{
     Container, ContainerAncestors, ContainerId, ContainerKind, ListMarker, ListTightness,
 };

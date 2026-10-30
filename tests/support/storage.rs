@@ -465,6 +465,120 @@ pub fn checkpoint_samples<S: Payload>(
     vec![filled, cleared, drained, refill]
 }
 
+/// Retain every sixteenth checkpoint, compact the historical tree, then refill
+/// the same positions. All payload disposal is explicit and measured here.
+pub fn checkpoint_compaction_samples<S: Payload>(
+    case: &'static str,
+    count: usize,
+    stride: usize,
+    batch: usize,
+) -> Vec<Sample> {
+    assert!(count > 0 && stride > 0 && batch > 0);
+    let mut cache = CheckpointIndex::new();
+    let start = Instant::now();
+    let mut heap_bytes = 0;
+    for i in 0..count {
+        let state = S::make(i as u8);
+        heap_bytes += state.heap_bytes();
+        cache.insert(TileId(i * stride), state).ok().unwrap();
+    }
+    for i in (0..count).step_by(16) {
+        cache
+            .invalidate((i + 1) * stride..(i + 16).min(count) * stride)
+            .unwrap();
+    }
+    let retained = count.div_ceil(16);
+    let tokens: Vec<_> = (0..count)
+        .step_by(16)
+        .map(|i| cache.token(TileId(i * stride)).unwrap())
+        .collect();
+    let mut before = Sample::new(case, count, "compact_before", start);
+    before.arena(cache.arena_stats());
+    before.add("valid_states", cache.len());
+    before.add("payload_heap_bytes", heap_bytes);
+    before.add("stride", stride);
+    let original_visits = cache.mutation_visits();
+    let start = Instant::now();
+    let mut task = cache.into_compaction();
+    let (mut out, mut frames, mut returned, mut released, mut steps, mut peak, mut output_peak) =
+        (Vec::new(), 0, 0, 0, 0, 0, 0);
+    loop {
+        let stats = task.stats();
+        peak = peak.max(stats.source.capacity_bytes + stats.destination.capacity_bytes);
+        let mut budget = Budget::new(WorkLimit {
+            objects: batch,
+            queries: batch,
+            ..Default::default()
+        });
+        let status = task.advance(&mut budget, &mut out);
+        frames += 1;
+        steps += budget.used().objects;
+        assert_eq!(budget.used().queries, budget.used().objects);
+        assert!(budget.used().objects <= batch);
+        assert_eq!(task.len(), retained);
+        output_peak = output_peak.max(out.capacity() * size_of::<S>());
+        returned += out.len();
+        released += out.iter().map(Payload::heap_bytes).sum::<usize>();
+        out.clear();
+        if status == Completion::Covered {
+            break;
+        }
+    }
+    assert!(tokens.iter().all(|&token| task.validates(token)));
+    let stats = task.stats();
+    peak = peak.max(stats.source.capacity_bytes + stats.destination.capacity_bytes);
+    assert_eq!(stats.source.capacity_bytes, 0);
+    assert_eq!(stats.moved, retained);
+    assert_eq!(returned, count - retained);
+    let mut cache = match task.finish() {
+        Ok(cache) => cache,
+        Err(_) => panic!("completed pass"),
+    };
+    let mut after = Sample::new(case, count, "compacted", start);
+    after.arena(cache.arena_stats());
+    after.add("valid_states", cache.len());
+    after.add("payload_heap_bytes", heap_bytes - released);
+    after.add("returned_states", returned);
+    after.add("released_payload_bytes", released);
+    after.add("visited_nodes", stats.visited);
+    after.add("moved_states", stats.moved);
+    after.add("retired_nodes", stats.retired);
+    after.add("steps", steps);
+    after.add("frames", frames);
+    after.add("batch", batch);
+    after.add("mutation_visits", stats.mutation_visits - original_visits);
+    after.add("source_capacity_bytes", stats.source.capacity_bytes);
+    after.add("scratch_capacity_bytes", stats.scratch.capacity_bytes);
+    after.add("scratch_allocation_calls", stats.scratch.allocation_calls);
+    after.add("observed_arena_peak_capacity_bytes", peak);
+    after.add("output_capacity_bytes", output_peak);
+    let start = Instant::now();
+    let visits = cache.mutation_visits();
+    for i in 0..count {
+        if i % 16 != 0 {
+            cache
+                .insert(TileId(i * stride), S::make(i as u8))
+                .ok()
+                .unwrap();
+        }
+    }
+    let mut checksum = 0_u64;
+    for i in 0..count {
+        let (tile, state) = cache.previous(TileId(i * stride + stride - 1)).unwrap();
+        assert_eq!(tile, TileId(i * stride));
+        assert!(state.bytes().iter().all(|&b| b == i as u8));
+        checksum += u64::from(state.bytes()[0]);
+    }
+    assert!(tokens.iter().all(|&token| cache.validates(token)));
+    let mut refill = Sample::new(case, count, "compact_refilled", start);
+    refill.arena(cache.arena_stats());
+    refill.add("valid_states", cache.len());
+    refill.add("payload_heap_bytes", heap_bytes);
+    refill.add("mutation_visits", cache.mutation_visits() - visits);
+    refill.add("checksum", checksum);
+    vec![before, after, refill]
+}
+
 pub fn measure(size: usize, queries: usize) -> Vec<Sample> {
     let mut samples = Vec::new();
     for case in ["plain", "dense", "containers"] {
@@ -494,6 +608,30 @@ pub fn measure(size: usize, queries: usize) -> Vec<Sample> {
     ));
     samples.extend(checkpoint_samples::<Vec<u8>>(
         "checkpoint_sparse",
+        count,
+        97,
+        31,
+    ));
+    samples.extend(checkpoint_compaction_samples::<[u8; 256]>(
+        "compact_inline",
+        count,
+        1,
+        31,
+    ));
+    samples.extend(checkpoint_compaction_samples::<Box<[u8; 256]>>(
+        "compact_boxed",
+        count,
+        1,
+        31,
+    ));
+    samples.extend(checkpoint_compaction_samples::<Vec<u8>>(
+        "compact_vec",
+        count,
+        1,
+        31,
+    ));
+    samples.extend(checkpoint_compaction_samples::<Vec<u8>>(
+        "compact_sparse",
         count,
         97,
         31,

@@ -13,7 +13,7 @@ use storage::*;
 fn storage_workloads_and_all_untimed_metrics_are_reproducible() {
     let a = measure(4096, 9);
     let b = measure(4096, 9);
-    assert_eq!(a.len(), 42);
+    assert_eq!(a.len(), 54);
     let mut keys = BTreeSet::new();
     for (a, b) in a.iter().zip(&b) {
         assert_eq!((a.case, a.scale, a.phase), (b.case, b.scale, b.phase));
@@ -27,6 +27,60 @@ fn storage_workloads_and_all_untimed_metrics_are_reproducible() {
         fingerprint(source("plain", 4096).as_bytes()),
         13_182_226_609_708_950_309
     );
+}
+
+#[test]
+fn compaction_measurements_match_capacity_budget_and_refill_models() {
+    for count in [17, 128, 2048] {
+        for stride in [1, 97] {
+            for batch in [1, 31, 4096] {
+                let samples =
+                    checkpoint_compaction_samples::<Vec<u8>>("model", count, stride, batch);
+                let [before, after, refill] = samples.as_slice() else {
+                    panic!("phases")
+                };
+                let retained = count.div_ceil(16) as u64;
+                assert_eq!(before.get("nodes"), trie_nodes(count, stride) as u64);
+                assert_eq!(
+                    after.get("nodes"),
+                    trie_nodes(retained as usize, stride * 16) as u64
+                );
+                assert_eq!(after.get("retired_nodes"), before.get("nodes"));
+                assert_eq!(
+                    after.get("steps"),
+                    after.get("retired_nodes") + after.get("visited_nodes")
+                );
+                assert_eq!(
+                    after.get("frames"),
+                    after.get("steps").div_ceil(batch as u64)
+                );
+                assert_eq!(after.get("moved_states"), retained);
+                assert_eq!(after.get("valid_states"), retained);
+                assert_eq!(after.get("returned_states"), count as u64 - retained);
+                assert_eq!(
+                    after.get("released_payload_bytes"),
+                    (count as u64 - retained) * 256
+                );
+                assert_eq!(after.get("payload_heap_bytes"), retained * 256);
+                assert_eq!(after.get("source_capacity_bytes"), 0);
+                assert!(after.get("arena_capacity_bytes") < before.get("arena_capacity_bytes"));
+                assert!(
+                    after.get("mutation_visits")
+                        <= after.get("steps") + retained * 4 * u64::from(usize::BITS)
+                );
+                assert_eq!(refill.get("nodes"), before.get("nodes"));
+                assert_eq!(
+                    refill.get("arena_capacity_bytes"),
+                    before.get("arena_capacity_bytes")
+                );
+                assert_eq!(refill.get("valid_states"), count as u64);
+                assert_eq!(
+                    refill.get("checksum"),
+                    (0..count).map(|i| u64::from(i as u8)).sum()
+                );
+            }
+        }
+    }
 }
 
 #[test]

@@ -1192,6 +1192,52 @@ loop {
 
 `DependencyKey` 针对直接语义依赖检查符号版本，检查数量计入 Budget；它不能替代传入排版状态的 ticket。`Document::snapshot` 显式复制受上限和字节预算约束的源码，未复制全 AST。`CheckpointIndex::drain_before` 按对象/查询预算移出旧状态，返回状态所有权；失效本身不批量执行用户析构。
 
+### 检查点历史树压缩
+
+`drain_before` 保留树节点和 arena 以便回填。需要归还历史树容量时，显式调用 `CheckpointIndex::into_compaction`，将缓存所有权移入 `CheckpointCompaction<S>`。任务先以 DFS 跳过失效子树，将有效叶状态移入新树，再逐节点退役旧 arena；失效 payload 追加到调用方的 `out`，由调用方选择析构时机，不要求 `S: Clone`。有效检查点的 token、版本、文档身份和已消费 revision 保持，失效 token 不会复活；完成后旧有效测量 ticket 仍按原有依赖规则验证。
+
+```rust
+use mdtui3::{Budget, CheckpointIndex, Completion, TileId, WorkLimit};
+let mut cache = CheckpointIndex::new();
+for i in 0..128 { cache.insert(TileId(i * 97), vec![i as u8; 256]).unwrap(); }
+let token = cache.token(TileId(0)).unwrap();
+cache.invalidate(1..usize::MAX).unwrap();
+let old_capacity = cache.arena_stats().capacity_bytes;
+let mut task = cache.into_compaction();
+let mut garbage = Vec::new();
+loop {
+    let mut budget = Budget::new(WorkLimit {
+        objects: 31, queries: 31, ..Default::default()
+    });
+    let status = task.advance(&mut budget, &mut garbage);
+    assert!(task.validates(token));
+    assert_eq!(task.previous(TileId(usize::MAX)).unwrap().0, TileId(0));
+    garbage.clear(); // 此处显式运行用户析构，不属于核心 Budget 的时间保证
+    if status == Completion::Covered { break; }
+}
+assert_eq!(task.stats().source.capacity_bytes, 0);
+let mut cache = match task.finish() {
+    Ok(cache) => cache,
+    Err(_) => panic!("advance 尚未完成"),
+};
+assert!(cache.arena_stats().capacity_bytes < old_capacity);
+assert!(cache.validates(token));
+cache.insert(TileId(1), vec![1; 256]).unwrap();
+```
+
+暂停期间 `len/is_empty/get/previous/token/validates` 查询两个树的并集，前驱仍为 O(log T)；没有可写的缓存别名。`finish` 未完成时返回原任务，可以继续分帧推进。持有任务即保留进度；直接丢弃任务等同于丢弃整个缓存，会运行剩余 payload 的析构。以下写入被所有权规则拒绝：
+
+```compile_fail
+use mdtui3::{CheckpointIndex, TileId};
+let mut cache = CheckpointIndex::<usize>::new();
+let task = cache.into_compaction();
+cache.insert(TileId(0), 1).unwrap(); // cache 已由 task 接管
+```
+
+每次步骤原子消费 1 object + 1 query：处理一个 DFS 节点（有效叶还含两次 O(log T) 的树写入），或退役一个旧节点；零/非对称预算不推进，`Covered` 后重复调用不再计费。N 个历史节点、L 个有效状态的整轮成本为 O(N + L log T)，任务 scratch 为 O(log T)，原有查询、失效与插入复杂度不变。没有逐字读取文档、复制 payload 或结束时整树析构；常规 Vec 扩容仍有摊销搬移成本，Budget 不是分配器的硬实时上界。
+
+压缩会暂存新旧两份 arena，旧 arena 在最后一个节点退役时释放；它不能作为严格内存上限。完成后的容量随保留状态分布和 Vec 容量台阶变化，不承诺每种输入都节省空间。旧 `drain_before` 游标是 arena 下标，压缩后须置零。任务期间可继续解析 Document，但必须暂存更新，取回缓存后按序或合并 `apply`；漏通知仍需 `rebuild`。压缩不改变 HeightIndex，返回的缓存继续供原有 recovery/测量接口使用。测量、独立模型和边界见 [存储实验](docs/storage.md#检查点历史树压缩实验)；并发可写压缩、硬内存上限及总堆剖析仍未实现。
+
 ## 更新事件与源码交互
 
 Update 携带文档身份及 `base_revision -> revision`。空追加、重复 EOF 和重复应用均为无副作用操作；漏更新、乱序、错误文档或视图返回明确错误。已消费更新之后的新测量不会被重复通知清掉。`merge` 移入新事件，累计成本随事件数增长；合并后的失效可比逐步处理更保守，但不遗漏失效。`append_into` / `finish_into` 与 `viewport_into` 保留 Vec 容量用于复用。

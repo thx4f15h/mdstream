@@ -1080,3 +1080,30 @@ README/TODO 已同步。稀疏索引验证不保证接近 2 GiB 的真实文档/
 验收：x86_64 和实际 i686 的项目 devShell check、clippy、debug/release nextest **各 905 项通过、0 skipped**；文档测试各 **70 项**（68 运行、2 compile-fail），fmt、脚本语法、CSV/哈希复核与 diff 检查通过。完整日志 `/tmp/mdtui3-query-scratch-validation.log`、`/tmp/mdtui3-query-scratch-index32.log`；专项 `/tmp/mdtui3-query-scratch-targeted.log`、`/tmp/mdtui3-query-scratch-targeted-extra.log`；三轮记录 `/tmp/mdtui3-query-scratch-measurements/`，跨轮/旧基线/源码校验 `/tmp/mdtui3-query-scratch-artifacts.log`。
 
 README/TODO 已同步。scratch 保留历史峰值容量，更深工作集可能继续增长；每个活动游标有独立栈，重建需重新预热。其它消费者的瞬时分配、语义/修订存储拆分、历史树节点回收、完整堆/RSS 峰值、多平台性能及终端 UI 继续保留后续。
+
+## 2026-10-30 检查点历史树压缩交付
+
+针对存储实验中 drain 后仍保留历史节点/arena 的缺口，交付 `CheckpointIndex::into_compaction`、`CheckpointCompaction<S>` 和容量/工作统计。任务拥有缓存，DFS 按有效计数跳过失效子树，把有效叶状态和原版本迁至新树，再按预算逐节点退役旧 arena；失效 payload 返回调用方，最后一个节点移出后直接释放长度为零的旧 Vec。无 `Clone`、新依赖或 unsafe，不重新读取文档，不在结束或任务 Drop 时自动执行整树压缩。
+
+接口与边界：
+
+- 每步原子扣 1 object + 1 query，与整帧其它工作共用 Budget；有效叶附带两次 O(log T) 树操作，工作访问单独计数。N 个历史节点、L 个有效状态的总成本 O(N + L log T)、scratch O(log T)；旧插入/查询/失效复杂度及常规 Vec 摊销增长不变。
+- 暂停期间 `previous/get/len/token/validates` 查询迁移前后两树的并集，有效 token、serial、文档身份及已消费 revision 原样保留，失效状态不复活。完成后恢复正常查询、按原依赖验证旧测量 ticket；晚更新按既有顺序检查。
+- 未完成 `finish` 返回拥有进度的原任务；零或非对称额度不推进，Covered 重放零工作。失效状态只转移所有权，析构由调用方决定。丢弃任务等同于丢弃缓存，保持任务即可暂停；不会在 Drop 中无预算完成迁移。
+- 维护期间不能写缓存，完成后继续消费暂存的有序/合并 Update，漏通知需要 rebuild；旧 drain arena 游标须置零。临时峰值包括新旧 arena，旧分配在最后一个节点退役时归还；不承诺每种状态分布都节省容量，没有严格内存上限或分配器/析构的硬实时保证。
+
+实现、示例和实验分别见 `src/checkpoints.rs`、[README](README.md#检查点历史树压缩) 与 [存储实验](docs/storage.md#检查点历史树压缩实验)。沿用共享 storage 驱动和三轮脚本，新增内联/Box/Vec 相邻与 Vec 稀疏四组，每组填充保留 1/16、压缩和回填三个阶段。仓库保存 [4,563 条指标/486 阶段原始记录](docs/checkpoint-compaction-baseline.csv) 及 [环境/源码哈希](docs/checkpoint-compaction-environment.txt)；各轮非时间字段一致，前一查询复用基线的 975 个非时间字段逐项不变。
+
+2,048 个状态保留 128 个：相邻 Vec arena 294,912 → 73,728 字节（下降 75%），稀疏 Vec arena 2,359,296 → 147,456 字节（下降 93.75%）；内联/Box 相邻同为 75%。旧 arena 最终容量为零，外置 payload 各释放 491,520 字节、保留 32,768 字节。相邻/稀疏分别 5,374 / 19,548 步、174 / 631 帧、9,723 / 25,680 次树访问，scratch 均 128 字节。回填恢复原节点数/arena 容量但增加分配次数，说明压缩适用于历史工作集收缩，固定工作集可继续使用原 drain 复用。测量记录的是明确 arena/Vec 容量和已知 payload，不冒充进程或总堆峰值，不以时间阈值证明复杂度。
+
+新增 11 项验收：
+
+- BTreeMap 与 u128 二分区间独立模型覆盖每个暂停位置的前驱/精确查询和最终节点数；100 轮随机历史、9,600 次操作、900,000 个完成后查询，以及 32 次不同位置回填后的节点回收和旧 token 拒绝。
+- 惰性祖先失效、单路径恢复、空/全有效树、反向插入版本、多轮压缩、异缓存 token、部分 drain 前后组合、有效及失效测量 ticket、文档更新/漏通知和错误文档。
+- 共享预消费、零/非对称预算、逐步推进、未完成 finish、完成重放；4,096 个非 Clone 稀疏状态验证零库内用户析构、返回值所有权与容量释放，两阶段中途丢弃验证每个状态恰好析构一次。
+- 接近 `isize::MAX` 的稀疏树、最大合法 tile 与非法极值、字长级 scratch/每步访问界；实机 i686 和 x86_64 均执行。共享测量另按 3 种状态数 × 2 种间隔 × 3 种预算独立核对节点、容量、返回状态、帧数和回填校验值。
+- README 新增 1 个调用样例和 1 个所有权编译失败样例；已有语法、预算、布局、随机模型和流式回归全部保留。
+
+验收：项目 devShell `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 **916/916**，文档测试 **72/72**，`cargo fmt --all -- --check`、脚本语法与 diff 检查通过；`nix develop .#index32 -c bash scripts/check-index32.sh` 实际 i686 的对应 check/clippy、debug/release 各 **916/916**、文档 **72/72** 及格式检查通过。三轮 storage release 驱动、CSV/旧基线/源码哈希复核通过。
+
+日志：`/tmp/mdtui3-checkpoint-compaction-validation.log`、`/tmp/mdtui3-checkpoint-compaction-index32.log`；专项 `...-targeted-final.log`；原始测量 `/tmp/mdtui3-checkpoint-compaction-measurements/`；复核 `/tmp/mdtui3-checkpoint-compaction-artifacts.log`。保留并发可写压缩、渐进释放旧 Vec 分配、硬内存上限、总堆/OOM、序号耗尽及其它 ABI；语义/修订拆分和终端 UI 未扩展。

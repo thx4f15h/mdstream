@@ -27,7 +27,7 @@ mkdir -- "$storage_output"
     rustc -Vv
     cargo -V
     printf 'base_bytes=%s queries=%s repetitions=%s\n' "$storage_base" "$storage_queries" "$storage_repetitions"
-    sha256sum flake.lock src/annotations.rs src/checkpoints.rs src/display.rs src/lib.rs examples/storage.rs tests/support/storage.rs scripts/measure-storage.sh
+    sha256sum flake.lock src/annotations.rs src/checkpoints.rs src/display.rs src/lib.rs examples/storage.rs tests/support/storage.rs tests/checkpoint_compaction.rs scripts/measure-storage.sh
     if command -v lscpu >/dev/null; then lscpu; fi
 } > "$storage_output/environment.txt"
 cargo metadata --no-deps --format-version 1 > "$storage_output/cargo-metadata.json"
@@ -53,10 +53,10 @@ for run in range(1, int(sys.argv[2]) + 1):
             value = int(row['value'])
             assert value >= 0
             current[key] = value
-    assert sum(key[-1] == 'elapsed_ns' for key in current) == 126
+    assert sum(key[-1] == 'elapsed_ns' for key in current) == 162
     stable = {key: value for key, value in current.items() if key[-1] != 'elapsed_ns'}
     if previous is not None:
         assert stable == previous, f'non-time counters differ in run {run}'
     previous = stable
-print(f'{sys.argv[2]} runs: 126 phases per run, all non-time metrics identical')
+print(f'{sys.argv[2]} runs: 162 phases per run, all non-time metrics identical')
 PY
