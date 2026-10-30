@@ -404,7 +404,7 @@ fn oracle(doc: &Document, ids: &[FoldId]) -> String {
                     .map_or(doc.source().len(), |next| next.source.start);
                 Span::new(h.source.end, end)
             }
-            FoldId::Code(id) => {
+            FoldId::Code(id) | FoldId::Math(id) => {
                 let b = doc.block(id).unwrap();
                 Span::new(
                     b.source.start,

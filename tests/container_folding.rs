@@ -150,7 +150,7 @@ fn ranges(doc: &Document, ids: &[FoldId]) -> Vec<(Span, FoldId)> {
                         },
                     )
                 }
-                FoldId::Code(_) | FoldId::TableRows(_) => unreachable!(),
+                FoldId::Code(_) | FoldId::Math(_) | FoldId::TableRows(_) => unreachable!(),
             };
             (span, id)
         })

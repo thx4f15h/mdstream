@@ -95,7 +95,7 @@ fn model(doc: &Document, id: FoldId) -> (Span, Span) {
             );
             (source, source)
         }
-        FoldId::Code(id) => {
+        FoldId::Code(id) | FoldId::Math(id) => {
             let block = doc.block(id).unwrap();
             let source = Span::new(
                 block.source.start,

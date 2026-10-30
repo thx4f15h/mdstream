@@ -14,6 +14,7 @@ use crate::{
 pub enum FoldId {
     Heading(HeadingId),
     Code(BlockId),
+    Math(BlockId),
     Table(TableId),
     Container(ContainerId),
     TableRows(TableRowRange),
@@ -66,6 +67,7 @@ pub struct FoldDefaults {
     /// Index 0 is h1, index 5 is h6. True starts that heading collapsed.
     pub heading_levels: [bool; 6],
     pub code: bool,
+    pub math: bool,
     pub table: bool,
     /// Collapse newly identified containers at or below this structural depth
     /// (`Container::depth >= threshold`). Roots are depth 1; List and Item each
@@ -82,7 +84,7 @@ pub struct FoldDefaults {
 pub struct FoldCandidate {
     pub id: FoldId,
     pub parent: Option<FoldId>,
-    /// Whole section, code block, table, row range or container, including the retained heading.
+    /// Whole section, code/math block, table, row range or container, including the retained heading.
     pub source: Span,
     /// Body replaced by a placeholder. Empty bodies produce no placeholder.
     pub hidden: Span,
@@ -195,6 +197,7 @@ impl FoldCandidates {
         let block = &document.blocks()[self.next];
         let id = match block.kind {
             BlockKind::Code { .. } => Some(FoldId::Code(BlockId(self.next))),
+            BlockKind::Math { .. } => Some(FoldId::Math(BlockId(self.next))),
             BlockKind::Table { id } => Some(FoldId::Table(id)),
             BlockKind::Heading { .. } => document
                 .headings()
@@ -250,10 +253,10 @@ pub(crate) struct FoldState {
     // Stable physical starts support overlap validation and point predecessor
     // queries without walking a table's rows or the other registered ranges.
     row_ranges: BTreeMap<usize, TableRowRange>,
-    // A completed row can end exactly at EOF inside a still-growable tile.
-    // Refresh that one mask on the next update, even if its source span is fixed.
-    row_boundary: Option<FoldId>,
-    // Six root sections, the active code/table and one incomplete row range
+    // A completed row range or math block can end at EOF inside a growable
+    // tile. These cannot share EOF, so one slot suffices for the next refresh.
+    fixed_boundary: Option<FoldId>,
+    // Six root sections, the active code/math/table and one incomplete row range
     // need individual refreshes. Containers and scoped sections share the tail.
     growing: BTreeSet<FoldId>,
     containers: crate::fold_ranges::FoldRanges,
@@ -370,14 +373,16 @@ impl Document {
                     open,
                 })
             }
-            FoldId::Code(id) => {
-                let block = self.block(id)?;
-                let BlockKind::Code { info } = block.kind else {
-                    return None;
+            FoldId::Code(block_id) | FoldId::Math(block_id) => {
+                let block = self.block(block_id)?;
+                let summary = match (id, &block.kind) {
+                    (FoldId::Code(_), BlockKind::Code { info }) => *info,
+                    (FoldId::Math(_), BlockKind::Math { .. }) => None,
+                    _ => return None,
                 };
                 let open = block.state != SyntaxState::Sealed && !self.is_finished();
                 // Pending physical-line prefixes belong provisionally to an open
-                // code block; classification can later retract that tail.
+                // code/math block; classification can later retract that tail.
                 let source = Span::new(
                     block.source.start,
                     if open {
@@ -387,11 +392,11 @@ impl Document {
                     },
                 );
                 Some(FoldCandidate {
-                    id: FoldId::Code(id),
+                    id,
                     parent: self.fold_parent(block.container, source.start),
                     source,
                     hidden: source,
-                    summary: info,
+                    summary,
                     open,
                 })
             }
@@ -468,6 +473,7 @@ impl Document {
     fn leaf_fold_candidate(&self, block: BlockId) -> Option<FoldCandidate> {
         self.fold_candidate(match self.block(block)?.kind {
             BlockKind::Code { .. } => FoldId::Code(block),
+            BlockKind::Math { .. } => FoldId::Math(block),
             BlockKind::Table { id } => FoldId::Table(id),
             _ => return None,
         })
@@ -542,8 +548,8 @@ impl FoldState {
         heights.cover(mask.tiles.clone(), false);
         self.starts.remove(&(mask.candidate.hidden.start, id));
         self.growing.remove(&id);
-        if self.row_boundary == Some(id) {
-            self.row_boundary = None;
+        if self.fixed_boundary == Some(id) {
+            self.fixed_boundary = None;
         }
         if self.shared_range(document, id) {
             self.range_index(id).set(Self::range_id(id), 0);
@@ -585,18 +591,18 @@ impl FoldState {
         }
         self.collapsed
             .insert(candidate.id, Mask { candidate, tiles });
-        self.track_row_boundary(document, candidate);
+        self.track_fixed_boundary(document, candidate);
     }
 
-    fn track_row_boundary(&mut self, document: &Document, candidate: FoldCandidate) {
-        if matches!(candidate.id, FoldId::TableRows(_)) {
+    fn track_fixed_boundary(&mut self, document: &Document, candidate: FoldCandidate) {
+        if matches!(candidate.id, FoldId::TableRows(_) | FoldId::Math(_)) {
             if !candidate.open
                 && candidate.hidden.end == document.source().len()
                 && !document.is_finished()
             {
-                self.row_boundary = Some(candidate.id);
-            } else if self.row_boundary == Some(candidate.id) {
-                self.row_boundary = None;
+                self.fixed_boundary = Some(candidate.id);
+            } else if self.fixed_boundary == Some(candidate.id) {
+                self.fixed_boundary = None;
             }
         }
     }
@@ -685,7 +691,7 @@ impl FoldState {
             self.growing.remove(&candidate.id);
         }
         mask.candidate = candidate;
-        self.track_row_boundary(document, candidate);
+        self.track_fixed_boundary(document, candidate);
         if shared {
             if old.open != candidate.open || !candidate.open {
                 self.range_index(candidate.id).set(
@@ -914,6 +920,9 @@ impl<S> FoldView<S> {
                 FoldId::Code(id) => document
                     .block(id)
                     .is_some_and(|block| matches!(block.kind, BlockKind::Code { .. })),
+                FoldId::Math(id) => document
+                    .block(id)
+                    .is_some_and(|block| matches!(block.kind, BlockKind::Math { .. })),
                 FoldId::Table(id) => document.table(id).is_some(),
                 FoldId::Container(id) => document.container(id).is_some(),
                 FoldId::TableRows(range) => self.has_table_rows(document, range),
@@ -1168,7 +1177,7 @@ impl<S> FoldView<S> {
             return Ok(());
         }
         crate::apply_layout_update(document, update, &mut self.heights, &mut self.checkpoints)?;
-        // Six root sections, one code/table, and at most one disjoint range
+        // Six root sections, one code/math/table, and at most one disjoint range
         // containing the sole incomplete table row. No historical range scan.
         debug_assert!(self.state.growing.len() <= 8);
         let mut growing = [None; 8];
@@ -1179,10 +1188,10 @@ impl<S> FoldView<S> {
         if dirty.is_some() {
             self.range_visits += 1; // One shared tail, independent of open depth.
         }
-        if let Some(id) = self.state.row_boundary.take() {
+        if let Some(id) = self.state.fixed_boundary.take() {
             self.range_visits += 1;
             let candidate = document.fold_candidate(id).unwrap();
-            // Tile membership can change while the fixed row endpoint does not.
+            // Tile membership can change while the fixed endpoint does not.
             self.state.refresh(document, &mut self.heights, candidate);
             dirty = Some(dirty.unwrap_or(usize::MAX).min(candidate.hidden.start));
         }
@@ -1256,10 +1265,15 @@ impl<S> FoldView<S> {
                 }
             }
         }
-        if self.defaults.code {
+        if self.defaults.code || self.defaults.math {
             for index in update.new_blocks.clone() {
                 self.default_visits += 1;
-                if let Some(candidate) = document.fold_candidate(FoldId::Code(BlockId(index))) {
+                let id = match document.blocks()[index].kind {
+                    BlockKind::Code { .. } if self.defaults.code => FoldId::Code(BlockId(index)),
+                    BlockKind::Math { .. } if self.defaults.math => FoldId::Math(BlockId(index)),
+                    _ => continue,
+                };
+                if let Some(candidate) = document.fold_candidate(id) {
                     self.state.insert(document, &mut self.heights, candidate);
                     dirty = Some(dirty.unwrap_or(usize::MAX).min(candidate.hidden.start));
                 }

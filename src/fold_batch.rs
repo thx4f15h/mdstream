@@ -95,6 +95,9 @@ impl FoldBatch {
                     FoldId::Code(id) => document
                         .block(id)
                         .is_some_and(|block| matches!(block.kind, BlockKind::Code { .. })),
+                    FoldId::Math(id) => document
+                        .block(id)
+                        .is_some_and(|block| matches!(block.kind, BlockKind::Math { .. })),
                     FoldId::Table(id) => document.table(id).is_some(),
                     FoldId::Container(id) => document.container(id).is_some(),
                     FoldId::TableRows(range) => view.has_table_rows(document, range),

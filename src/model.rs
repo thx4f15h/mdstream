@@ -94,6 +94,14 @@ pub enum BlockKind {
     Code {
         info: Option<Span>,
     },
+    /// Independent `$$` block, identified by its stable BlockId. The content
+    /// envelope excludes delimiter lines but includes physical prefixes/CRLF.
+    /// It grows as lines are classified. `closed` distinguishes a delimiter
+    /// close from scope exit/EOF; consult Block::state for active versus sealed.
+    Math {
+        content: Span,
+        closed: bool,
+    },
     ThematicBreak,
     Blank,
     Definition {
@@ -128,7 +136,7 @@ impl Style {
     pub const HARD_BREAK: Self = Self(32);
     /// An ordinary line break within continuing inline content (on the LF).
     pub const SOFT_BREAK: Self = Self(64);
-    /// Raw content of a confirmed dollar-delimited math object.
+    /// Raw mathematical content (inline object or independent math block).
     pub const MATH: Self = Self(128);
 
     pub const fn contains(self, other: Self) -> bool {

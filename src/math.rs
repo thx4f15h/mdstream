@@ -1,4 +1,4 @@
-use crate::{Budget, Completion, Document, Span, TILE_BYTES, WorkLimit};
+use crate::{BlockId, BlockKind, Budget, Completion, Document, Span, TILE_BYTES, WorkLimit};
 
 /// Stable, document-local index of a confirmed mathematical span.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -25,6 +25,31 @@ pub struct Math {
 }
 
 impl Document {
+    /// O(1) reader of the committed raw content of an independent math block.
+    /// Pending, unclassified line prefixes are not yet part of the content.
+    /// BlockKind::Math holds the current range/closed flag; Block::state and
+    /// Update::{new_blocks, changed_blocks} report growth and sealing.
+    pub fn math_block_content(&self, id: BlockId) -> Option<MathContent<'_>> {
+        let BlockKind::Math { content, .. } = self.block(id)?.kind else {
+            return None;
+        };
+        Some(MathContent {
+            source: self.source(),
+            remaining: content,
+            gaps: &[],
+            gap: None,
+        })
+    }
+
+    /// Like math_block_content, omitting only matched container prefixes.
+    /// Raw whitespace, CRLF, backslashes and Markdown spelling are preserved.
+    /// Uses the same mapped chunks and shared budget as math_payload.
+    pub fn math_block_payload(&self, id: BlockId) -> Option<MathContent<'_>> {
+        let mut cursor = self.math_block_content(id)?;
+        cursor.gaps = &self.math_gaps;
+        Some(cursor)
+    }
+
     /// Source-ordered, non-overlapping confirmed objects. No provisional entries.
     pub fn maths(&self) -> &[Math] {
         &self.maths
@@ -194,6 +219,39 @@ impl<'a> MathContent<'a> {
 #[cfg(test)]
 mod tests {
     use crate::{Budget, Document, MathId, WorkLimit};
+
+    #[test]
+    fn math_blocks_share_ordered_gaps_without_per_append_or_body_storage() {
+        let mut doc = Document::new();
+        doc.append("> $inline\n> end$\n> $$\n> ").unwrap();
+        doc.append(&"x".repeat(1_000_000)).unwrap();
+        assert_eq!(doc.math_gaps.len(), 2);
+        let capacity = doc.math_gaps.capacity();
+        let blocks = doc.blocks.capacity();
+        for _ in 0..1000 {
+            doc.append("x").unwrap();
+        }
+        assert_eq!(doc.math_gaps.len(), 2);
+        assert_eq!(doc.math_gaps.capacity(), capacity);
+        assert_eq!(doc.blocks.capacity(), blocks);
+        doc.append("\n> $$\n> $next\n> end$\n").unwrap();
+        assert_eq!(doc.math_gaps.len(), 3);
+        assert!(doc.math_gaps.windows(2).all(|g| g[0].end <= g[1].start));
+        for (id, expected) in [(MathId(0), "inline\nend"), (MathId(1), "next\nend")] {
+            let mut cursor = doc.math_payload(id).unwrap();
+            let mut budget = Budget::new(WorkLimit::unlimited());
+            let mut text = String::new();
+            while let Some(chunk) = cursor.advance(&mut budget).unwrap() {
+                text.push_str(chunk.text);
+            }
+            assert_eq!(text, expected);
+        }
+        let id = crate::BlockId(2);
+        assert_eq!(
+            doc.math_block_payload(id).unwrap().source_position(),
+            doc.blocks[id.0].source.start + 5
+        );
+    }
 
     #[test]
     fn math_gap_storage_tracks_only_discontinuous_feeds_and_never_copies_body() {

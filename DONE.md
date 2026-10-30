@@ -621,3 +621,18 @@ README、TODO 已同步，仅将容器跨行数学内容子项标记完成；数
 - 项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo nextest run` 与 `cargo nextest run --release` 各 **542** 项、`cargo test --doc` **45** 项、`cargo fmt --all -- --check`。`cargo run -r --example container_policies` 输出 **3 帧 / 3 容器 / 0 源码字节**，导航 **4 帧**；既有 `container_defaults` 和 `fold_batch` 示例通过。日志：`/tmp/mdtui3-container-policy-validation.log`。
 
 本单元交付默认策略、视图内状态及有预算筛选核心；任务控件绘制、任务聚合统计、实际摘要/容器排版、手工交叉范围和终端 UI 继续留待各自阶段，不将总体折叠规划标记完成。
+
+## 2026-10-30 独立数学块核心交付
+
+- [x] 独占物理行 `$$` 开闭的数学块，至多三个前导空格和可选 space/tab，支持 LF/CRLF/EOF。顶层和显式 Quote/Item 使用确切作用域，正文保持字面；缺失前缀、兄弟/外层切换和 EOF 封存未闭合块，不回放。独立数学块允许空内容，未完成或超长定界候选沿用有界分类规则。具体方言见 [README](README.md#独立数学块)。
+- [x] 稳定 `BlockId` 与 `BlockKind::Math { content, closed }` 保存增长中的内容包络和显式闭合标志，`Block::state` 区分 Growing/Sealed。不增加独立 arena，不混入只含闭合行内对象的 MathId 集合；复用 `new_blocks` / `changed_blocks`、合并通知及旧测量失效。正文增长和封存只做块范围失效，不遍历旧 tile。
+- [x] `math_block_content` / `math_block_payload` 复用 MathContent 游标，借用原文或省略匹配的容器前缀，保留 CRLF、反斜线和实体拼写。MathChunk.source 连续覆盖内容原文，前缀返回空 text 且按源码收费。O(1) 构造，首次有效读取付费后 O(log G) 定位，之后每步 O(1)，最多 TILE_BYTES 字节及 1 query/1 object；UTF-8 预算不足原子暂停，不复制完整正文。
+- [x] `FoldId::Math` / `FoldDefaults::math` 接入独立视图、章节/容器父关系、预算发现、批量、预览和源码导航；默认只初始化新节点，显式选择保留。扩展已有固定末端刷新机制，数学块当前 EOF 封闭后继续追加会刷新末 tile 遮蔽，避免隐藏相邻新文字。通用显示为 MATH 样式字面回退，实际 TeX 排版和对象回调继续留待后续。
+
+新增 14 项验收：12 项专用测试、1 项 UTF-8 全切点/逐前缀快照、1 项内部间隙/容量测试；既有短样本和固定种子分块快照同时覆盖数学块 payload 映射。独立模型验证 400 组源码/内容/容器范围和 240 次流式折叠区间/高度；覆盖 Unicode/CRLF、空块、失败及超长开闭候选、代码/表格/行内数学优先级、容器边界/EOF、稳定身份与通知合并、旧测量拒绝、共享预算、视图隔离和批量/预览/导航。四个既有折叠模型的穷尽匹配补充 Math 分支，原有断言保留。
+
+复杂度与资源验收：千层引用中百万字同物理行增长不增加分类/行内消费/容器/章节步骤，容器与章节折叠索引无额外访问；关闭少于 2000 次注解树访问。250 层列表续行按输入前缀线性匹配。4096 个封闭历史块后追加只处理新块和当前边界，不遍历旧折叠；百万字后 1000 次逐字追加不增加数学间隙记录或块 arena 容量，行内对象与独立块共享有序间隙索引。收起百万字数学块的布局零正文回调、零字节计费。累计解析 O(n log n)、空间 O(n)，零运行时依赖且禁止 unsafe，不承诺单次 append/finish 的硬时延。
+
+项目 devShell 验收：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run` 各 556 项、`cargo test --doc` 46 项、`cargo fmt --all -- --check` 和 `git diff --check` 通过。`cargo run -r --example math_blocks` 读取 5 帧/34 源码字节、导航 4 帧；既有 `math`、`container_math`、`container_code` 示例通过。完整日志：`/tmp/mdtui3-math-block-validation.log`；流式高度模型捕获并修复当前 EOF 末 tile 遮蔽，失败证据 `/tmp/mdtui3-math-block-model.log`。
+
+README、TODO 已同步，只标记独立数学块核心完成；额外数学定界方言、TeX 解析/排版与实际对象回调、分类上限扩展、其余容器/脚注语义和终端 UI 继续保留待办。

@@ -72,9 +72,18 @@ pub(crate) fn classify(
         let run = text.iter().take_while(|&&b| b == fence.byte).count();
         return if complete
             && spaces <= 3
-            && run >= fence.length
-            && text[run..].iter().all(u8::is_ascii_whitespace)
-        {
+            && if fence.byte == b'$' {
+                run == 2
+            } else {
+                run >= fence.length
+            }
+            && text[run..].iter().all(|b| {
+                if fence.byte == b'$' {
+                    matches!(b, b' ' | b'\t')
+                } else {
+                    b.is_ascii_whitespace()
+                }
+            }) {
             Line::FenceClose
         } else {
             Line::Code
@@ -90,6 +99,17 @@ pub(crate) fn classify(
     }
     if text.is_empty() {
         return Line::Text;
+    }
+    // Independent display blocks require a complete, bounded delimiter line.
+    // Longer/failed lines retain the existing ordinary inline interpretation.
+    if complete && text.starts_with(b"$$") && text[2..].iter().all(|b| matches!(b, b' ' | b'\t')) {
+        return Line::FenceOpen {
+            fence: Fence {
+                byte: b'$',
+                length: 2,
+            },
+            info: None,
+        };
     }
     if text.starts_with(b"[^")
         && let Some(close) = text.iter().position(|&b| b == b']')

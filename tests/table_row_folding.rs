@@ -143,7 +143,7 @@ fn interval(doc: &Document, id: FoldId) -> Span {
                 .map_or(doc.source().len(), |next| next.source.start);
             Span::new(h.source.end, end)
         }
-        FoldId::Code(_) => unreachable!(),
+        FoldId::Code(_) | FoldId::Math(_) => unreachable!(),
     }
 }
 fn model(doc: &Document, view: &FoldView, ids: &[FoldId]) -> Vec<(Span, FoldId)> {

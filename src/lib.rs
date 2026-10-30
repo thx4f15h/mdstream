@@ -716,6 +716,11 @@ impl Document {
         inline.finish(&mut self.effects(update));
         self.inline = inline;
         if let Some(id) = self.current.take() {
+            if matches!(self.blocks[id.0].kind, BlockKind::Math { .. }) {
+                // Sealing can change an object consumer's layout even at EOF.
+                // One range mutation, never a walk of its body or prefix gaps.
+                self.mark(self.blocks[id.0].source, Style::default(), update);
+            }
             if let BlockKind::FootnoteDefinition { symbol } = self.blocks[id.0].kind {
                 self.footnotes
                     .seal(symbol, id, self.source.len(), update, &mut self.work);
@@ -1176,13 +1181,24 @@ impl Document {
             Line::FenceOpen { fence, info } => {
                 inline = false;
                 hidden = true;
-                let id = self.new_block(span, BlockKind::Code { info }, update);
+                let kind = if fence.byte == b'$' {
+                    BlockKind::Math {
+                        content: Span::new(span.end, span.end),
+                        closed: false,
+                    }
+                } else {
+                    BlockKind::Code { info }
+                };
+                let id = self.new_block(span, kind, update);
                 self.fence = Some(fence);
                 id
             }
             Line::FenceClose => {
                 let id = self.current.unwrap();
                 self.blocks[id.0].source.end = span.end;
+                if let BlockKind::Math { closed, .. } = &mut self.blocks[id.0].kind {
+                    *closed = true;
+                }
                 self.mark(span, Style::HIDDEN, update);
                 self.fence = None;
                 self.close_current(update);
@@ -1193,6 +1209,13 @@ impl Document {
                 payload.start = content.start;
                 let id = self.current.unwrap();
                 self.blocks[id.0].source.end = span.end;
+                if let BlockKind::Math { content: body, .. } = &mut self.blocks[id.0].kind {
+                    body.end = span.end;
+                    if content.start > span.start {
+                        self.math_gaps.push(Span::new(span.start, content.start));
+                    }
+                    self.mark(self.blocks[id.0].source, Style::default(), update);
+                }
                 id
             }
             Line::Indented { prefix } => {
@@ -1304,6 +1327,10 @@ impl Document {
         self.containers.end = span.end;
         self.headings.parsed_end = span.end;
         self.blocks[line.block.0].source.end = span.end;
+        if let BlockKind::Math { content, .. } = &mut self.blocks[line.block.0].kind {
+            content.end = span.end;
+            self.mark(self.blocks[line.block.0].source, Style::default(), update);
+        }
         if let BlockKind::FootnoteDefinition { symbol } = self.blocks[line.block.0].kind {
             self.footnotes.extend(
                 symbol,
@@ -1601,6 +1628,10 @@ impl<'a> Iterator for Runs<'a> {
         if block.is_some_and(|id| matches!(self.document.blocks[id.0].kind, BlockKind::Code { .. }))
         {
             style = style.union(Style::CODE);
+        }
+        if block.is_some_and(|id| matches!(self.document.blocks[id.0].kind, BlockKind::Math { .. }))
+        {
+            style = style.union(Style::MATH);
         }
         Some(RenderRun {
             source: Span::new(start, end),
