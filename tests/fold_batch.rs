@@ -673,6 +673,7 @@ fn defaults_initialize_new_nodes_once_and_explicit_operations_win() {
     let defaults = FoldDefaults {
         heading_levels: [true; 6],
         code: true,
+        ..Default::default()
     };
     view.set_defaults(defaults);
     assert_eq!(view.defaults(), defaults);
@@ -722,6 +723,7 @@ fn defaults_handle_setext_finish_batch_updates_and_all_character_boundaries() {
         view.set_defaults(FoldDefaults {
             heading_levels: [true, true, false, false, false, false],
             code: true,
+            ..Default::default()
         });
         let mut merged = Update::default();
         for ch in text.chars() {
@@ -759,6 +761,7 @@ fn default_growth_does_not_revisit_historical_candidates_or_long_setext_text() {
     view.set_defaults(FoldDefaults {
         heading_levels: [true; 6],
         code: true,
+        ..Default::default()
     });
     let update = doc
         .append(&format!(
@@ -789,6 +792,7 @@ fn empty_batch_finishes_and_default_heading_levels_are_selective() {
     view.set_defaults(FoldDefaults {
         heading_levels: [false, true, false, true, false, true],
         code: false,
+        ..Default::default()
     });
     let mut text = String::new();
     for level in 1..=6 {
@@ -807,4 +811,114 @@ fn empty_batch_finishes_and_default_heading_levels_are_selective() {
         .find(|c| matches!(c.id, FoldId::Code(_)))
         .unwrap();
     assert!(!view.is_collapsed(code.id));
+}
+
+#[test]
+fn table_batch_commands_share_section_siblings_and_preserve_descendants() {
+    let doc = document(
+        "a | b\n- | -\n\n# Parent\na | b\n- | -\n\n```\ncode\n```\n### Child\na | b\n- | -\n\n# Outside\n",
+    );
+    let all = candidates(&doc);
+    let target = FoldId::Table(TableId(1));
+    let nested = FoldId::Table(TableId(2));
+    let code = all
+        .iter()
+        .find(|c| matches!(c.id, FoldId::Code(_)))
+        .unwrap()
+        .id;
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    view.set_collapsed(&doc, target, true).unwrap();
+    view.set_collapsed(&doc, nested, true).unwrap();
+    let progress = run(
+        &doc,
+        &mut view,
+        FoldBatchAction::Siblings {
+            target,
+            collapsed: true,
+        },
+    );
+    assert_eq!(progress.changed, 2); // Code and Child, preserving target and nested.
+    let expected: Vec<_> = all
+        .iter()
+        .map(|c| [target, nested, code, heading(1)].contains(&c.id))
+        .collect();
+    assert_model(&doc, &view, &all, &expected);
+    let progress = run(
+        &doc,
+        &mut view,
+        FoldBatchAction::Subtree {
+            root: target,
+            collapsed: false,
+        },
+    );
+    assert_eq!(progress.visited, 1);
+    assert_eq!(progress.changed, 1);
+    assert!(view.is_collapsed(nested));
+    let progress = run(&doc, &mut view, FoldBatchAction::All { collapsed: true });
+    assert_eq!(progress.visited, doc.blocks().len());
+    assert!(all.iter().all(|c| view.is_collapsed(c.id)));
+    run(
+        &doc,
+        &mut view,
+        FoldBatchAction::AtLevel {
+            level: 1,
+            collapsed: false,
+        },
+    );
+    assert!(view.is_collapsed(target));
+    run(&doc, &mut view, FoldBatchAction::Focus { target });
+    let expected: Vec<_> = all
+        .iter()
+        .map(|c| c.id != target && c.id != heading(0))
+        .collect();
+    assert_model(&doc, &view, &all, &expected);
+    for action in [
+        FoldBatchAction::Subtree {
+            root: FoldId::Table(TableId(99)),
+            collapsed: true,
+        },
+        FoldBatchAction::Siblings {
+            target: FoldId::Table(TableId(99)),
+            collapsed: false,
+        },
+        FoldBatchAction::Focus {
+            target: FoldId::Table(TableId(99)),
+        },
+    ] {
+        assert!(matches!(
+            FoldBatch::new(&doc, &view, action),
+            Err(LayoutError::InvalidRange)
+        ));
+    }
+}
+
+#[test]
+fn table_defaults_only_visit_new_tables_and_the_open_tail() {
+    let mut doc = Document::new();
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    view.set_defaults(FoldDefaults {
+        table: true,
+        ..Default::default()
+    });
+    let update = doc
+        .append(&"a | b\n- | -\nrow | value\n\n".repeat(10_000))
+        .unwrap();
+    view.apply(&doc, &update).unwrap();
+    assert_eq!(view.default_visits(), 10_000);
+    assert_eq!(view.range_visits(), 0);
+    for chunk in ["a | b\n", "- | -\n", "new | row\n", "# Next\n"] {
+        let visits = view.default_visits();
+        let ranges = view.range_visits();
+        let update = doc.append(chunk).unwrap();
+        let work = doc.work();
+        view.apply(&doc, &update).unwrap();
+        assert_eq!(doc.work(), work);
+        assert_eq!(
+            view.default_visits() - visits,
+            update.new_tables.len() as u64
+        );
+        assert!(view.range_visits() - ranges <= 1);
+    }
+    assert!(view.is_collapsed(FoldId::Table(TableId(10_000))));
+    assert!(!view.is_collapsed(heading(0)));
 }

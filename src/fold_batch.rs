@@ -21,7 +21,7 @@ pub enum FoldBatchAction {
         target: FoldId,
         collapsed: bool,
     },
-    /// Exactly this heading level (1..=6); code and other levels keep their choices.
+    /// Exactly this heading level (1..=6); other candidates keep their choices.
     AtLevel {
         level: u8,
         collapsed: bool,
@@ -81,6 +81,7 @@ impl FoldBatch {
                     FoldId::Code(id) => document
                         .block(id)
                         .is_some_and(|block| matches!(block.kind, BlockKind::Code { .. })),
+                    FoldId::Table(id) => document.table(id).is_some(),
                 };
                 if !valid {
                     return Err(LayoutError::InvalidRange);

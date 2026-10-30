@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     BlockId, BlockKind, Budget, CheckpointIndex, Completion, Document, DocumentId, HeadingId,
-    HeightIndex, LayoutError, Measurement, Span, SyntaxState, TileId, Update, WorkLimit,
+    HeightIndex, LayoutError, Measurement, Span, SyntaxState, TableId, TileId, Update, WorkLimit,
 };
 
 /// Document-local stable identity. Containers and arbitrary crossing ranges are
@@ -14,6 +14,7 @@ use crate::{
 pub enum FoldId {
     Heading(HeadingId),
     Code(BlockId),
+    Table(TableId),
 }
 
 /// Initial choices for candidates first discovered by a subsequent `apply`.
@@ -23,17 +24,18 @@ pub struct FoldDefaults {
     /// Index 0 is h1, index 5 is h6. True starts that heading collapsed.
     pub heading_levels: [bool; 6],
     pub code: bool,
+    pub table: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FoldCandidate {
     pub id: FoldId,
     pub parent: Option<FoldId>,
-    /// Whole section or code block, including the retained heading.
+    /// Whole section, code block or table, including the retained heading.
     pub source: Span,
     /// Body replaced by a placeholder. Empty bodies produce no placeholder.
     pub hidden: Span,
-    /// Heading title or fence info; this is a source reference, not copied text.
+    /// Heading title, fence info or table header; a source reference, not copied text.
     pub summary: Option<Span>,
     pub open: bool,
 }
@@ -118,6 +120,7 @@ impl FoldCandidates {
         let block = &document.blocks()[self.next];
         let id = match block.kind {
             BlockKind::Code { .. } => Some(FoldId::Code(BlockId(self.next))),
+            BlockKind::Table { id } => Some(FoldId::Table(id)),
             BlockKind::Heading { .. } => document
                 .headings()
                 .current(block.source.start)
@@ -168,7 +171,7 @@ struct Mask {
 pub(crate) struct FoldState {
     collapsed: BTreeMap<FoldId, Mask>,
     starts: BTreeSet<(usize, FoldId)>,
-    // Only the six still-open heading sections and the active code block can
+    // Only the six still-open heading sections and the active code/table block can
     // change existing ranges on append. Closed historical folds are untouched.
     growing: BTreeSet<FoldId>,
 }
@@ -252,28 +255,59 @@ impl Document {
                     open,
                 })
             }
+            FoldId::Table(id) => {
+                let table = self.table(id)?;
+                let block = self.block(table.block)?;
+                let open = block.state != SyntaxState::Sealed && !self.is_finished();
+                // As with code blocks, a pending physical line is provisionally
+                // inside the table until its classification seals the block.
+                let source = Span::new(
+                    table.source.start,
+                    if open {
+                        self.source().len()
+                    } else {
+                        table.source.end
+                    },
+                );
+                Some(FoldCandidate {
+                    id: FoldId::Table(id),
+                    parent: self.headings().current(source.start).map(FoldId::Heading),
+                    source,
+                    hidden: source,
+                    summary: Some(table.row(0)?.source),
+                    open,
+                })
+            }
         }
     }
 
-    /// Innermost candidate at a source position; pending text uses its section.
+    /// Innermost candidate, including a pending tail of an open code/table block.
     pub fn fold_candidate_at(&self, offset: usize) -> Option<FoldCandidate> {
         if offset >= self.source().len() {
             return None;
         }
         if let Some(block) = self.block_at(offset)
-            && let Some(candidate) = self.fold_candidate(FoldId::Code(block))
+            && let Some(candidate) = self.leaf_fold_candidate(block)
         {
             return Some(candidate);
         }
         // The pending tail may be outside the last block's committed range.
         if let Some(index) = self.blocks().len().checked_sub(1)
-            && let Some(candidate) = self.fold_candidate(FoldId::Code(BlockId(index)))
+            && let Some(candidate) = self.leaf_fold_candidate(BlockId(index))
             && candidate.open
             && candidate.source.range().contains(&offset)
         {
             return Some(candidate);
         }
         self.fold_candidate(FoldId::Heading(self.headings().current(offset)?))
+    }
+
+    fn leaf_fold_candidate(&self, block: BlockId) -> Option<FoldCandidate> {
+        self.fold_candidate(match self.block(block)?.kind {
+            BlockKind::Code { .. } => FoldId::Code(block),
+            BlockKind::Table { id } => FoldId::Table(id),
+            _ => return None,
+        })
     }
 }
 
@@ -468,6 +502,7 @@ impl<S> FoldView<S> {
                 FoldId::Code(id) => document
                     .block(id)
                     .is_some_and(|block| matches!(block.kind, BlockKind::Code { .. })),
+                FoldId::Table(id) => document.table(id).is_some(),
             };
             if !valid {
                 return Err(LayoutError::InvalidRange);
@@ -526,8 +561,8 @@ impl<S> FoldView<S> {
         self.defaults
     }
 
-    /// O(1). Applies only to newly identified headings/code blocks in future
-    /// updates, including late Setext recognition. Existing choices stay intact;
+    /// O(1). Applies only to newly identified headings/code blocks/tables in future
+    /// updates, including late syntax recognition. Existing choices stay intact;
     /// use FoldBatch to change them explicitly. Invalidates pending view tasks.
     pub fn set_defaults(&mut self, defaults: FoldDefaults) {
         if self.defaults != defaults {
@@ -536,7 +571,7 @@ impl<S> FoldView<S> {
         }
     }
 
-    /// New heading/block metadata inspected to initialize default choices.
+    /// New heading/block/table metadata inspected to initialize default choices.
     /// No historical candidates or source text are scanned.
     pub fn default_visits(&self) -> u64 {
         self.default_visits
@@ -682,6 +717,18 @@ impl<S> FoldView<S> {
                     self.state.insert(document, &mut self.heights, candidate);
                     dirty = Some(dirty.unwrap_or(usize::MAX).min(candidate.hidden.start));
                 }
+            }
+        }
+        if self.defaults.table {
+            // A header can convert an existing paragraph block into a table;
+            // new_blocks alone would miss that late confirmation.
+            for index in update.new_tables.clone() {
+                self.default_visits += 1;
+                let candidate = document
+                    .fold_candidate(FoldId::Table(TableId(index)))
+                    .unwrap();
+                self.state.insert(document, &mut self.heights, candidate);
+                dirty = Some(dirty.unwrap_or(usize::MAX).min(candidate.hidden.start));
             }
         }
         if let Some(start) = dirty {

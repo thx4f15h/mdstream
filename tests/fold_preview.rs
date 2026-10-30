@@ -223,6 +223,7 @@ fn streaming_defaults_setext_and_resize_preserve_preview_and_current_ranges() {
     view.set_defaults(FoldDefaults {
         heading_levels: [true; 6],
         code: true,
+        ..Default::default()
     });
     let update = doc.append("# A\n").unwrap();
     view.apply(&doc, &update).unwrap();

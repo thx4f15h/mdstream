@@ -142,5 +142,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
     }
+    // Whole-table folding uses the same placeholder and budgets. The retained
+    // header range can be read separately without visiting historical cells.
+    let mut table_document = Document::new();
+    let mut table_view = FoldView::new(&table_document, 1)?;
+    table_view.set_defaults(FoldDefaults {
+        table: true,
+        ..Default::default()
+    });
+    let update = table_document.append(&format!(
+        "| Name | Value |\n| - | - |\n| long | {} |\n",
+        "x".repeat(1_000_000)
+    ))?;
+    table_view.apply(&table_document, &update)?;
+    let update = table_document.append("| next | row |\n# After table\nvisible\n")?;
+    table_view.apply(&table_document, &update)?;
+    let update = table_document.finish();
+    table_view.apply(&table_document, &update)?;
+    let candidate = table_document
+        .fold_candidate(FoldId::Table(TableId(0)))
+        .unwrap();
+    let mut budget = Budget::new(WorkLimit {
+        queries: 1,
+        objects: 1,
+        bytes: 32,
+        ..Default::default()
+    });
+    println!(
+        "Table collapsed; bounded header: {:?}",
+        candidate
+            .summary_text(&table_document, 32, &mut budget)
+            .unwrap()
+    );
+    show(&table_document, &mut table_view)?;
     Ok(())
 }

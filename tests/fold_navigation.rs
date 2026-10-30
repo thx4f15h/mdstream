@@ -640,3 +640,51 @@ fn source_boundaries_empty_eof_wrong_document_and_late_setext_are_defined() {
         Some(doc.source().len())
     );
 }
+
+#[test]
+fn table_bookmarks_project_to_summary_and_reveal_only_the_required_path() {
+    let doc =
+        document("# A\n## B\na | b\n- | -\nexact | value\n\n## Other\na | b\n- | -\nother | row\n");
+    let destination = doc.source().find("exact").unwrap() + 2;
+    let table = FoldId::Table(TableId(0));
+    let other = FoldId::Table(TableId(1));
+    let bookmark = Bookmark::new(&doc, destination, 2).unwrap();
+    assert_eq!(bookmark.target(), Some(table));
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    for id in [table, other, heading(2)] {
+        view.set_collapsed(&doc, id, true).unwrap();
+    }
+    let anchor = bookmark
+        .anchor()
+        .resolve(&doc, &view, 24, &mut tiny())
+        .unwrap()
+        .unwrap();
+    assert_eq!(anchor.hidden_by, Some(table));
+    assert_eq!(anchor.target.source, Some(doc.tables()[0].source.start));
+    for id in [heading(0), heading(1)] {
+        view.set_collapsed(&doc, id, true).unwrap();
+    }
+    let anchor = bookmark
+        .anchor()
+        .resolve(&doc, &view, 24, &mut tiny())
+        .unwrap()
+        .unwrap();
+    assert_eq!(anchor.hidden_by, Some(heading(0)));
+    let mut task = bookmark.navigation(&doc, &view, 24).unwrap();
+    let (target, steps, changes) = finish(&mut task, &doc, &mut view);
+    assert!(steps > 1);
+    assert_eq!(target.unwrap().source, Some(destination));
+    assert_eq!(changes.len(), 3);
+    for id in [heading(0), heading(1), table] {
+        assert!(!view.is_collapsed(id));
+    }
+    assert!(view.is_collapsed(other));
+    assert!(view.is_collapsed(heading(2)));
+    let anchor = bookmark
+        .anchor()
+        .resolve(&doc, &view, 24, &mut tiny())
+        .unwrap()
+        .unwrap();
+    assert_eq!(anchor.hidden_by, None);
+    assert_eq!(anchor.target.source, Some(destination));
+}

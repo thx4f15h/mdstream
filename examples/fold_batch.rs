@@ -28,6 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     view.set_defaults(FoldDefaults {
         heading_levels: [false, true, true, true, true, true],
         code: true,
+        ..Default::default()
     });
     let update = doc.append(&format!("# Guide\n{}", "## Details\nbody\n".repeat(100)))?;
     view.apply(&doc, &update)?;

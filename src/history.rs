@@ -14,7 +14,7 @@ pub struct Bookmark {
 }
 
 impl Bookmark {
-    /// Capture the source and its innermost section/code ID without reading text.
+    /// Capture the source and its innermost fold ID without reading text.
     /// O(log blocks + log headings), O(1) space. EOF and empty input are valid.
     /// viewport_offset is the source's row below the viewport top, not a global
     /// row or tile offset. The host reapplies it after local source-to-row layout.

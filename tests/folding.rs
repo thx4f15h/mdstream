@@ -77,6 +77,7 @@ fn default_masks_and_partial_batches_feed_budgeted_layout() {
     view.set_defaults(FoldDefaults {
         heading_levels: [false, true, true, true, true, true],
         code: true,
+        ..Default::default()
     });
     let update = doc.append("# Root\nintro\n## Child\n").unwrap();
     view.apply(&doc, &update).unwrap();
@@ -413,6 +414,17 @@ fn oracle(doc: &Document, ids: &[FoldId]) -> String {
                     },
                 )
             }
+            FoldId::Table(id) => {
+                let table = doc.table(id).unwrap();
+                Span::new(
+                    table.source.start,
+                    if doc.block(table.block).unwrap().state == SyntaxState::Sealed {
+                        table.source.end
+                    } else {
+                        doc.source().len()
+                    },
+                )
+            }
         })
         .filter(|r| !r.is_empty())
         .collect();
@@ -444,7 +456,7 @@ fn seeded_nested_toggles_and_resize_match_source_union() {
     let mut source = String::new();
     for i in 0..32 {
         source.push_str(&format!(
-            "{} H{i}\n{}\n```rs\ncode {i}\n```\n",
+            "{} H{i}\n{}\n```rs\ncode {i}\n```\na | b\n- | -\nrow {i} | 界\n\n",
             "#".repeat(1 + (i * 7 % 6)),
             "中文🙂\n".repeat(15 + i % 8)
         ));
@@ -464,6 +476,7 @@ fn seeded_nested_toggles_and_resize_match_source_union() {
                 .filter(|(_, b)| matches!(b.kind, BlockKind::Code { .. }))
                 .map(|(i, _)| FoldId::Code(BlockId(i))),
         )
+        .chain((0..doc.tables().len()).map(|i| FoldId::Table(TableId(i))))
         .collect();
     let mut selected = Vec::new();
     let mut preview = None;
@@ -741,4 +754,273 @@ fn placeholders_revive_syntax_zero_tiles_and_recovery_is_bounded() {
         }
     }
     panic!("recovery did not progress");
+}
+
+#[test]
+fn tables_have_stable_candidates_bounded_summaries_and_single_owned_placeholders() {
+    let doc =
+        document("# A\n| 界 &amp; | b |\n| - | - |\n| ![](/hidden) | x |\n\n# B\na | b\n- | -\n");
+    let table = FoldId::Table(TableId(0));
+    let empty = FoldId::Table(TableId(1));
+    let candidate = doc.fold_candidate(table).unwrap();
+    assert_eq!(candidate.source, doc.tables()[0].source);
+    assert_eq!(candidate.hidden, candidate.source);
+    assert_eq!(candidate.parent, Some(heading(0)));
+    assert_eq!(
+        candidate.summary,
+        Some(doc.tables()[0].row(0).unwrap().source)
+    );
+    assert!(!candidate.open);
+    assert_eq!(doc.tile_count(), 1);
+    for offset in candidate.source.range() {
+        assert_eq!(doc.fold_candidate_at(offset), Some(candidate));
+    }
+    assert!(doc.fold_candidate(FoldId::Table(TableId(2))).is_none());
+    let mut budget = Budget::new(WorkLimit {
+        queries: 1,
+        objects: 1,
+        bytes: 4,
+        ..Default::default()
+    });
+    assert_eq!(candidate.summary_text(&doc, 4, &mut budget), Some("| "));
+    assert_eq!(budget.used().bytes, 2); // Never split the three-byte character.
+    let mut cursor = doc.fold_candidates(candidate.source).unwrap();
+    let mut found = Vec::new();
+    assert_eq!(
+        cursor
+            .advance(&doc, &mut Budget::new(WorkLimit::default()), &mut found)
+            .unwrap(),
+        Completion::BudgetExhausted
+    );
+    assert_eq!(
+        cursor
+            .advance(&doc, &mut Budget::new(WorkLimit::unlimited()), &mut found)
+            .unwrap(),
+        Completion::Covered
+    );
+    assert_eq!(found, [candidate]);
+
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    let mut other = FoldView::new(&doc, 1).unwrap();
+    view.set_collapsed(&doc, table, true).unwrap();
+    view.set_collapsed(&doc, empty, true).unwrap();
+    let ticket = view.heights().ticket(TileId(0)).unwrap();
+    view.set_collapsed(&doc, heading(0), true).unwrap();
+    assert!(view.measure(ticket, 99).is_err());
+    assert_eq!(render(&doc, &mut view, true).text, "A\n[fold]\nB\n[fold]\n");
+    view.set_collapsed(&doc, heading(0), false).unwrap();
+    let sink = render(&doc, &mut view, true);
+    assert_eq!(sink.text, oracle(&doc, &[table, empty]));
+    assert_eq!(sink.images, 0);
+    assert_eq!(sink.placeholders.len(), 2);
+    assert_eq!(sink.placeholders[0].candidate, candidate);
+    assert!(sink.placeholders.iter().all(|p| p.owner == TileId(0)));
+    assert_eq!(
+        view.heights().total_rows(),
+        sink.text.bytes().filter(|&b| b == b'\n').count() as u128
+    );
+    assert_eq!(render(&doc, &mut other, true).images, 1);
+}
+
+#[test]
+fn table_defaults_handle_late_confirmation_replays_and_explicit_expansion() {
+    let mut doc = Document::new();
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    view.set_defaults(FoldDefaults {
+        table: true,
+        ..Default::default()
+    });
+    let update = doc.append("a | b\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    assert!(doc.tables().is_empty());
+    assert_eq!(view.default_visits(), 0);
+    let update = doc.append("- | -\n").unwrap();
+    assert!(update.new_blocks.is_empty());
+    assert_eq!(update.new_tables, 0..1);
+    view.apply(&doc, &update).unwrap();
+    let id = FoldId::Table(TableId(0));
+    assert!(view.is_collapsed(id));
+    assert_eq!(view.default_visits(), 1);
+    view.set_collapsed(&doc, id, false).unwrap();
+    view.apply(&doc, &update).unwrap();
+    for ch in "中文 | 🙂\nmore | text".chars() {
+        let update = doc.append(ch.encode_utf8(&mut [0; 4])).unwrap();
+        view.apply(&doc, &update).unwrap();
+        assert!(!view.is_collapsed(id));
+        assert_eq!(view.default_visits(), 1);
+    }
+    let mut merged = doc.append("\n\na | b\n").unwrap();
+    merged
+        .merge(doc.append("- | -\nsecond | row\n").unwrap())
+        .unwrap();
+    view.apply(&doc, &merged).unwrap();
+    assert_eq!(view.default_visits(), 2);
+    assert!(!view.is_collapsed(id));
+    assert!(view.is_collapsed(FoldId::Table(TableId(1))));
+    let update = doc.finish();
+    view.apply(&doc, &update).unwrap();
+    assert_eq!(view.default_visits(), 2);
+    let mut late_view = FoldView::new(&doc, 1).unwrap();
+    late_view.set_defaults(view.defaults());
+    let update = doc.finish();
+    late_view.apply(&doc, &update).unwrap();
+    assert!(!late_view.is_collapsed(id));
+}
+
+#[test]
+fn table_streaming_prefixes_and_all_splits_preserve_masks_and_retract_pending_lines() {
+    let source = "# A\na | 界\n- | -\n🙂 | &amp;\n# B\n```\ncode\n```\na | b\n- | -\nrow | tail";
+    let parse = |chunks: Vec<&str>, merged: bool| {
+        let mut doc = Document::new();
+        let mut view = FoldView::new(&doc, 1).unwrap();
+        view.set_defaults(FoldDefaults {
+            code: true,
+            table: true,
+            ..Default::default()
+        });
+        let mut batch = Update::default();
+        for chunk in chunks {
+            let update = doc.append(chunk).unwrap();
+            if merged {
+                batch.merge(update).unwrap();
+            } else {
+                view.apply(&doc, &update).unwrap();
+                let mut ids: Vec<_> = (0..doc.tables().len())
+                    .map(|i| FoldId::Table(TableId(i)))
+                    .collect();
+                ids.extend(doc.blocks().iter().enumerate().filter_map(|(i, b)| {
+                    matches!(b.kind, BlockKind::Code { .. }).then_some(FoldId::Code(BlockId(i)))
+                }));
+                for &id in &ids {
+                    let candidate = doc.fold_candidate(id).unwrap();
+                    assert!(view.is_collapsed(id));
+                    assert_eq!(
+                        doc.fold_candidate_at(candidate.source.end - 1),
+                        Some(candidate)
+                    );
+                }
+                assert_eq!(render(&doc, &mut view, true).text, oracle(&doc, &ids));
+            }
+        }
+        let update = doc.finish();
+        if merged {
+            batch.merge(update).unwrap();
+            view.apply(&doc, &batch).unwrap();
+        } else {
+            view.apply(&doc, &update).unwrap();
+        }
+        assert!(
+            doc.tables()
+                .iter()
+                .enumerate()
+                .all(|(i, _)| !doc.fold_candidate(FoldId::Table(TableId(i))).unwrap().open)
+        );
+        let text = render(&doc, &mut view, true).text;
+        view.reset(3).unwrap();
+        assert_eq!(render(&doc, &mut view, true).text, text);
+        text
+    };
+    let expected = parse(vec![source], false);
+    assert_eq!(expected, "A\n[fold]\nB\n[fold]\n[fold]\n");
+    for (offset, _) in source
+        .char_indices()
+        .chain(std::iter::once((source.len(), '\0')))
+    {
+        for merged in [false, true] {
+            assert_eq!(
+                parse(vec![&source[..offset], &source[offset..]], merged),
+                expected,
+                "split {offset}, merged {merged}"
+            );
+        }
+    }
+    let chunks = source
+        .char_indices()
+        .map(|(i, ch)| &source[i..i + ch.len_utf8()])
+        .collect();
+    assert_eq!(parse(chunks, false), expected);
+}
+
+#[test]
+fn million_byte_table_growth_and_folded_layout_skip_cells() {
+    let mut doc = Document::new();
+    doc.append(&format!(
+        "# A\na | b\n- | -\n{} | tail\n",
+        "x".repeat(1_000_000)
+    ))
+    .unwrap();
+    let id = FoldId::Table(TableId(0));
+    let mut view = FoldView::new(&doc, 2).unwrap();
+    view.set_collapsed(&doc, id, true).unwrap();
+    let before = view.heights().mutation_visits();
+    let update = doc.append("pending").unwrap();
+    let work = doc.work();
+    view.apply(&doc, &update).unwrap();
+    assert_eq!(doc.work(), work);
+    assert_eq!(view.range_visits(), 1);
+    assert!(view.heights().mutation_visits() - before < 1500);
+    let candidate = doc.fold_candidate(id).unwrap();
+    assert_eq!(candidate.source.end, doc.source().len());
+    assert_eq!(
+        doc.fold_candidate_at(doc.source().len() - 1),
+        Some(candidate)
+    );
+    let mut pass = LayoutPass::folded(&doc, &view, TileId(0), 24).unwrap();
+    let mut sink = Sink::default();
+    let mut budget = Budget::new(WorkLimit {
+        queries: 60,
+        tiles: 4,
+        bytes: 512,
+        objects: 30,
+        ..Default::default()
+    });
+    assert_eq!(
+        pass.advance_folded(&doc, &mut view, &mut budget, &mut sink)
+            .unwrap(),
+        Completion::EndOfDocument
+    );
+    assert_eq!(sink.text, "A\n[fold]\n");
+    assert!(sink.bytes < 10);
+    assert!(sink.tiles <= 2);
+    assert_eq!(sink.placeholders.len(), 1);
+    let update = doc.append("\n# Next\nvisible\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    assert!(!doc.fold_candidate(id).unwrap().open);
+    assert_eq!(
+        render(&doc, &mut view, true).text,
+        "A\n[fold]\nNext\nvisible\n"
+    );
+}
+
+#[test]
+fn table_preview_restores_latest_range_after_append_close_and_resize() {
+    let mut doc = Document::new();
+    doc.append("# A\na | b\n- | -\nold | row\n").unwrap();
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    let id = FoldId::Table(TableId(0));
+    view.set_collapsed(&doc, id, true).unwrap();
+    let result = view
+        .set_preview(&doc, Some(id), &mut Budget::new(WorkLimit::default()))
+        .unwrap();
+    assert_eq!(result.completion, Completion::BudgetExhausted);
+    assert_eq!(view.preview(), None);
+    view.set_preview(&doc, Some(id), &mut Budget::new(WorkLimit::unlimited()))
+        .unwrap();
+    let update = doc.append("new | row\n# Next\nvisible\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    view.reset(3).unwrap();
+    assert!(view.is_collapsed(id));
+    assert_eq!(render(&doc, &mut view, true).text, oracle(&doc, &[]));
+    let mut budget = Budget::new(WorkLimit::unlimited());
+    assert_eq!(
+        view.set_preview(&doc, Some(FoldId::Table(TableId(99))), &mut budget),
+        Err(LayoutError::InvalidRange)
+    );
+    assert_eq!(budget.used(), WorkLimit::default());
+    assert_eq!(view.preview(), Some(id));
+    view.set_preview(&doc, None, &mut budget).unwrap();
+    assert_eq!(
+        render(&doc, &mut view, true).text,
+        "A\n[fold]\nNext\nvisible\n"
+    );
 }

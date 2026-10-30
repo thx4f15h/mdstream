@@ -331,7 +331,7 @@ assert_eq!(matches[0].source, Span::new(0, doc.source().len()));
 
 ## 基础折叠
 
-`FoldView` 为每个视图保存独立的收起意愿、高度和检查点。当前支持顶层标题章节、围栏和缩进代码块：章节保留标题，正文及子章节变为一个占位；代码块整体变为占位。空章节不生成占位。父节点展开后恢复原来的子节点状态，源码、解析对象和 `Style::HIDDEN` 不变。
+`FoldView` 为每个视图保存独立的收起意愿、高度和检查点。当前支持顶层标题章节、围栏和缩进代码块、表格：章节保留标题，正文及子章节变为一个占位；代码块和表格整体变为占位，表格保留表头源码作为摘要。空章节不生成占位。父节点展开后恢复原来的子节点状态，源码、解析对象和 `Style::HIDDEN` 不变。
 
 ```rust
 use mdtui3::{Document, FoldView, FoldId, HeadingId, Budget, WorkLimit};
@@ -364,9 +364,39 @@ view.heights().viewport_budgeted(0..24, 0, &mut budget, &mut tiles);
 
 `set_collapsed` / `toggle` 返回源码变化范围和视图版本；从受影响边界起惰性过期后续高度与检查点，旧异步测量和布局继续任务会被拒绝。`view.measure` 验证本视图的测量及检查点依赖；`insert_checkpoint` 同时使下游布局失效。`reset` 保留折叠意愿与遮蔽，只重置基础估计和检查点。保留的高度仍可能是过期估计，展开后仅测量请求窗口；选择远处 tile 时默认局部近似，不能承诺精确绝对行号。`folded_from_checkpoint` 只接受本视图的有效起点及指定字节距离内的恢复，接入方恢复 sink 状态，恢复步骤也使用同一 Budget。
 
-每次 append/finish 或连续 Update 批处理后调用 `view.apply`，然后才能查询。对已有折叠，更新只检查最多六个开放章节和一个开放代码块；开启默认收起时还处理新增标题/块的元数据，不枚举历史折叠。新 tile 在 apply 返回前继承遮蔽。开放代码块的未分类行前缀暂属该块，闭合/下一块确认后可以收回；Setext 晚确认也能缩短前一章节的范围。普通源码追加不会读取旧正文。重复应用不清掉新测量，错误文档或不连续更新在修改视图之前被拒绝。
+每次 append/finish 或连续 Update 批处理后调用 `view.apply`，然后才能查询。对已有折叠，更新只检查最多六个开放章节和一个开放代码/表格块；开启默认收起时还处理新增标题/块/表格的元数据，不枚举历史折叠。新 tile 在 apply 返回前继承遮蔽。开放代码/表格块的未分类行前缀暂属该块，闭合/下一块确认后可以收回；Setext 晚确认也能缩短前一章节的范围。普通源码追加不会读取旧正文。重复应用不清掉新测量，错误文档或不连续更新在修改视图之前被拒绝。
 
-折叠导航、锚点恢复、有预算批量操作、临时展开和摘要读取见下文。目录 UI、摘要占位绘制、表格/容器折叠、手工交叉范围继续见 [TODO](TODO.md#折叠支持规划)。
+折叠导航、锚点恢复、有预算批量操作、临时展开和摘要读取见下文。目录 UI、摘要占位绘制、表格行预览/范围折叠、容器折叠、手工交叉范围继续见 [TODO](TODO.md#折叠支持规划)。
+
+### 整表折叠
+
+`FoldId::Table(TableId)` 把整张已识别表格（表头、分隔行、正文）替换为一个占位，`summary` 指向第 0 行的原始源码。宿主可以用 `summary_text` 读取有界原文前缀，或用 `DisplayExcerpt` 读取显示摘要；两者都需要自己的共享预算。列分隔符、对齐、边框和实际表头布局仍由渲染器处理，摘要接口不会自动拼接单元格或测量全表。仅含表头和分隔行的表也产生一个占位。
+
+```rust
+use mdtui3::*;
+
+let mut doc = Document::new();
+let mut view = FoldView::new(&doc, 1)?;
+view.set_defaults(FoldDefaults { table: true, ..Default::default() });
+let update = doc.append("| Name | Value |\n| - | - |\n| first | 1 |\n")?;
+view.apply(&doc, &update)?;
+let id = FoldId::Table(TableId(0));
+assert!(view.is_collapsed(id));
+let update = doc.append("| second | 2 |\n# After table\n")?;
+view.apply(&doc, &update)?;
+let candidate = doc.fold_candidate(id).unwrap();
+assert!(!candidate.open);
+assert_eq!(candidate.hidden, doc.table(TableId(0)).unwrap().source);
+let mut budget = Budget::new(WorkLimit {
+    queries: 1, objects: 1, bytes: 32, ..Default::default()
+});
+assert_eq!(candidate.summary_text(&doc, 32, &mut budget), Some("| Name | Value |\n"));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+表格的父节点是当前章节；父章节收放保留表格自身意愿。默认设置、批量命令、临时展开、源码锚点与书签复用现有契约，导航到隐藏单元格时仅展开必要的章节和表格。`Update.new_tables` 处理表头晚确认，包括已有段落块转成表格的情况；显式展开后追加行不会再次套用默认值。开放表格的待分类行前缀暂属表格，下一块确认时收回，EOF 封闭范围。最多六个章节和一个代码/表格块的开放范围上限保持不变。
+
+候选查询、切换及更新均不枚举行/列/单元格；排版直接跳过隐藏正文，占位高度只归属表格起点 tile。`examples/folding.rs` 演示百万字单元格收起后追加新行、读取表头前缀及有预算排版。前几行预览、连续行范围折叠和表格绘制仍是后续工作。
 
 ## 折叠导航与源码锚点
 
@@ -414,7 +444,7 @@ assert!(view.is_collapsed(FoldId::Heading(HeadingId(1))));
 
 `FoldBatch` 提供当前 revision 上的显式命令：`All` 展开/收起全部候选，`Subtree` 包括根及全部后代，`AtLevel` 只修改严格等于指定级别（1–6）的标题，`Focus` 展开目标及祖先并收起所有其他候选。聚焦会修改后代意愿；仅想露出目标并保留无关状态时使用 `FoldNavigationPolicy::Reveal`。
 
-`Siblings { target, collapsed }` 展开/收起与目标具有相同 `FoldCandidate::parent` 的其他候选，保留目标、祖先和各节点后代的原有意愿。兄弟可以是不同级别的标题或代码块；没有父节点的候选互为根层兄弟，包括首个标题之前的代码块。目标已被祖先隐藏时仍可操作，但不会自动展开祖先；没有兄弟时完成且无变化。该命令只修改已有节点，不改变新节点默认值。
+`Siblings { target, collapsed }` 展开/收起与目标具有相同 `FoldCandidate::parent` 的其他候选，保留目标、祖先和各节点后代的原有意愿。兄弟可以是不同级别的标题、代码块或表格；没有父节点的候选互为根层兄弟，包括首个标题之前的代码块和表格。目标已被祖先隐藏时仍可操作，但不会自动展开祖先；没有兄弟时完成且无变化。该命令只修改已有节点，不改变新节点默认值。
 
 ```rust
 use mdtui3::*;
@@ -424,6 +454,7 @@ let mut view = FoldView::new(&doc, 1)?;
 view.set_defaults(FoldDefaults {
     heading_levels: [false, true, true, true, true, true],
     code: true,
+    ..Default::default()
 });
 let update = doc.append("# Guide\n## Details\nbody\n")?;
 view.apply(&doc, &update)?;
@@ -447,9 +478,9 @@ assert!(!view.is_collapsed(FoldId::Heading(HeadingId(1))));
 
 批量任务渐进生效；取消、文档更新、外部折叠操作、默认设置变化或 reset 后，已经完成的修改保留。旧任务会在消费预算或修改视图之前被拒绝；任务自身修改及正常高度测量允许继续，完成后重复调用不再产生修改。每次实际修改复用单节点的高度遮蔽、检查点及测量失效，调用方可以在两次 advance 之间正常绘制。需要原子切换整棵树或取消回滚的宿主，不能将该接口当成事务。
 
-`FoldDefaults` 只规定**后续首次识别**的节点初始意愿：`heading_levels[0..6]` 对应 h1–h6，`code` 控制代码块，默认全部展开。`set_defaults` 为 O(1)，不追溯已有候选，不覆盖显式展开/收起；已有文档创建视图后仍全部展开，需要调整时使用批量命令。默认设置变化增加视图版本，但不改变当前布局；相同设置无操作。批量命令不修改默认设置，因此“全部展开”后新到来的标题仍按当前默认初始化。单节点收放继续保留子节点意愿；resize 保留默认设置和所有节点意愿。
+`FoldDefaults` 只规定**后续首次识别**的节点初始意愿：`heading_levels[0..6]` 对应 h1–h6，`code` 控制代码块，`table` 控制表格，默认全部展开。`set_defaults` 为 O(1)，不追溯已有候选，不覆盖显式展开/收起；已有文档创建视图后仍全部展开，需要调整时使用批量命令。默认设置变化增加视图版本，但不改变当前布局；相同设置无操作。批量命令不修改默认设置，因此“全部展开”后新到来的标题仍按当前默认初始化。单节点收放继续保留子节点意愿；resize 保留默认设置和所有节点意愿。
 
-`view.apply` 通过 `Update.new_headings` / `new_blocks` 初始化新候选，Setext 晚确认使用新 HeadingId，即使其块早已存在；重复应用不会重置意愿。`default_visits` 计量检查的新增标题/块元数据，`range_visits` 继续计量最多七个已有开放范围。初始化成本计入新增对象事件，不宣称任意大 Update 的消费具有整帧硬预算；没有新的候选时，不回访历史节点或读取旧正文。合并 Update 在 apply 时统一使用当前默认设置；需要在流中切换默认值时，先应用切换前的更新。
+`view.apply` 通过 `Update.new_headings` / `new_blocks` / `new_tables` 初始化新候选，Setext 和表格晚确认使用新 HeadingId/TableId，即使其块早已存在；重复应用不会重置意愿。`default_visits` 计量检查的新增标题/块/表格元数据，`range_visits` 继续计量最多七个已有开放范围。初始化成本计入新增对象事件，不宣称任意大 Update 的消费具有整帧硬预算；没有新的候选时，不回访历史节点或读取旧正文。合并 Update 在 apply 时统一使用当前默认设置；需要在流中切换默认值时，先应用切换前的更新。
 
 可运行示例：`cargo run -r --example fold_batch`。
 
@@ -485,7 +516,7 @@ for target in [Some(root), None] {
 
 ## 跳转历史与书签
 
-`Bookmark::new(&doc, source, viewport_offset)` 保存文档身份、精确 UTF-8 源码锚点、捕获时所在的章节/代码 ID，以及目标行相对视口顶端的行偏移。源码应来自实际排版或精确跳转目标；普通滚动后先用 `Navigator::reconcile_source` 回填映射，不能把估计的 tile 起点当作精确返回位置。书签可单独保存，并通过 `Bookmark::navigation` 创建最小路径展开任务；可以用于同一文档的其他视图。追加、finish、Setext 晚确认和 resize 后仍以保存的源码位置为准，目标 ID 仅是捕获时的元数据。EOF 使用左亲和，新增内容不会移动旧 EOF 书签；重载后的新文档身份会被拒绝。
+`Bookmark::new(&doc, source, viewport_offset)` 保存文档身份、精确 UTF-8 源码锚点、捕获时所在的章节/代码/表格 ID，以及目标行相对视口顶端的行偏移。源码应来自实际排版或精确跳转目标；普通滚动后先用 `Navigator::reconcile_source` 回填映射，不能把估计的 tile 起点当作精确返回位置。书签可单独保存，并通过 `Bookmark::navigation` 创建最小路径展开任务；可以用于同一文档的其他视图。追加、finish、Setext 晚确认和 resize 后仍以保存的源码位置为准，目标 ID 仅是捕获时的元数据。EOF 使用左亲和，新增内容不会移动旧 EOF 书签；重载后的新文档身份会被拒绝。
 
 `NavigationHistory` 保存当前条目和线性的前进/后退分支。普通滚动用 `replace_current` 更新当前返回位置；新跳转成功后才 `push` 目标并截断前进分支。完全相同的书签是无操作，保留前进分支；相同源码、不同偏移或目标元数据则是不同条目。`navigation` 在历史边界返回 `None`，否则创建可暂停的 `HistoryNavigation`；完成后自动移动历史游标，宿主将返回的 `ScrollTarget` 应用到 Navigator。
 
@@ -601,7 +632,7 @@ assert_eq!(text, "first\nsecond\n");
 | `src/annotations.rs` | 区间样式、隐藏聚合、最新 revision |
 | `src/references.rs` | 有长度上限的标签规范化和 BTreeMap 符号表 |
 | `src/layout.rs` | lazy 高度与遮蔽树、viewport、锚点和过期测量拒绝 |
-| `src/folding.rs` / `src/frame.rs` | 章节/代码块候选、独立折叠视图、预算排版和占位 |
+| `src/folding.rs` / `src/frame.rs` | 章节/代码块/表格候选、独立折叠视图、预算排版和占位 |
 | `src/checkpoints.rs` | 有效检查点的范围失效和前驱查询 |
 | `src/table.rs` | 表格行/单元格、对齐、流式单元格解析和列宽提示 |
 | `src/headings.rs` | 标题 arena 和六个级别的索引 |
