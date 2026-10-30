@@ -43,6 +43,7 @@ mod layout;
 mod math;
 mod model;
 mod navigation;
+mod paragraph_folds;
 mod references;
 mod search;
 mod source_folds;
@@ -89,6 +90,7 @@ pub use layout::{
 pub use math::{Math, MathChunk, MathContent, MathId, MathKind, MathObjects};
 pub use model::*;
 pub use navigation::{NavAction, Navigator, ScrollTarget};
+pub use paragraph_folds::{ParagraphFoldCandidate, ParagraphFoldCandidates};
 pub use references::MAX_LABEL_BYTES;
 pub use search::{Selection, SourceSearch, TaskState};
 pub use source_folds::{

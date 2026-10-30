@@ -967,3 +967,17 @@ README/TODO 已同步，只勾选显式开放顶层段落前缀折叠。容器�
 项目 devShell 全部验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 **830 项**、`cargo test --doc` **65 项**、`cargo fmt --all -- --check` 及 `git diff --check`。新增 `container_paragraph_folding` release 示例在百万字追加和兄弟条目恢复后仅 **6 帧/32 计费字节/一次段尾回调**；原 paragraph_folding、source_folding、container_folding release 示例均通过。完整日志 `/tmp/mdtui3-container-paragraph-validation.log`，专项日志 `/tmp/mdtui3-container-paragraph-targeted.log`。
 
 README/TODO 已同步；已交付显式源码前缀核心。自动发现/长度默认策略、逻辑/显示行数前缀、完整字素/对象截断、媒体详情、完整容器/tab 方言及终端排版继续保留 TODO。保持零运行时依赖、禁止 unsafe 和累计 O(n log n)/空间 O(n) 契约。
+
+## 2026-10-30 长段落有预算候选发现交付
+
+新增 `ParagraphFoldCandidates` / `ParagraphFoldCandidate`：按半开源码窗口发现顶层及容器逻辑段落，并按整段已分类源码字节下限筛选。结果包含首物理叶块 BlockId、确切容器、完整源码包络、classified_end 和开放状态；从段中、后续物理叶块或待分类尾部起步可定位更早的首叶块，结果有序且无重复。长度包含原始语法、容器前缀及 CRLF，待分类字节不帮助达到下限；空窗口没有结果，允许非 UTF-8 边界的元数据窗口。
+
+构造 O(1)，每步原子消费 1 query / 1 object；不合格段落、非段落叶块和结束查找同样计费，零正文/tiles/recovery 读取。多叶块段落无论是否达到长度下限都直接跳到段尾。复用有序块范围、已有闭合容器段尾索引与活动首尾，每步固定次数 O(log B + log P) 查询，游标 O(1)，无新增解析索引或逐帧历史枚举；输出 Vec 可复用，分配沿用摊还契约。千层引用/百万字、4096 物理叶块、4096 历史段落中的单段窗口均只需一个步骤；250 层列表发现同样一个步骤，注册祖先路径另按既定预算处理。
+
+游标绑定文档及 revision，非空追加/首次 finish 使旧任务失效；验证错误不改变输出或消费预算。开放尾部暂定到 EOF，Setext/整表迟确认移除候选、晚表头分离收缩范围、作用域边界和 EOF 冻结。宿主可按新增字节窗口重新发现普通增长的原段落，缓存的未注册候选在迟确认后需重查受影响的原窗口。发现不绑定视图，注册、折叠、临时预览和 resize 不影响游标，也不排除已注册/被隐藏段落；选择后用现有三个段落注册入口继续共享当帧预算，原有重叠及端点路径验证保持。已注册对象仍由 FoldView::apply 维护。
+
+新增 **14 项**专项验收：400 个独立源码包络/1600 组窗口和长度筛选模型、UTF-8 全切点及逐前缀、CRLF/EOF/部分 tab/lazy、窗口每个字节边界、开放待分类长度、迟确认成功/失败、预算原子暂停与 4096 非候选逐项计费、共享注册预算及 2000 次祖先检查、独立视图与注册/预览/reset、错误文档/旧 revision/无效窗口、合并通知/重放和旧测量/注册拒绝、240 轮流式范围/可见性模型、千层/百万字/250 层列表/4096 历史及物理叶块。百万字后逐字追加 1000 次，各局部窗口恰好一个发现步骤、视图恰好 1000 次活动刷新；inline 只增加 1000，祖先及段尾索引不增长。未修改解析器或既有语法预期。
+
+项目 devShell 验收全部通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 **844 项**、`cargo test --doc` **66 项**、`cargo fmt --all -- --check` 及 `git diff --check`。新 `paragraph_discovery` release 示例：从百万字中段发现原首叶块仅 **1 query/object、0 正文字节**，共享预算注册合计 **8 帧**，追加后局部窗口保持身份；既有 container_paragraph_folding 示例仍为 **6 帧/32 字节/一次段尾回调**。完整日志 `/tmp/mdtui3-paragraph-discovery-validation.log`；专项日志 `/tmp/mdtui3-paragraph-discovery-targeted.log`。
+
+README/TODO 已同步，本单元完成有预算候选发现。自动注册/默认长度策略、逻辑/显示行数前缀、完整字素/对象截断、媒体详情、完整容器方言及终端 UI 保留 TODO；零运行时依赖、禁止 unsafe 和累计复杂度契约保持。

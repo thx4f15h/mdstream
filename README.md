@@ -1677,7 +1677,7 @@ assert!(!view.is_collapsed(id));
 
 段尾回调依然表示这次布局已跳过的折叠尾部，即使文档尚未结束；追加使旧布局任务过期，宿主重建局部布局。收起范围增长、收缩或删除从原隐藏起点失效高度/检查点，过期测量和注册/枚举/导航任务均拒绝。展开及预览期间也维护活动范围，退出预览时使用最新边界；部分 tile 继续保留前缀/占位和后续可见内容，`paragraph_end` 的 object/recovery 预算及恢复规则保持不变。手工范围与整段预留不相交，章节祖先、批量和源码导航复用现有组合。
 
-最多一个顶层段落活动，视图只保留一个更新槽；每次通知只查原 BlockId 和该注册，O(log R + log F + log T)，不扫描历史注册、正文或祖先。封口/移除后退出槽，旧 EOF tile 沿用一次性边界校正；每个视图状态独立。解析器和语法索引没有新增工作。15 项专项验收覆盖 384 组独立换行布局、240 轮流式区间/高度模型、UTF-8 全切点/逐前缀及合并通知、各种迟确认/失败、百万字增长与恢复、4096 历史注册、千层容器边界、预算暂停和旧任务拒绝。`paragraph_folding` release 示例现在先注册并收起开放段落，再追加百万字及后续段落。容器跨叶块身份见下方；自动发现/长度默认策略、按显示行数截断、完整对象边界与终端排版仍在 TODO。
+最多一个顶层段落活动，视图只保留一个更新槽；每次通知只查原 BlockId 和该注册，O(log R + log F + log T)，不扫描历史注册、正文或祖先。封口/移除后退出槽，旧 EOF tile 沿用一次性边界校正；每个视图状态独立。解析器和语法索引没有新增工作。15 项专项验收覆盖 384 组独立换行布局、240 轮流式区间/高度模型、UTF-8 全切点/逐前缀及合并通知、各种迟确认/失败、百万字增长与恢复、4096 历史注册、千层容器边界、预算暂停和旧任务拒绝。`paragraph_folding` release 示例现在先注册并收起开放段落，再追加百万字及后续段落。容器跨叶块身份及有预算候选发现见下方；自动注册/长度默认策略、按显示行数截断、完整对象边界与终端排版仍在 TODO。
 
 
 ### 容器内多物理叶块段落的前缀折叠
@@ -1707,7 +1707,48 @@ assert_eq!(candidate.source.end, doc.source().find(">\n").unwrap());
 
 解析器只在真实逻辑段落闭合时写一个 `first -> end` 有序索引，`Work::paragraph_closures` 记录写入次数；P 个闭合段落占 O(P)，每次封口 O(log P)，不枚举物理叶块。活动首尾复用 `container_title/current`，普通增长不写此索引。注册构造 O(log P + log R)；随后两端祖先路径逐项共享 Budget，任务 O(1) 空间。每个视图仍仅有一个活动段落槽：普通增长 O(log R + log F + log T)，闭合时额外一次 O(log P) 查询；不扫描历史注册、正文或祖先。保留累计 O(n log n)、空间 O(n) 和摊还成本契约。
 
-`cargo run -r --example container_paragraph_folding` 演示引用中的列表条目、跨物理叶块注册、百万字追加及兄弟条目恢复。15 项专项测试覆盖 288 组独立布局、240 轮/960 次切换的可见性与高度模型、UTF-8 全切点/逐前缀、CRLF/EOF、部分 tab/lazy 续行、长表头及长分隔行成功/失败、千层引用与 250 层列表两端路径、4096 历史段落/物理叶块、预算暂停、检查点恢复及旧任务/测量拒绝。自动发现/长度策略、显示行数与完整对象截断、媒体详情、完整容器语法及终端排版继续保留 TODO。
+`cargo run -r --example container_paragraph_folding` 演示引用中的列表条目、跨物理叶块注册、百万字追加及兄弟条目恢复。15 项专项测试覆盖 288 组独立布局、240 轮/960 次切换的可见性与高度模型、UTF-8 全切点/逐前缀、CRLF/EOF、部分 tab/lazy 续行、长表头及长分隔行成功/失败、千层引用与 250 层列表两端路径、4096 历史段落/物理叶块、预算暂停、检查点恢复及旧任务/测量拒绝。有预算候选发现见下节；默认长度/自动注册策略、显示行数与完整对象截断、媒体详情、完整容器语法及终端排版继续保留 TODO。
+
+## 长段落有预算候选发现
+
+`ParagraphFoldCandidates::new(document, window, min_bytes)` 在半开源码窗口中分帧发现可注册的顶层及容器逻辑段落。窗口从段中、任意物理续行或待分类尾部开始时，也返回更早的首叶块；结果按源码排序，同一段落只返回一次。空窗口无结果，窗口允许落在 UTF-8 标量内部，因为发现过程不读取字节。无效范围返回 `InvalidRange`。
+
+`ParagraphFoldCandidate` 包含稳定首叶块 `block`、确切 `container`、整段 `source`、`classified_end` 与 `open`。`min_bytes` 是**整段已分类源码字节数的包含式下限**，包括语法、容器前缀、CRLF 等，不是窗口交集或显示长度；0 接受所有非空合格段落。开放段落的 `source` 暂定到当前 EOF，但待分类尾部不计入长度筛选，预览上限仍必须严格小于 `classified_end - source.start`。未形成首叶块的待分类输入、标题、代码、表格、空行、其它非段落叶块及未达到固定注册边界的闭合段落不返回。
+
+```rust
+use mdtui3::*;
+let mut doc = Document::new();
+doc.append("> first line\n> second line\n")?;
+let mut task = ParagraphFoldCandidates::new(&doc, Span::new(16, 17), 20)?;
+let mut out = Vec::new();
+let mut budget = Budget::new(WorkLimit {
+    queries: 1, objects: 1, ..Default::default()
+});
+assert_eq!(task.advance(&doc, &mut budget, &mut out)?, Completion::Covered);
+let candidate = out[0];
+assert_eq!(candidate.block, BlockId(0));
+assert_eq!(candidate.source, Span::new(0, doc.source().len()));
+assert!(candidate.open && candidate.container.is_some());
+assert_eq!(budget.used().bytes, 0);
+let mut view = FoldView::new(&doc, 1)?;
+let mut registration = SourceFoldRegistration::container_paragraph(
+    &doc, &view, candidate.block, 8
+)?;
+// 本帧发现已用完预算，注册必须保留进度，下一帧再处理祖先路径。
+assert_eq!(registration.advance(&doc, &mut view, &mut budget)?.completion,
+    Completion::BudgetExhausted);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+构造 O(1)，每次检查一个逻辑段落或非段落物理叶块，原子扣 1 query / 1 object；不匹配长度的段落和结束查找也计费。多叶块段落直接跳到逻辑段尾，长度不符也不逐叶块检查。零正文字节、tile、recovery 消费；预算不足返回 `BudgetExhausted` 并保留位置，`Covered` 后同 revision 的重复调用免费。每次成功进入 `advance` 清空并复用调用方 Vec；文档归属/版本错误不修改输出和预算。输出容量受当帧对象预算约束，Vec 扩容沿用摊还成本契约。
+
+游标和结果属于当前文档 revision。非空 append/首次 finish 使旧游标返回 `StaleContinuation`，包括已完成或空窗口游标；另一文档返回 `WrongDocument`。普通增长后可以仅查询新增字节窗口，并重新发现包含它的原段落。Setext/整表迟确认移除候选，晚表头分离会收缩段尾，作用域退出使它封口；若宿主缓存了未注册候选，应重新查询受影响的原窗口，不能只靠新增字节窗口推断旧候选是否仍存在。已注册段落沿用 `FoldView::apply` 的收缩/移除/稳定身份规则。
+
+发现不读取或改变视图：折叠、临时预览、注册、测量及 resize 不使游标失效，结果也包含已注册或已被祖先隐藏的段落。宿主选择候选后，按 `container` / `open` 使用 `container_paragraph` / `open_paragraph` / `paragraph`，继续共享当帧 Budget；重复、手工重叠和祖先交叉由已有注册验证拒绝。发现不会自动创建注册、替用户收起内容或选择预览前缀。默认长度/自动注册策略、显示行数及完整字素/对象截断仍保留 TODO。
+
+每步只做固定次数 O(log B + log P) 索引查询（B 为物理块，P 为闭合容器段落），复用块的有序源码范围、已有 `first -> end` 索引和唯一活动段落端点；不新增解析索引、不遍历祖先或历史段落。任务 O(1) 空间。窗口内非段落叶块逐项计费，因此整窗完成成本取决于实际访问项；单帧不会无预算全量枚举。千层/百万字、4096 物理叶块及 4096 历史段落中的单段窗口均只需一个步骤，250 层列表的发现不提前支付其 1000 次注册祖先检查。
+
+`tests/paragraph_discovery.rs` 的 14 项验收覆盖 400 个独立段落包络、1600 组随机窗口/长度筛选、UTF-8 全切点/逐前缀、CRLF/EOF/部分 tab/lazy、迟确认成功/失败、预算原子暂停、视图变更/独立注册、通知合并与旧任务/测量拒绝、240 轮流式范围/可见性模型及百万字后 1000 次逐字追加。`cargo run -r --example paragraph_discovery` 演示从百万字段中发现首叶块、共享预算注册及新 revision 的局部重查。
 
 ## 表格连续行范围折叠
 
@@ -2102,6 +2143,7 @@ assert_eq!(text, "first\nsecond\n");
 | `src/table_preview.rs` | 共享行数/字节上限与 Budget 的表格前几行摘要 |
 | `src/table.rs` | 表格行/单元格、对齐、流式单元格解析和列宽提示 |
 | `src/source_folds.rs` | 手工范围/段落前缀预览身份、两端路径预算验证及窗口枚举 |
+| `src/paragraph_folds.rs` | 顶层/容器逻辑段落窗口发现、长度筛选和共享预算游标 |
 | `src/headings.rs` | 标题 arena、全局/作用域六级索引及源码上下文边界 |
 | `src/heading_search.rs` | 有预算的标题显示名称检索、级别过滤和命中源码映射 |
 | `src/anchors.rs` | revision 绑定的有预算标题 slug、全局消歧和 fragment 解析 |
@@ -2141,6 +2183,7 @@ nix develop -c cargo run -r --example table_row_folding
 nix develop -c cargo run -r --example source_folding
 nix develop -c cargo run -r --example paragraph_folding
 nix develop -c cargo run -r --example container_paragraph_folding
+nix develop -c cargo run -r --example paragraph_discovery
 nix develop -c cargo run -r --example search
 nix develop -c cargo run -r --example heading_search
 nix develop -c cargo run -r --example anchors
