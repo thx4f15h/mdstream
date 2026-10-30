@@ -2248,6 +2248,28 @@ nix develop -c cargo run -r --example history
 
 本 checkout 已安装 Rust skill 提供的本地 pre-commit：运行 `cargo fmt --all` 后只重新 stage 原本暂存的 Rust 文件。格式化可能改变提交中的行号；其它未暂存文件可能被格式化，但不会自动暂存。钩子不随 Git 分发，紧急情况下可用 `git commit --no-verify` 跳过。
 
+## 可复现语法生成与失败缩减
+
+`tests/syntax_fuzz.rs` 的 v1 语料固定四个持久化种子（0、1、`0x12345678`、`0xdeadbeefcafebabe`），每种 36 例，共 144 例；源码、精确分块位置及种子一起用 FNV-1a 指纹锁定。生成器使用显式 u64 wrapping 运算和转换前取模，不依赖系统随机数或时间。十二类块产生式组合递归行内语法、引用/列表前缀、晚定义、失败/未闭合候选、中文/emoji、LF/CRLF，以及分类窗口附近的长行。逐字符、随机和语法标记边界三种分块计划共检查 **19,536 个开放前缀**，再检查 EOF 和重复 finish；实际语料到达标题、表格、容器、链接、数学、脚注和代码对象，防止生成器退化为普通文本。
+
+每个分块前缀都和同一前缀的一次 append 对照，复用既有 `chunking` 完整快照：块/容器/标题/表格、稳定对象 ID 与符号、数学/脚注内容、样式和显示映射。不比较文档身份或 append 修订次数。同时独立检查 UTF-8 区间、块/tile/run/display 源码覆盖、容器父顺序/深度/范围、对象引用和单元格/内容映射顺序，以及 pending 上限、finish 幂等与 EOF 后 append 拒绝。这验证增量一致性和数据不变量，不产生 CommonMark/GFM 的标准期望；官方样例评分保持独立。
+
+命令行与 nextest 使用同一驱动，零新增依赖。CLI 默认 seed 0、48 例；`--seed` 使用十进制 u64。正常结束返回 0；发现失败先保存原始 case，再确定性缩减，返回 1；参数、文件或格式错误返回 2。
+
+```bash
+nix develop -c cargo nextest run --test syntax_fuzz --no-fail-fast --success-output immediate
+nix develop -c cargo run -r --example syntax_fuzz -- --seed 305419896 --cases 256
+# 注入演示预期返回 1，生成原始文件及同路径的 .min 文件：
+nix develop -c cargo run -r --example syntax_fuzz -- --inject split-crlf --output /tmp/fuzz.case
+nix develop -c cargo run -r --example syntax_fuzz -- --replay /tmp/fuzz.case.min --output /tmp/fuzz-replay.case
+```
+
+case 文件首行为 `mdtui3-syntax-fuzz-v1`，后续固定字段为 `seed`、`case`、`fault`、`cuts`，空行之后是原始 UTF-8 输入，保留 CRLF、NUL、空追加和无换行 EOF。cuts 为非递减绝对字节端点，最后隐式追加剩余后缀；重放直接使用文件内容，不重新调用生成器，越界或非 UTF-8 边界会拒绝。nextest 失败也输出完整原始/缩减 case；CLI 在开始缩减前写入原始文件。修改生成算法需明确更新版本和语料指纹，不能以改种子或跳过失败样本掩盖缺陷。
+
+缩减先按固定顺序由粗到细删除 Unicode 字符区间，再合并分块，反复执行到固定点；删除时同步映射切点，始终保持合法 UTF-8。只接受保持同一阶段/属性签名的失败，panic unwind 也会被记录；不以耗时或随机次数停止。结果对单字符删除和单切点移除不可再减，不保证全局最短或最简单语法。此测试工具会反复解析/复制全文，适用于有界语料；不承担解析核心的预算或复杂度保证，也不处理进程 abort、OOM 或挂死的恢复。
+
+三个故障只存在于测试驱动：观察快照丢失 strong 样式、块范围越界，以及分块适配器在 CR/LF 分离时漏传 LF。验收确认每种故障被检测、缩减结果可重放且确定，关闭注入后通过；前两者分别缩减为 6/1 字节，第三者为 `\r\n` 并保留中间切点。既有随机字符测试、标准样例与百万字/深嵌套计数测试继续运行；32 位索引执行与更广的性能矩阵仍见 TODO。
+
 ## 存储实测与标准样例范围
 
 `annotation_arena_stats`、高度树/检查点的 `arena_stats`、高度依赖树的 `dependency_arena_stats` 返回 Vec 容量字节数、节点数与实际容量增长分配次数。统计不包含 allocator 元数据、碎片、其它 String/Vec 或用户状态的间接堆分配。`scaling` 示例同时记录操作计数、查询分位数与容量；`one_byte_reused` 对照复用通知缓冲的逐字符输入。

@@ -1002,3 +1002,24 @@ README/TODO 已同步，本单元完成有预算候选发现。自动注册/默�
 项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 860 项、`cargo test --doc` 67 项、`cargo fmt --all -- --check`、`git diff --check`。完整日志 `/tmp/mdtui3-paragraph-auto-validation.log`；专项日志 `/tmp/mdtui3-paragraph-auto-targeted.log`、`/tmp/mdtui3-paragraph-auto-targeted-extra.log`。新 release 示例 `paragraph_auto_folding` 为 8 帧、零正文读取、显式展开跨封口保留；既有 `paragraph_discovery` 与 `container_paragraph_folding` release 示例也通过（后者 6 帧/32 源码字节）。
 
 README/TODO 已同步。本单元完成有预算自动注册与源码字节长度默认策略；逻辑/显示行数前缀、完整字素/对象截断、媒体详情、完整容器方言及终端 UI 继续保留 TODO。零运行时依赖、禁止 unsafe 和累计复杂度契约保持。
+
+
+## 2026-10-30 可复现语法生成 fuzz 与失败缩减交付
+
+新增 `tests/support/syntax_fuzz.rs` 和 `examples/syntax_fuzz.rs`，共享固定版本生成器、失败属性检查、精确输入/分块重放及确定性缩减。四个持久化 u64 种子各 36 例，共 144 例、19,536 个开放前缀；源码/分块/种子用 FNV-1a 指纹 8310356521655359848 锁定。十二类块产生式组合两层行内语法、显式引用/列表、晚定义、未闭合/错误候选、中文/emoji、CRLF 和跨 1 KiB 分类窗口长行，逐字符/随机/语法标记分块均参与验收。独立覆盖检查实际到达 46 个标题、53 张表、707 个容器、191 个链接、26 个行内数学、61 个脚注引用、72 个代码块和 32 个数学块；68 例含 CR、38 例含 Unicode、24 例跨分类窗口。
+
+`tests/chunking.rs` 的完整快照原样移入 `tests/support/snapshot.rs`，只放开测试模块可见性，没有删减或规范化旧语义投影。每个开放前缀及 EOF 与一次 append 对照，覆盖块/容器/标题/表格、链接/引用符号、数学/脚注及内容映射、样式与显示映射；独立验证 UTF-8 范围、源码覆盖、父先于子与深度/包含、对象 ID、行/单元格和 payload 顺序、pending 上限、重复 finish 和 EOF 后 append 拒绝。未修改解析核心或官方标准样例，零新增依赖，现有复杂度和预算测试全部保留。
+
+失败文件 `mdtui3-syntax-fuzz-v1` 保存种子、case 序号、注入模式、绝对字节切点及原始输入，保留空追加、NUL、CRLF 和未终止 EOF；重放不重新生成。CLI 失败先写原件，再写 `.min`，退出 1；正常退出 0，格式/参数/IO 错误退出 2。缩减按固定次序删除字符区间和分块切点、映射剩余端点，直到单字符/单切点删除均不能保持原失败阶段/属性；结果确定且保持 UTF-8，不承诺全局最小。工具可捕获 panic unwind；对全文重复解析属于测试成本，不声称解析核心的增量预算适用于缩减器，abort/OOM/挂死恢复不在本单元范围。
+
+新增 7 项验收覆盖固定语料、指纹与文件往返、非法切点/版本拒绝、实际语法覆盖，以及三个独立注入故障：
+
+- strong 样式丢失命中 `live.semantic.runs`，144 字节/144 切点缩减为 `**g**\n`（6 字节、0 显式切点）。
+- 块区间越界命中 `live.range.utf8`，缩减为 `\n`（1 字节）。
+- CRLF 分块时漏传 LF 命中 `live.semantic.source`，缩减为 `\r\n`（2 字节），保留唯一必需切点 1。
+
+三种注入只改变驱动的观察快照或输入适配器，不进入库。测试重复缩减得到同一 case，并逐字符/逐切点验证不可再减；取消注入后同一输入通过。CLI 独立验收额外 256 例（seed 305419896）通过，三个故障及缩减文件重放均按预期退出 1，重复缩减文件 `cmp` 字节一致，去掉注入的重放均退出 0。
+
+项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 **867 项**、`cargo test --doc` **67 项**、`cargo fmt --all -- --check`、`git diff --check`。完整日志 `/tmp/mdtui3-syntax-fuzz-validation.log`；专项及旧分块回归 `/tmp/mdtui3-syntax-fuzz-targeted.log`；CLI 生成/故障/重放 `/tmp/mdtui3-syntax-fuzz-cli.log`，原件及缩减文件在 `/tmp/mdtui3-syntax-fuzz-{lose-style,bad-range,split-crlf}.case[.min]`。
+
+README/TODO 已同步。完成可复现语法生成和失败缩减，不将自比较当作 CommonMark/GFM 合规率或覆盖率引导 fuzz；32 位索引执行、更广性能矩阵、其余语法边界及终端 UI 继续保留 TODO。
