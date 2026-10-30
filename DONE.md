@@ -346,3 +346,15 @@
 验收在项目 devShell 内通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo nextest run --no-fail-fast`（292 项）、`cargo nextest run --release --no-fail-fast`（292 项）、`cargo test --doc`（27 项）、`cargo fmt --all -- --check`、`git diff --check`。`cargo run -r --example footnotes` 验证晚定义保留编号，6 帧读取 40 字节正文。日志：`/tmp/mdtui3-footnotes-validation.log`。
 
 保留零运行时依赖、`forbid(unsafe_code)`、累计解析 O(n log n) 与空间 O(n)。多行/多段及容器内定义、正文 Markdown 排版、编号上标和文末脚注区、双向跳转/返回与实际对象回调仍见 TODO；通用显示暂时保留 `[^label]` 原文标记，隐藏顶层定义。
+
+
+## 2026-10-30 表格连续行范围折叠交付
+
+- [x] **范围身份与边界**：`TableRowRange { table, start, end }` / `FoldId::TableRows` 绑定固定正文行号 `[start, end)`，排除表头/分隔行；不接受空、倒序、未来行或无效 TableId。`FoldView::insert_table_rows` 初始展开、精确重插保留意愿，视图内即使展开/预览也禁止重叠及包含，邻接范围保持独立占位；`remove_table_rows` 可撤销注册并重设边界。文档按 ID 查询 O(1) 元数据，语法候选枚举不生成任意行组合。
+- [x] **视图组合与预算消费**：行范围直接父节点是整表；章节/容器/整表收起隐藏子占位，展开恢复局部选择。支持 set/toggle、All/Subtree/Siblings/Focus 批量、临时展开、源码导航和锚点、独立视图、resize 与旧测量/任务拒绝。批量逐个访问已注册范围，1 query / 1 object 原子推进；布局和摘要复用共享 Budget，完整隐藏内部使用高度区间遮蔽，占位归属起点 tile。独立 TablePreview 不改变范围状态。
+- [x] **流式与 EOF**：允许选入已索引但未完成末行，其源码终点随该行增长；换行/finish 固定，未分类尾部及新行不自动加入。完整行结束于当前 EOF 时记录唯一边界候选，下一次更新校正同一个可增长 tile 的覆盖；否则旧 EOF 内新增的可见行会被误遮蔽。单次追加只更新一个活动行范围或一次 EOF 边界，不扫描所有历史区间；合并更新、重复更新/finish、预览恢复均使用当前范围。
+- [x] **复杂度**：BTreeMap 按稳定物理行起点保存不相交注册，前驱查找点覆盖、相邻项验证重叠；注册 O(log R)，切换/移除 O(log R + log F + log T)，不遍历行/列/源码/覆盖 tile。注册空间 O(正文行数)，重复切换不积累历史；六个根章节 + 整表 + 当前末行最多 8 个逐次刷新范围，容器/内层章节继续共享末端。百万字后 1000 次逐字追加仅消费 1000 table bytes / 1000 次行范围刷新；4096 个历史范围后的普通追加零历史范围刷新。
+- [x] **验收**：新增 `tests/table_row_folding.rs` 13 项测试，覆盖 UTF-8 全切点/中间快照、CRLF、空/越界/重叠输入、邻接占位、同 tile 边界、首行摘要预算、隐藏图片、全部批量命令、导航/预览/旧任务、合并与 EOF；1200 次随机切换/预览/reset 对照独立可见区间与高度模型，240 次嵌套作用域流式增长/跨表验收，4096 个范围查找/切换及 1000 次大范围注册移除验收。独立 EOF 用例覆盖 12 种行长与 ASCII/中/🙂 后继，确认仅一次边界校正且新行可见。
+- [x] **项目 devShell**：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 305 项、`cargo test --doc` 28 项、`cargo fmt --all -- --check` 和 `git diff --check` 通过。`cargo run -r --example table_row_folding` 用 6 帧/38 个计费字节跳过百万字隐藏行，保留表头、前行及后续追加行。完整验收日志：`/tmp/mdtui3-table-row-folding-validation.log`。
+
+本轮交付固定、不相交正文行范围核心；没有改变 Markdown 源码、解析方言或零运行时依赖/禁止 unsafe 契约。真实表格与占位绘制、自动增长尾部策略、重叠/嵌套行区间及手工任意源码范围仍单独设计，终端 UI 不在本轮范围。

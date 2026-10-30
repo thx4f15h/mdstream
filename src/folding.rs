@@ -16,6 +16,18 @@ pub enum FoldId {
     Code(BlockId),
     Table(TableId),
     Container(ContainerId),
+    TableRows(TableRowRange),
+}
+
+/// Stable document-local body row interval, independent of source/visual width.
+/// Row zero is the header and cannot be included. End is exclusive; all selected
+/// rows must already be indexed. Register with FoldView::insert_table_rows.
+/// The last row may still grow, but later rows never join this fixed interval.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TableRowRange {
+    pub table: TableId,
+    pub start: usize,
+    pub end: usize,
 }
 
 /// Initial choices for candidates first discovered by a subsequent `apply`.
@@ -37,11 +49,11 @@ pub struct FoldDefaults {
 pub struct FoldCandidate {
     pub id: FoldId,
     pub parent: Option<FoldId>,
-    /// Whole section, code block, table or container, including the retained heading.
+    /// Whole section, code block, table, row range or container, including the retained heading.
     pub source: Span,
     /// Body replaced by a placeholder. Empty bodies produce no placeholder.
     pub hidden: Span,
-    /// Title, fence info, table header or container range; borrowed source metadata.
+    /// Title, fence info, table header, first selected row or container range.
     pub summary: Option<Span>,
     pub open: bool,
 }
@@ -201,8 +213,15 @@ struct Mask {
 pub(crate) struct FoldState {
     collapsed: BTreeMap<FoldId, Mask>,
     starts: BTreeSet<(usize, FoldId)>,
-    // At most six root sections and the active code/table block need individual
-    // range refreshes. Containers and scoped sections share the tail below.
+    // Registered disjoint ranges, including expanded and previewed choices.
+    // Stable physical starts support overlap validation and point predecessor
+    // queries without walking a table's rows or the other registered ranges.
+    row_ranges: BTreeMap<usize, TableRowRange>,
+    // A completed row can end exactly at EOF inside a still-growable tile.
+    // Refresh that one mask on the next update, even if its source span is fixed.
+    row_boundary: Option<FoldId>,
+    // Six root sections, the active code/table and one incomplete row range
+    // need individual refreshes. Containers and scoped sections share the tail.
     growing: BTreeSet<FoldId>,
     containers: crate::fold_ranges::FoldRanges,
     sections: crate::fold_ranges::FoldRanges,
@@ -255,6 +274,23 @@ impl Document {
     /// Open containers provisionally include unclassified source, like tables.
     pub fn fold_candidate(&self, id: FoldId) -> Option<FoldCandidate> {
         match id {
+            FoldId::TableRows(range) => {
+                if range.start == 0 || range.start >= range.end {
+                    return None;
+                }
+                let table = self.table(range.table)?;
+                let first = table.row(range.start)?;
+                let last = table.row(range.end - 1)?;
+                let source = Span::new(first.source.start, last.source.end);
+                Some(FoldCandidate {
+                    id,
+                    parent: Some(FoldId::Table(range.table)),
+                    source,
+                    hidden: source,
+                    summary: Some(first.source),
+                    open: !last.complete && !self.is_finished(),
+                })
+            }
             FoldId::Container(id) => {
                 let container = self.container(id)?;
                 let open = container.state != SyntaxState::Sealed && !self.is_finished();
@@ -449,6 +485,12 @@ impl FoldState {
         if let Some(candidate) = hidden {
             return FoldSegment::Hidden(candidate);
         }
+        if let Some((_, &range)) = self.row_ranges.range(..=offset).next_back()
+            && let Some(mask) = self.collapsed.get(&FoldId::TableRows(range))
+            && mask.candidate.hidden.range().contains(&offset)
+        {
+            return FoldSegment::Hidden(mask.candidate);
+        }
         let end = self
             .starts
             .range((offset, FoldId::Heading(HeadingId(0)))..)
@@ -467,6 +509,9 @@ impl FoldState {
         heights.cover(mask.tiles.clone(), false);
         self.starts.remove(&(mask.candidate.hidden.start, id));
         self.growing.remove(&id);
+        if self.row_boundary == Some(id) {
+            self.row_boundary = None;
+        }
         if self.shared_range(document, id) {
             self.range_index(id).set(Self::range_id(id), 0);
             self.open_ranges.remove(&(mask.candidate.hidden.start, id));
@@ -507,6 +552,20 @@ impl FoldState {
         }
         self.collapsed
             .insert(candidate.id, Mask { candidate, tiles });
+        self.track_row_boundary(document, candidate);
+    }
+
+    fn track_row_boundary(&mut self, document: &Document, candidate: FoldCandidate) {
+        if matches!(candidate.id, FoldId::TableRows(_)) {
+            if !candidate.open
+                && candidate.hidden.end == document.source().len()
+                && !document.is_finished()
+            {
+                self.row_boundary = Some(candidate.id);
+            } else if self.row_boundary == Some(candidate.id) {
+                self.row_boundary = None;
+            }
+        }
     }
 
     fn shared_range(&self, document: &Document, id: FoldId) -> bool {
@@ -593,6 +652,7 @@ impl FoldState {
             self.growing.remove(&candidate.id);
         }
         mask.candidate = candidate;
+        self.track_row_boundary(document, candidate);
         if shared {
             if old.open != candidate.open || !candidate.open {
                 self.range_index(candidate.id).set(
@@ -666,7 +726,101 @@ impl<S> FoldView<S> {
     pub fn version(&self) -> u64 {
         self.version
     }
-    /// Existing root section/code/table refreshes, shared tail checks and event-
+
+    /// Register a fixed, nonempty body row interval, initially expanded. Exact
+    /// reinsertion preserves its choice. Overlap (including nesting) with any
+    /// registered range in this view is rejected, even while expanded/previewed.
+    /// Adjacent ranges remain distinct placeholders. No source is read: O(log R).
+    /// Registration invalidates view tasks; no document syntax is changed.
+    pub fn insert_table_rows(
+        &mut self,
+        document: &Document,
+        table: TableId,
+        rows: Range<usize>,
+    ) -> Result<FoldId, LayoutError> {
+        self.check(document)?;
+        let range = TableRowRange {
+            table,
+            start: rows.start,
+            end: rows.end,
+        };
+        let id = FoldId::TableRows(range);
+        let candidate = document
+            .fold_candidate(id)
+            .ok_or(LayoutError::InvalidRange)?;
+        let start = candidate.source.start;
+        if let Some((_, &previous)) = self.state.row_ranges.range(..=start).next_back() {
+            if previous == range {
+                return Ok(id);
+            }
+            if previous.table == table && previous.end > rows.start {
+                return Err(LayoutError::InvalidRange);
+            }
+        }
+        if let Some((_, next)) = self.state.row_ranges.range(start..).next()
+            && next.table == table
+            && next.start < rows.end
+        {
+            return Err(LayoutError::InvalidRange);
+        }
+        self.state.row_ranges.insert(start, range);
+        self.version += 1;
+        Ok(id)
+    }
+
+    /// Forget a registered row interval and its local choice, including preview.
+    /// This permits replacing its bounds. Other folds retain their choices.
+    /// O(log R + log F + log T), with no scan of covered rows or tiles.
+    pub fn remove_table_rows(
+        &mut self,
+        document: &Document,
+        range: TableRowRange,
+    ) -> Result<Option<FoldChange>, LayoutError> {
+        self.check(document)?;
+        let id = FoldId::TableRows(range);
+        let candidate = document
+            .fold_candidate(id)
+            .ok_or(LayoutError::InvalidRange)?;
+        if !self.has_table_rows(document, range) {
+            return Ok(None);
+        }
+        self.state.remove(document, &mut self.heights, id);
+        if self.preview() == Some(id) {
+            self.preview = None;
+        }
+        self.state.row_ranges.remove(&candidate.source.start);
+        self.version += 1;
+        self.expire_from(document, candidate.hidden.start)?;
+        Ok(Some(FoldChange {
+            version: self.version,
+            source: candidate.hidden,
+        }))
+    }
+
+    /// Storage is bounded by the number of indexed body rows, not toggle count.
+    pub fn table_row_range_count(&self) -> usize {
+        self.state.row_ranges.len()
+    }
+
+    pub(crate) fn has_table_rows(&self, document: &Document, range: TableRowRange) -> bool {
+        document
+            .fold_candidate(FoldId::TableRows(range))
+            .is_some_and(|c| self.state.row_ranges.get(&c.source.start) == Some(&range))
+    }
+
+    pub(crate) fn next_table_rows(
+        &self,
+        start: usize,
+        end: usize,
+    ) -> Option<(usize, TableRowRange)> {
+        self.state
+            .row_ranges
+            .range(start..end)
+            .next()
+            .map(|(&at, &range)| (at, range))
+    }
+    /// Root section/code/table/row refreshes, a completed EOF row boundary,
+    /// shared tail checks and event-
     /// driven scoped-section/container refreshes; independent of body size and
     /// still-open depth. Title growth refreshes at most one scoped heading.
     pub fn range_visits(&self) -> u64 {
@@ -707,7 +861,7 @@ impl<S> FoldView<S> {
     /// preview. Appends and reset preserve preview, using current ranges on exit.
     ///
     /// A change atomically costs one query and one object for at most two nodes'
-    /// fixed index operations, O(log H + log C + log F + log T), with O(1) extra storage.
+    /// fixed index operations, O(log H + log C + log R + log F + log T), with O(1) extra storage.
     /// No source or covered tiles are scanned. An identical request is free.
     /// Rendering the newly visible window still needs its own shared budget.
     pub fn set_preview(
@@ -717,7 +871,7 @@ impl<S> FoldView<S> {
         budget: &mut Budget,
     ) -> Result<FoldPreviewProgress, LayoutError> {
         self.check(document)?;
-        // Validate IDs in O(1), before charging or changing the old preview.
+        // Validate before charging or changing preview; row registration costs O(log R).
         if let Some(id) = target {
             let valid = match id {
                 FoldId::Heading(id) => document.headings().get(id).is_some(),
@@ -726,6 +880,7 @@ impl<S> FoldView<S> {
                     .is_some_and(|block| matches!(block.kind, BlockKind::Code { .. })),
                 FoldId::Table(id) => document.table(id).is_some(),
                 FoldId::Container(id) => document.container(id).is_some(),
+                FoldId::TableRows(range) => self.has_table_rows(document, range),
             };
             if !valid {
                 return Err(LayoutError::InvalidRange);
@@ -842,6 +997,11 @@ impl<S> FoldView<S> {
         let candidate = document
             .fold_candidate(id)
             .ok_or(LayoutError::InvalidRange)?;
+        if let FoldId::TableRows(range) = id
+            && !self.has_table_rows(document, range)
+        {
+            return Err(LayoutError::InvalidRange);
+        }
         if self.is_collapsed(id) == collapsed {
             return Ok(None);
         }
@@ -912,14 +1072,23 @@ impl<S> FoldView<S> {
             return Ok(());
         }
         crate::apply_layout_update(document, update, &mut self.heights, &mut self.checkpoints)?;
-        debug_assert!(self.state.growing.len() <= 7);
-        let mut growing = [None; 7];
+        // Six root sections, one code/table, and at most one disjoint range
+        // containing the sole incomplete table row. No historical range scan.
+        debug_assert!(self.state.growing.len() <= 8);
+        let mut growing = [None; 8];
         for (slot, &id) in growing.iter_mut().zip(&self.state.growing) {
             *slot = Some(id);
         }
         let mut dirty = self.state.open_ranges.first().map(|&(start, _)| start);
         if dirty.is_some() {
             self.range_visits += 1; // One shared tail, independent of open depth.
+        }
+        if let Some(id) = self.state.row_boundary.take() {
+            self.range_visits += 1;
+            let candidate = document.fold_candidate(id).unwrap();
+            // Tile membership can change while the fixed row endpoint does not.
+            self.state.refresh(document, &mut self.heights, candidate);
+            dirty = Some(dirty.unwrap_or(usize::MAX).min(candidate.hidden.start));
         }
         for &id in &update.closed_containers {
             if self.state.collapsed.contains_key(&FoldId::Container(id)) {

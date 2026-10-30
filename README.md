@@ -519,7 +519,7 @@ view.heights().viewport_budgeted(0..24, 0, &mut budget, &mut tiles);
 
 每次 append/finish 或连续 Update 批处理后调用 `view.apply`，然后才能查询。对已有折叠，更新检查最多六个开放顶层章节和一个开放代码/表格块；开放容器与内层章节共享一次尾部遮蔽更新；新标题和容器关闭各检查相关作用域的至多六个末尾章节，另检查一个可能增长的旧标题。开启默认收起时还处理新增标题/块/表格/容器的元数据，不枚举历史折叠或开放容器祖先链。新 tile 在 apply 返回前继承遮蔽。开放容器/内层章节/代码/表格的未分类行前缀暂属该范围，闭合/下一块确认后可以收回；Setext 晚确认也能缩短前一章节的范围。普通源码追加不会读取旧正文。重复应用不清掉新测量，错误文档或不连续更新在修改视图之前被拒绝。
 
-折叠导航、锚点恢复、有预算批量操作、临时展开和摘要读取见下文。目录 UI、摘要占位绘制、表格连续行范围折叠、容器类型/任务策略、手工交叉范围继续见 [TODO](TODO.md#折叠支持规划)。
+折叠导航、锚点恢复、有预算批量操作、临时展开和摘要读取见下文。目录 UI、摘要占位绘制、容器类型/任务策略、手工交叉范围继续见 [TODO](TODO.md#折叠支持规划)。
 
 ### 整表折叠
 
@@ -549,7 +549,7 @@ assert_eq!(candidate.summary_text(&doc, 32, &mut budget), Some("| Name | Value |
 
 表格的折叠父节点是确切作用域的当前章节；该作用域还没有标题时挂在所属容器下，根作用域没有标题时无父节点。父节点收放保留表格自身意愿。默认设置、批量命令、临时展开、源码锚点与书签复用现有契约，导航到隐藏单元格时逐帧展开必要的顶层/内层章节、容器和表格。`Update.new_tables` 处理表头晚确认，包括已有段落块转成表格的情况；显式展开后追加行不会再次套用默认值。开放表格的待分类行前缀暂属表格，下一块确认时收回，EOF 封闭范围。最多六个顶层章节和一个代码/表格块仍单独刷新；任意多个开放内层章节与容器共用尾部，见下文。
 
-候选查询、切换及更新均不枚举行/列/单元格；排版直接跳过隐藏正文，占位高度只归属表格起点 tile。`examples/folding.rs` 演示百万字单元格收起后追加新行、读取表头前缀及有预算排版。前几行有界摘要读取见下文；连续行范围折叠和表格绘制仍是后续工作。
+候选查询、切换及更新均不枚举行/列/单元格；排版直接跳过隐藏正文，占位高度只归属表格起点 tile。`examples/folding.rs` 演示百万字单元格收起后追加新行、读取表头前缀及有预算排版。前几行有界摘要读取及连续行范围折叠见下文；表格绘制仍是后续工作。
 
 ### 容器折叠
 
@@ -689,7 +689,7 @@ assert!(!view.is_collapsed(FoldId::Heading(HeadingId(1))));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-创建任务为 O(1)，范围定位在第一次 `advance` 中消费 1 query、1 object；之后每个块或容器 opener 同样消费 1 query、1 object，包括非候选及不匹配级别/父节点的对象。子树范围通过索引定位；兄弟操作检查父节点隐藏范围内的块与容器 opener，包含后代元数据但不修改后代意愿，根层兄弟操作及其他命令分帧扫描块与容器索引。同起点、同范围的 List/Item/Table 通过容器前序顺序区分祖先，Subtree 与 Focus 不会误改同范围祖先/后代。既不扫描源码正文，也不逐 tile 更新隐藏范围。每步为 O(log B + log H + log C + log F + log T) 的固定次数索引操作（B 为块数），完整任务按实际访问的块与容器数计费。`visited` / `changed` 是累计对象访问数/实际状态变化数，`change` 是本次调用的区间包络及最新版本，耗尽返回 `BudgetExhausted`。任务仅保存 O(1) 游标状态；不复制候选列表或折叠快照。
+创建任务为 O(1)（行范围目标额外验证视图注册，O(log R)），范围定位在第一次 `advance` 中消费 1 query、1 object；之后每个块、容器 opener 或已注册行范围同样消费 1 query、1 object，包括非候选及不匹配级别/父节点的对象。子树范围通过索引定位；兄弟操作检查父节点隐藏范围内的块与容器 opener，包含后代元数据但不修改后代意愿，根层兄弟操作及其他命令分帧扫描块与容器索引。同起点、同范围的 List/Item/Table 通过容器前序顺序区分祖先，Subtree 与 Focus 不会误改同范围祖先/后代。既不扫描源码正文，也不逐 tile 更新隐藏范围。每步为 O(log B + log H + log C + log R + log F + log T) 的固定次数索引操作（B 为块数，R 为已注册行范围数），完整任务按实际访问的块、容器与行范围数计费。`visited` / `changed` 是累计对象访问数/实际状态变化数，`change` 是本次调用的区间包络及最新版本，耗尽返回 `BudgetExhausted`。任务仅保存 O(1) 游标状态；不复制候选列表或折叠快照。
 
 批量任务渐进生效；取消、文档更新、外部折叠操作、默认设置变化或 reset 后，已经完成的修改保留。旧任务会在消费预算或修改视图之前被拒绝；任务自身修改及正常高度测量允许继续，完成后重复调用不再产生修改。每次实际修改复用单节点的高度遮蔽、检查点及测量失效，调用方可以在两次 advance 之间正常绘制。需要原子切换整棵树或取消回滚的宿主，不能将该接口当成事务。
 
@@ -725,6 +725,38 @@ assert!(view.is_collapsed(FoldId::Container(ContainerId(2))));
 策略只消费 `Update.new_containers`，包括同一合并更新内已打开又关闭的容器，以及物理行晚确认的节点。初始化与祖先是否收起或正在预览无关，每个节点保留自己的意愿；预览父节点期间新出现的深层子节点仍按阈值初始化。显式单节点、导航及批量操作修改已有选择；预览期间的显式操作更新预览结束时恢复的选择。更改/关闭默认策略、普通追加、关闭、finish、重复 apply 和 resize 都不会重新初始化已有 ID。`set_defaults` 不影响当前布局，变化会使旧视图任务失效，相同值无操作；合并更新统一使用 apply 当时的策略。
 
 启用策略时每个新容器检查一次已存深度，计入 `default_visits`，无论是否达到阈值；禁用时不访问这些元数据。设 N 为新增容器数，K 为达到阈值的个数，初始化额外成本为 O(N + K(log H + log C + log F + log T))，只增加 O(1) 策略字段，折叠状态沿用 O(F + C + H) 空间（含内层章节索引）。没有新容器的普通追加不检查历史节点或开放祖先，仍只更新一次共享尾部。apply 按新增对象/开闭事件消费，不承诺任意大更新的单帧时延；查询、批量操作、预览和排版继续共用 Budget。测试覆盖千层/百万字逐字追加、4096 个历史兄弟、UTF-8 全切点/逐前缀及 240 次流式策略/显式操作的区间与高度模型。`cargo run -r --example container_defaults` 演示预览中的新子节点、显式展开优先及批量展开后新条目的默认收起。
+
+## 表格连续行范围折叠
+
+`FoldView::insert_table_rows(document, table, start..end)` 注册一个视图内的固定正文行范围，返回 `FoldId::TableRows(TableRowRange { table, start, end })`，初始展开。行号沿用 `Table::row`：第 0 行是表头；仅接受 `1 <= start < end <= rows.len()`，end 不含。表头、分隔行和范围外正文保留；范围内完整物理行（含容器前缀）合并成一个占位。摘要指向首个选中行，读取仍受 `summary_text` 或 `DisplayExcerpt` 的字节/帧预算限制。
+
+```rust
+use mdtui3::*;
+let mut doc = Document::new();
+doc.append("| h |\n| - |\n| first |\n| hidden |\n")?;
+let mut view = FoldView::new(&doc, 1)?;
+let rows = view.insert_table_rows(&doc, TableId(0), 2..3)?;
+view.set_collapsed(&doc, rows, true)?;
+let update = doc.append("| later |\n")?;
+view.apply(&doc, &update)?;
+let candidate = doc.fold_candidate(rows).unwrap();
+assert_eq!(candidate.parent, Some(FoldId::Table(TableId(0))));
+assert_eq!(candidate.hidden, doc.table(TableId(0)).unwrap().row(2).unwrap().source);
+assert!(view.is_collapsed(rows)); // later is outside the fixed row interval
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+范围身份由 TableId 和两个行号组成，与显示列宽、折行和字节增长无关，只在所属 Document 内有效。精确重复注册保留既有状态；同一视图内所有已注册范围必须不相交（包含、交叉均返回 `InvalidRange`），即使当前展开或临时预览也如此。相邻区间独立保留两个占位。不接受空范围、表头、未索引或未来行；调用方先通过 `Table::row` / `row_at` 选定范围。`remove_table_rows` 移除注册及局部状态，若正在预览则结束该预览；随后可重设边界。其它视图可注册不同范围，不相互约束。`table_row_range_count` 返回当前注册数。
+
+已索引的未完成末行可以选入：该行追加时源码终点同步增长，`FoldCandidate::open` 表示末行尚未完成；换行或 finish 后固定。未分类 pending 尾部始终不在行范围内，新正文行也不自动加入。完整行恰好结束于当前 EOF 时，下次更新只刷新这一个范围的 tile 边界，避免旧 EOF 的未满 tile 吞掉新追加的可见行；无需刷新历史区间。修改范围须移除后重注册，不隐式合并或裁切。
+
+行范围的直接父节点总是整表。整表、容器或章节遮蔽其占位，展开祖先后恢复行范围意愿。`set_collapsed`、`toggle`、`set_preview`、`FoldAnchor`、有预算 `FoldNavigation` 和 `LayoutPass::folded` 均支持已注册范围；直接使用未注册行范围修改视图返回 `InvalidRange`。`Document::fold_candidate` 可查询任意有效行范围的 O(1) 元数据，但文档候选枚举/`fold_candidate_at` 只发现语法节点，不生成任意行组合；被隐藏源码的实际行范围身份通过 `FoldView::hidden_at` 查询。
+
+`FoldBatch` 包含当前视图已注册范围：All、Subtree、Siblings、Focus 沿用父子规则，AtLevel 只作用于标题；每个行范围按 1 query / 1 object 分步处理，默认策略不自动创建行范围。批量先消费语法候选，再消费选中源码窗口内已注册行范围；中间结果立即可用。注册/移除及其它视图变更使旧批量、导航和布局任务失效，重置布局保留注册及意愿。`TablePreview` 的独立摘要读取不受行遮蔽影响，也不修改注册或意愿。
+
+设 R 为已注册行范围数：有序起点索引通过相邻项验证重叠、前驱查询查找点覆盖，注册 O(log R)、单点折叠与移除 O(log R + log F + log T)，不枚举覆盖行、列、字节或 tile。非空且不相交保证注册存储 O(正文行数)，反复切换不保留历史。追加最多刷新一个未完成行范围或一次旧 EOF 边界；叠加原有至多六个根章节与一张整表/代码块，保持既定增量复杂度。布局、导航、摘要和批量使用共享 Budget；直接注册、移除和单点切换是有限次数索引操作，和已有 `set_collapsed` 一样不自行驱动排版。占位高度归属范围起点 tile，完整隐藏内部使用区间遮蔽，边界及新可见内容按帧预算消费。
+
+`cargo run -r --example table_row_folding` 演示百万字末行、固定行范围、整表状态恢复及后续行可见性。真实表格边框、列宽、软换行、占位绘制，以及自动随新行延长的尾部策略仍由后续工作推进。
 
 ## 表格前几行有界预览
 
@@ -1020,6 +1052,7 @@ nix develop -c cargo run -r --example budget
 nix develop -c cargo run -r --example display
 nix develop -c cargo run -r --example excerpt
 nix develop -c cargo run -r --example table_preview
+nix develop -c cargo run -r --example table_row_folding
 nix develop -c cargo run -r --example search
 nix develop -c cargo run -r --example heading_search
 nix develop -c cargo run -r --example anchors
