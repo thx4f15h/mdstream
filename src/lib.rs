@@ -56,6 +56,7 @@ mod utf8;
 pub use anchors::{
     AnchorSlug, AnchorTarget, FragmentLookup, FragmentStep, HeadingAnchor, HeadingAnchors,
 };
+pub use annotations::QueryScratch;
 pub use autolink::MAX_AUTOLINK_BYTES;
 pub use block::{BLOCK_LOOKAHEAD, MAX_FENCE_LENGTH};
 pub use budget::{Budget, Completion, WorkLimit};
@@ -65,7 +66,7 @@ pub use containers::{
     Container, ContainerAncestors, ContainerId, ContainerKind, ListMarker, ListTightness,
 };
 pub use destination::{MAX_DESTINATION_BYTES, MAX_LINK_SUFFIX_BYTES, MAX_LINK_TITLE_BYTES};
-pub use display::{DisplayCursor, DisplayRun, DisplayRuns, DisplayStep};
+pub use display::{DisplayCursor, DisplayRun, DisplayRuns, DisplayRunsWithScratch, DisplayStep};
 pub use display_search::{DisplayMatch, DisplaySearch};
 pub use excerpt::{DisplayExcerpt, ExcerptEnd, ExcerptLimits, ExcerptStep};
 pub use fold_batch::{FoldBatch, FoldBatchAction, FoldBatchProgress};
@@ -425,16 +426,47 @@ impl Document {
 
     pub fn runs_in(&self, span: Span) -> Option<Runs<'_>> {
         self.text(span)?;
-        Some(Runs {
+        Some(self.runs_with_segments(span, self.annotations.segments(span)))
+    }
+
+    /// Like `runs`, retaining the traversal allocation in caller storage.
+    pub fn runs_with_scratch<'doc, 'scratch>(
+        &'doc self,
+        id: TileId,
+        scratch: &'scratch mut QueryScratch,
+    ) -> Option<RunsWithScratch<'doc, 'scratch>> {
+        self.runs_in_with_scratch(self.tile(id)?, scratch)
+    }
+
+    /// Like `runs_in`, with reusable O(log n) traversal storage. Invalid ranges
+    /// leave scratch unchanged. Drop the iterator before borrowing scratch
+    /// again; yielded runs remain usable for the document's lifetime.
+    pub fn runs_in_with_scratch<'doc, 'scratch>(
+        &'doc self,
+        span: Span,
+        scratch: &'scratch mut QueryScratch,
+    ) -> Option<RunsWithScratch<'doc, 'scratch>> {
+        self.text(span)?;
+        let marks = self
+            .annotations
+            .segments_with_scratch(span, std::mem::take(scratch));
+        Some(RunsWithScratch {
+            runs: self.runs_with_segments(span, marks),
+            scratch,
+        })
+    }
+
+    fn runs_with_segments<'a>(&'a self, span: Span, marks: annotations::Segments<'a>) -> Runs<'a> {
+        Runs {
             document: self,
             cursor: span.start,
             end: span.end,
             block: self
                 .blocks
                 .partition_point(|block| block.source.end <= span.start),
-            marks: self.annotations.segments(span),
+            marks,
             pending: None,
-        })
+        }
     }
 
     pub fn append(&mut self, text: &str) -> Result<Update, Finished> {
@@ -1710,6 +1742,38 @@ pub struct Runs<'a> {
     pending: Option<(Span, annotations::Mark)>,
 }
 
+/// A semantic iterator that returns its traversal storage on drop. Text borrows
+/// only `'doc`; the exclusive scratch borrow ends when this iterator is dropped.
+pub struct RunsWithScratch<'doc, 'scratch> {
+    runs: Runs<'doc>,
+    scratch: &'scratch mut QueryScratch,
+}
+
+impl RunsWithScratch<'_, '_> {
+    pub fn annotation_visits(&self) -> u64 {
+        self.runs.annotation_visits()
+    }
+
+    /// Pending frames, retained capacity and this query's allocation calls.
+    pub fn scratch_stats(&self) -> ArenaStats {
+        self.runs.scratch_stats()
+    }
+}
+
+impl<'doc> Iterator for RunsWithScratch<'doc, '_> {
+    type Item = RenderRun<'doc>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.runs.next()
+    }
+}
+
+impl Drop for RunsWithScratch<'_, '_> {
+    fn drop(&mut self) {
+        self.runs.marks.recycle_into(self.scratch);
+    }
+}
+
 impl Runs<'_> {
     /// Tree nodes traversed by this query; independent of parser mutation work.
     pub fn annotation_visits(&self) -> u64 {
@@ -1720,7 +1784,8 @@ impl Runs<'_> {
     /// allocation/growth calls for this iterator. Capacity never shrinks during
     /// iteration, so its final value is also this stack's peak. Excludes the
     /// document, allocator overhead and inline iterator state. Each new query
-    /// owns a fresh stack; this method does not allocate or traverse the tree.
+    /// owns a fresh stack unless constructed with caller scratch; this method
+    /// does not allocate or traverse the tree.
     pub fn scratch_stats(&self) -> ArenaStats {
         self.marks.scratch_stats()
     }

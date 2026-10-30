@@ -121,7 +121,159 @@ pub fn document_samples(case: &'static str, size: usize, queries: usize) -> Vec<
         assert_eq!(doc.annotation_arena_stats(), arena);
         result.push(sample);
     }
+    result.push(reusable_query_sample(
+        &doc, case, size, queries, false, true,
+    ));
+    for reuse in [false, true] {
+        result.push(reusable_query_sample(
+            &doc, case, size, queries, true, reuse,
+        ));
+        result.push(cursor_sample(&doc, case, size, queries, reuse));
+    }
     result
+}
+
+fn query_span(doc: &Document, i: usize) -> Span {
+    let at = doc.source().len() / 2 + i % 8;
+    Span::new(at, (at + 256).min(doc.source().len()))
+}
+
+// Same source/text/hidden checksum as the original semantic workload. Full
+// styles, IDs, replacement mappings and budget costs have separate model tests.
+fn query_checksum(text: &str, source: Span, style: Style) -> u64 {
+    fingerprint(text.as_bytes()) ^ source.start as u64 ^ u64::from(style.contains(Style::HIDDEN))
+}
+
+pub fn reusable_query_sample(
+    doc: &Document,
+    case: &'static str,
+    size: usize,
+    queries: usize,
+    display: bool,
+    reuse: bool,
+) -> Sample {
+    let phase = match (display, reuse) {
+        (false, false) => "semantic_fresh",
+        (false, true) => "semantic_reused",
+        (true, false) => "display_fresh",
+        (true, true) => "display_reused",
+    };
+    let mut scratch = QueryScratch::default();
+    let query = |span, scratch: &mut QueryScratch| {
+        let (mut runs, mut checksum) = (0_u64, 0_u64);
+        if display {
+            let mut iter = doc.display_runs_in_with_scratch(span, scratch).unwrap();
+            for run in iter.by_ref() {
+                runs += 1;
+                checksum = checksum.wrapping_add(query_checksum(run.text, run.source, run.style));
+                black_box(run);
+            }
+            (
+                runs,
+                checksum,
+                iter.annotation_visits(),
+                iter.scratch_stats(),
+            )
+        } else {
+            let mut iter = doc.runs_in_with_scratch(span, scratch).unwrap();
+            for run in iter.by_ref() {
+                runs += 1;
+                checksum = checksum.wrapping_add(query_checksum(run.text, run.source, run.style));
+                black_box(run);
+            }
+            (
+                runs,
+                checksum,
+                iter.annotation_visits(),
+                iter.scratch_stats(),
+            )
+        }
+    };
+    // Prewarm only the eight actual windows; do not traverse the full document.
+    for i in 0..8 {
+        black_box(query(query_span(doc, i), &mut scratch));
+    }
+    let warm = scratch.stats();
+    let (mut runs, mut checksum, mut visits, mut allocations, mut peak) = (0, 0_u64, 0, 0, 0);
+    let start = Instant::now();
+    for i in 0..queries {
+        if !reuse {
+            scratch = QueryScratch::default();
+        }
+        let (count, sum, steps, stats) = query(query_span(doc, i), &mut scratch);
+        runs += count;
+        checksum = checksum.wrapping_add(sum);
+        visits += steps;
+        allocations += stats.allocation_calls;
+        peak = peak.max(stats.capacity_bytes);
+    }
+    let mut sample = Sample::new(case, size, phase, start);
+    sample.add("queries", queries);
+    sample.add("scratch_allocation_calls", allocations);
+    sample.add("scratch_peak_capacity_bytes", peak);
+    sample.add("warm_allocation_calls", warm.allocation_calls);
+    sample.add("warm_capacity_bytes", warm.capacity_bytes);
+    sample.add("tree_query_visits", visits);
+    sample.add("runs", runs);
+    sample.add("checksum", checksum);
+    sample
+}
+
+pub fn cursor_sample(
+    doc: &Document,
+    case: &'static str,
+    size: usize,
+    queries: usize,
+    reuse: bool,
+) -> Sample {
+    let (mut allocations, mut peak, mut runs, mut checksum, mut bytes) = (0, 0, 0, 0_u64, 0);
+    let start = Instant::now();
+    for i in 0..queries {
+        let span = query_span(doc, i);
+        let mut cursor = doc.display_cursor(span).unwrap();
+        while cursor.source_position() < span.end {
+            // Recreating at every emitted run models the previous fresh-stack
+            // next() behavior; both paths use exactly the same public budget API.
+            if !reuse {
+                cursor = doc
+                    .display_cursor(Span::new(cursor.source_position(), span.end))
+                    .unwrap();
+            }
+            let before = cursor.scratch_stats();
+            let mut budget = Budget::new(WorkLimit {
+                bytes: 66,
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            });
+            let DisplayStep::Run(run) = cursor.next(doc, &mut budget).unwrap() else {
+                panic!("progress")
+            };
+            checksum = checksum.wrapping_add(query_checksum(run.text, run.source, run.style));
+            black_box(run);
+            runs += 1;
+            bytes += budget.used().bytes;
+            allocations += cursor.scratch_stats().allocation_calls - before.allocation_calls;
+            peak = peak.max(cursor.scratch_stats().capacity_bytes);
+        }
+    }
+    let mut sample = Sample::new(
+        case,
+        size,
+        if reuse {
+            "cursor_reused"
+        } else {
+            "cursor_fresh"
+        },
+        start,
+    );
+    sample.add("queries", queries);
+    sample.add("scratch_allocation_calls", allocations);
+    sample.add("scratch_peak_capacity_bytes", peak);
+    sample.add("runs", runs);
+    sample.add("checksum", checksum);
+    sample.add("budget_bytes", bytes);
+    sample
 }
 
 pub fn viewport_sample(size: usize, queries: usize, reuse: bool) -> Sample {

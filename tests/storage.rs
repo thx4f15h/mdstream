@@ -13,7 +13,7 @@ use storage::*;
 fn storage_workloads_and_all_untimed_metrics_are_reproducible() {
     let a = measure(4096, 9);
     let b = measure(4096, 9);
-    assert_eq!(a.len(), 27);
+    assert_eq!(a.len(), 42);
     let mut keys = BTreeSet::new();
     for (a, b) in a.iter().zip(&b) {
         assert_eq!((a.case, a.scale, a.phase), (b.case, b.scale, b.phase));
@@ -27,6 +27,44 @@ fn storage_workloads_and_all_untimed_metrics_are_reproducible() {
         fingerprint(source("plain", 4096).as_bytes()),
         13_182_226_609_708_950_309
     );
+}
+
+#[test]
+fn reusable_semantic_display_and_cursor_queries_reduce_allocations_with_identical_work() {
+    for size in [4096, 16_384, 65_536] {
+        for case in ["plain", "dense", "containers"] {
+            let samples = document_samples(case, size, 64);
+            let sample = |phase| samples.iter().find(|s| s.phase == phase).unwrap();
+            for (fresh, reused) in [
+                ("window_queries", "semantic_reused"),
+                ("display_fresh", "display_reused"),
+                ("cursor_fresh", "cursor_reused"),
+            ] {
+                let (fresh, reused) = (sample(fresh), sample(reused));
+                for metric in ["queries", "runs", "checksum", "scratch_peak_capacity_bytes"] {
+                    assert_eq!(fresh.get(metric), reused.get(metric));
+                }
+                assert!(
+                    reused.get("scratch_allocation_calls") < fresh.get("scratch_allocation_calls")
+                );
+                if reused.phase == "cursor_reused" {
+                    assert_eq!(fresh.get("budget_bytes"), reused.get("budget_bytes"));
+                    assert!(reused.get("scratch_allocation_calls") <= 64 * 6);
+                } else {
+                    assert_eq!(reused.get("scratch_allocation_calls"), 0);
+                    assert!(reused.get("warm_allocation_calls") <= 6);
+                    assert_eq!(
+                        reused.get("warm_capacity_bytes"),
+                        reused.get("scratch_peak_capacity_bytes")
+                    );
+                    assert_eq!(
+                        fresh.get("tree_query_visits"),
+                        reused.get("tree_query_visits")
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[test]

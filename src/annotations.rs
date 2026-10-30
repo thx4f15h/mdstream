@@ -228,16 +228,21 @@ impl Annotations {
     }
 
     pub fn segments(&self, span: Span) -> Segments<'_> {
-        let mut stack = Vec::new();
+        self.segments_with_scratch(span, QueryScratch::default())
+    }
+
+    pub fn segments_with_scratch(&self, span: Span, mut scratch: QueryScratch) -> Segments<'_> {
+        scratch.stack.clear();
+        let initial_allocations = scratch.allocations;
         if span.end > self.capacity && !span.is_empty() {
-            stack.push(Frame {
+            scratch.push(Frame {
                 node: None,
                 span: Span::new(span.start.max(self.capacity), span.end),
                 inherited: Mark::default(),
             });
         }
         if span.start < self.capacity && !span.is_empty() {
-            stack.push(Frame {
+            scratch.push(Frame {
                 node: Some(self.root),
                 span: Span::new(0, self.capacity),
                 inherited: Mark::default(),
@@ -246,8 +251,8 @@ impl Annotations {
         Segments {
             tree: self,
             query: span,
-            allocations: u64::from(!stack.is_empty()),
-            stack,
+            initial_allocations,
+            scratch,
             visits: 0,
         }
     }
@@ -259,24 +264,82 @@ struct Frame {
     inherited: Mark,
 }
 
+/// Reusable annotation traversal storage for semantic and display queries.
+///
+/// Holds no document references. A query exclusively borrows this buffer and
+/// returns its capacity on drop, even after partial iteration or unwinding.
+/// Returned text only borrows the document, so it may outlive that query. The
+/// buffer can be reused after document mutation or with another document; no
+/// old traversal is resumed. Storage grows with tree depth, not result count,
+/// and is retained until this value is dropped (or replaced with Default).
+///
+/// A live iterator exclusively borrows scratch:
+/// ```compile_fail
+/// use mdtui3::{Document, QueryScratch, Span};
+/// let doc = Document::new();
+/// let mut scratch = QueryScratch::default();
+/// let mut first = doc.runs_in_with_scratch(Span::new(0, 0), &mut scratch).unwrap();
+/// let second = doc.display_runs_in_with_scratch(Span::new(0, 0), &mut scratch);
+/// first.next();
+/// ```
+/// The document remains immutably borrowed during traversal:
+/// ```compile_fail
+/// use mdtui3::{Document, QueryScratch, Span};
+/// let mut doc = Document::new();
+/// let mut scratch = QueryScratch::default();
+/// let mut runs = doc.display_runs_in_with_scratch(Span::new(0, 0), &mut scratch).unwrap();
+/// doc.append("changed").unwrap();
+/// runs.next();
+/// ```
+#[derive(Default)]
+pub struct QueryScratch {
+    stack: Vec<Frame>,
+    allocations: u64,
+}
+
+impl QueryScratch {
+    /// O(1) retained capacity and cumulative allocation/growth requests since
+    /// construction. `nodes` is zero between queries; active queries report
+    /// their pending frames and per-query allocations via `scratch_stats`.
+    /// Excludes allocator overhead and all storage other than this Vec.
+    pub fn stats(&self) -> crate::ArenaStats {
+        crate::ArenaStats {
+            nodes: self.stack.len(),
+            capacity_bytes: self.stack.capacity() * std::mem::size_of::<Frame>(),
+            allocation_calls: self.allocations,
+        }
+    }
+
+    fn push(&mut self, frame: Frame) {
+        if self.stack.len() == self.stack.capacity() {
+            self.allocations += 1;
+        }
+        self.stack.push(frame);
+    }
+}
+
 /// Ordered constant-mark intervals. Each relevant tree node is visited once,
 /// including absent children (uniform inherited tags), with O(log n) state.
 /// Internal intervals may split UTF-8; the public run iterator coalesces them.
 pub(crate) struct Segments<'a> {
     tree: &'a Annotations,
     query: Span,
-    stack: Vec<Frame>,
-    allocations: u64,
+    scratch: QueryScratch,
+    initial_allocations: u64,
     pub visits: u64,
 }
 
 impl Segments<'_> {
     pub fn scratch_stats(&self) -> crate::ArenaStats {
         crate::ArenaStats {
-            nodes: self.stack.len(),
-            capacity_bytes: self.stack.capacity() * std::mem::size_of::<Frame>(),
-            allocation_calls: self.allocations,
+            allocation_calls: self.scratch.allocations - self.initial_allocations,
+            ..self.scratch.stats()
         }
+    }
+
+    pub fn recycle_into(&mut self, scratch: &mut QueryScratch) {
+        self.scratch.stack.clear();
+        *scratch = std::mem::take(&mut self.scratch);
     }
 }
 
@@ -284,7 +347,7 @@ impl Iterator for Segments<'_> {
     type Item = (Span, Mark);
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(frame) = self.stack.pop() {
+        while let Some(frame) = self.scratch.stack.pop() {
             self.visits += 1;
             let mut mark = frame.inherited;
             if let Some(id) = frame.node {
@@ -295,10 +358,7 @@ impl Iterator for Segments<'_> {
                     for (side, start, end) in [(1, mid, frame.span.end), (0, frame.span.start, mid)]
                     {
                         if start < self.query.end && self.query.start < end {
-                            if self.stack.len() == self.stack.capacity() {
-                                self.allocations += 1;
-                            }
-                            self.stack.push(Frame {
+                            self.scratch.push(Frame {
                                 node: node.child(side),
                                 span: Span::new(start, end),
                                 inherited: mark,
@@ -412,5 +472,59 @@ mod tests {
         assert_eq!(segments[1].0, Span::new(8, 13));
         assert_eq!(segments[1].1, Mark::default());
         assert_eq!(tree.segments(Span::new(13, 13)).count(), 0);
+    }
+
+    #[test]
+    fn reusable_scratch_at_maximum_tree_depth_matches_sparse_write_log() {
+        let end = isize::MAX as usize;
+        let mut tree = Annotations::default();
+        let mut writes = Vec::new();
+        for bit in 0..usize::BITS - 1 {
+            let at = (1_usize << bit) - 1;
+            let span = Span::new(at, end - at);
+            let style = if bit % 2 == 0 {
+                Style::STRONG
+            } else {
+                Style::EMPHASIS
+            };
+            let link = Some(LinkId(bit as usize));
+            tree.apply(span, style, link, u64::from(bit) + 1);
+            writes.push((span, style, link));
+        }
+        let mut scratch = QueryScratch::default();
+        for _ in 0..3 {
+            let before = scratch.stats();
+            // The end extends past the allocated tree, exercising both initial
+            // frames and an unannotated tail without allocating huge input.
+            let mut segments = tree.segments_with_scratch(Span::new(0, usize::MAX), scratch);
+            let mut cursor = 0;
+            for (span, mark) in segments.by_ref() {
+                assert_eq!(span.start, cursor);
+                for at in [span.start, span.end - 1] {
+                    let mut expected = Mark::default();
+                    for (i, (range, style, link)) in writes.iter().enumerate() {
+                        if range.range().contains(&at) {
+                            expected.style = expected.style.union(*style);
+                            expected.link = *link;
+                            expected.revision = i as u64 + 1;
+                        }
+                    }
+                    assert_eq!(
+                        (mark.style, mark.link, mark.revision),
+                        (expected.style, expected.link, expected.revision)
+                    );
+                }
+                cursor = span.end;
+            }
+            assert_eq!(cursor, usize::MAX);
+            assert!(segments.visits <= 8 * u64::from(usize::BITS).pow(2));
+            scratch = QueryScratch::default();
+            segments.recycle_into(&mut scratch);
+            assert_eq!(scratch.stats().nodes, 0);
+            assert!(scratch.stats().capacity_bytes <= 2 * (usize::BITS as usize + 4) * 128);
+            if before.capacity_bytes > 0 {
+                assert_eq!(scratch.stats(), before);
+            }
+        }
     }
 }

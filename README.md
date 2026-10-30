@@ -1229,6 +1229,33 @@ assert_eq!(display, "中 & a b 🙂");
 
 实体失败、超长或未完成时保留原文，只按正常语法处理拒绝候选的当前字节；不会回扫候选。反斜线转义、代码块/span、自动链接地址、链接目标/title、引用标签匹配及 fence info 不做实体解码。未闭合代码 span 沿用已有的无回退方言。晚确认通过 Text 变化和区间 revision 使旧显示缓存及布局过期，即使宿主关闭了样式影响尺寸的策略。
 
+### 查询栈复用
+
+高频窗口可使用 `QueryScratch::default()` 配合 `runs_in_with_scratch` / `display_runs_in_with_scratch`；按 tile 读取分别用 `runs_with_scratch` / `display_runs_with_scratch`。返回的 `RunsWithScratch` / `DisplayRunsWithScratch` 独占借用 scratch，耗尽后仍须 drop 才能再次借用；正常退出、提前停止及 panic unwind 都会归还容量。返回文本只借用文档，可在释放迭代器后继续使用。原有不带 scratch 的接口仍可用。
+
+```rust
+use mdtui3::{Document, QueryScratch, Span};
+let mut doc = Document::new();
+doc.append("a **b** &amp;")?;
+doc.finish();
+let span = Span::new(0, doc.source().len());
+let mut scratch = QueryScratch::default();
+let runs: Vec<_> = doc.runs_in_with_scratch(span, &mut scratch).unwrap().collect();
+let warm = scratch.stats();
+let again: Vec<_> = doc.runs_in_with_scratch(span, &mut scratch).unwrap().collect();
+assert_eq!(runs, again); // 已返回文本不占用 scratch 的借用。
+assert_eq!(scratch.stats(), warm); // 相同查询不再分配栈。
+let display: Vec<_> = doc.display_runs_in_with_scratch(span, &mut scratch).unwrap().collect();
+assert!(display.iter().any(|run| run.text == "&"));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+scratch 无文档引用或可恢复语义，只保留 Vec 容量；每次从当前文档索引重新查询，允许在追加/迟确认之后或不同文档之间复用。查询期间文档保持不可变借用；无效范围不改 scratch，空范围不分配。遍历仍是 O(log n + 请求范围)，栈按树深度增长；预热工作集后不增长，切换到更深查询可能继续分配。容量保留到 drop 或赋值 `QueryScratch::default()`；没有全局或线程局部缓存，不需要 unsafe。
+
+`QueryScratch::stats()` O(1) 返回保留容量及生命周期累计分配/扩容调用，查询之间 `nodes = 0`；迭代器的 `scratch_stats()` 返回待处理帧、当前容量及**本查询**新增分配调用。`DisplayCursor` 自动复用自己的栈，`scratch_stats()` 为该游标各步骤累计统计；每步只保留容量，仍按原规则重查有限窗口、预先扣费并检查文档/revision，预算耗尽和错误不会分配或改变继续位置。游标销毁释放容量；重建游标重新预热。其它高层消费者是否使用此接口取决于各自实现，未声称全部调用链零分配。
+
+分配、访问数、预算及独立结果模型见 [查询 scratch 测量](docs/storage.md#查询-scratch-复用实验)。这些计数只覆盖标注遍历栈，不等于全局 allocator、总堆峰值或实际终端时延。
+
 ## 显示文本搜索
 
 `DisplaySearch::new(&doc, query)` 创建绑定当前文档身份及 revision 的搜索任务。搜索对象是按源码顺序串接的非 `HIDDEN` 显示片段：实体已解码、闭合代码 span 空白已规范化，隐藏标记和链接目标不参与匹配。采用区分大小写的字面匹配，支持重叠命中和跨 run/tile 匹配；空查询返回 `InvalidRange`。不增加块/表格分隔符，不把普通软换行变为空格，不做 Unicode 归一化，也不包含终端绘制的边框、占位或将来的折叠状态。
@@ -2299,7 +2326,7 @@ nix develop .#index32 -c bash scripts/check-index32.sh
 
 `annotation_arena_stats`、高度树/检查点的 `arena_stats`、高度依赖树的 `dependency_arena_stats` 返回 Vec 容量字节数、节点数与实际容量增长分配次数。统计不包含 allocator 元数据、碎片、其它 String/Vec 或用户状态的间接堆分配。`scaling` 示例同时记录操作计数、查询分位数与容量；`one_byte_reused` 对照复用通知缓冲的逐字符输入。
 
-2026-10-30 在 ark 上的 release 样本：524,286 字节密集标记产生 854,391 个语义节点；子索引改用 `Option<NonZeroUsize>` 后，节点大小由 88 降至 72 字节，对应 arena 容量由 92,274,688 降至 75,497,472 字节（约 18.2%）。写入访问数 8,010,100、固定视口查询访问数 13,022 均未改变，分配次数同为 20。缩小了节点常数，没有增加全树压缩过程。峰值 arena 容量等于当前容量，因为该 arena 不缩容；这不是整个进程峰值内存。语义/修订存储拆分与查询 scratch 复用尚未实施。 后续 [存储与回收实验](docs/storage.md) 提供三规模可复跑容量/分配测量、查询栈 `Runs::scratch_stats()`、检查点 clear/drain/refill 对照及优化决策；已将检查点子索引同样压缩，Vec 状态节点在本机由 88 降至 72 字节。回收只释放移出后由调用方丢弃的外部 payload，保留树 arena；不声称总堆统计或硬内存上限。
+2026-10-30 在 ark 上的 release 样本：524,286 字节密集标记产生 854,391 个语义节点；子索引改用 `Option<NonZeroUsize>` 后，节点大小由 88 降至 72 字节，对应 arena 容量由 92,274,688 降至 75,497,472 字节（约 18.2%）。写入访问数 8,010,100、固定视口查询访问数 13,022 均未改变，分配次数同为 20。缩小了节点常数，没有增加全树压缩过程。峰值 arena 容量等于当前容量，因为该 arena 不缩容；这不是整个进程峰值内存。语义/修订存储拆分尚未实施；查询 scratch 复用已交付，见上方接口。后续 [存储与回收实验](docs/storage.md) 提供三规模可复跑容量/分配测量、查询栈 `Runs::scratch_stats()`、检查点 clear/drain/refill 对照及优化决策；已将检查点子索引同样压缩，Vec 状态节点在本机由 88 降至 72 字节。回收只释放移出后由调用方丢弃的外部 payload，保留树 arena；不声称总堆统计或硬内存上限。
 
 标准样例固定为 [CommonMark 0.31.2 autolinks](https://spec.commonmark.org/0.31.2/#autolinks)，离线夹具保存在 `tests/fixtures/commonmark_autolinks.rs`，保留上游 CC BY-SA 4.0 归属信息。19 个样例中，18 个在源码文本/目标语义上符合；606 为刻意差异：失败候选内部的反斜线不重新解析。URI percent encoding 属输出层，因此对照时归一化目标编码。其它已评分子集见下文，其余 CommonMark/GFM 范围未评分；现有容器展平、强调/代码回退和语法长度限制仍按上文方言约定，不以自比较分块测试充当完整规范合规率。
 

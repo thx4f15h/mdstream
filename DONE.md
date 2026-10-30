@@ -1069,3 +1069,14 @@ README/TODO 已同步。稀疏索引验证不保证接近 2 GiB 的真实文档/
 验收：新增 `tests/storage.rs` 7 项测试；项目 devShell 的 check、clippy、debug/release nextest 各 894 项、67 项文档测试、fmt、脚本语法、原始 CSV/指纹/源码哈希复核及 diff 检查通过。同一套 check、clippy、debug/release 各 894 项与 67 项文档测试在真实 i686 目标通过。三轮每轮 81 阶段的全部非时间字段一致；CLI 非法参数和拒绝覆盖检查通过。
 
 完整日志：`/tmp/mdtui3-storage-validation.log`、`/tmp/mdtui3-storage-index32.log`；专项与三轮驱动：`/tmp/mdtui3-storage-targeted-final.log`；原始目录：`/tmp/mdtui3-storage-measurements/`；独立前后/哈希核验：`/tmp/mdtui3-storage-artifacts.log`；CLI：`/tmp/mdtui3-storage-cli.log`。查询 scratch 复用有分配收益线索，语义/修订拆分和大型状态叶存储也有容量优化空间，但尚无实现与端到端对照；历史树节点回收、完整堆/RSS 峰值、其它 ABI/跨机器性能及终端 UI 继续保留。保持零运行时依赖与禁止 unsafe。
+
+## 2026-10-30 查询 scratch 复用交付
+
+- [x] **安全可归还查询栈**：`QueryScratch` 与 `runs_in_with_scratch` / `display_runs_in_with_scratch` 及对应 tile 入口保留标注遍历 Vec。两个带 scratch 的迭代器独占借用调用方缓冲，drop 时清空待消费帧并归还容量，包含提前退出和 panic unwind；返回文本只借用 Document，可在 scratch 再次使用时继续读取。跨文档、追加、迟确认后重新建立查询，不保留旧遍历语义；空范围不分配，无效范围不改缓冲，调用方可 drop/default 释放容量。原有查询 API、遍历算法、样式/源码映射及访问计数保持。
+- [x] **预算游标自动复用**：`DisplayCursor` 跨步骤保留自己的栈，原身份/revision 校验、检查窗口、六维共享预算和源码位置恢复不变；预算不足、错误和完成状态不分配、不扣费。`QueryScratch::stats()` 与游标统计累计分配/扩容调用，迭代器 `scratch_stats()` 统计本次查询；全部只覆盖遍历 Vec，无全局缓存、线程局部缓存、新依赖或 unsafe。
+- [x] **可复跑分配对照**：扩展原 storage 驱动，三规模/三轮共 3,303 条指标、378 个阶段，非时间字段逐项相同。65,536 参数、64 次窗口查询：plain 语义/显示新栈各 64 次分配，dense/containers 各 192 次，预热后全部为 0；预热分别 1/3/3 次，容量 288/1,152/1,152 字节。对应预算游标 plain 256→64、dense 21,072→128、containers 7,344→128，包含每个新窗口的冷启动。输出、访问数、容量及预算消费对照相同；旧压缩后基线的全部非时间指标不变。原始 CSV、环境和限制见 [测量记录](docs/storage.md#查询-scratch-复用实验)。时间记录与回归并行，不据此声称吞吐或真实终端时延改善。
+- [x] **模型和回归**：新增 11 项测试、3 项文档样例（含 2 项 compile-fail）。400 组独立字节样式/1,200 窗口模型、字面显示预期、全部 UTF-8 范围/切点、实体/代码 CRLF/部分 tab/表格和数学映射、双查询与保留结果、跨文档/流式迟确认/异常退出通过。百万字/千层引用/密集语法及稀疏最大字长树验证 O(log n) 栈和窗口访问界；多种非对称预算、共享依赖消费、旧版本/文档拒绝与空查询验证原子性。既有分块、搜索、摘要/预览、导航、折叠与预算回归全部保留。
+
+验收：x86_64 和实际 i686 的项目 devShell check、clippy、debug/release nextest **各 905 项通过、0 skipped**；文档测试各 **70 项**（68 运行、2 compile-fail），fmt、脚本语法、CSV/哈希复核与 diff 检查通过。完整日志 `/tmp/mdtui3-query-scratch-validation.log`、`/tmp/mdtui3-query-scratch-index32.log`；专项 `/tmp/mdtui3-query-scratch-targeted.log`、`/tmp/mdtui3-query-scratch-targeted-extra.log`；三轮记录 `/tmp/mdtui3-query-scratch-measurements/`，跨轮/旧基线/源码校验 `/tmp/mdtui3-query-scratch-artifacts.log`。
+
+README/TODO 已同步。scratch 保留历史峰值容量，更深工作集可能继续增长；每个活动游标有独立栈，重建需重新预热。其它消费者的瞬时分配、语义/修订存储拆分、历史树节点回收、完整堆/RSS 峰值、多平台性能及终端 UI 继续保留后续。

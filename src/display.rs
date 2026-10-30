@@ -1,6 +1,6 @@
 use crate::{
-    BlockId, Budget, Document, DocumentId, LayoutError, LinkId, RenderRun, Runs, Span, Style,
-    TILE_BYTES, WorkLimit,
+    BlockId, Budget, Document, DocumentId, LayoutError, LinkId, QueryScratch, RenderRun, Runs,
+    Span, Style, TILE_BYTES, WorkLimit,
 };
 
 /// A fragment of display text with its original source mapping. Hidden syntax
@@ -106,6 +106,37 @@ pub struct DisplayRuns<'a> {
     space: usize,
 }
 
+/// Display iterator with the same source borrowing as `DisplayRuns`, returning
+/// caller-owned traversal capacity on drop, including after early termination.
+pub struct DisplayRunsWithScratch<'doc, 'scratch> {
+    runs: DisplayRuns<'doc>,
+    scratch: &'scratch mut QueryScratch,
+}
+
+impl DisplayRunsWithScratch<'_, '_> {
+    pub fn annotation_visits(&self) -> u64 {
+        self.runs.annotation_visits()
+    }
+
+    pub fn scratch_stats(&self) -> crate::ArenaStats {
+        self.runs.scratch_stats()
+    }
+}
+
+impl<'doc> Iterator for DisplayRunsWithScratch<'doc, '_> {
+    type Item = DisplayRun<'doc>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.runs.next()
+    }
+}
+
+impl Drop for DisplayRunsWithScratch<'_, '_> {
+    fn drop(&mut self) {
+        self.runs.runs.marks.recycle_into(self.scratch);
+    }
+}
+
 impl Document {
     pub fn display_runs(&self, tile: crate::TileId) -> Option<DisplayRuns<'_>> {
         self.display_runs_in(self.tile(tile)?)
@@ -115,9 +146,38 @@ impl Document {
     /// fragment containing '&'; subsequent fragments are empty continuations.
     /// Code CRLF emits its space at LF (the parser already hides CR).
     pub fn display_runs_in(&self, source: Span) -> Option<DisplayRuns<'_>> {
-        Some(DisplayRuns {
+        Some(self.display_with_runs(source, self.runs_in(source)?))
+    }
+
+    pub fn display_runs_with_scratch<'doc, 'scratch>(
+        &'doc self,
+        tile: crate::TileId,
+        scratch: &'scratch mut QueryScratch,
+    ) -> Option<DisplayRunsWithScratch<'doc, 'scratch>> {
+        self.display_runs_in_with_scratch(self.tile(tile)?, scratch)
+    }
+
+    /// Same mapping and complexity as `display_runs_in`, retaining stack
+    /// capacity in `scratch`. Invalid ranges leave the buffer unchanged.
+    pub fn display_runs_in_with_scratch<'doc, 'scratch>(
+        &'doc self,
+        source: Span,
+        scratch: &'scratch mut QueryScratch,
+    ) -> Option<DisplayRunsWithScratch<'doc, 'scratch>> {
+        self.text(source)?;
+        let marks = self
+            .annotations
+            .segments_with_scratch(source, std::mem::take(scratch));
+        Some(DisplayRunsWithScratch {
+            runs: self.display_with_runs(source, self.runs_with_segments(source, marks)),
+            scratch,
+        })
+    }
+
+    fn display_with_runs<'a>(&'a self, source: Span, runs: Runs<'a>) -> DisplayRuns<'a> {
+        DisplayRuns {
             document: self,
-            runs: self.runs_in(source)?,
+            runs,
             pending: None,
             entry: self
                 .display
@@ -127,7 +187,7 @@ impl Document {
                 .display
                 .spaces
                 .partition_point(|s| s.0.end <= source.start),
-        })
+        }
     }
 
     /// A revision-bound reader for a finite requested range. Advance it using
@@ -139,6 +199,7 @@ impl Document {
             revision: self.revision(),
             position: source.start,
             end: source.end,
+            scratch: QueryScratch::default(),
         })
     }
 }
@@ -146,6 +207,11 @@ impl Document {
 impl DisplayRuns<'_> {
     pub fn annotation_visits(&self) -> u64 {
         self.runs.annotation_visits()
+    }
+
+    /// Pending annotation frames, capacity and per-query allocation calls.
+    pub fn scratch_stats(&self) -> crate::ArenaStats {
+        self.runs.scratch_stats()
     }
 }
 
@@ -274,9 +340,16 @@ pub struct DisplayCursor {
     revision: u64,
     position: usize,
     end: usize,
+    scratch: QueryScratch,
 }
 
 impl DisplayCursor {
+    /// Retained traversal capacity and cumulative allocations across steps.
+    /// No traversal or allocation occurs here; pending frames are always zero.
+    pub fn scratch_stats(&self) -> crate::ArenaStats {
+        self.scratch.stats()
+    }
+
     pub fn source_position(&self) -> usize {
         self.position
     }
@@ -318,7 +391,7 @@ impl DisplayCursor {
             return Ok(DisplayStep::BudgetExhausted);
         }
         let run = document
-            .display_runs_in(Span::new(self.position, end))
+            .display_runs_in_with_scratch(Span::new(self.position, end), &mut self.scratch)
             .unwrap()
             .next()
             .unwrap();
