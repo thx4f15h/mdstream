@@ -221,10 +221,10 @@ fn explicit_tails_and_syntax_cancel_before_publishing_later_objects() {
             compare_plain(doc.source());
         }
     }
-    // If a direct suffix is still arriving, failure must publish one provisional
-    // ID and subsequent completion must update that same ID.
+    // An unsupported byte in a pending suffix publishes one provisional ID;
+    // subsequent completion updates that same ID without replaying the suffix.
     let mut doc = Document::new();
-    doc.append(&format!("![old\nend](url '{}", "t".repeat(1100)))
+    doc.append(&format!("![old\nend](url '_{}", "t".repeat(1100)))
         .unwrap();
     assert_eq!(doc.links().len(), 1);
     assert_eq!(
@@ -235,7 +235,7 @@ fn explicit_tails_and_syntax_cancel_before_publishing_later_objects() {
     assert!(update.new_links.is_empty());
     assert_eq!(update.changed_links, 0..1);
     assert_eq!(doc.link_destination(LinkId(0)), Some("url"));
-    assert_eq!(doc.link_title(LinkId(0)).unwrap().len(), 1100);
+    assert_eq!(doc.link_title(LinkId(0)).unwrap().len(), 1101);
 }
 
 #[test]

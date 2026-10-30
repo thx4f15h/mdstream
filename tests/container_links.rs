@@ -210,10 +210,8 @@ fn table_confirmation_discards_old_labels_and_failures_resume_them_once() {
             assert!(doc.work().inline_bytes <= doc.source().len() as u64);
         }
         let doc = parse(&format!("{prior}> {body}end](u)|b\n> -|-\n"));
-        assert_eq!(doc.tables().len(), usize::from(padding == 0));
-        if padding != 0 {
-            assert!(label(&doc, 0).starts_with("old\n"));
-        }
+        assert_eq!(doc.tables().len(), 1);
+        assert!(doc.links().is_empty());
     }
 }
 
@@ -397,7 +395,7 @@ fn provisional_reference_becomes_direct_with_the_same_id_and_change_event() {
     let mut doc = Document::new();
     let mut batch = doc
         .append(&format!(
-            "{prefix}![a\n{prefix}b](url '{}",
+            "{prefix}![a\n{prefix}b](url '_{}",
             "t".repeat(1100)
         ))
         .unwrap();
@@ -413,7 +411,7 @@ fn provisional_reference_becomes_direct_with_the_same_id_and_change_event() {
     assert_eq!(doc.link_info(LinkId(0)).unwrap().label, before.label);
     assert_eq!(doc.link_info(LinkId(0)).unwrap().state, SyntaxState::Sealed);
     assert_eq!(doc.link_destination(LinkId(0)), Some("url"));
-    assert_eq!(doc.link_title(LinkId(0)).unwrap().len(), 1100);
+    assert_eq!(doc.link_title(LinkId(0)).unwrap().len(), 1101);
     assert_eq!(label(&doc, 0), "a\nb");
 }
 

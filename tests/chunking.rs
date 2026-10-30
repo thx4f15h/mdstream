@@ -1318,3 +1318,49 @@ fn isolated_closed_shortcuts_match_utf8_splits_and_every_live_prefix() {
         assert_eq!(snapshot(&live), snapshot(&whole));
     }
 }
+
+#[test]
+fn explicit_link_suffix_headers_match_utf8_splits_and_live_prefixes() {
+    for source in [
+        format!(
+            "> - [x] a ![old \r\n>   **中🙂** end](u '标题') {}|[tail](v)\r\n>   -|-\r\n",
+            "中🙂".repeat(150)
+        ),
+        format!("a [old\nend][KEY 中] {}|b\n-|-", "x".repeat(1030)),
+        format!("a ![old\nend][] {}|b\n-|-\n", "x".repeat(1030)),
+        format!("a [old\nend](u '{}') |b\n-|-\n", "t".repeat(1100)),
+        format!(
+            "a [old\n{}end][{}] |b\n-|-\n",
+            "x".repeat(200),
+            "r".repeat(900)
+        ),
+        format!("a ![old\nend](url {}|b\n-|-\n", "t".repeat(1100)),
+        format!("a ![old\nend](url '{}_|b\n-|-\n", "t".repeat(1100)),
+        format!(
+            "> a ![old\n> end][key] {}|b\n> {}x|b\n> ===\n",
+            "x".repeat(1030),
+            "-".repeat(1030)
+        ),
+        format!("a [old  \r\nend](u) {}\r\n", "x".repeat(1030)),
+        format!("a ![old\nend][key] {}", "x".repeat(1030)),
+        format!("> a ![old\n> end][] {}|b\n-|-\n", "x".repeat(1030)),
+        format!("- ![a\n\t中\n  b][key] {}|c\n  wrong\n", "x".repeat(1030)),
+    ] {
+        for (at, _) in source.char_indices() {
+            check_chunks(&source, &[at]);
+        }
+        let mut live = Document::new();
+        for (at, c) in source.char_indices() {
+            let end = at + c.len_utf8();
+            live.append(&source[at..end]).unwrap();
+            let mut whole = Document::new();
+            whole.append(&source[..end]).unwrap();
+            assert_eq!(snapshot(&live), snapshot(&whole), "prefix {end}");
+        }
+        live.finish();
+        let mut whole = Document::new();
+        whole.append(&source).unwrap();
+        whole.finish();
+        assert_eq!(snapshot(&live), snapshot(&whole));
+    }
+}

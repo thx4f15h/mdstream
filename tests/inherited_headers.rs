@@ -175,7 +175,7 @@ fn open_cross_line_candidates_keep_their_existing_semantics() {
             assert!(doc.tables().is_empty());
         }
     }
-    for (open, close) in [("[open", "end](u) "), ("$open", "end$ &amp; ")] {
+    for (open, close) in [("[open", "end](u) &amp; "), ("$open", "end$ &amp; ")] {
         let source = format!("{open}\n{close}{}|b\n-|-\n", "x".repeat(2048));
         let doc = parse(&source);
         let ordinary = parse(&source.replace('|', "/"));

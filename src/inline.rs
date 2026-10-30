@@ -248,6 +248,17 @@ enum Tail {
     },
 }
 
+// Only syntax-free suffix payloads can share the already consumed cell prefix.
+// Keep spans, not copied targets or prematurely interned reference symbols.
+enum HeaderLinkSuffix {
+    Destination {
+        source: Span,
+        destination: Span,
+        title: Option<Span>,
+    },
+    Label(Span),
+}
+
 /// Single-pass delimiter machine. Each delimiter is pushed/popped at most once.
 /// Crossing pairs discard intervening openers; there is no backtracking.
 #[derive(Default)]
@@ -294,10 +305,11 @@ pub(crate) struct Inline {
     // As with code, isolate at most one inherited math closure. Do not allocate
     // a MathId until failure: success reparses the independent current row.
     header_math: Option<MathPair>,
-    // A closed inherited shortcut keeps using the bounded label buffer. Delay
-    // both the LinkId and symbol/first_use effects until failure. A suffix or
-    // new inline syntax cancels before it can overwrite the label or emit links.
+    // A closed inherited label keeps using the bounded buffer. Delay its LinkId
+    // and symbol/first_use effects, including inert explicit suffixes. New inline
+    // syntax cancels before it can overwrite the label or emit later links.
     header_link: Option<Candidate>,
+    header_link_suffix: Option<HeaderLinkSuffix>,
 }
 
 impl Inline {
@@ -337,6 +349,7 @@ impl Inline {
         debug_assert!(self.header_code.is_none());
         debug_assert!(self.header_math.is_none());
         debug_assert!(self.header_link.is_none());
+        debug_assert!(self.header_link_suffix.is_none());
         self.header_floor = self.stack.len();
         self.header_crossed = false;
         self.header_bracket = self.bracket.map(|b| b.open);
@@ -353,10 +366,36 @@ impl Inline {
         if let Some(candidate) = self.header_link.take() {
             effects.work.delimiter_steps += 1;
             let candidate = self.shortcut(candidate, effects);
-            if let Some(Tail::After(waiting)) = &mut self.tail {
-                // No suffix has been consumed yet. Preserve the same ID if
-                // the rejecting byte now starts a direct/full/collapsed tail.
-                *waiting = candidate;
+            if let Some(suffix) = self.header_link_suffix.take() {
+                match suffix {
+                    HeaderLinkSuffix::Destination {
+                        source,
+                        destination,
+                        title,
+                    } => {
+                        effects.complete_link(
+                            candidate,
+                            LinkTarget::Direct(destination),
+                            Some(source),
+                            title,
+                        );
+                    }
+                    HeaderLinkSuffix::Label(source) => {
+                        self.reference_tail(candidate, source, effects);
+                    }
+                }
+            } else if let Some(tail) = &mut self.tail {
+                // A rejecting byte can arrive partway through a bounded suffix.
+                // Resume it with the original shortcut ID and parser position.
+                match tail {
+                    Tail::After(waiting)
+                    | Tail::Destination {
+                        candidate: waiting, ..
+                    }
+                    | Tail::Label {
+                        candidate: waiting, ..
+                    } => *waiting = candidate,
+                }
             } else {
                 self.seal_candidate(candidate, effects);
             }
@@ -389,8 +428,31 @@ impl Inline {
     /// Return whether the first-cell state can be reused. An opaque code/math prefix
     /// is instead parsed once as a cell during the existing row scan. Never
     /// finish its pending run: that could publish a cross-line mapping/object.
-    pub fn confirm_header(&mut self, work: &mut Work) -> bool {
+    pub fn confirm_header(&mut self, effects: &mut Effects<'_>) -> bool {
         debug_assert!(!self.header_crossed);
+        // In an independent cell a full reference suffix is itself a shortcut.
+        // Its inert label has no other local effects or pending delimiter state.
+        // Publish it before any later cell objects, without replaying the row.
+        if let Some(HeaderLinkSuffix::Label(source)) = self.header_link_suffix.take()
+            && let Some(symbol) = effects.references.intern(
+                &effects.source[source.start + 1..source.end - 1],
+                effects.work,
+            )
+        {
+            let id = effects.complete_link(
+                Candidate {
+                    open: source.start,
+                    close: source.end - 1,
+                    link: None,
+                    image: None,
+                },
+                LinkTarget::Reference(symbol),
+                None,
+                None,
+            );
+            effects.link_info[id.0].state = SyntaxState::Sealed;
+        }
+        let work = &mut effects.work;
         work.delimiter_steps += self.header_pairs.len() as u64;
         self.header_pairs.clear();
         work.delimiter_steps += u64::from(self.header_code.take().is_some());
@@ -473,17 +535,23 @@ impl Inline {
             }
             self.finish_run(Some(byte), effects);
         }
-        if ((self.header_code.is_some()
-            || self.header_math.is_some()
-            || self.header_link.is_some())
-            && matches!(
-                byte,
-                b'&' | b'<' | b'\\' | b'*' | b'_' | b'~' | b'`' | b'$' | b'!' | b'[' | b']'
-            ))
-            || (self.header_link.is_some() && self.tail.is_some() && byte == b'(')
+        let syntax = matches!(
+            byte,
+            b'&' | b'<' | b'\\' | b'*' | b'_' | b'~' | b'`' | b'$' | b'!' | b'[' | b']'
+        );
+        let suffix_delimiter = matches!(
+            (&self.tail, byte),
+            (Some(Tail::After(_)), b'[') | (Some(Tail::Label { .. }), b']')
+        );
+        if ((self.header_code.is_some() || self.header_math.is_some()) && syntax)
+            || (self.header_link.is_some()
+                && ((syntax && !suffix_delimiter)
+                    || (byte == b'^' && matches!(self.tail, Some(Tail::Label { .. })))
+                    // A completed [key] could take a different tail in the cell.
+                    || (byte == b'(' && matches!(self.header_link_suffix, Some(HeaderLinkSuffix::Label(_))))))
         {
             // Flush before this byte can publish a source-ordered replacement
-            // or object, or start an explicit link tail. Rejection is permanent
+            // or object. Rejection is permanent
             // for this line, even if its next opaque candidate is open at '|'.
             self.cancel_header(effects);
             self.header_crossed = true;
@@ -829,46 +897,47 @@ impl Inline {
                 mut parser,
             } => match parser.byte(byte, pos) {
                 Progress::Invalid => {
+                    if self.header_link.is_some() {
+                        self.cancel_header(effects);
+                        self.header_crossed = true;
+                    }
                     self.seal_candidate(candidate, effects);
                     return false;
                 }
                 Progress::Complete { destination, title } => {
-                    effects.complete_link(
-                        candidate,
-                        LinkTarget::Direct(destination),
-                        Some(Span::new(parser.start - 1, pos + 1)),
-                        title,
-                    );
+                    let source = Span::new(parser.start - 1, pos + 1);
+                    if self.header_link.is_some() {
+                        self.header_link_suffix = Some(HeaderLinkSuffix::Destination {
+                            source,
+                            destination,
+                            title,
+                        });
+                    } else {
+                        effects.complete_link(
+                            candidate,
+                            LinkTarget::Direct(destination),
+                            Some(source),
+                            title,
+                        );
+                    }
                 }
                 Progress::Pending => self.tail = Some(Tail::Destination { candidate, parser }),
             },
             Tail::Label { candidate, start } => {
                 if pos - start - 1 > MAX_LABEL_BYTES || matches!(byte, b'\n' | b'\r' | b'[') {
+                    if self.header_link.is_some() {
+                        self.cancel_header(effects);
+                        self.header_crossed = true;
+                    }
                     self.seal_candidate(candidate, effects);
                     return false;
                 }
                 if byte == b']' {
-                    let symbol = if pos == start + 1 {
-                        // Reuse the already-normalized shortcut label. Its
-                        // source envelope may include hidden container prefixes.
-                        candidate.link.and_then(|id| match effects.links[id.0] {
-                            LinkTarget::Reference(symbol) => Some(symbol),
-                            _ => None,
-                        })
+                    let source = Span::new(start, pos + 1);
+                    if self.header_link.is_some() {
+                        self.header_link_suffix = Some(HeaderLinkSuffix::Label(source));
                     } else {
-                        effects
-                            .references
-                            .intern(&effects.source[start + 1..pos], effects.work)
-                    };
-                    if let Some(symbol) = symbol {
-                        effects.complete_link(
-                            candidate,
-                            LinkTarget::Reference(symbol),
-                            Some(Span::new(start, pos + 1)),
-                            None,
-                        );
-                    } else {
-                        self.seal_candidate(candidate, effects);
+                        self.reference_tail(candidate, source, effects);
                     }
                 } else {
                     self.tail = Some(Tail::Label { candidate, start });
@@ -876,6 +945,26 @@ impl Inline {
             }
         }
         true
+    }
+
+    fn reference_tail(&self, candidate: Candidate, source: Span, effects: &mut Effects<'_>) {
+        let symbol = if source.len() == 2 {
+            // The source envelope can contain hidden container prefixes.
+            candidate.link.and_then(|id| match effects.links[id.0] {
+                LinkTarget::Reference(symbol) => Some(symbol),
+                _ => None,
+            })
+        } else {
+            effects.references.intern(
+                &effects.source[source.start + 1..source.end - 1],
+                effects.work,
+            )
+        };
+        if let Some(symbol) = symbol {
+            effects.complete_link(candidate, LinkTarget::Reference(symbol), Some(source), None);
+        } else {
+            self.seal_candidate(candidate, effects);
+        }
     }
 
     fn seal_candidate(&self, candidate: Candidate, effects: &mut Effects<'_>) {
@@ -917,6 +1006,46 @@ impl Inline {
 #[cfg(test)]
 mod tests {
     use crate::{Document, LinkId};
+
+    #[test]
+    fn isolated_link_suffixes_keep_fixed_spans_and_release_them_on_resolution() {
+        for suffix in ["(u 'title')", "[key]", "[]"] {
+            let mut doc = Document::new();
+            doc.append(&format!("> a ![old\n> end]{suffix} {}", "x".repeat(1030)))
+                .unwrap();
+            assert!(doc.inline.header_link_suffix.is_some());
+            let candidate = doc.inline.header_link.unwrap();
+            let label = doc.inline.label.clone();
+            let capacity = doc.inline.label.capacity();
+            let before = doc.work();
+            doc.append(&"x".repeat(1_000_000)).unwrap();
+            assert_eq!(doc.inline.header_link.unwrap().open, candidate.open);
+            assert_eq!(doc.inline.header_link.unwrap().close, candidate.close);
+            assert_eq!(doc.inline.label, label);
+            assert_eq!(doc.inline.label.capacity(), capacity);
+            assert_eq!(doc.work().label_bytes, before.label_bytes);
+            assert_eq!(doc.work().delimiter_steps, before.delimiter_steps);
+            doc.append("\n").unwrap();
+            assert!(doc.inline.header_link.is_none());
+            assert!(doc.inline.header_link_suffix.is_none());
+            for i in 0..200 {
+                doc.append(&format!("> a ![old\n> end]{suffix} {}", "x".repeat(1030)))
+                    .unwrap();
+                assert!(doc.inline.header_link_suffix.is_some());
+                doc.append(match i % 4 {
+                    0 => "\n",
+                    1 => "|b\n> -|-\n\n",
+                    2 => "|b\n> wrong\n",
+                    _ => "[new](u)\n",
+                })
+                .unwrap();
+                assert!(doc.inline.header_link.is_none());
+                assert!(doc.inline.header_link_suffix.is_none());
+                assert!(doc.inline.label.capacity() <= capacity);
+            }
+            assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+        }
+    }
 
     #[test]
     fn isolated_shortcut_reuses_bounded_label_storage_and_releases_on_resolution() {

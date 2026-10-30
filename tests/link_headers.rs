@@ -113,7 +113,7 @@ fn replaced_labels_and_opaque_combinations_match_independent_cells() {
 }
 
 #[test]
-fn label_close_cancels_probe_even_if_overlong_or_replaced_afterward() {
+fn label_close_cancels_probe_when_replaced_and_isolates_inert_direct_tails() {
     for marker in ["[", "!["] {
         for padding in [0, 1010, 2048] {
             for suffix in ["", "(u)", "[ref]", "(bad target)"] {
@@ -131,14 +131,11 @@ fn label_close_cancels_probe_even_if_overlong_or_replaced_afterward() {
                 "y".repeat(1100)
             ))
             .unwrap();
-            let info = *doc.link_info(LinkId(0)).unwrap();
-            assert_eq!(doc.link_destination(LinkId(0)), Some("u"));
-            let before = doc.work();
+            assert!(doc.links().is_empty());
             doc.append("|b\n-|-\n").unwrap();
-            assert!(doc.tables().is_empty());
-            assert_eq!(*doc.link_info(LinkId(0)).unwrap(), info);
-            // The next short line may get a summary; the rejected long line does not.
-            assert!(doc.work().table_header_bytes - before.table_header_bytes <= 4);
+            assert_eq!(doc.tables().len(), 1);
+            assert!(doc.links().is_empty());
+            assert!(doc.references().is_empty());
         }
     }
 }
@@ -314,12 +311,23 @@ fn generated_replacement_and_escape_sequences_match_label_model() {
                 let prior = format!("a {marker} prior\n");
                 let prefix = format!("{}{a}{b}", "x".repeat(1030));
                 let header = format!("{prefix}|b\n");
-                // A closed shortcut followed only by ordinary text now stays
-                // eligible. Explicit tails and new syntax still reject it.
+                // This finite token model includes one inert direct or reference
+                // tail. Later syntax still cancels; pending plain labels can wait.
                 let rejected = closes_old_label(&prefix).is_some_and(|end| {
                     let suffix = &prefix[end..];
-                    suffix.starts_with('(')
-                        || suffix.contains(['&', '<', '\\', '*', '_', '~', '`', '$', '!', '[', ']'])
+                    let syntax = |text: &str| {
+                        text.contains(['&', '<', '\\', '*', '_', '~', '`', '$', '!', '[', ']'])
+                    };
+                    if let Some(label) = suffix.strip_prefix('[') {
+                        match label.split_once(']') {
+                            Some((body, rest)) => {
+                                syntax(body) || syntax(rest) || rest.contains('(')
+                            }
+                            None => syntax(label),
+                        }
+                    } else {
+                        syntax(suffix.strip_prefix("(v)").unwrap_or(suffix))
+                    }
                 });
                 if rejected {
                     compare_plain(&format!("{prior}{header}-|-\n"));

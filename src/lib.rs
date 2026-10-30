@@ -1042,8 +1042,8 @@ impl Document {
         }
         // Emphasis openers and separable close-only pairs may be retained while
         // probing. Other inherited pairs cancel with their original semantics.
-        // Inherited code/math and shortcut labels stay isolated through an
-        // inert suffix after closure. Labels retain local effects; their link
+        // Inherited code/math and labels (including inert explicit tails) stay
+        // isolated through an inert suffix after closure. Labels retain local effects; their link
         // objects and reference side effects wait for the header decision.
         let inherited = self
             .containers
@@ -1550,9 +1550,17 @@ impl Document {
         update: &mut Update,
     ) {
         let id = TableId(self.tables.len());
-        let first_cell = (header.parsed_end > header.content.start
-            && self.inline.confirm_header(&mut self.work))
-        .then(|| std::mem::take(&mut self.inline));
+        let first_cell = if header.parsed_end > header.content.start {
+            let mut inline = std::mem::take(&mut self.inline);
+            if inline.confirm_header(&mut self.effects(update)) {
+                Some(inline)
+            } else {
+                self.inline = inline;
+                None
+            }
+        } else {
+            None
+        };
         if let Some(end) = header.paragraph_end {
             self.blocks[self.current.unwrap().0].source.end = end;
         }

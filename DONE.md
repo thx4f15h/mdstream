@@ -847,3 +847,19 @@ README/TODO 已同步，仅标记上述独立子项。闭合后带其它行内�
 项目 devShell 全部通过：cargo check --all-targets、cargo clippy --all-targets -- -D warnings、debug/release cargo nextest run --no-fail-fast 各 753 项、cargo test --doc 60 项、cargo fmt --all -- --check 和 git diff --check。新 closed_link_headers 示例验证百万字成功丢弃/失败晚定义、稳定图片 ID 和预算预览（14 帧/94 个计费源码字节）。完整日志 `/tmp/mdtui3-closed-link-headers-validation.log`；初始两项失败基线 `/tmp/mdtui3-closed-link-headers-baseline.log`。
 
 README/TODO 已同步，仅标记此独立子项。显式目标/引用后缀、闭合后其它行内语法、通用已发布对象/引用副作用撤销、其余分类/容器限制及终端 UI 继续保留待办。零运行时依赖与禁止 unsafe 保持。
+
+## 2026-10-30 旧链接图片普通字符显式后缀的晚管道长表头核心交付
+
+本单元交付旧跨行链接/图片标签闭合后，直接裸目标与可选 title、full/collapsed 引用的普通字符后缀子项。继承顶层或同一显式 Quote/Item 的标签时，可在首管道前解析有界后缀并继续即时消费普通长尾；目标中的平衡括号、空目标、Unicode title/引用均沿用原单物理行方言。含行内语法起始字符的后缀、引用内 `^`、完成引用后缀后再遇 `(`、闭合后新行内语法仍取消探测；完整边界见 [README](README.md#表格任务列表与图片)。短表头、早管道、lazy/部分 tab 当前表头分类和其它块优先级保持原规则。
+
+先复现两项失败基线：原实现遇后缀起始就发布旧 LinkId/shortcut 符号并取消探测，不能确认此类长表头。现在复用原 Destination/Tail 单遍状态，只额外保存一个后缀的源码端点，不复制目标、不提前分配对象/符号或更新 first_use。成功丢弃旧跨行对象，直接目标和空引用保持单元格字面正文；完整非空 `[key]` 按独立单元格 shortcut 发布自己的 LinkId、源码映射和首引用位置，在后续单元格对象之前完成，无需回放长前缀。未完成普通后缀由单元格边界丢弃，表格管道优先规则保持。
+
+失败、无管道、EOF、Setext 或作用域退出先提交原 shortcut，再应用完成后缀，保留原符号创建顺序和首引用副作用，直接目标仍可留下旧 shortcut 符号；full 引用按目标标签间接寻址，collapsed 复用已去前缀的旧标签。拒绝字节恢复原 parser 位置和同一 LinkId，后续完成只更新该对象；空白/过长旧标签仍遵循无 shortcut 对象及直接目标回退规则。既有局部样式、代码/数学对象和历史 LinkId 保持稳定；源标签包络、部分 tab 显示映射及晚定义无需回访旧引用。
+
+新增 14 项验收：tests/link_suffix_headers.rs 12 项、tests/chunking.rs 全 UTF-8 切点/逐前缀快照 1 项、内部状态 1 项。覆盖四种作用域和两种标签的独立早管道对照，400 组范围/长分隔行模型，显式目标/title/引用与总后缀精确上限，非法/未完成/CRLF/EOF/Setext/作用域退出，17 种取消后缀及稳定临时对象，已定义符号的 first_use、两万旧引用晚定义及首定义优先，部分 tab 映射、共享预算暂停/恢复、合并 Update 与旧缓存/测量/显示/搜索任务拒绝。同步更新既有接受范围断言，并保留含新语法时取消及 Provisional LinkId 更新的检查。
+
+千层容器中三类后缀的百万字长尾每字节仅新增一次 inline/header 摘要计数，标签、delimiter、分类、容器、标题及 arena 计数保持不变。250 层列表、4096 旧对象/旧 opener/列的成功路径保留历史 ID，决议仅 4097 次 delimiter_steps，局部 key 规范化 3 字节；不回扫首单元格。固定后缀状态在每类 200 轮成功/失败/取消后释放，标签缓冲不增长。折叠百万字容器正文与对象零读取。累计 O(n log n)、空间 O(n)，无新增运行时依赖/unsafe，不承诺单次判定硬时延。
+
+项目 devShell 全部通过：cargo check --all-targets、cargo clippy --all-targets -- -D warnings、debug/release cargo nextest run --no-fail-fast 各 767 项、cargo test --doc 61 项、cargo fmt --all -- --check 和 git diff --check。新 link_suffix_headers 示例验证百万字成功局部引用/失败晚定义、稳定图片 ID 和预算预览（16 帧/112 个计费源码字节）；既有 closed_link_headers、link_headers、closed_headers、closed_code_headers、closed_math_headers 示例全部通过。完整日志 `/tmp/mdtui3-link-suffix-headers-validation.log`；初始两项失败基线 `/tmp/mdtui3-link-suffix-headers-baseline.log`；专项 `/tmp/mdtui3-link-suffix-headers-targeted.log`。
+
+按可独立验收子项交付。含行内语法字符的显式后缀、闭合后其它语法、多行目标/title、通用对象/符号撤销及其余分类/容器/终端 UI 需求仍在 TODO。
