@@ -389,6 +389,7 @@ fn container_code_all_utf8_splits_prefixes_and_merged_updates_match_fold_model()
         table: true,
         heading_levels: [true; 6],
         container_depth: Some(2),
+        ..Default::default()
     };
     let expected = parse(source);
     for cut in source.char_indices().map(|(i, _)| i).chain([source.len()]) {

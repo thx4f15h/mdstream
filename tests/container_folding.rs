@@ -1270,3 +1270,734 @@ fn default_depth_streaming_policy_and_explicit_choices_match_interval_height_mod
         }
     }
 }
+
+fn policy_filter(bits: usize) -> ContainerFoldFilter {
+    ContainerFoldFilter {
+        quotes: bits & 1 != 0,
+        lists: bits & 2 != 0,
+        items: bits & 4 != 0,
+        completed_tasks: bits & 8 != 0,
+        incomplete_tasks: bits & 16 != 0,
+    }
+}
+
+// Independent class bit model, including the union between all items and tasks.
+fn policy_matches(bits: usize, kind: ContainerKind, checked: Option<bool>) -> bool {
+    let classes = match kind {
+        ContainerKind::Quote => 1,
+        ContainerKind::List { .. } => 2,
+        ContainerKind::Item { .. } => 4 | checked.map_or(0, |c| if c { 8 } else { 16 }),
+    };
+    bits & classes != 0
+}
+
+fn policy_action(bits: usize, collapsed: bool) -> FoldBatchAction {
+    FoldBatchAction::Containers {
+        filter: policy_filter(bits),
+        collapsed,
+    }
+}
+
+#[test]
+fn container_policy_all_class_unions_and_depths_match_independent_model() {
+    for bits in 0..32 {
+        for depth in [None, Some(0), Some(3), Some(usize::MAX)] {
+            let mut doc = Document::new();
+            let mut view = FoldView::new(&doc, 1).unwrap();
+            view.set_defaults(FoldDefaults {
+                containers: policy_filter(bits),
+                container_depth: depth,
+                ..Default::default()
+            });
+            let mut update = doc.append("# Root\n> - [x] done\n>   > quote\n> - [ ] open\n> - ordinary\n\n1. [X] ordered\n2. [z] ordinary\n").unwrap();
+            update.merge(doc.finish()).unwrap();
+            view.apply(&doc, &update).unwrap();
+            for i in 0..doc.container_count() {
+                let id = ContainerId(i);
+                let c = doc.container(id).unwrap();
+                assert_eq!(
+                    view.is_collapsed(container(i)),
+                    policy_matches(bits, c.kind, view.task_checked(&doc, id).unwrap())
+                        || depth.is_some_and(|d| c.depth >= d)
+                );
+            }
+            assert_eq!(
+                view.default_visits(),
+                if bits == 0 && depth.is_none() {
+                    0
+                } else {
+                    doc.container_count() as u64
+                }
+            );
+            assert!(!view.is_collapsed(FoldId::Heading(HeadingId(0))));
+            let chosen: Vec<_> = (0..doc.container_count())
+                .map(container)
+                .filter(|&id| view.is_collapsed(id))
+                .collect();
+            assert_eq!(render(&doc, &mut view, true).text, oracle(&doc, &chosen));
+        }
+    }
+}
+
+#[test]
+fn container_policy_marker_confirmation_splits_prefixes_eof_and_merge_agree() {
+    fn snapshot(
+        chunks: &[&str],
+        merged: bool,
+        finish: bool,
+    ) -> Vec<(Container, bool, Option<bool>)> {
+        let mut doc = Document::new();
+        let mut view = FoldView::new(&doc, 1).unwrap();
+        view.set_defaults(FoldDefaults {
+            containers: policy_filter(8),
+            ..Default::default()
+        });
+        let mut updates = Update::default();
+        for chunk in chunks {
+            let update = doc.append(chunk).unwrap();
+            if merged {
+                updates.merge(update).unwrap();
+            } else {
+                view.apply(&doc, &update).unwrap();
+            }
+        }
+        if finish {
+            let update = doc.finish();
+            if merged {
+                updates.merge(update).unwrap();
+            } else {
+                view.apply(&doc, &update).unwrap();
+            }
+        }
+        if merged {
+            view.apply(&doc, &updates).unwrap();
+        }
+        assert_eq!(view.default_visits(), doc.container_count() as u64);
+        (0..doc.container_count())
+            .map(|i| {
+                let c = doc.container(ContainerId(i)).unwrap();
+                let state = view.task_checked(&doc, ContainerId(i)).unwrap();
+                assert_eq!(view.is_collapsed(container(i)), state == Some(true));
+                (c, view.is_collapsed(container(i)), state)
+            })
+            .collect()
+    }
+    for source in [
+        "> - [x] 中\r\n>   > next\n> - [ ] 🙂\n\n1. [X] eof",
+        "- [x]",
+        "- [x",
+        "- [x]bad\n",
+        "- [ ]\n- [z] plain\n",
+    ] {
+        let expected = snapshot(&[source], false, true);
+        for cut in source.char_indices().map(|(i, _)| i).chain([source.len()]) {
+            for merged in [false, true] {
+                assert_eq!(
+                    snapshot(&[&source[..cut], &source[cut..]], merged, true),
+                    expected
+                );
+                assert_eq!(
+                    snapshot(&[&source[..cut]], merged, false),
+                    snapshot(&[&source[..cut]], false, false)
+                );
+            }
+            let chars: Vec<_> = source[..cut]
+                .char_indices()
+                .map(|(i, c)| &source[i..i + c.len_utf8()])
+                .collect();
+            assert_eq!(
+                snapshot(&chars, false, false),
+                snapshot(&[&source[..cut]], false, false)
+            );
+        }
+    }
+}
+
+#[test]
+fn container_policy_existing_explicit_and_overridden_choices_survive_append() {
+    let mut doc = Document::new();
+    doc.append("- [x] old\n").unwrap();
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    let mut other = FoldView::new(&doc, 1).unwrap();
+    view.set_defaults(FoldDefaults {
+        containers: policy_filter(8),
+        ..Default::default()
+    });
+    assert!(!view.is_collapsed(container(1)));
+    let update = doc.append("- [x] new\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    other.apply(&doc, &update).unwrap();
+    assert!(view.is_collapsed(container(2)));
+    view.set_collapsed(&doc, container(2), false).unwrap();
+    let before = (
+        doc.revision(),
+        doc.work(),
+        doc.source().to_owned(),
+        doc.container(ContainerId(2)),
+    );
+    view.set_task_checked(&doc, ContainerId(2), false).unwrap();
+    assert_eq!(
+        (
+            doc.revision(),
+            doc.work(),
+            doc.source().to_owned(),
+            doc.container(ContainerId(2))
+        ),
+        before
+    );
+    assert_eq!(
+        view.task_checked(&doc, ContainerId(2)).unwrap(),
+        Some(false)
+    );
+    assert_eq!(
+        other.task_checked(&doc, ContainerId(2)).unwrap(),
+        Some(true)
+    );
+    assert!(!view.is_collapsed(container(2)));
+    let visits = view.default_visits();
+    view.apply(&doc, &update).unwrap();
+    assert_eq!(view.default_visits(), visits);
+    view.reset(3).unwrap();
+    let mut update = doc.append("  grows\n- [x] later\n").unwrap();
+    update.merge(doc.finish()).unwrap();
+    view.apply(&doc, &update).unwrap();
+    other.apply(&doc, &update).unwrap();
+    assert_eq!(view.default_visits() - visits, 1);
+    assert!(!view.is_collapsed(container(2)));
+    assert!(view.is_collapsed(container(3)));
+    assert_eq!(
+        view.task_checked(&doc, ContainerId(2)).unwrap(),
+        Some(false)
+    );
+    assert_eq!(
+        other.task_checked(&doc, ContainerId(2)).unwrap(),
+        Some(true)
+    );
+    view.set_task_checked(&doc, ContainerId(2), true).unwrap();
+    assert!(!view.is_collapsed(container(2))); // Defaults are never re-run.
+    let version = view.version();
+    assert_eq!(
+        view.set_task_checked(&doc, ContainerId(2), true).unwrap(),
+        None
+    );
+    assert_eq!(view.version(), version);
+}
+
+#[test]
+fn container_policy_filtered_batches_charge_unmatched_nodes_and_share_budget() {
+    let doc = document(
+        "> - [x] done\n> - [ ] pending\n> - plain\n\n# Heading\n```\ncode\n```\na|b\n-|-\nx|y\n",
+    );
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    let rows = view.insert_table_rows(&doc, TableId(0), 1..2).unwrap();
+    let noncontainers: Vec<_> = all(&doc)
+        .into_iter()
+        .filter(|c| !matches!(c.id, FoldId::Container(_)))
+        .map(|c| c.id)
+        .chain([rows])
+        .collect();
+    for &id in &noncontainers {
+        view.set_collapsed(&doc, id, true).unwrap();
+    }
+    view.set_task_checked(&doc, ContainerId(2), false).unwrap();
+    view.set_task_checked(&doc, ContainerId(3), true).unwrap();
+    let work = doc.work();
+    let mut task = FoldBatch::new(&doc, &view, policy_action(8, true)).unwrap();
+    for limit in [
+        WorkLimit::default(),
+        WorkLimit {
+            queries: 1,
+            ..Default::default()
+        },
+        WorkLimit {
+            objects: 1,
+            ..Default::default()
+        },
+    ] {
+        let mut budget = Budget::new(limit);
+        let progress = task.advance(&doc, &mut view, &mut budget).unwrap();
+        assert_eq!(progress.visited, 0);
+        assert_eq!(budget.used(), WorkLimit::default());
+        assert_eq!(progress.completion, Completion::BudgetExhausted);
+    }
+    for i in 0..doc.container_count() {
+        let mut budget = tiny();
+        let progress = task.advance(&doc, &mut view, &mut budget).unwrap();
+        assert_eq!(progress.visited, i + 1);
+        assert_eq!(progress.changed, usize::from(i >= 3));
+        assert_eq!(budget.used(), tiny().remaining());
+        let paused = task.advance(&doc, &mut view, &mut budget).unwrap();
+        assert_eq!(paused.visited, progress.visited);
+        assert_eq!(paused.change, None);
+    }
+    let mut empty = Budget::new(WorkLimit::default());
+    assert_eq!(
+        task.advance(&doc, &mut view, &mut empty)
+            .unwrap()
+            .completion,
+        Completion::Covered
+    );
+    assert_eq!(empty.used(), WorkLimit::default());
+    assert_eq!(doc.work(), work);
+    assert!(!view.is_collapsed(container(2)));
+    assert!(view.is_collapsed(container(3)));
+    assert!(noncontainers.iter().all(|&id| view.is_collapsed(id)));
+    let empty_filter = batch(&doc, &mut view, policy_action(0, false));
+    assert_eq!(empty_filter.visited, doc.container_count());
+    assert_eq!(empty_filter.changed, 0);
+    assert_eq!(batch(&doc, &mut view, policy_action(4, false)).changed, 1);
+    assert!(noncontainers.iter().all(|&id| view.is_collapsed(id)));
+}
+
+#[test]
+fn container_policy_task_changes_invalidate_tasks_tickets_and_validate_identity() {
+    let mut doc = Document::new();
+    doc.append("- [ ] task\n- ordinary\n").unwrap();
+    let mut view = FoldView::<u32>::with_state(&doc, 1).unwrap();
+    let other = document("- [x] other\n");
+    assert_eq!(view.task_checked(&doc, ContainerId(0)).unwrap(), None);
+    for id in [ContainerId(0), ContainerId(2), ContainerId(99)] {
+        assert_eq!(
+            view.set_task_checked(&doc, id, true),
+            Err(LayoutError::InvalidRange)
+        );
+    }
+    assert_eq!(
+        view.task_checked(&other, ContainerId(1)),
+        Err(LayoutError::WrongDocument)
+    );
+    assert_eq!(
+        view.set_task_checked(&other, ContainerId(1), true),
+        Err(LayoutError::WrongDocument)
+    );
+    view.insert_checkpoint(TileId(0), 42).unwrap();
+    let ticket = view.heights().ticket(TileId(0)).unwrap();
+    let mut task = FoldBatch::new(&doc, &view, policy_action(8, true)).unwrap();
+    let mut nav = FoldNavigation::new(
+        &doc,
+        &view,
+        &Navigator::new(),
+        NavAction::Home,
+        FoldNavigationPolicy::Reveal,
+        1,
+    )
+    .unwrap();
+    let mut pass = LayoutPass::folded(&doc, &view, TileId(0), 10).unwrap();
+    let change = view
+        .set_task_checked(&doc, ContainerId(1), true)
+        .unwrap()
+        .unwrap();
+    assert_eq!(&doc.source()[change.source.range()], "[ ]");
+    assert_eq!(view.measure(ticket, 99), Err(LayoutError::StaleMeasurement));
+    assert!(view.checkpoints().previous(TileId(0)).is_none());
+    let mut budget = tiny();
+    assert_eq!(
+        task.advance(&doc, &mut view, &mut budget),
+        Err(LayoutError::StaleContinuation)
+    );
+    assert_eq!(
+        nav.advance(&doc, &mut view, &mut budget),
+        Err(LayoutError::StaleContinuation)
+    );
+    assert_eq!(
+        pass.advance_folded(&doc, &mut view, &mut budget, &mut Sink::default()),
+        Err(LayoutError::StaleContinuation)
+    );
+    assert_eq!(budget.used(), WorkLimit::default());
+    let update = doc.append("  continuation\n").unwrap();
+    assert_eq!(
+        view.task_checked(&doc, ContainerId(1)),
+        Err(LayoutError::OutOfOrderUpdate)
+    );
+    assert_eq!(
+        view.set_task_checked(&doc, ContainerId(1), false),
+        Err(LayoutError::OutOfOrderUpdate)
+    );
+    view.apply(&doc, &update).unwrap();
+    assert_eq!(view.task_checked(&doc, ContainerId(1)).unwrap(), Some(true));
+    let mut task = FoldBatch::new(&doc, &view, policy_action(8, true)).unwrap();
+    view.set_task_checked(&doc, ContainerId(1), true).unwrap(); // No-op keeps task valid.
+    assert_eq!(
+        task.advance(&doc, &mut view, &mut Budget::new(WorkLimit::unlimited()))
+            .unwrap()
+            .changed,
+        1
+    );
+}
+
+#[test]
+fn container_policy_preview_batches_and_navigation_preserve_local_intent() {
+    let mut doc = Document::new();
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    view.set_defaults(FoldDefaults {
+        containers: policy_filter(8),
+        ..Default::default()
+    });
+    let update = doc.append("- [x] parent\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    view.set_preview(&doc, Some(container(1)), &mut tiny())
+        .unwrap();
+    let update = doc.append("  - [x] child\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    assert!(view.is_collapsed(container(3)));
+    view.set_task_checked(&doc, ContainerId(1), false).unwrap();
+    batch(&doc, &mut view, policy_action(16, false));
+    assert!(!view.is_collapsed(container(1)));
+    assert_eq!(view.preview(), Some(container(1)));
+    view.set_preview(&doc, None, &mut tiny()).unwrap();
+    let target = doc.source().find("child").unwrap();
+    assert!(
+        matches!(view.hidden_at(&doc, target, &mut tiny()).unwrap(), FoldLookup::Hidden(c) if c.id == container(3))
+    );
+    let mut nav = FoldNavigation::new(
+        &doc,
+        &view,
+        &Navigator::new(),
+        NavAction::Source(target),
+        FoldNavigationPolicy::Reveal,
+        4,
+    )
+    .unwrap();
+    let mut reached = None;
+    for _ in 0..12 {
+        let progress = nav.advance(&doc, &mut view, &mut tiny()).unwrap();
+        if progress.completion == Completion::Covered {
+            reached = progress.target;
+            break;
+        }
+    }
+    assert_eq!(reached.unwrap().source, Some(target));
+    assert!(!view.is_collapsed(container(3)));
+    let update = doc.append("    more\n  - [x] new sibling\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    assert!(!view.is_collapsed(container(3)));
+    assert!(view.is_collapsed(container(4)));
+    assert_eq!(
+        view.task_checked(&doc, ContainerId(1)).unwrap(),
+        Some(false)
+    );
+}
+
+#[test]
+fn container_policy_thousand_levels_million_bytes_and_sparse_batch_are_bounded() {
+    let mut doc = Document::new();
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    view.set_defaults(FoldDefaults {
+        containers: policy_filter(1 | 8),
+        ..Default::default()
+    });
+    let update = doc
+        .append(&format!(
+            "{}- [x] {}",
+            ">".repeat(1000),
+            "x".repeat(1_000_000)
+        ))
+        .unwrap();
+    view.apply(&doc, &update).unwrap();
+    assert_eq!(doc.container_count(), 1002);
+    assert_eq!(view.default_visits(), 1002);
+    let before = (
+        view.default_visits(),
+        view.range_visits(),
+        view.container_index_visits(),
+        doc.work(),
+    );
+    for _ in 0..1000 {
+        let update = doc.append("x").unwrap();
+        view.apply(&doc, &update).unwrap();
+    }
+    assert_eq!(view.default_visits(), before.0);
+    assert_eq!(view.range_visits() - before.1, 1000);
+    assert_eq!(view.container_index_visits(), before.2);
+    assert_eq!(doc.work().container_steps, before.3.container_steps);
+    let progress = batch(&doc, &mut view, policy_action(16, true));
+    assert_eq!((progress.visited, progress.changed), (1002, 0));
+    let mut sink = Sink::default();
+    let mut pass = LayoutPass::folded(&doc, &view, TileId(0), 10).unwrap();
+    let mut budget = Budget::new(WorkLimit {
+        queries: 16,
+        objects: 4,
+        tiles: 2,
+        ..Default::default()
+    });
+    assert_eq!(
+        pass.advance_folded(&doc, &mut view, &mut budget, &mut sink)
+            .unwrap(),
+        Completion::EndOfDocument
+    );
+    assert_eq!(budget.used().bytes, 0);
+    assert_eq!(sink.text, "[fold]\n");
+    let before = view.container_index_visits();
+    view.set_task_checked(&doc, ContainerId(1001), false)
+        .unwrap();
+    assert_eq!(view.container_index_visits(), before);
+    assert!(view.is_collapsed(container(1001))); // No implicit refolding or ancestry walk.
+    let update = doc.finish();
+    view.apply(&doc, &update).unwrap();
+    assert_eq!(view.default_visits(), 1002);
+}
+
+#[test]
+fn container_policy_historical_siblings_do_not_increase_append_initialization() {
+    let mut doc = Document::new();
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    view.set_defaults(FoldDefaults {
+        containers: policy_filter(8),
+        ..Default::default()
+    });
+    let update = doc.append(&"- [x] old\n".repeat(4096)).unwrap();
+    view.apply(&doc, &update).unwrap();
+    let before = (view.default_visits(), view.container_index_visits());
+    let update = doc.append("- [ ] new\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    assert_eq!(view.default_visits() - before.0, 1);
+    assert!(view.container_index_visits() - before.1 < 100);
+    view.set_task_checked(&doc, ContainerId(4097), true)
+        .unwrap();
+    let work = doc.work();
+    let mut task = FoldBatch::new(&doc, &view, policy_action(8, false)).unwrap();
+    let mut budget = Budget::new(WorkLimit {
+        queries: 4,
+        objects: 4,
+        ..Default::default()
+    });
+    let progress = task.advance(&doc, &mut view, &mut budget).unwrap();
+    assert_eq!((progress.visited, progress.changed), (4, 3));
+    assert_eq!(budget.used().bytes, 0);
+    let mut budget = Budget::new(WorkLimit {
+        queries: 5000,
+        objects: 5000,
+        ..Default::default()
+    });
+    let progress = task.advance(&doc, &mut view, &mut budget).unwrap();
+    assert_eq!((progress.visited, progress.changed), (4098, 4096));
+    assert_eq!(doc.work(), work);
+    let visits = view.default_visits();
+    let update = doc.append("- [x] future\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    assert_eq!(view.default_visits() - visits, 1);
+    assert!(view.is_collapsed(container(4098)));
+    assert!(!view.is_collapsed(container(4097)));
+}
+
+#[test]
+fn container_policy_streaming_filters_overrides_and_preview_match_interval_height_model() {
+    let mut doc = Document::new();
+    let mut view = FoldView::new(&doc, 2).unwrap();
+    let mut choices = std::collections::BTreeSet::new();
+    let mut states = std::collections::BTreeMap::new();
+    let mut preview = None;
+    let mut bits = 8;
+    let mut depth = None;
+    let mut seed = 0x834f52b6u64;
+    for step in 0..320 {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        if step % 7 == 0 {
+            bits = seed as usize % 32;
+            depth = if step % 14 == 0 { Some(4) } else { None };
+            view.set_defaults(FoldDefaults {
+                containers: policy_filter(bits),
+                container_depth: depth,
+                ..Default::default()
+            });
+        }
+        let old_count = doc.container_count();
+        let line = match step % 5 {
+            0 => "> - [x] parent\n".to_owned(),
+            1 => ">   - [ ] child\n".to_owned(),
+            2 => format!(">     {}\n", "long ".repeat(800)),
+            3 => "> - ordinary\n".to_owned(),
+            _ => "\n".to_owned(),
+        };
+        let update = doc.append(&line).unwrap();
+        view.apply(&doc, &update).unwrap();
+        for i in old_count..doc.container_count() {
+            let id = ContainerId(i);
+            let c = doc.container(id).unwrap();
+            let checked = match c.kind {
+                ContainerKind::Item { task, .. } => task.map(|t| t.checked),
+                _ => None,
+            };
+            if let Some(value) = checked {
+                states.insert(id, value);
+            }
+            if policy_matches(bits, c.kind, checked) || depth.is_some_and(|d| c.depth >= d) {
+                choices.insert(container(i));
+            }
+        }
+        let i = seed as usize % doc.container_count();
+        let id = ContainerId(i);
+        match step % 6 {
+            0 => {
+                preview = Some(container(i));
+                view.set_preview(&doc, preview, &mut tiny()).unwrap();
+            }
+            1 => {
+                preview = None;
+                view.set_preview(&doc, None, &mut tiny()).unwrap();
+            }
+            2 => {
+                let (&task, &old) = states.iter().nth(seed as usize % states.len()).unwrap();
+                states.insert(task, !old);
+                view.set_task_checked(&doc, task, !old).unwrap();
+            }
+            3 => {
+                let selected = (seed >> 8) as usize % 32;
+                let collapsed = seed & 32 != 0;
+                batch(&doc, &mut view, policy_action(selected, collapsed));
+                for j in 0..doc.container_count() {
+                    if policy_matches(
+                        selected,
+                        doc.container(ContainerId(j)).unwrap().kind,
+                        states.get(&ContainerId(j)).copied(),
+                    ) {
+                        if collapsed {
+                            choices.insert(container(j));
+                        } else {
+                            choices.remove(&container(j));
+                        }
+                    }
+                }
+            }
+            4 => {
+                view.reset(step % 4 + 1).unwrap();
+            }
+            _ => {
+                view.toggle(&doc, container(i)).unwrap();
+                if !choices.insert(container(i)) {
+                    choices.remove(&container(i));
+                }
+            }
+        }
+        assert_eq!(
+            view.task_checked(&doc, id).unwrap(),
+            states.get(&id).copied()
+        );
+        for i in 0..doc.container_count() {
+            assert_eq!(
+                view.is_collapsed(container(i)),
+                choices.contains(&container(i))
+            );
+        }
+        let effective: Vec<_> = choices
+            .iter()
+            .copied()
+            .filter(|&id| Some(id) != preview)
+            .collect();
+        let offset = seed as usize % doc.source().len();
+        let expected = ranges(&doc, &effective)
+            .into_iter()
+            .find(|(s, _)| s.range().contains(&offset));
+        match view.hidden_at(&doc, offset, &mut tiny()).unwrap() {
+            FoldLookup::Hidden(c) => assert_eq!(Some(c.id), expected.map(|(_, id)| id)),
+            FoldLookup::Visible => assert!(expected.is_none()),
+            _ => panic!("budget"),
+        }
+        if step % 13 == 0 || step == 319 {
+            let sink = render(&doc, &mut view, false);
+            assert_eq!(sink.text, oracle(&doc, &effective), "step {step}");
+            assert_eq!(
+                view.heights().total_rows(),
+                sink.text.bytes().filter(|&b| b == b'\n').count() as u128
+            );
+        }
+    }
+}
+
+#[test]
+fn container_policy_batch_partial_work_is_kept_on_invalidation_and_wrong_view_rejected() {
+    let mut doc = Document::new();
+    doc.append("- [x] first\n- [x] second\n").unwrap();
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    let mut other = FoldView::new(&doc, 1).unwrap();
+    let mut task = FoldBatch::new(&doc, &view, policy_action(8, true)).unwrap();
+    let mut budget = tiny();
+    assert_eq!(
+        task.advance(&doc, &mut other, &mut budget),
+        Err(LayoutError::WrongView)
+    );
+    let wrong = document("- [x] wrong\n");
+    assert_eq!(
+        task.advance(&wrong, &mut view, &mut budget),
+        Err(LayoutError::WrongDocument)
+    );
+    assert_eq!(budget.used(), WorkLimit::default());
+    let mut budget = Budget::new(WorkLimit {
+        queries: 2,
+        objects: 2,
+        ..Default::default()
+    });
+    let progress = task.advance(&doc, &mut view, &mut budget).unwrap();
+    assert_eq!((progress.visited, progress.changed), (2, 1));
+    assert!(view.is_collapsed(container(1)));
+    assert!(!view.is_collapsed(container(2)));
+    view.set_defaults(FoldDefaults {
+        containers: policy_filter(16),
+        ..Default::default()
+    });
+    let mut budget = tiny();
+    assert_eq!(
+        task.advance(&doc, &mut view, &mut budget),
+        Err(LayoutError::StaleContinuation)
+    );
+    assert_eq!(budget.used(), WorkLimit::default());
+    let mut task = FoldBatch::new(&doc, &view, policy_action(8, true)).unwrap();
+    let update = doc.append("- [ ] future\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    assert_eq!(
+        task.advance(&doc, &mut view, &mut budget),
+        Err(LayoutError::StaleContinuation)
+    );
+    assert!(view.is_collapsed(container(1)));
+    assert!(!view.is_collapsed(container(2)));
+    assert!(view.is_collapsed(container(3)));
+    assert_eq!(budget.used(), WorkLimit::default());
+    let empty = Document::new();
+    let mut empty_view = FoldView::new(&empty, 1).unwrap();
+    let mut task = FoldBatch::new(&empty, &empty_view, policy_action(31, true)).unwrap();
+    let mut budget = Budget::new(WorkLimit::default());
+    assert_eq!(
+        task.advance(&empty, &mut empty_view, &mut budget)
+            .unwrap()
+            .completion,
+        Completion::Covered
+    );
+}
+
+#[test]
+fn container_policy_merged_update_uses_apply_time_defaults_once() {
+    let mut doc = Document::new();
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    view.set_defaults(FoldDefaults {
+        containers: policy_filter(16),
+        ..Default::default()
+    });
+    let mut updates = doc.append("- [ ] first\n").unwrap();
+    updates
+        .merge(doc.append("- [x] second\n").unwrap())
+        .unwrap();
+    updates.merge(doc.finish()).unwrap();
+    view.set_defaults(FoldDefaults {
+        containers: policy_filter(8),
+        ..Default::default()
+    });
+    view.apply(&doc, &updates).unwrap();
+    assert!(!view.is_collapsed(container(1)));
+    assert!(view.is_collapsed(container(2)));
+    assert_eq!(view.default_visits(), 3);
+    view.set_task_checked(&doc, ContainerId(1), true).unwrap();
+    view.set_task_checked(&doc, ContainerId(2), false).unwrap();
+    view.set_defaults(FoldDefaults::default());
+    let before = (view.version(), view.default_visits());
+    view.apply(&doc, &updates).unwrap();
+    assert_eq!((view.version(), view.default_visits()), before);
+    assert!(!view.is_collapsed(container(1)));
+    assert!(view.is_collapsed(container(2)));
+    assert_eq!(view.task_checked(&doc, ContainerId(1)).unwrap(), Some(true));
+    assert_eq!(
+        view.task_checked(&doc, ContainerId(2)).unwrap(),
+        Some(false)
+    );
+}

@@ -4,9 +4,9 @@ use std::{
 };
 
 use crate::{
-    BlockId, BlockKind, Budget, CheckpointIndex, Completion, ContainerId, Document, DocumentId,
-    HeadingId, HeightIndex, LayoutError, Measurement, Span, SyntaxState, TableId, TileId, Update,
-    WorkLimit,
+    BlockId, BlockKind, Budget, CheckpointIndex, Completion, ContainerId, ContainerKind, Document,
+    DocumentId, HeadingId, HeightIndex, LayoutError, Measurement, Span, SyntaxState, TableId,
+    TileId, Update, WorkLimit,
 };
 
 /// Document-local stable identity. Arbitrary crossing ranges are unsupported.
@@ -30,6 +30,35 @@ pub struct TableRowRange {
     pub end: usize,
 }
 
+/// Union of container classes. An empty filter selects nothing. `items`
+/// includes task items; task flags select only items with that effective state.
+/// Lists are selected independently of their children's completion states.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ContainerFoldFilter {
+    pub quotes: bool,
+    pub lists: bool,
+    pub items: bool,
+    pub completed_tasks: bool,
+    pub incomplete_tasks: bool,
+}
+
+impl ContainerFoldFilter {
+    pub(crate) fn matches(self, kind: ContainerKind, checked: Option<bool>) -> bool {
+        match kind {
+            ContainerKind::Quote => self.quotes,
+            ContainerKind::List { .. } => self.lists,
+            ContainerKind::Item { .. } => {
+                self.items
+                    || match checked {
+                        Some(true) => self.completed_tasks,
+                        Some(false) => self.incomplete_tasks,
+                        None => false,
+                    }
+            }
+        }
+    }
+}
+
 /// Initial choices for candidates first discovered by a subsequent `apply`.
 /// Existing choices are never overwritten, including explicit expansions.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -43,6 +72,10 @@ pub struct FoldDefaults {
     /// count as a level. None disables this policy; Some(0) includes all roots.
     /// Applies to Quote/List/Item alike, regardless of ancestor choices or preview.
     pub container_depth: Option<usize>,
+    /// Collapse new containers matching these classes OR container_depth.
+    /// Task states start from the source marker. Neither later state overrides
+    /// nor defaults changes reapply initialization to an existing container.
+    pub containers: ContainerFoldFilter,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -686,6 +719,8 @@ pub struct FoldView<S = ()> {
     range_visits: u64,
     defaults: FoldDefaults,
     default_visits: u64,
+    // Only values differing from the source marker; bounded by task item count.
+    task_overrides: BTreeMap<ContainerId, bool>,
     // The active node is temporarily absent from the effective masks. Keep only
     // its local choice; ancestor/descendant choices remain in the usual index.
     preview: Option<(FoldId, bool)>,
@@ -713,6 +748,7 @@ impl<S> FoldView<S> {
             range_visits: 0,
             defaults: FoldDefaults::default(),
             default_visits: 0,
+            task_overrides: BTreeMap::new(),
             preview: None,
         })
     }
@@ -937,6 +973,66 @@ impl<S> FoldView<S> {
 
     pub fn defaults(&self) -> FoldDefaults {
         self.defaults
+    }
+
+    /// This view's effective task state, or None for a non-task container.
+    /// O(log U), where U is the number of overridden task items. Invalid IDs
+    /// and unsynchronized/wrong documents are rejected before lookup.
+    pub fn task_checked(
+        &self,
+        document: &Document,
+        id: ContainerId,
+    ) -> Result<Option<bool>, LayoutError> {
+        self.check(document)?;
+        let container = document.container(id).ok_or(LayoutError::InvalidRange)?;
+        Ok(match container.kind {
+            ContainerKind::Item {
+                task: Some(task), ..
+            } => Some(
+                self.task_overrides
+                    .get(&id)
+                    .copied()
+                    .unwrap_or(task.checked),
+            ),
+            _ => None,
+        })
+    }
+
+    /// Override a task marker in this view without modifying source, syntax,
+    /// fold choices or preview. Use an explicit filtered batch to refold items.
+    /// Returning to the source state removes the override. A change invalidates
+    /// view continuations and affected measurements; identical values are free.
+    /// Returns the marker range for consumers drawing the effective state.
+    /// O(log U + log T), with no scan of descendants or source text.
+    pub fn set_task_checked(
+        &mut self,
+        document: &Document,
+        id: ContainerId,
+        checked: bool,
+    ) -> Result<Option<FoldChange>, LayoutError> {
+        let current = self
+            .task_checked(document, id)?
+            .ok_or(LayoutError::InvalidRange)?;
+        if current == checked {
+            return Ok(None);
+        }
+        let ContainerKind::Item {
+            task: Some(task), ..
+        } = document.container(id).unwrap().kind
+        else {
+            unreachable!()
+        };
+        if checked == task.checked {
+            self.task_overrides.remove(&id);
+        } else {
+            self.task_overrides.insert(id, checked);
+        }
+        self.version += 1;
+        self.expire_from(document, task.source.start)?;
+        Ok(Some(FoldChange {
+            version: self.version,
+            source: task.source,
+        }))
     }
 
     /// O(1). Applies only to newly identified headings/code blocks/tables/containers in future
@@ -1181,13 +1277,25 @@ impl<S> FoldView<S> {
                 dirty = Some(dirty.unwrap_or(usize::MAX).min(candidate.hidden.start));
             }
         }
-        if let Some(depth) = self.defaults.container_depth {
-            // Depth is stored on each node: neither historical containers nor
+        if self.defaults.container_depth.is_some()
+            || self.defaults.containers != ContainerFoldFilter::default()
+        {
+            // All predicates use stored metadata. Neither historical nodes nor
             // the active ancestor chain need visiting, even for a merged update.
             for index in update.new_containers.clone() {
                 self.default_visits += 1;
                 let id = ContainerId(index);
-                if document.container(id).unwrap().depth >= depth {
+                let container = document.container(id).unwrap();
+                let checked = match container.kind {
+                    ContainerKind::Item { task, .. } => task.map(|t| t.checked),
+                    _ => None,
+                };
+                if self
+                    .defaults
+                    .container_depth
+                    .is_some_and(|depth| container.depth >= depth)
+                    || self.defaults.containers.matches(container.kind, checked)
+                {
                     let candidate = document.fold_candidate(FoldId::Container(id)).unwrap();
                     self.state.insert(document, &mut self.heights, candidate);
                     dirty = Some(dirty.unwrap_or(usize::MAX).min(candidate.hidden.start));
@@ -1216,5 +1324,34 @@ impl<S> FoldView<S> {
     pub fn insert_checkpoint(&mut self, tile: TileId, state: S) -> Result<Option<S>, LayoutError> {
         self.checkpoints
             .insert_for_layout(&mut self.heights, tile, state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_override_storage_tracks_current_differences_not_toggle_history() {
+        let mut doc = Document::new();
+        doc.append(&"- [ ] task\n".repeat(4096)).unwrap();
+        doc.finish();
+        let mut view = FoldView::new(&doc, 1).unwrap();
+        for i in 1..=4096 {
+            view.set_task_checked(&doc, ContainerId(i), true).unwrap();
+        }
+        assert_eq!(view.task_overrides.len(), 4096);
+        for i in 1..=4096 {
+            view.set_task_checked(&doc, ContainerId(i), false).unwrap();
+        }
+        assert!(view.task_overrides.is_empty());
+        let nodes = view.heights().node_count();
+        for _ in 0..1000 {
+            view.set_task_checked(&doc, ContainerId(1), true).unwrap();
+            assert_eq!(view.task_overrides.len(), 1);
+            view.set_task_checked(&doc, ContainerId(1), false).unwrap();
+            assert!(view.task_overrides.is_empty());
+        }
+        assert_eq!(view.heights().node_count(), nodes);
     }
 }

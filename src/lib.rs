@@ -69,8 +69,8 @@ pub use fold_navigation::{
     FoldAnchor, FoldAnchorTarget, FoldNavigation, FoldNavigationPolicy, FoldNavigationProgress,
 };
 pub use folding::{
-    FoldCandidate, FoldCandidates, FoldChange, FoldDefaults, FoldId, FoldLookup, FoldPlaceholder,
-    FoldPreviewProgress, FoldView, TableRowRange,
+    ContainerFoldFilter, FoldCandidate, FoldCandidates, FoldChange, FoldDefaults, FoldId,
+    FoldLookup, FoldPlaceholder, FoldPreviewProgress, FoldView, TableRowRange,
 };
 pub use footnotes::{
     Footnote, FootnoteChunk, FootnoteContent, FootnoteDefinition, FootnoteId, FootnoteReference,

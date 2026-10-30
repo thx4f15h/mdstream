@@ -609,3 +609,15 @@ README、TODO 已同步，仅将容器跨行数学内容子项标记完成；数
 项目 devShell 的 check、clippy（-D warnings）、debug/release nextest 各 530 项、44 项文档测试、fmt 和 diff 检查通过。新增 `container_setext` 示例用 16 帧读取完整两行标题的 32 源码字节，跳过 120 万字节折叠正文；另有 container_headings、container_sections、container_inline、container_lazy、container_math 五个回归示例通过。日志：`/tmp/mdtui3-setext-validation.log`（check/clippy、两种 nextest 通过；首次新增文档示例的 Option 写法错误已修正）、`/tmp/mdtui3-setext-doc-examples-validation.log`（修正后 44 项文档测试及六个示例、fmt/diff 均通过）。
 
 此项交付既有容器方言中的多行 Setext；下划线含前缀的 1 KiB 分类上限、更完整块语义撤销、tight/loose 余项、tab 缩进及终端排版继续保留 TODO。
+
+## 2026-10-30 容器类型与任务完成状态策略交付
+
+- `ContainerFoldFilter` 以 Quote/List/全部 Item/已完成任务/未完成任务五个字段作并集。普通条目不匹配任务字段；`items` 包括任务，List 不聚合子项状态。`FoldDefaults::containers` 与既有深度阈值任一命中即初始化新节点为收起；只检查 `new_containers` 的已存元数据一次，含晚识别、EOF 及合并更新，无历史/祖先回扫。
+- `FoldView::task_checked` / `set_task_checked` 提供独立视图内的有效完成状态和稀疏覆盖，只保存与源 marker 不同的值。修改不写 Document/样式、不改折叠意愿或预览，设回源码状态移除覆盖；普通追加、finish 和 reset 保留覆盖与显式意愿。实际变化返回 marker 区间和新版本，惰性失效相关测量/检查点以及旧批量/导航/排版任务；无操作保持版本。源码读取仍表示原文，宿主绘制任务控件时查询有效状态。
+- `FoldBatchAction::Containers` 仅遍历容器 arena，以有效状态筛选；包括隐藏祖先下的节点，逐容器扣 1 query / 1 object，不匹配和空筛选也计费，不收初始化费，不读取正文/叶块/表格行。预算不足原子暂停，完成后重读免费，渐进修改可立即排版，取消或失效保留已完成部分。非命中容器、标题/代码/整表/注册行范围及未来默认设置保持意愿；预览节点的保存意愿与原单点/批量规则一致。
+- 复杂度：新增 N 个容器、匹配 K 个的默认成本沿用 O(N + K(log H + log C + log F + log T))；普通正文追加只刷新共享尾部。批量任务 O(1) 状态、总访问 C 个容器，每步固定次数元数据/索引操作，含 O(log U) 有效状态查询及既有折叠索引操作。U 个覆盖占 O(U)，单点覆盖 O(log U + log T)，无全祖先/子块/tile 扫描。默认 apply 仍是事件摊还契约，不增加任意大 Update 的单帧硬预算承诺。零运行时依赖、禁止 unsafe 保持。
+- 新增 12 项验收：32 种筛选 × 4 种深度组合对照；UTF-8 全切点/逐前缀、CRLF/无效及未完成 marker/EOF/合并更新；旧节点及显式展开优先、两视图隔离、状态/预览/导航组合、非容器和行范围保留、预算原子暂停与共享、身份/版本拒绝、旧测量及检查点失效。320 轮流式默认切换/覆盖/批量/预览/reset 与独立区间/高度模型一致。
+- 千层容器与百万字正文后的 1000 次逐字追加无默认重查、无容器索引写入或祖先解析增长；筛选 1002 个不匹配容器按预算推进，隐藏正文布局计费 0 bytes。4096 个历史任务后新条目只初始化一次；4096 个覆盖恢复原状态后存储清空，单节点再切换 1000 次不累积历史或高度索引节点。
+- 项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo nextest run` 与 `cargo nextest run --release` 各 **542** 项、`cargo test --doc` **45** 项、`cargo fmt --all -- --check`。`cargo run -r --example container_policies` 输出 **3 帧 / 3 容器 / 0 源码字节**，导航 **4 帧**；既有 `container_defaults` 和 `fold_batch` 示例通过。日志：`/tmp/mdtui3-container-policy-validation.log`。
+
+本单元交付默认策略、视图内状态及有预算筛选核心；任务控件绘制、任务聚合统计、实际摘要/容器排版、手工交叉范围和终端 UI 继续留待各自阶段，不将总体折叠规划标记完成。

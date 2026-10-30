@@ -1,6 +1,7 @@
 use crate::{
-    BlockKind, Budget, Completion, Document, DocumentId, FoldCandidate, FoldCandidates, FoldChange,
-    FoldId, FoldView, LayoutError, Span, TableRowRange, WorkLimit,
+    BlockKind, Budget, Completion, ContainerFoldFilter, ContainerId, Document, DocumentId,
+    FoldCandidate, FoldCandidates, FoldChange, FoldId, FoldView, LayoutError, Span, TableRowRange,
+    WorkLimit,
 };
 
 /// Explicit commands on syntax candidates and registered table row ranges.
@@ -27,6 +28,13 @@ pub enum FoldBatchAction {
         level: u8,
         collapsed: bool,
     },
+    /// Inspect only containers, including those under collapsed ancestors.
+    /// Task predicates use this view's effective task state. Unmatched nodes,
+    /// non-container candidates and future defaults retain their choices.
+    Containers {
+        filter: ContainerFoldFilter,
+        collapsed: bool,
+    },
     /// Expand the target and its ancestors; collapse every other candidate.
     /// Descendant choices are explicitly replaced, unlike single-node toggles.
     Focus {
@@ -48,8 +56,8 @@ pub struct FoldBatchProgress {
 /// Resumable, non-atomic batch editing. Intermediate choices are immediately
 /// usable by layout. Dropping/invalidating the task keeps completed changes.
 /// Storage is O(1); each budgeted step visits one block, container opener or
-/// registered row range. Appends, reset, defaults changes and external fold
-/// operations (including row registration/removal) invalidate the continuation.
+/// registered row range. Appends, reset, defaults/task-state changes and external
+/// fold operations (including row registration/removal) invalidate the continuation.
 pub struct FoldBatch {
     document: DocumentId,
     revision: u64,
@@ -63,6 +71,7 @@ pub struct FoldBatch {
     rows_end: usize,
     visited: usize,
     changed: usize,
+    container_next: usize,
 }
 
 impl FoldBatch {
@@ -109,12 +118,14 @@ impl FoldBatch {
             rows_end: 0,
             visited: 0,
             changed: 0,
+            container_next: 0,
         })
     }
 
     /// One query and one object pay for initialization, or for inspecting one
     /// block/container/registered row range and changing its candidate. Each step
     /// uses a fixed number of index operations; source and tiles are not scanned.
+    /// Containers visits only the container arena, without an initialization step.
     pub fn advance<S>(
         &mut self,
         document: &Document,
@@ -132,6 +143,33 @@ impl FoldBatch {
         }
         view.check(document)?;
         let mut change: Option<FoldChange> = None;
+        if let FoldBatchAction::Containers { filter, collapsed } = self.action {
+            // No block/row discovery or path walk. Unmatched containers still
+            // consume one query/object, so a sparse filter cannot bypass budget.
+            while self.container_next < document.container_count() {
+                if !budget.charge(WorkLimit {
+                    queries: 1,
+                    objects: 1,
+                    ..Default::default()
+                }) {
+                    return Ok(self.progress(Completion::BudgetExhausted, change));
+                }
+                let id = ContainerId(self.container_next);
+                self.container_next += 1;
+                self.visited += 1;
+                let container = document.container(id).unwrap();
+                if filter.matches(container.kind, view.task_checked(document, id)?) {
+                    self.apply_choice(
+                        document,
+                        view,
+                        FoldId::Container(id),
+                        collapsed,
+                        &mut change,
+                    )?;
+                }
+            }
+            return Ok(self.progress(Completion::Covered, change));
+        }
         loop {
             let syntax_done = self
                 .candidates
@@ -207,21 +245,34 @@ impl FoldBatch {
                     collapsed
                 }
                 FoldBatchAction::Focus { .. } => !candidate.contains_candidate(&self.root.unwrap()),
+                FoldBatchAction::Containers { .. } => unreachable!(),
             };
-            if let Some(applied) = view.set_collapsed(document, candidate.id, collapsed)? {
-                self.changed += 1;
-                self.version = view.version();
-                change = Some(FoldChange {
-                    version: applied.version,
-                    source: change.map_or(applied.source, |old| {
-                        Span::new(
-                            old.source.start.min(applied.source.start),
-                            old.source.end.max(applied.source.end),
-                        )
-                    }),
-                });
-            }
+            self.apply_choice(document, view, candidate.id, collapsed, &mut change)?;
         }
+    }
+
+    fn apply_choice<S>(
+        &mut self,
+        document: &Document,
+        view: &mut FoldView<S>,
+        id: FoldId,
+        collapsed: bool,
+        change: &mut Option<FoldChange>,
+    ) -> Result<(), LayoutError> {
+        if let Some(applied) = view.set_collapsed(document, id, collapsed)? {
+            self.changed += 1;
+            self.version = view.version();
+            *change = Some(FoldChange {
+                version: applied.version,
+                source: change.map_or(applied.source, |old| {
+                    Span::new(
+                        old.source.start.min(applied.source.start),
+                        old.source.end.max(applied.source.end),
+                    )
+                }),
+            });
+        }
+        Ok(())
     }
 
     fn progress(&self, completion: Completion, change: Option<FoldChange>) -> FoldBatchProgress {
