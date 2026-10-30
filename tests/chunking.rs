@@ -1394,3 +1394,36 @@ fn atx_whitespace_matches_all_utf8_splits_live_prefixes_and_eof() {
         assert_eq!(snapshot(&live), snapshot(&whole));
     }
 }
+
+#[test]
+fn setext_whitespace_matches_all_utf8_splits_and_live_prefixes() {
+    for source in [
+        "  **中\r\n🙂** \t\r\n===\r\n".to_owned(),
+        "  a  \n  b\t\n---".to_owned(),
+        ">   [中\n> 🙂](u) $x$ &#32; \t\n> ===\n> body\n".to_owned(),
+        "> - [x]  ` a\n>   b ` \t\r\n>   ===\n".to_owned(),
+        "-  *start\n\tend* \t\n  ===\n".to_owned(),
+        "  x\r \t\r\n===\n  y\r\r \t\r\n---\n".to_owned(),
+        "  old \t\n==x\n\n>  next \t\n> ===\n".to_owned(),
+        format!(">  *old\n> {}*|b \t\n> ===\n", "x".repeat(1050)),
+        format!("  {}\t{}\r\n===\n", "中".repeat(350), " ".repeat(1050)),
+        format!("  a \t\n{}\n===\n", "=".repeat(BLOCK_LOOKAHEAD + 1)),
+    ] {
+        for (at, _) in source.char_indices() {
+            check_chunks(&source, &[at]);
+        }
+        let mut live = Document::new();
+        for (at, ch) in source.char_indices() {
+            let end = at + ch.len_utf8();
+            live.append(&source[at..end]).unwrap();
+            let mut whole = Document::new();
+            whole.append(&source[..end]).unwrap();
+            assert_eq!(snapshot(&live), snapshot(&whole), "prefix {end}");
+        }
+        live.finish();
+        let mut whole = Document::new();
+        whole.append(&source).unwrap();
+        whole.finish();
+        assert_eq!(snapshot(&live), snapshot(&whole));
+    }
+}

@@ -211,25 +211,13 @@ enum Assessment {
         reason: &'static str,
         observed: &'static str,
     },
-    Unsupported {
-        reason: &'static str,
-        observed: &'static str,
-    },
 }
 
 // Current observations are separate from the verbatim upstream oracle. Both a
 // regression and an improvement require review, never automatic reclassification.
 fn assessment(number: usize) -> Assessment {
     match number {
-        80 | 81 | 83 | 86 | 88 | 90..=106 => Assessment::Supported,
-        82 => Assessment::Unsupported {
-            reason: "Setext title retains leading spaces and trailing tab",
-            observed: "<h1>  Foo <em>bar\nbaz</em>\t</h1>\n",
-        },
-        84 => Assessment::Unsupported {
-            reason: "Setext title retains one-to-three-column indentation",
-            observed: "<h2>   Foo</h2>\n<h2>  Foo</h2>\n<h1>  Foo</h1>\n",
-        },
+        80..=84 | 86 | 88..=106 => Assessment::Supported,
         85 => Assessment::DeliberateDifference {
             reason: "blank lines terminate indented code in the documented dialect (README: container code blocks)",
             observed: "<pre><code>Foo\n---\n</code></pre>\n<pre><code>Foo\n</code></pre>\n<hr />\n",
@@ -237,10 +225,6 @@ fn assessment(number: usize) -> Assessment {
         87 => Assessment::DeliberateDifference {
             reason: "indented code interrupts paragraphs in the documented dialect (also ATX example 70)",
             observed: "<p>Foo</p>\n<pre><code>---\n</code></pre>\n",
-        },
-        89 => Assessment::Unsupported {
-            reason: "Setext title retains trailing spaces before underline",
-            observed: "<h2>Foo  </h2>\n",
         },
         _ => panic!("unclassified upstream example {number}"),
     }
@@ -251,8 +235,7 @@ fn check_case(number: usize, markdown: &str, expected: &str, actual: &str) {
         Assessment::Supported => {
             assert_eq!(actual, expected, "example {number}, input {markdown:?}");
         }
-        Assessment::DeliberateDifference { observed, .. }
-        | Assessment::Unsupported { observed, .. } => {
+        Assessment::DeliberateDifference { observed, .. } => {
             assert_ne!(
                 actual, expected,
                 "example {number} now matches upstream; review classification"
@@ -276,12 +259,11 @@ fn pinned_commonmark_setext_report() {
         let (category, label, reason) = match assessment(number) {
             Assessment::Supported => (0, "supported", "matches upstream"),
             Assessment::DeliberateDifference { reason, .. } => (1, "deliberate difference", reason),
-            Assessment::Unsupported { reason, .. } => (2, "unsupported", reason),
         };
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [22, 2, 3]);
+    assert_eq!(counts, [25, 2, 0]);
     eprintln!(
         "CommonMark 0.31.2 Setext headings (80–106): {} supported, {} deliberate differences, {} unsupported; other sections not scored by this test",
         counts[0], counts[1], counts[2]
@@ -359,8 +341,8 @@ fn pinned_commonmark_setext_every_split_and_scalar_prefix() {
 #[test]
 fn setext_projection_preserves_whitespace_styles_and_block_scope() {
     assert_eq!(project(&parse("a\nb\n===\n")), "<h1>a\nb</h1>\n");
-    assert_eq!(project(&parse("  a\t\n===\n")), "<h1>  a\t</h1>\n");
-    assert_eq!(project(&parse("a  \n---\n")), "<h2>a  </h2>\n");
+    assert_eq!(project(&parse("  a\t\n===\n")), "<h1>a</h1>\n");
+    assert_eq!(project(&parse("a  \n---\n")), "<h2>a</h2>\n");
     assert_eq!(
         project(&parse("*a* & < \\\"\n===\n")),
         "<h1><em>a</em> &amp; &lt; &quot;</h1>\n"
@@ -379,6 +361,7 @@ fn setext_projection_preserves_whitespace_styles_and_block_scope() {
         project(&parse("- a\n- b\n")),
         "<ul>\n<li>a</li>\n<li>b</li>\n</ul>\n"
     );
+    assert_eq!(project(&parse("  a\t\n")), "<p>  a\t</p>\n");
     assert_eq!(project(&parse("a\n\nb\n")), "<p>a</p>\n<p>b</p>\n");
     assert_eq!(
         project(&parse("    a  \n\n    b\n")),

@@ -900,3 +900,16 @@ README/TODO 已同步，仅标记此独立子项。显式目标/引用后缀、�
 独立运行：`nix develop -c cargo nextest run --test commonmark_setext --no-fail-fast --success-output immediate`；夹具复核：`python3 scripts/generate_commonmark_setext.py /path/to/spec.json --check`。3 项新增测试全部通过。项目 devShell 的 `cargo check --all-targets`、clippy `-D warnings`、debug/release nextest 各 **783 项**、**62 项文档测试**、格式检查、ATX/Setext 夹具复核及 `git diff --check` 通过。完整日志 `/tmp/mdtui3-commonmark-setext-validation.log`，独立分类与分块日志 `/tmp/mdtui3-commonmark-setext-targeted.log`，初始公开语义观察 `/tmp/mdtui3-commonmark-setext-inspect.log`；另以独立 Python 读取逐对核验 27 份官方输入/HTML 并验证来源摘要篡改被拒绝。
 
 本次完成评分而非全部语法支持，没有修改解析核心、依赖或终端 UI。Setext 首尾空白（82、84、89）明确保留 TODO；完整缩进/空行规则、分类长度上限、其余 CommonMark/GFM 范围及终端 UI 继续保留，短标准样例不替代已有长输入和预算/复杂度验收。
+
+## 2026-10-30 Setext 原始首尾空白交付
+
+- [x] **官方空白缺口修复**：Setext 的整段原文首尾 space/tab 在下划线确认时隐藏，`Heading.content` 收缩到裁剪后的源码包络。固定 CommonMark 0.31.2 样例 82、84、89 改为支持，完整章节现为 **25 支持、2 刻意差异、0 未支持**；官方 Markdown/HTML 夹具、摘要和 HTML 投影代码不变。85/87 仍保留已记录的缩进代码方言差异，未改成官方期望。
+- [x] **单遍摘要与迟确认**：行内扫描同时维护首尾非 space/tab 字节及待定 CR，计入现有 `Work.inline_bytes`，只增加固定状态。LF/CRLF 后的 Setext 下划线完整确认时读取端点并写至多两个隐藏区间；不回扫正文、容器祖先或物理叶块。内部空白、软/硬换行、已确认代码/数学/链接、实体生成空格和原始源码映射保持；普通段落及失败下划线继续既有规则。序列关闭时清除端点，表头失败只消费未解析后缀，成功则隔离单元格。
+- [x] **身份与预算消费**：保留 BlockId、原始物理范围及已发布链接/数学对象；新 HeadingId 使用既有整段 Update 失效及合并协议。首尾 tile 的旧 key/测量/检查点、显示游标、名称搜索和 slug 任务正确失效；小预算显示读取原子暂停并推进，跨 tile/逐标量显示与全文一致，命中的源码映射、共享预算名称搜索/slug、折叠默认/预览/导航通过。
+- [x] **独立模型与对抗验收**：新增 10 项验收（`tests/setext_whitespace.rs` 9 项及全局分块快照 1 项）。1200 组原始区间模型对照独立整串 trim；覆盖 UTF-8 全切点/逐字符前缀、CRLF/EOF/孤立 CR、实体/代码/未闭合候选、内部硬换行、列表 padding/任务/部分 tab、分类上限、作用域切换及表头失败/成功。既有官方 533 切点、506 逐字符前缀评分保持通过。
+
+顶层及千层引用中的百万字正文加百万字尾部空白，逐字增长只计新增行内字节，分类/容器/标题上下文计数不变；下划线确认的旧正文/标签读取为零、区间树访问少于 1000。4096 个历史标题/链接/数学对象之后，再确认含 4096 个中间物理叶块的标题，旧对象和中间块不改写、标题步骤仅 2 次；空间保持固定摘要而非缓存原文。追加百万字折叠正文后，范围查询零正文计费；既有 `container_setext` release 示例以 16 帧/32 源码字节完成并跳过隐藏正文。整体仍是既有摊还 O(n log n)/空间 O(n) 契约，未把未闭合 opener 的实际收尾成本称作常数时间。
+
+项目 devShell 验收全部通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 **793 项**、`cargo test --doc` **63 项**、`cargo fmt --all -- --check`、官方 ATX/Setext 夹具 `--check` 和 `git diff --check`。`container_setext`、`heading_search`、`anchors` 三个 release 示例通过。完整日志 `/tmp/mdtui3-setext-whitespace-validation.log`；修改前官方评分的三项失败基线 `/tmp/mdtui3-setext-whitespace-baseline.log`；初次独立评分与容器回归 `/tmp/mdtui3-setext-whitespace-targeted.log`；专项分块/预算/复杂度 `/tmp/mdtui3-setext-whitespace-new-tests.log`；最终独立评分和文档复核 `/tmp/mdtui3-setext-whitespace-final-doc.log`。
+
+本单元完成已识别 Setext 标题的原始首尾空白需求。普通段落空白、完整缩进/空行规则、Setext 分类上限、剩余容器/tab 规则、其它 CommonMark/GFM 范围及终端 UI 继续按 TODO 推进；零运行时依赖及禁止 unsafe 保持。

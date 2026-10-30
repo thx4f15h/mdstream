@@ -263,6 +263,11 @@ enum HeaderLinkSuffix {
 /// Crossing pairs discard intervening openers; there is no backtracking.
 #[derive(Default)]
 pub(crate) struct Inline {
+    // Non-space/tab endpoints of the raw sequence, excluding its final LF/CRLF.
+    // Updated in the existing byte scan, including opaque syntax. Setext can
+    // trim the outer edges without replaying text or visiting physical leaves.
+    raw_content: Option<Span>,
+    raw_cr: Option<usize>,
     stack: Vec<Delimiter>,
     last: [Option<usize>; 5],
     run: Option<Run>,
@@ -507,12 +512,32 @@ impl Inline {
         for pos in span.range() {
             let byte = effects.source.as_bytes()[pos];
             effects.work.inline_bytes += 1;
+            if let Some(cr) = self.raw_cr.take()
+                && byte != b'\n'
+            {
+                self.raw_nonspace(cr);
+            }
+            match byte {
+                b'\r' => self.raw_cr = Some(pos),
+                b' ' | b'\t' | b'\n' => (),
+                _ => self.raw_nonspace(pos),
+            }
             self.byte(byte, pos, effects);
             self.previous = Some(byte);
         }
         if let Some(math) = &mut self.math {
             math.end = span.end;
         }
+    }
+
+    fn raw_nonspace(&mut self, pos: usize) {
+        self.raw_content.get_or_insert(Span::new(pos, pos + 1)).end = pos + 1;
+    }
+
+    /// Called only after the last payload LF, before the Setext underline is
+    /// consumed. Internal whitespace stays inside this source envelope.
+    pub fn setext_content(&self) -> Option<Span> {
+        self.raw_content
     }
 
     fn byte(&mut self, byte: u8, pos: usize, effects: &mut Effects<'_>) {
@@ -974,6 +999,8 @@ impl Inline {
     }
 
     pub fn finish(&mut self, effects: &mut Effects<'_>) {
+        self.raw_content = None;
+        self.raw_cr = None;
         if let Some(tail) = &self.tail {
             let candidate = match tail {
                 Tail::After(c)

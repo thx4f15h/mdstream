@@ -1207,6 +1207,17 @@ impl Document {
                         ),
                     )
                 };
+                let trimmed = self
+                    .inline
+                    .setext_content()
+                    .unwrap_or(Span::new(content.end, content.end));
+                debug_assert!(content.start <= trimmed.start && trimmed.end <= content.end);
+                self.mark(
+                    Span::new(content.start, trimmed.start),
+                    Style::HIDDEN,
+                    update,
+                );
+                self.mark(Span::new(trimmed.end, content.end), Style::HIDDEN, update);
                 self.blocks[id.0].kind = BlockKind::Heading { level };
                 // Keep all source-ordered physical leaves and their IDs. Only
                 // the first leaf becomes the opener; the last owns the underline.
@@ -1219,7 +1230,7 @@ impl Document {
                         container: self.blocks[id.0].container,
                         level,
                         source: whole,
-                        content,
+                        content: trimmed,
                     },
                     &mut self.work,
                 );
