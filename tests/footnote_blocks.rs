@@ -178,7 +178,7 @@ fn internal_blanks_and_trailing_list_separators_are_distinct() {
         ("- [^n]: first\n  \n  tail\n", ListTightness::Loose),
         ("- [^n]: first\n  \n- next\n", ListTightness::Loose),
         ("- [^n]: first\n  \n", ListTightness::Tight),
-        ("- > [^n]: first\n  >\n- next\n", ListTightness::Tight),
+        ("- > [^n]: first\n  >\n- next\n", ListTightness::Loose),
     ] {
         let doc = parse(source);
         assert_eq!(

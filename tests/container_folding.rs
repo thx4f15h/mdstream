@@ -2083,3 +2083,71 @@ fn container_policy_merged_update_uses_apply_time_defaults_once() {
         Some(false)
     );
 }
+
+#[test]
+fn nested_tail_propagation_preview_and_scope_close_match_interval_height_model() {
+    let mut doc = Document::new();
+    let mut view = FoldView::new(&doc, 2).unwrap();
+    let mut selected = std::collections::BTreeSet::new();
+    let mut preview = None;
+    let mut seed = 0x1ca5994fu64;
+    for step in 0..240 {
+        let line = match step % 8 {
+            0 => "# Root\n- # outer\n  - # inner\n",
+            1 => "    \r\n",
+            2 => "- sibling\n  > - child\n  >   \n",
+            3 => "  h|h\n  -|-\n  x|y\n",
+            4 => "  - # child\n    \n    more\n    \n",
+            5 => "  # parent\n",
+            6 => "  - > child\n    >\n",
+            _ => "- [x] next\n# outside\n",
+        };
+        let update = doc.append(line).unwrap();
+        view.apply(&doc, &update).unwrap();
+        for i in update.new_containers {
+            if i % 3 != 0 {
+                selected.insert(container(i));
+                view.set_collapsed(&doc, container(i), true).unwrap();
+            }
+        }
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        let id = container(seed as usize % doc.container_count());
+        match step % 5 {
+            0 => {
+                preview = Some(id);
+                view.set_preview(&doc, preview, &mut tiny()).unwrap();
+            }
+            1 => {
+                preview = None;
+                view.set_preview(&doc, None, &mut tiny()).unwrap();
+            }
+            2 => view.reset(3).unwrap(),
+            _ => {
+                if !selected.insert(id) {
+                    selected.remove(&id);
+                }
+                view.toggle(&doc, id).unwrap();
+            }
+        }
+        let effective: Vec<_> = selected
+            .iter()
+            .copied()
+            .filter(|&id| Some(id) != preview)
+            .collect();
+        let sink = render(&doc, &mut view, false);
+        assert_eq!(sink.text, oracle(&doc, &effective), "step {step}");
+        assert_eq!(
+            view.heights().total_rows(),
+            sink.text.bytes().filter(|&b| b == b'\n').count() as u128
+        );
+    }
+    let update = doc.finish();
+    view.apply(&doc, &update).unwrap();
+    view.set_preview(&doc, None, &mut tiny()).unwrap();
+    assert_eq!(
+        render(&doc, &mut view, false).text,
+        oracle(&doc, &selected.into_iter().collect::<Vec<_>>())
+    );
+}

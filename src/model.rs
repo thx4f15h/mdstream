@@ -220,8 +220,9 @@ pub struct Work {
     pub container_bytes: u64,
     /// Active-frame checks, quote-index probes and individual opens/closes.
     pub container_steps: u64,
-    /// Direct item payload/sibling checks and one-time Tight -> Loose changes.
-    /// No descendant or ancestor scans are included or required.
+    /// Direct item payload/sibling checks, trailing-separator deliveries after
+    /// actual child closures, and one-time Tight -> Loose changes. No scans of
+    /// historical descendants or retained ancestors are required.
     pub list_steps: u64,
     /// Heading scope opens/closes, classified context checks and heading inserts.
     /// Each step performs at most six index operations; no ancestor/body scans.

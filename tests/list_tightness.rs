@@ -86,7 +86,7 @@ fn leading_trailing_and_marker_only_lines_wait_for_actual_separators() {
 }
 
 #[test]
-fn blanks_affect_only_their_exact_item_and_nested_children_count_as_content() {
+fn blanks_separate_direct_items_or_follow_a_closed_trailing_child() {
     for (source, expected) in [
         (
             "- outer\n  - inner\n    \n    more\n- sibling\n",
@@ -94,7 +94,7 @@ fn blanks_affect_only_their_exact_item_and_nested_children_count_as_content() {
         ),
         (
             "- outer\n  - inner\n    \n- sibling\n",
-            vec![ListTightness::Tight, ListTightness::Tight],
+            vec![ListTightness::Loose, ListTightness::Tight],
         ),
         (
             "- outer\n  > quote\n  >\n  > more\n- sibling\n",

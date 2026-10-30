@@ -739,3 +739,18 @@ README/TODO 已同步完成范围。剩余新叶块类型与表头、普通新�
 项目 devShell 验收：cargo check --all-targets、cargo clippy --all-targets -- -D warnings、debug/release cargo nextest run --no-fail-fast 各 656 项、cargo test --doc 53 项、cargo fmt --all -- --check 及 git diff --check 通过。list_blanks 新示例用 3 帧/0 正文字节读取祖先，验证内外层分别晚确定、EOF 封口及折叠意愿保持；既有 list_tightness、containers、container_folding 示例通过。完整验收日志：`/tmp/mdtui3-list-blanks-validation.log`；初始三项失败基线：`/tmp/mdtui3-list-blanks-baseline.log`。
 
 README/TODO 已同步。完整缩进内层尾部空行向祖先传播、实际段落间距、其它容器/tab 规则、分类上限及终端 UI 继续保留后续；未声明完整 CommonMark tight/loose 兼容。
+
+
+## 2026-10-30 列表嵌套末尾空行传播核心交付
+
+完成既有容器方言的嵌套末尾空行传播：已分类的分隔若仍位于最后子容器尾部，随 List/Item/Quote 实际关闭传给恢复的祖先 Item；同型兄弟或已有直接内容后的新内容/子容器确认该父列表 Loose。内层后续内容会消耗分隔，不继续传播；EOF/关闭本身不确认，退出整个列表不污染新作用域，已关闭内层列表可保持 Tight。空 Item/Quote 首行、编号/任务/标记变更、字面代码/数学、脚注内部分段与末尾分隔及分类窗口规则见 [README](README.md#列表嵌套末尾空行)。
+
+实现只增加一个布尔尾部摘要，复用已有后缀关闭循环；任意深度子树一次关闭只向保留 Item 传递一次待定分隔。兄弟切换先关闭旧子树再读取旧 Item 的分隔状态，防止遗漏晚确认。没有历史子块或祖先扫描、不增加深度索引；源码范围、叶块/对象身份、既有一次区间失效和 Update.loosened_lists 契约保持。Work.list_steps 明确计入实际关闭后的分隔传递。累计解析 O(n log n)、空间 O(n)、零运行时依赖及禁止 unsafe 保持。
+
+新增 13 项验收：11 项专用测试、1 项全局分块快照和 1 项折叠高度模型。覆盖 400 组独立深度/恢复作用域/源码范围模型、240 轮流式折叠/预览/高度、UTF-8 全切点/逐前缀、CRLF/EOF、短尾部未分类与长空白不重试、完整 tab 边界、任务与 marker、新直接子块/失败候选、引用和脚注尾部、事件重建/合并/容量复用、旧缓存/测量/检查点/任务拒绝及共享预算。既有两处明确断言“不传播”的预期随新语义更新，内部空行和字面块隔离仍通过。
+
+复杂度证据：64/128/250 层列表各 1000 条完整空行仅 1000 次 list_steps；恢复最外层兄弟均为 4 次 list_steps，container_steps 恰为 2 × depth + 1，对应实际路径检查/关闭/新建。千层引用尾部关闭同样只需 4 次间距步骤；空行期间无折叠容器索引更新或容量增长。百万字长行后 1000 次逐字追加不增加分类前缀/祖先/间距工作；1 或 4096 个历史条目后，嵌套尾部确认均为 4 次 list_steps、5 次 container_steps，旧块/链接不改写。折叠百万字正文零读取，祖先游标与布局共享预算并可原子暂停。
+
+项目 devShell 验收全部通过：cargo check --all-targets、cargo clippy --all-targets -- -D warnings、debug/release cargo nextest run --no-fail-fast 各 669 项、cargo test --doc 54 项、cargo fmt --all -- --check 及 git diff --check。新 list_tail_blanks 示例用 3 帧/0 正文字节验证父级迟确认、内层 Tight/Sealed、稳定范围和折叠意愿；既有 list_blanks、list_tightness、containers、container_folding、footnote_blocks 示例通过。完整日志：`/tmp/mdtui3-list-tail-validation.log`；初始两项失败基线：`/tmp/mdtui3-list-tail-baseline.log`。
+
+README/TODO 已同步。实际段落间距、其它容器/tab 规则、分类上限及更完整块确认/撤销、终端 UI 继续保留 TODO；不声明完整 CommonMark 兼容。

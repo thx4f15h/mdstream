@@ -1101,3 +1101,44 @@ fn list_blank_retention_matches_all_utf8_splits_live_prefixes_and_eof() {
         assert_eq!(snapshot(&live), snapshot(&whole));
     }
 }
+
+#[test]
+fn nested_list_tails_match_all_utf8_splits_live_prefixes_and_eof() {
+    for source in [
+        "- # 中\r\n  - [x] **🙂** [l](u)\r\n    \r\n- [ ] sibling".to_owned(),
+        "- - > quote\n    >\n  # parent\n- sibling\n".to_owned(),
+        "- > - 中\n  >   \n  > - 🙂\n- sibling\n".to_owned(),
+        "- - first\n    \n    more\n- sibling\n  - child\n\t\n  + new child\n".to_owned(),
+        "- - [^n]: body\n    \n- next\n  - $$\n    \n- last\n".to_owned(),
+        "- - ```\n    \n    ```\n    \n- next\n  - h|h\n    -|-\n    \n  head\n  ===".to_owned(),
+        "> - - first\n>     \n> - next\n>   - last\n>     \n# exit\n".to_owned(),
+        "- - child\n    \n".to_owned(),
+        format!("- - child\n{}\n- 中🙂\n", " ".repeat(BLOCK_LOOKAHEAD - 1)),
+        format!("- - child\n{}\n- 中🙂\n", " ".repeat(BLOCK_LOOKAHEAD)),
+        format!(
+            "- - child\n    \n  {}|h\n  -|-\n- next\n",
+            "x".repeat(BLOCK_LOOKAHEAD + 20)
+        ),
+    ] {
+        for (at, _) in source.char_indices() {
+            check_chunks(&source, &[at]);
+        }
+        let mut live = Document::new();
+        for (at, c) in source.char_indices() {
+            let end = at + c.len_utf8();
+            live.append(&source[at..end]).unwrap();
+            let mut whole = Document::new();
+            whole.append(&source[..end]).unwrap();
+            assert_eq!(
+                snapshot(&live),
+                snapshot(&whole),
+                "prefix {end}: {source:?}"
+            );
+        }
+        live.finish();
+        let mut whole = Document::new();
+        whole.append(&source).unwrap();
+        whole.finish();
+        assert_eq!(snapshot(&live), snapshot(&whole));
+    }
+}

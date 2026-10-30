@@ -116,6 +116,9 @@ pub(crate) struct Containers {
     // An omitted-prefix blank can separate any resumed list at/after this
     // depth. Resolve only its next direct scope, never write all ancestors.
     blank_from: Option<usize>,
+    // The last descendant ends in a separator. Deliver it only when that
+    // descendant closes; intervening content consumes it without ancestor work.
+    trailing_blank: bool,
     pub end: usize,
     allocations: u64,
 }
@@ -338,6 +341,7 @@ impl Containers {
     }
 
     pub fn close_to(&mut self, keep: usize, end: usize, work: &mut Work, update: &mut Update) {
+        let popped = self.active.len() > keep;
         while self.active.len() > keep {
             match self.active.pop().unwrap() {
                 Active::Quote(id) => {
@@ -349,6 +353,17 @@ impl Containers {
                     self.close(list, end, work, update);
                 }
             }
+        }
+        if self.active.is_empty() {
+            self.trailing_blank = false;
+        } else if popped
+            && self.trailing_blank
+            && let Some(Active::List { spacing, .. }) = self.active.last_mut()
+        {
+            // Closing any number of trailing descendants delivers one pending
+            // separator. Closure alone never confirms Loose, including EOF.
+            spacing.pending_blank = true;
+            work.list_steps += 1;
         }
         if self
             .blank_from
@@ -376,7 +391,8 @@ impl Containers {
     }
 
     /// Observe only an item's direct payload or a newly opened direct child.
-    /// Blanks inside a quote/nested list never walk or update ancestor items.
+    /// Blanks inside a quote/nested list never walk or update ancestor items;
+    /// only a trailing separator survives closure to a resumed parent scope.
     /// A marker-only first line is not a separator; trailing blanks alone do
     /// not loosen a list. A later sibling can confirm even an empty old item.
     pub fn observe_payload(
@@ -389,6 +405,10 @@ impl Containers {
         if !blank {
             self.resolve_blank();
         }
+        self.trailing_blank = blank
+            && self
+                .inner()
+                .is_some_and(|id| self.nodes[id.0].source.start != start);
         let Some(Active::List {
             list,
             item,
@@ -455,7 +475,7 @@ impl Containers {
                     item,
                     indent,
                     content_indent,
-                    spacing,
+                    ..
                 } => {
                     let spaces = prefix.spaces();
                     if (keep > 0 || root_markers)
@@ -469,13 +489,19 @@ impl Containers {
                         {
                             break;
                         }
+                        // A child's tail must reach the old Item before the
+                        // sibling decides spacing and replaces that Item.
+                        self.close_to(keep + 1, span.start, work, update);
+                        let Active::List { spacing, .. } = self.active[keep] else {
+                            unreachable!()
+                        };
                         work.list_steps += 1;
                         if spacing.pending_blank || self.blank_from.is_some_and(|from| from <= keep)
                         {
                             self.loosen(list, work, update);
                         }
                         self.blank_from = None;
-                        self.close_to(keep + 1, span.start, work, update);
+                        self.trailing_blank = false;
                         self.close(item, span.start, work, update);
                         let item = self.open(
                             ContainerKind::Item {
