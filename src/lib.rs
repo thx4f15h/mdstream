@@ -169,8 +169,8 @@ pub struct Document {
     table_header: Option<table::HeaderCandidate>,
     streaming_header: Option<table::StreamingHeader>,
     table_delimiter: Option<table::DelimiterCandidate>,
-    // One physical inline payload can become a container Setext heading on the
-    // next explicit line. Its text is never copied or reparsed on confirmation.
+    // First leaf and content envelope of the current container text sequence.
+    // Setext confirmation never merges leaves or reparses their inline content.
     container_title: Option<(BlockId, Span)>,
     table_row: Option<table::RowParser>,
     references: References,
@@ -649,7 +649,11 @@ impl Document {
         update.new_containers.end = self.containers.len();
         update.container_end = self.containers.end;
         if update.base_revision != update.revision {
-            update.changed_blocks = update.new_blocks.start.saturating_sub(1)..self.blocks.len();
+            update.changed_blocks = update
+                .changed_blocks
+                .start
+                .min(update.new_blocks.start.saturating_sub(1))
+                ..self.blocks.len();
             update.changed_links = update.new_links.start.saturating_sub(1)..self.links.len();
             update.changed_headings =
                 update.new_headings.start.saturating_sub(1)..self.headings.entries().len();
@@ -707,6 +711,7 @@ impl Document {
 
     fn close_current(&mut self, update: &mut Update) {
         self.container_inline = None;
+        self.container_title = None;
         let mut inline = std::mem::take(&mut self.inline);
         inline.finish(&mut self.effects(update));
         self.inline = inline;
@@ -732,6 +737,14 @@ impl Document {
         }
         self.container_inline = self.containers.inner();
         self.push_block(span, kind, update)
+    }
+
+    fn extend_container_title(&mut self, block: BlockId, content: Span) {
+        if let Some((_, title)) = &mut self.container_title {
+            title.end = content.end;
+        } else {
+            self.container_title = Some((block, content));
+        }
     }
 
     fn push_block(&mut self, span: Span, kind: BlockKind, update: &mut Update) -> BlockId {
@@ -846,7 +859,7 @@ impl Document {
             }
             self.feed_header(root_header, update);
         }
-        let previous_title = self.container_title.take().or_else(|| {
+        let previous_title = self.container_title.or_else(|| {
             header.as_ref().map(|h| {
                 (
                     h.block.unwrap(),
@@ -1024,6 +1037,9 @@ impl Document {
             self.mark(span, Style::default(), update);
             self.mark(Span::new(span.start, content.start), Style::HIDDEN, update);
             let end = block::body_end(&self.source, span);
+            if header.container.is_some() {
+                self.extend_container_title(block.unwrap(), Span::new(content.start, end));
+            }
             if end + 2 == span.end {
                 self.mark(Span::new(end, end + 1), Style::HIDDEN, update);
             }
@@ -1137,8 +1153,11 @@ impl Document {
                     )
                 };
                 self.blocks[id.0].kind = BlockKind::Heading { level };
-                self.blocks[id.0].source.end = span.end;
-                let whole = self.blocks[id.0].source;
+                // Keep all source-ordered physical leaves and their IDs. Only
+                // the first leaf becomes the opener; the last owns the underline.
+                self.blocks[self.current.unwrap().0].source.end = span.end;
+                let whole = Span::new(self.blocks[id.0].source.start, span.end);
+                update.changed_blocks.start = update.changed_blocks.start.min(id.0);
                 self.headings.push(
                     Heading {
                         block: id,
@@ -1253,7 +1272,7 @@ impl Document {
             }
         }
         if container_text {
-            self.container_title = Some((id, Span::new(payload.start, body_end)));
+            self.extend_container_title(id, Span::new(payload.start, body_end));
         }
         if let BlockKind::Heading { level } = self.blocks[id.0].kind {
             self.headings.push(
@@ -1295,9 +1314,7 @@ impl Document {
                 &mut self.work,
             );
         }
-        if let Some((id, content)) = &mut self.container_title
-            && *id == line.block
-        {
+        if let Some((_, content)) = &mut self.container_title {
             content.end = block::body_end(&self.source, self.blocks[line.block.0].source);
         }
         if line.table {
@@ -1362,7 +1379,7 @@ impl Document {
         }
         let block = self.current.unwrap();
         if header.container.is_some() {
-            self.container_title = Some((block, header.content));
+            self.extend_container_title(block, header.content);
         }
         let line = StreamingLine {
             block,
@@ -1386,6 +1403,12 @@ impl Document {
 
     fn finish_header(&mut self, mut candidate: table::StreamingHeader, update: &mut Update) {
         let end = block::body_end(&self.source, candidate.header.source);
+        if candidate.header.container.is_some() {
+            self.extend_container_title(
+                candidate.header.block.unwrap(),
+                Span::new(candidate.header.content.start, end),
+            );
+        }
         if end + 2 == candidate.header.source.end {
             self.mark(Span::new(end, end + 1), Style::HIDDEN, update);
         }
@@ -1401,8 +1424,6 @@ impl Document {
             }
             if candidate.header.container.is_some() {
                 let block = candidate.header.block.unwrap();
-                self.container_title =
-                    Some((block, Span::new(candidate.header.content.start, end)));
                 self.end_container_text(block);
             }
         } else {

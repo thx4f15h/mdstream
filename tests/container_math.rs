@@ -170,7 +170,7 @@ fn setext_promotion_keeps_confirmed_mapping_and_later_ids_are_stable() {
     let update = doc.append("> ---\n> $next\n> end$\n").unwrap();
     assert_eq!(update.new_headings, 0..1);
     assert_eq!(update.new_maths, 1..2);
-    assert_eq!(doc.headings().entries()[0].block, BlockId(1));
+    assert_eq!(doc.headings().entries()[0].block, BlockId(0));
     assert_eq!(doc.maths()[0], math);
     assert_eq!(payload(&doc, 0), "a\nb");
     assert_eq!(payload(&doc, 1), "next\nend");

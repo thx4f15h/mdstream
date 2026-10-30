@@ -300,7 +300,7 @@ fn late_setext_pending_exit_and_merged_closures_preserve_choices() {
     for id in [h(0), h(1)] {
         view.set_collapsed(&doc, id, true).unwrap();
     }
-    let boundary = doc.source().len();
+    let boundary = doc.source().find("> old").unwrap();
     let update = doc.append("> New\n").unwrap();
     view.apply(&doc, &update).unwrap();
     verify(&doc, &view);

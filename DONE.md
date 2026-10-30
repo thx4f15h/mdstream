@@ -595,3 +595,17 @@ README、TODO 已同步，仅将容器跨行标签子项标记完成；数学内
 项目 devShell 验收：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 517 项、`cargo test --doc` 43 项、`cargo fmt --all -- --check` 和 `git diff --check` 通过。`cargo run -r --example container_math` 验证流式对象、稳定叶块、容器折叠与逐帧映射，读取 4 帧/30 源码字节；既有 `math`、`math_headers`、`container_inline`、`container_links` 示例通过。完整日志：`/tmp/mdtui3-container-math-validation.log`。
 
 README、TODO 已同步，仅将容器跨行数学内容子项标记完成；数学块、额外定界方言、TeX 排版与实际对象回调、更完整块语义撤销、其余容器规则及终端 UI 继续保留待办。
+
+## 2026-10-30 容器内多物理行 Setext 核心交付
+
+- [x] 同一确切 Quote/Item 中的显式、等价前缀及 lazy 连续正文由显式 Setext 下划线迟确认；空行、兄弟、实际作用域切换和已识别块中断终止序列。失败表头回到同一序列，确认表格清除候选；非法/超长下划线保持既有分类行为，换行/EOF 完成合法下划线后才发布标题。
+- [x] 首叶块保留 BlockId 并成为标题 opener，末叶块吸收下划线，中间物理叶块完全不改写；Heading.source/content 保存整段原始源码包络，显示读取去除中间前缀和 CR。已发布跨行强调、代码映射、链接/图片/数学对象及 ID 不撤销、不回放，未闭合状态只在边界收尾。
+- [x] changed_blocks 保守覆盖首叶块到末端，确认只发布一次整段结构失效和一个 new_headings；章节边界回退、稳定导航、折叠候选/默认/预览、容器组合、合并 Update、旧缓存/测量/读取任务失效复用既有机制。多行标题排版以 Heading.source 为准，不能假定它等于首叶块 source。
+
+解析继续使用一份固定大小的首块与内容区间，无正文副本或每行候选数组。新增字节单遍消费，确认只修改首尾块及范围索引，不按旧正文长度、叶块数或历史标题数遍历。行内未闭合状态收尾仍按 opener 生命周期计费，全库保持累计 O(n log n)、空间 O(n)，无单次调用硬时延承诺。
+
+验收：新增 13 项测试（12 项专用测试及全局分块快照），覆盖 UTF-8 全切点/逐前缀、CRLF/EOF、任务/兄弟/嵌套/块边界、长表头确认及失败/取消、长分隔行回退、对象/叶块稳定身份、预算暂停、缓存/测量/任务及合并更新。400 组前缀自由显示与独立章节/折叠范围模型通过；千层引用、250 层列表的百万字续行只消费新增字节，确认 inline_bytes 不增长；4096 个连续 lazy 叶块中间块保持原值，4096 个历史标题后的确认仅新增 2 个 heading_steps、1 次默认初始化和至多 8 次折叠范围检查。
+
+项目 devShell 的 check、clippy（-D warnings）、debug/release nextest 各 530 项、44 项文档测试、fmt 和 diff 检查通过。新增 `container_setext` 示例用 16 帧读取完整两行标题的 32 源码字节，跳过 120 万字节折叠正文；另有 container_headings、container_sections、container_inline、container_lazy、container_math 五个回归示例通过。日志：`/tmp/mdtui3-setext-validation.log`（check/clippy、两种 nextest 通过；首次新增文档示例的 Option 写法错误已修正）、`/tmp/mdtui3-setext-doc-examples-validation.log`（修正后 44 项文档测试及六个示例、fmt/diff 均通过）。
+
+此项交付既有容器方言中的多行 Setext；下划线含前缀的 1 KiB 分类上限、更完整块语义撤销、tight/loose 余项、tab 缩进及终端排版继续保留 TODO。

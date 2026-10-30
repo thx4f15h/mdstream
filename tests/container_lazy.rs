@@ -202,10 +202,10 @@ fn lazy_table_looking_lines_do_not_confirm_headers_or_extend_tables() {
 }
 
 #[test]
-fn lazy_equals_is_text_but_later_explicit_setext_keeps_single_leaf_semantics() {
+fn lazy_equals_is_text_but_later_explicit_setext_promotes_the_sequence() {
     let doc = parse("> *first\nlast*\n> ===\n");
     assert_eq!(doc.headings().entries().len(), 1);
-    assert_eq!(doc.headings().entries()[0].block, BlockId(1));
+    assert_eq!(doc.headings().entries()[0].block, BlockId(0));
     assert_eq!(doc.headings().entries()[0].container, Some(ContainerId(0)));
     assert!(style(&doc, 3).contains(Style::EMPHASIS));
     let doc = parse("> title\n===\n> next\n");

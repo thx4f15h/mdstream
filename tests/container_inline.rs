@@ -242,7 +242,7 @@ fn failed_table_candidates_continue_once_but_confirmed_tables_isolate_cells() {
 }
 
 #[test]
-fn single_line_setext_promotion_preserves_committed_inline_semantics_then_closes() {
+fn multiline_setext_promotion_preserves_committed_inline_semantics_then_closes() {
     let mut doc = Document::new();
     doc.append("> *first\n> last*\n").unwrap();
     let before = doc.work();
@@ -250,9 +250,9 @@ fn single_line_setext_promotion_preserves_committed_inline_semantics_then_closes
     assert_eq!(update.new_headings, 0..1);
     assert_eq!(doc.work().inline_bytes, before.inline_bytes);
     let heading = &doc.headings().entries()[0];
-    assert_eq!(heading.block, BlockId(1));
-    assert_eq!(doc.text(heading.content), Some("last*"));
-    assert_eq!(visible(&doc, heading.content), "last");
+    assert_eq!(heading.block, BlockId(0));
+    assert_eq!(doc.text(heading.content), Some("*first\n> last*"));
+    assert_eq!(visible(&doc, heading.content), "first\nlast");
     assert!(style(&doc, 3).contains(Style::EMPHASIS));
     assert_eq!(breaks(&doc).len(), 1); // Already confirmed before promotion.
     let doc = parse("> *first\n> last\n> ---\n> end*\n");

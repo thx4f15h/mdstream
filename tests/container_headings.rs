@@ -145,9 +145,9 @@ fn sections_are_local_to_exact_scope_and_current_restores_outer_context() {
 }
 
 #[test]
-fn setext_is_one_physical_payload_and_never_crosses_container_boundaries() {
+fn setext_spans_continuing_payloads_and_never_crosses_container_boundaries() {
     for (source, expected) in [
-        ("> first\n> second\n> -\n", vec!["second"]),
+        ("> first\n> second\n> -\n", vec!["first\nsecond"]),
         ("- title\n  -\n", vec!["title"]),
         ("- title\n-\n", vec![]),
         ("> title\n===\n", vec![]),

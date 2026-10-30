@@ -264,6 +264,8 @@ pub struct Update {
     pub container_end: usize,
     /// Conservative contiguous object deltas, including new objects. The last
     /// existing object can be reported even when its value did not change.
+    /// Setext promotion can widen changed_blocks back to the first container
+    /// text leaf; intervening leaves are not rewritten or enumerated by parsing.
     pub changed_blocks: Range<usize>,
     pub changed_headings: Range<usize>,
     pub changed_links: Range<usize>,

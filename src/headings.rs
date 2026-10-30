@@ -2,12 +2,15 @@ use crate::{BlockId, ContainerId, HeadingId, Span, Work};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Heading {
+    /// Stable opener leaf. A container Setext heading can span several physical
+    /// leaves: only this first leaf has Heading kind; source covers all of them.
     pub block: BlockId,
     /// Exact section scope. None is the document root.
     pub container: Option<ContainerId>,
     pub level: u8,
     pub source: Span,
-    /// Title source without heading markers; query inline runs lazily for a TOC.
+    /// Title source envelope without outer heading markers. Intervening container
+    /// prefixes remain in source; display runs hide them without flattening text.
     pub content: Span,
 }
 

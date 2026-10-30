@@ -768,3 +768,34 @@ fn container_math_matches_all_utf8_splits_and_live_prefixes() {
         assert_eq!(snapshot(&live), snapshot(&whole));
     }
 }
+
+#[test]
+fn container_setext_matches_all_utf8_splits_and_live_prefixes() {
+    for source in [
+        "> - [x] **中\r\n>   🙂**\\\r\nlast [x](u)\n>   ===\r\n>   body\n>   # peer\n".to_owned(),
+        "> first\n> [a\n> b](u) $c\n> d$ `e\n> f`\n> ===".to_owned(),
+        "> first\n> two\n> > # nested\n> new\n> tail\n> ---\n".to_owned(),
+        "> first\n> second\n> ==x\n> ===\n> # stop\n".to_owned(),
+        format!("> first\n> {}|b\n> ===\n", "x".repeat(1030)),
+        format!("> first\n> a|b\n> -|{}x\n> ===\n", "-".repeat(1030)),
+        format!("> *first\n> {}*|b\n> ===\n", "x".repeat(1030)),
+        format!("> first\n> {}\n> ===\n", "=".repeat(1030)),
+    ] {
+        for (at, _) in source.char_indices() {
+            check_chunks(&source, &[at]);
+        }
+        let mut live = Document::new();
+        for (at, c) in source.char_indices() {
+            let end = at + c.len_utf8();
+            live.append(&source[at..end]).unwrap();
+            let mut whole = Document::new();
+            whole.append(&source[..end]).unwrap();
+            assert_eq!(snapshot(&live), snapshot(&whole), "prefix {end}");
+        }
+        live.finish();
+        let mut whole = Document::new();
+        whole.append(&source).unwrap();
+        whole.finish();
+        assert_eq!(snapshot(&live), snapshot(&whole));
+    }
+}
