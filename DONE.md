@@ -815,3 +815,19 @@ README、TODO 只标记本子项；无法隔离的旧强调闭合、通用已发
 项目 devShell 全部通过：cargo check --all-targets、cargo clippy --all-targets -- -D warnings、debug/release cargo nextest run --no-fail-fast 各 726 项、cargo test --doc 58 项、cargo fmt --all -- --check 和 git diff --check。新 closed_code_headers 示例验证百万字成功丢弃/失败提交、稳定链接和预算预览（15 帧/101 个计费源码字节）；既有 code_headers、closed_headers、math_headers、link_headers 示例通过。完整日志 `/tmp/mdtui3-closed-code-headers-validation.log`；初始两项失败基线 `/tmp/mdtui3-closed-code-headers-baseline.log`；专项 `/tmp/mdtui3-closed-code-headers-targeted.log`。
 
 README/TODO 已同步，仅标记上述独立子项。闭合后带其它行内语法的代码表头、通用已发布映射撤销、其它分类/容器限制与终端 UI 继续保留 TODO。零运行时依赖与禁止 unsafe 保持。
+
+## 2026-10-30 旧数学可隔离闭合的晚管道长表头核心交付
+
+本单元交付顶层或同一显式 Quote/Item 续行中，旧 `$` / `$$` 在首管道前闭合、闭合后只有普通文本/空白及不启动语法的标点的晚管道长表头。完整字符边界与流式方言见 [README](README.md#表格任务列表与图片)。保留分类窗口、lazy/部分 tab 表头及块优先级，不声称通用已发布对象或样式撤销已完成。
+
+先复现两项失败基线：原实现拒绝这类表头，并在判定前发布跨行 MathId。数学 arena 要求源码有序且 ID 稳定，不能在表头确认后删除或重编号对象。本次匹配等长美元串时只暂存 open/close 两个源码区间，不提前发布 MathId、MATH 样式、定界符隐藏或 new_maths；长尾仍逐字消费。成功丢弃该端点对和旧 Inline，在既有单元格扫描中独立解析当前行；当前行对象发布一次，历史 MathId/LinkId/脚注编号和物理叶块保持稳定。
+
+失败、无管道 LF/EOF、Setext 或作用域退出时，按原端点提交公式一次，再消费未处理的后缀。闭合后遇到其它行内语法起始字节，必须在处理该字节前提交旧公式并取消该行探测，防止同次 feed 中后来的数学对象先入 arena；再次开启候选也不重启探测。原始读取保留源码包络，math_payload 复用已有前缀间隙与部分 tab 映射，闭合不回访或改写历史映射。正常范围失效拒绝旧缓存、测量、显示游标和搜索任务，合并 Update 与逐次应用的折叠视图一致。
+
+额外状态 O(1)，每次探测最多一个定界端点对；提交/丢弃计一次 math_steps，美元串扫描继续原计数。成功只额外消费互不重叠的当前表头，失败不重放，满足 inline_bytes <= source().len() + table_bytes，累计 O(n log n)/空间 O(n)，不承诺单次解析硬时延。千层引用中前序百万字数学正文加当前百万字长尾，每字仅增加一次 inline_bytes/table_header_bytes，无分类、数学、容器、章节或祖先工作，注解/容器容量不变。250 层列表中的 4096 历史公式/链接、旧 opener、当前行对象和列保持一次消费，旧公式逐项不变。内部测试确认百万字期间端点和间隙索引不变，200 轮成功/失败/取消后端点对释放。
+
+新增 13 项验收：tests/closed_math_headers.rs 11 项、全局 UTF-8 全切点/逐前缀快照 1 项、内部状态 1 项。覆盖独立早管道单元格语义、两种美元串/三个闭合位置/四种作用域、12 种取消后缀、400 组范围与长分隔行模型、CRLF/EOF/Setext/作用域退出、共享预算原子暂停、前缀与 tab 的数学源码映射、摘要/搜索和折叠零正文读取。四处旧拒绝断言更新为新增接受分支的语义模型或带语法后缀的明确拒绝案例，保留失败回退验证。
+
+项目 devShell 全部通过：cargo check --all-targets、cargo clippy --all-targets -- -D warnings、debug/release cargo nextest run --no-fail-fast 各 739 项、cargo test --doc 59 项、cargo fmt --all -- --check 和 git diff --check。新 closed_math_headers 示例验证百万字成功丢弃/失败提交、稳定 MathId 及预算预览（14 帧/96 个计费源码字节）；既有 math_headers、closed_code_headers、closed_headers、container_math、link_headers 示例通过。完整日志 `/tmp/mdtui3-closed-math-headers-validation.log`；初始两项失败基线 `/tmp/mdtui3-closed-math-headers-baseline.log`；专项 `/tmp/mdtui3-closed-math-headers-targeted.log`。
+
+README/TODO 已同步，仅标记上述独立子项。闭合后带其它行内语法的数学表头、通用已发布对象/样式撤销、其它分类/容器限制及终端 UI 继续保留 TODO。零运行时依赖与禁止 unsafe 保持。

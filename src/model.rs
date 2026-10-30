@@ -230,6 +230,7 @@ pub struct Work {
     /// Each step performs at most six index operations; no ancestor/body scans.
     pub heading_steps: u64,
     /// Maximal dollar runs resolved once, including mismatches and literal runs.
+    /// Also counts each isolated inherited closure's one-time commit or discard.
     pub math_steps: u64,
     /// Symbol operations and individual definition growth/close events.
     pub footnote_steps: u64,

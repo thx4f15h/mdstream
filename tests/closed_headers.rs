@@ -147,7 +147,7 @@ fn nonseparable_crossings_flush_isolated_pairs_and_keep_original_semantics() {
         ("**old *old\n", "end* _local end** "),
         ("[old *old\n", "end* end](u) "), // Later object cancels the probe.
         ("`old\n", "end` &amp; "),        // Semantic suffix cancels code isolation.
-        ("$old\n", "end$ "),
+        ("$old\n", "end$ &amp; "),        // Semantic suffix cancels math isolation.
     ] {
         for prefix in ["", "> "] {
             let prior = format!("{prefix}{prior}");

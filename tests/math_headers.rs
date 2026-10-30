@@ -291,9 +291,9 @@ fn repeated_failed_probes_never_walk_old_openers_or_revisit_math_body() {
     assert!(doc.work().delimiter_steps - before.delimiter_steps <= 4098);
 }
 
-// Independent model: a matching dollar run closes the old candidate only when
-// a following byte BEFORE the pipe ends that run. EOF/pipe does not flush it.
-fn closes_before_pipe(prefix: &str, width: usize) -> bool {
+// Independent model: only a matching run followed by new syntax cancels the
+// probe. An inert tail can now isolate the closure; pipe does not flush a run.
+fn cancels_before_pipe(prefix: &str, width: usize) -> bool {
     let bytes = prefix.as_bytes();
     let mut at = 0;
     while at < bytes.len() {
@@ -305,7 +305,7 @@ fn closes_before_pipe(prefix: &str, width: usize) -> bool {
                 at += 1;
             }
             if at < bytes.len() && at - start == width {
-                return true;
+                return bytes[at..].iter().any(|b| b"&<\\*_~`$![]".contains(b));
             }
         } else {
             at += 1;
@@ -330,13 +330,13 @@ fn generated_dollar_runs_and_escapes_match_independent_closure_model() {
                 let header = format!("{prefix}|end\n");
                 let source = format!("{prior}{header}-|-\n");
                 let doc = parse(&source);
-                let closed = closes_before_pipe(&prefix, width);
+                let cancelled = cancels_before_pipe(&prefix, width);
                 assert_eq!(
                     doc.tables().len(),
-                    usize::from(!closed),
+                    usize::from(!cancelled),
                     "{width} {a:?} {b:?}"
                 );
-                if closed {
+                if cancelled {
                     rejected += 1;
                     compare_plain(&source);
                 } else {
@@ -362,7 +362,7 @@ fn containers_cancel_table_probe_when_inherited_math_closes_before_pipe() {
             "x".repeat(2048)
         ))
         .unwrap();
-        // The first dollar on the continuation closes $old and cancels probing.
+        // The second dollar after the old closure cancels its isolated probe.
         assert_eq!(doc.maths().len(), 1);
         let math = *doc.math(MathId(0)).unwrap();
         doc.append(&format!("|$tail$\n{prefix}-|-\n{prefix}$body$|z\n"))
@@ -472,7 +472,7 @@ fn generated_tables_and_rejections_match_independent_range_model() {
         source.push_str(&format!(
             "{}{}|b\r\n",
             "x".repeat(1030 + i),
-            if i % 3 == 0 { "$$ closed " } else { "" }
+            if i % 3 == 0 { "$$ closed &amp; " } else { "" }
         ));
         let delimiter_start = source.len();
         source.push_str(&format!(
