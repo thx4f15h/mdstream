@@ -366,7 +366,7 @@ view.heights().viewport_budgeted(0..24, 0, &mut budget, &mut tiles);
 
 每次 append/finish 或连续 Update 批处理后调用 `view.apply`，然后才能查询。对已有折叠，更新只检查最多六个开放章节和一个开放代码/表格块；开启默认收起时还处理新增标题/块/表格的元数据，不枚举历史折叠。新 tile 在 apply 返回前继承遮蔽。开放代码/表格块的未分类行前缀暂属该块，闭合/下一块确认后可以收回；Setext 晚确认也能缩短前一章节的范围。普通源码追加不会读取旧正文。重复应用不清掉新测量，错误文档或不连续更新在修改视图之前被拒绝。
 
-折叠导航、锚点恢复、有预算批量操作、临时展开和摘要读取见下文。目录 UI、摘要占位绘制、表格行预览/范围折叠、容器折叠、手工交叉范围继续见 [TODO](TODO.md#折叠支持规划)。
+折叠导航、锚点恢复、有预算批量操作、临时展开和摘要读取见下文。目录 UI、摘要占位绘制、表格连续行范围折叠、容器折叠、手工交叉范围继续见 [TODO](TODO.md#折叠支持规划)。
 
 ### 整表折叠
 
@@ -396,7 +396,7 @@ assert_eq!(candidate.summary_text(&doc, 32, &mut budget), Some("| Name | Value |
 
 表格的父节点是当前章节；父章节收放保留表格自身意愿。默认设置、批量命令、临时展开、源码锚点与书签复用现有契约，导航到隐藏单元格时仅展开必要的章节和表格。`Update.new_tables` 处理表头晚确认，包括已有段落块转成表格的情况；显式展开后追加行不会再次套用默认值。开放表格的待分类行前缀暂属表格，下一块确认时收回，EOF 封闭范围。最多六个章节和一个代码/表格块的开放范围上限保持不变。
 
-候选查询、切换及更新均不枚举行/列/单元格；排版直接跳过隐藏正文，占位高度只归属表格起点 tile。`examples/folding.rs` 演示百万字单元格收起后追加新行、读取表头前缀及有预算排版。前几行预览、连续行范围折叠和表格绘制仍是后续工作。
+候选查询、切换及更新均不枚举行/列/单元格；排版直接跳过隐藏正文，占位高度只归属表格起点 tile。`examples/folding.rs` 演示百万字单元格收起后追加新行、读取表头前缀及有预算排版。前几行有界摘要读取见下文；连续行范围折叠和表格绘制仍是后续工作。
 
 ## 折叠导航与源码锚点
 
@@ -483,6 +483,40 @@ assert!(!view.is_collapsed(FoldId::Heading(HeadingId(1))));
 `view.apply` 通过 `Update.new_headings` / `new_blocks` / `new_tables` 初始化新候选，Setext 和表格晚确认使用新 HeadingId/TableId，即使其块早已存在；重复应用不会重置意愿。`default_visits` 计量检查的新增标题/块/表格元数据，`range_visits` 继续计量最多七个已有开放范围。初始化成本计入新增对象事件，不宣称任意大 Update 的消费具有整帧硬预算；没有新的候选时，不回访历史节点或读取旧正文。合并 Update 在 apply 时统一使用当前默认设置；需要在流中切换默认值时，先应用切换前的更新。
 
 可运行示例：`cargo run -r --example fold_batch`。
+
+## 表格前几行有界预览
+
+`TablePreview` 为整表折叠提供独立的摘要读取任务：`rows` 包含表头（第 0 行），跳过分隔行，最多读取前 N 个已索引行；`source_bytes` 与 `display_bytes` 是所有行共用的总上限，不逐行重置。源码上限包含行内隐藏标记，UTF-8 不截断标量；超长首个单元格也不能绕过上限。返回值保留行号、样式、链接和绝对源码映射，不合成列分隔、隐式空单元格、边框或省略号。`RowsEnd` 表示读完当前已索引行，`RowLimit` 表示仍有行未选入；字节上限返回 `SourceLimit` / `DisplayLimit`，不向后扫描确认余文可见。沿用 `DisplayExcerpt` 的停止语义：多个字节上限同时触及时，读取窗口可能影响报告哪个原因，但不影响输出前缀。
+
+```rust
+use mdtui3::*;
+let mut doc = Document::new();
+doc.append("| name |\n| - |\n| **世界** |\n| later |\n")?;
+let mut view = FoldView::new(&doc, 1)?;
+view.set_collapsed(&doc, FoldId::Table(TableId(0)), true)?;
+let mut preview = TablePreview::new(&doc, TableId(0), TablePreviewLimits {
+    rows: 2, source_bytes: 128, display_bytes: 64,
+})?;
+let mut budget = Budget::new(WorkLimit::unlimited());
+loop {
+    match preview.next(&doc, &mut budget)? {
+        TablePreviewStep::Run { row, run } => println!("{row}: {}", run.text),
+        TablePreviewStep::Complete(end) => {
+            assert_eq!(end, TablePreviewEnd::RowLimit);
+            break;
+        }
+        TablePreviewStep::BudgetExhausted => break, // retain task for next frame
+    }
+}
+assert!(view.is_collapsed(FoldId::Table(TableId(0))));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+读取不改变整表占位、隐藏范围、高度、临时展开状态或父子折叠意愿；父章节收起时，是否显示该摘要由宿主决定。它提供行摘要数据，**不把前 N 行从整表遮蔽区间中释放**。实际表格布局、摘要占位高度及屏幕软换行上限仍由后续渲染器处理。
+
+构造和存储 O(1)；每个选中行的初始化消费共享 Budget 的 1 query / 1 object，读取显示片段沿用 `DisplayExcerpt` 的计费，6 bytes、1 query、1 object 每帧可持续推进（行初始化可能独占一帧）。不枚举列、单元格或未选入行，R 个访问行、S 个检查源码字节的成本为 O(R + (S + 1) log(n + 1))。返回文本借用文档，输出存储由调用方管理。
+
+任务和输出绑定文档身份与 revision；追加或首次 finish 后返回 `StaleContinuation`，调用方按需重建，不自动重读历史行。未分类的 pending 尾部不属于已索引行；已索引但未完成的行按当前源码范围读取，可由 `TableRow::complete` 判断。错误文档/过期任务在扣费前拒绝，完成可免费重复读取。`cargo run -r --example table_preview` 演示收起百万字表格、追加新行后按小预算读取前两行。
 
 ## 临时折叠预览
 
@@ -634,6 +668,7 @@ assert_eq!(text, "first\nsecond\n");
 | `src/layout.rs` | lazy 高度与遮蔽树、viewport、锚点和过期测量拒绝 |
 | `src/folding.rs` / `src/frame.rs` | 章节/代码块/表格候选、独立折叠视图、预算排版和占位 |
 | `src/checkpoints.rs` | 有效检查点的范围失效和前驱查询 |
+| `src/table_preview.rs` | 共享行数/字节上限与 Budget 的表格前几行摘要 |
 | `src/table.rs` | 表格行/单元格、对齐、流式单元格解析和列宽提示 |
 | `src/headings.rs` | 标题 arena 和六个级别的索引 |
 | `src/heading_search.rs` | 有预算的标题显示名称检索、级别过滤和命中源码映射 |
@@ -659,6 +694,7 @@ nix develop -c cargo run -r --example scaling
 nix develop -c cargo run -r --example budget
 nix develop -c cargo run -r --example display
 nix develop -c cargo run -r --example excerpt
+nix develop -c cargo run -r --example table_preview
 nix develop -c cargo run -r --example search
 nix develop -c cargo run -r --example heading_search
 nix develop -c cargo run -r --example folding

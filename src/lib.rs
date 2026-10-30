@@ -41,6 +41,7 @@ mod navigation;
 mod references;
 mod search;
 mod table;
+mod table_preview;
 mod utf8;
 
 pub use autolink::MAX_AUTOLINK_BYTES;
@@ -73,6 +74,7 @@ pub use navigation::{NavAction, Navigator, ScrollTarget};
 pub use references::MAX_LABEL_BYTES;
 pub use search::{Selection, SourceSearch, TaskState};
 pub use table::{Alignment, Column, Table, TableCell, TableRow};
+pub use table_preview::{TablePreview, TablePreviewEnd, TablePreviewLimits, TablePreviewStep};
 pub use utf8::Utf8Document;
 
 /// Validate both consumers before changing either. Replaying an update preserves
