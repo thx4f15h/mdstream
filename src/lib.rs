@@ -907,10 +907,22 @@ impl Document {
             let code_line = self.fence.filter(|f| f.byte != b'$').and_then(|_| {
                 fence_scope.and_then(|_| {
                     self.containers
-                        .code_prefix(&self.source, span, &mut self.work)
+                        .partial_prefix(&self.source, span, None, &mut self.work)
                 })
             });
-            let line = code_line.or_else(|| {
+            let text_line = if self.fence.is_none()
+                && header.is_none()
+                && self.container_inline.is_some()
+                && self.container_inline == self.containers.inner()
+                && self.inline.can_continue_partial_tab()
+            {
+                self.containers
+                    .partial_prefix(&self.source, span, Some(complete), &mut self.work)
+            } else {
+                None
+            };
+            let partial_text = text_line.is_some();
+            let line = code_line.or(text_line).or_else(|| {
                 self.containers.line(
                     &self.source,
                     span,
@@ -940,7 +952,7 @@ impl Document {
                     .is_some_and(|(id, _)| self.blocks[id.0].container == self.containers.inner());
                 let inner = Span::new(line.prefix, span.end);
                 content = inner;
-                let mut inner_classification = if lazy {
+                let mut inner_classification = if lazy || partial_text {
                     Line::Text
                 } else {
                     self.work.classified_bytes += inner.len() as u64;
@@ -962,7 +974,7 @@ impl Document {
                     &mut self.work,
                     update,
                 );
-                table_text = !lazy && matches!(inner_classification, Line::Text);
+                table_text = !lazy && !partial_text && matches!(inner_classification, Line::Text);
                 classification = match inner_classification {
                     leaf @ (Line::Heading { .. }
                     | Line::Setext(_)
@@ -1273,6 +1285,11 @@ impl Document {
             }
             Line::Container { prefix, kind } => {
                 payload.start = prefix;
+                if virtual_spaces > 0 {
+                    payload.start -= 1;
+                    self.display
+                        .spaces(Span::new(payload.start, prefix), virtual_spaces);
+                }
                 let blank = container_blank;
                 inline = !blank;
                 container_text = !blank;
@@ -1316,7 +1333,14 @@ impl Document {
             self.mark(Span::new(body_end, body_end + 1), Style::HIDDEN, update);
         }
         if inline {
-            self.feed(payload, update);
+            let mut fed = payload;
+            if virtual_spaces > 0 {
+                let mut parser = std::mem::take(&mut self.inline);
+                parser.virtual_spaces(payload.start, virtual_spaces, &mut self.effects(update));
+                self.inline = parser;
+                fed.start += 1;
+            }
+            self.feed(fed, update);
             if suffix.is_some() {
                 self.feed(Span::new(body_end, span.end), update);
             }

@@ -225,6 +225,24 @@ pub(crate) struct Inline {
 }
 
 impl Inline {
+    /// Math payload mapping remains byte-for-byte; its partial-tab extension
+    /// is separate. All other state is continued without cloning old openers.
+    pub fn can_continue_partial_tab(&self) -> bool {
+        self.math.is_none()
+    }
+
+    /// Feed at most three semantic spaces owned by one original tab byte.
+    /// This is only used before a nonblank same-scope continuation, so it can
+    /// neither create a delimiter nor become a trailing ordinary line break.
+    pub fn virtual_spaces(&mut self, at: usize, columns: u8, effects: &mut Effects<'_>) {
+        debug_assert!(self.math.is_none());
+        for _ in 0..columns {
+            effects.work.inline_bytes += 1;
+            self.byte(b' ', at, effects);
+            self.previous = Some(b' ');
+        }
+    }
+
     /// Emphasis openers, code/math, a label and the pending break may reach the
     /// preceding line. Inspect fixed state, never walk or clone the stack.
     pub fn can_isolate_line(&self) -> bool {

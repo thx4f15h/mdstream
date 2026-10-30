@@ -138,6 +138,10 @@ fn every_single_split_for_small_constructs() {
         "- **中**\r\n  \r\n- 🙂\r\n",
         "> - a\n>   \n>   - b\n>     \n>     c\n> - d\n",
         "- ```\n  \n  ```\n  \n  tail\n",
+        "- [x] *中\r\n\t🙂* &amp; [a\n\tb][]\n\n[a b]: /u\n",
+        "- ` a\n\t`\n\n1. ` a\n\t`\n\n   > ` a\n   >\t`\n",
+        "- - *a\n\tb*\n\t# heading\n\n- > a\n\tmissing\n",
+        "- a\n\tb|c\n  -|-\n- $a\n\tb$\n- a\n\t\n\tlast",
         "> > **中\r\n> _🙂_**\\\r\nlazy\n> # end\n",
         "> - [x] ` 中\n> 🙂\nend`\n- next\n",
         "> *a|b\n|--|--|\nend*\n> title\n===\n> ---\n",
@@ -940,6 +944,35 @@ fn partial_tabs_match_all_utf8_splits_and_live_prefixes_at_classification_limit(
         format!("> - ```\n>\t{}~~~\n>\t```", " ".repeat(1030)),
         format!("{}- ```\n{}\t中\n", ">".repeat(1018), ">".repeat(1018)),
         format!("- ```\n\t{}\n\t```", "`".repeat(1030)),
+    ];
+    for source in sources {
+        for (at, _) in source.char_indices() {
+            check_chunks(&source, &[at]);
+        }
+        let mut live = Document::new();
+        for (at, c) in source.char_indices() {
+            let end = at + c.len_utf8();
+            live.append(&source[at..end]).unwrap();
+            let mut whole = Document::new();
+            whole.append(&source[..end]).unwrap();
+            assert_eq!(snapshot(&live), snapshot(&whole), "prefix {end}");
+        }
+        live.finish();
+        let mut whole = Document::new();
+        whole.append(&source).unwrap();
+        whole.finish();
+        assert_eq!(snapshot(&live), snapshot(&whole));
+    }
+}
+
+#[test]
+fn prose_partial_tabs_match_utf8_splits_live_prefixes_and_bounded_fallback() {
+    let sources = [
+        format!("- [x] *中\n\t{}🙂* &amp; [a\n\tb](u)\r\n", "x".repeat(1030)),
+        format!("- ` a\n\t{}\n\t`\n", "x".repeat(1030)),
+        format!("{}- [a\n{}\t中](u)\n", ">".repeat(1018), ">".repeat(1018)),
+        format!("- first\n\t{}late\n", " ".repeat(1030)),
+        format!("- first\n\t{}|h\n  -|-\n", "x".repeat(1030)),
     ];
     for source in sources {
         for (at, _) in source.char_indices() {

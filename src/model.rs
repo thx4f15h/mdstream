@@ -198,6 +198,7 @@ pub struct Work {
     /// Actual inline visits, including a confirmed code-inherited header's
     /// opaque prefix followed by its independent cell parse. That extra pass
     /// is bounded by table_bytes; failed candidates never replay the prefix.
+    /// A partially consumed container tab adds at most three virtual-space visits.
     pub inline_bytes: u64,
     pub delimiter_steps: u64,
     pub label_bytes: u64,

@@ -225,10 +225,10 @@ fn nested_tab_runs_are_linear_and_lazy_mismatch_never_walks_the_remaining_path()
         }
         assert_eq!(
             doc.work().container_steps - before.container_steps,
-            100 * depth as u64
+            200 * depth as u64 // partial-tab probe, then original whole-byte path
         );
         assert!(
-            doc.work().container_bytes - before.container_bytes < 100 * (3 * depth as u64 + 30)
+            doc.work().container_bytes - before.container_bytes < 100 * (6 * depth as u64 + 30)
         );
         assert_eq!(doc.container_count(), 2 * depth);
         assert!(doc.blocks().iter().all(|b| b.container == item));
@@ -236,13 +236,13 @@ fn nested_tab_runs_are_linear_and_lazy_mismatch_never_walks_the_remaining_path()
         for _ in 0..100 {
             doc.append("\tlazy\n").unwrap();
         }
-        assert_eq!(doc.work().container_steps - before.container_steps, 200);
+        assert_eq!(doc.work().container_steps - before.container_steps, 400);
         assert_eq!(doc.work().heading_steps - before.heading_steps, 100);
         assert_eq!(doc.container_count(), 2 * depth);
-        // A single tab cannot be split between two two-column item frames.
+        // An ordinary continuation can now share a tab between item frames.
         let doc = parse("- - first\n\tstill lazy\n");
         assert_eq!(doc.container_count(), 4);
-        assert_eq!(visible(&doc), "first\n\tstill lazy\n");
+        assert_eq!(visible(&doc), "first\nstill lazy\n");
     }
 }
 

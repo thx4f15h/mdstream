@@ -21,6 +21,9 @@ pub struct DisplayRun<'a> {
 #[derive(Default)]
 pub(crate) struct DisplayIndex {
     entries: Vec<Entry>,
+    // Source-ordered single-byte replacements, independent of the later code
+    // ranges that may enclose them. No rewriting an open code span's body.
+    spaces: Vec<(Span, u8)>,
 }
 
 struct Entry {
@@ -30,7 +33,6 @@ struct Entry {
 
 enum Kind {
     Entity(String),
-    Spaces(u8),
     Code { leading: Span, trailing: Span },
 }
 
@@ -51,10 +53,11 @@ impl DisplayIndex {
         self.push(source, Kind::Entity(text));
     }
 
-    /// A partially consumed container tab in literal fenced-code content.
+    /// A partially consumed container tab, possibly inside a future code span.
     pub fn spaces(&mut self, source: Span, columns: u8) {
         debug_assert!((1..=3).contains(&columns));
-        self.push(source, Kind::Spaces(columns));
+        debug_assert!(self.spaces.last().is_none_or(|s| s.0.end <= source.start));
+        self.spaces.push((source, columns));
     }
 
     /// Only inspect the endpoints: the inline scanner maintains all-spaces as
@@ -64,8 +67,10 @@ impl DisplayIndex {
             return;
         }
         let bytes = text.as_bytes();
-        let trim =
-            !all_spaces && code_space(bytes[source.start]) && code_space(bytes[last.end - 1]);
+        let last_virtual = self.spaces.last().is_some_and(|s| s.0 == last);
+        let trim = !all_spaces
+            && code_space(bytes[source.start])
+            && (code_space(bytes[last.end - 1]) || last_virtual);
         let leading_end = source.start
             + if trim {
                 1 + usize::from(bytes[source.start..source.end].starts_with(b"\r\n"))
@@ -94,6 +99,7 @@ pub struct DisplayRuns<'a> {
     runs: Runs<'a>,
     pending: Option<RenderRun<'a>>,
     entry: usize,
+    space: usize,
 }
 
 impl Document {
@@ -113,6 +119,10 @@ impl Document {
                 .display
                 .entries
                 .partition_point(|e| e.source.end <= source.start),
+            space: self
+                .display
+                .spaces
+                .partition_point(|s| s.0.end <= source.start),
         })
     }
 
@@ -147,6 +157,24 @@ impl<'a> Iterator for DisplayRuns<'a> {
         while self
             .document
             .display
+            .spaces
+            .get(self.space)
+            .is_some_and(|s| s.0.end <= start)
+        {
+            self.space += 1;
+        }
+        let mut virtual_columns = None;
+        if let Some(&(source, columns)) = self.document.display.spaces.get(self.space) {
+            if start < source.start {
+                end = end.min(source.start);
+            } else {
+                end = end.min(source.end);
+                virtual_columns = Some(columns);
+            }
+        }
+        while self
+            .document
+            .display
             .entries
             .get(self.entry)
             .is_some_and(|e| e.source.end <= start)
@@ -159,10 +187,6 @@ impl<'a> Iterator for DisplayRuns<'a> {
             } else {
                 end = end.min(entry.source.end);
                 match &entry.kind {
-                    Kind::Spaces(columns) => {
-                        replacement = Some(entry.source);
-                        substitute = Some(&"   "[..usize::from(*columns)]);
-                    }
                     Kind::Entity(text) => {
                         replacement = Some(entry.source);
                         substitute = Some(if start == entry.source.start {
@@ -179,6 +203,11 @@ impl<'a> Iterator for DisplayRuns<'a> {
                         } else if start >= trailing.start {
                             replacement = Some(*trailing);
                             substitute = Some("");
+                            if let Some(columns) = &mut virtual_columns {
+                                // Code normalization trims one semantic space,
+                                // not every column owned by the source tab.
+                                *columns -= 1;
+                            }
                         } else {
                             end = end.min(trailing.start);
                             let bytes = self.document.source().as_bytes();
@@ -205,6 +234,10 @@ impl<'a> Iterator for DisplayRuns<'a> {
                     }
                 }
             }
+        }
+        if let Some(columns) = virtual_columns {
+            replacement = Some(Span::new(start, start + 1));
+            substitute = Some(&"   "[..usize::from(columns)]);
         }
         let output = DisplayRun {
             source: Span::new(start, end),
@@ -287,5 +320,46 @@ impl DisplayCursor {
             .unwrap();
         self.position = run.source.end;
         Ok(DisplayStep::Run(run))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Document, Span, Style};
+
+    #[test]
+    fn partial_tabs_store_one_record_per_line_and_code_closure_never_rewrites_them() {
+        let mut doc = Document::new();
+        doc.append("- ` a\n").unwrap();
+        for _ in 0..4096 {
+            doc.append("\tb\n").unwrap();
+        }
+        assert_eq!(doc.display.spaces.len(), 4096);
+        assert!(doc.display.entries.is_empty());
+        doc.append(&format!("\t{}", "x".repeat(1_000_000))).unwrap();
+        let capacity = doc.display.spaces.capacity();
+        let before = doc.work();
+        for _ in 0..1000 {
+            doc.append("x").unwrap();
+        }
+        assert_eq!(doc.display.spaces.len(), 4097);
+        assert_eq!(doc.display.spaces.capacity(), capacity);
+        assert_eq!(doc.work().container_steps, before.container_steps);
+        assert_eq!(doc.work().inline_bytes - before.inline_bytes, 1000);
+        let records = doc.display.spaces.clone();
+        let before = doc.work();
+        doc.append(" `\n").unwrap();
+        assert_eq!(doc.display.entries.len(), 1);
+        assert_eq!(doc.display.spaces, records);
+        assert_eq!(doc.work().inline_bytes - before.inline_bytes, 3);
+        assert!(doc.work().tree_visits - before.tree_visits < 2000);
+        let tab = doc.source().find('\t').unwrap();
+        let run = doc
+            .display_runs_in(Span::new(tab, tab + 1))
+            .unwrap()
+            .next()
+            .unwrap();
+        assert_eq!(run.text, "  ");
+        assert!(run.style.contains(Style::CODE));
     }
 }

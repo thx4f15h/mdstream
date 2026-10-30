@@ -128,7 +128,7 @@ pub(crate) struct ContainerOptions {
 
 pub(crate) struct ContainerLine {
     pub prefix: usize,
-    // Unconsumed columns of the tab at prefix - 1, only for fenced code.
+    // Unconsumed columns of the tab at prefix - 1.
     pub virtual_spaces: u8,
     pub kind: BlockKind,
     pub lazy: bool,
@@ -164,27 +164,79 @@ impl Containers {
         self.active.last().map(|a| a.inner())
     }
 
-    /// Match an existing code fence's entire path before committing any partial
-    /// tabs. Failure leaves the normal sibling/scope classifier untouched.
-    pub fn code_prefix(&self, source: &str, span: Span, work: &mut Work) -> Option<ContainerLine> {
-        let mut prefix = Prefix::new(source, span, false);
+    /// Match the entire existing path before committing partial tabs. Text
+    /// probes additionally require a nonblank ordinary continuation; all other
+    /// lines retain the original sibling/leaf classifier without side effects.
+    pub fn partial_prefix(
+        &self,
+        source: &str,
+        span: Span,
+        text: Option<bool>,
+        work: &mut Work,
+    ) -> Option<ContainerLine> {
+        if text.is_some() {
+            // Only prefix spelling can contain a consumable tab. Skip the
+            // speculative path walk for ordinary space/quote continuations,
+            // and stop at the first payload byte rather than reading the body.
+            let mut tab = false;
+            for &byte in &source.as_bytes()[span.range()] {
+                work.container_bytes += 1;
+                match byte {
+                    b'\t' => {
+                        tab = true;
+                        break;
+                    }
+                    b' ' | b'>' => (),
+                    _ => break,
+                }
+            }
+            if !tab {
+                return None;
+            }
+        }
+        let mut prefix = Prefix::new(source, span, text.unwrap_or(false));
         prefix.split_tabs = true;
         let mut matched = true;
+        let mut quotes = 0;
         for frame in &self.active {
             work.container_steps += 1;
             matched = match *frame {
-                Active::Quote(_) => prefix.quote(),
+                Active::Quote(_) => {
+                    quotes += 1;
+                    prefix.quote()
+                }
                 Active::List { content_indent, .. } => prefix.consume_indent(content_indent),
             };
             if !matched {
                 break;
             }
         }
+        if matched && let Some(complete) = text {
+            let payload = Span::new(prefix.pos, span.end);
+            // Virtual columns participate in this bound. New leaves, blank
+            // lines and new markers deliberately use the original dialect.
+            matched = prefix.partial
+                && prefix.spaces() <= 3
+                && prefix.spaces_end < prefix.end
+                && prefix.bytes[prefix.spaces_end] != b'>'
+                && prefix.marker().is_none();
+            if matched {
+                work.classified_bytes += payload.len() as u64;
+                matched = matches!(
+                    crate::block::classify(source, payload, complete, None, true),
+                    crate::block::Line::Text
+                );
+            }
+        }
         work.container_bytes += prefix.inspected;
         matched.then_some(ContainerLine {
             prefix: prefix.pos,
             virtual_spaces: prefix.virtual_spaces as u8,
-            kind: BlockKind::Paragraph,
+            kind: if quotes == 0 {
+                BlockKind::Paragraph
+            } else {
+                BlockKind::Quote { depth: quotes }
+            },
             lazy: false,
         })
     }
@@ -533,6 +585,7 @@ struct Prefix<'a> {
     pos: usize,
     column: usize,
     split_tabs: bool,
+    partial: bool,
     virtual_spaces: usize,
     end: usize,
     complete: bool,
@@ -548,6 +601,7 @@ impl<'a> Prefix<'a> {
             pos: span.start,
             column: 0,
             split_tabs: false,
+            partial: false,
             virtual_spaces: 0,
             end: crate::block::body_end(source, span),
             complete,
@@ -575,7 +629,7 @@ impl<'a> Prefix<'a> {
         self.spaces_column - self.column
     }
 
-    /// Partial tabs are opt-in for an atomic code-fence path probe. Otherwise a
+    /// Partial tabs are opt-in for an atomic existing-path probe. Otherwise a
     /// failed match leaves the entire prefix untouched for the original dialect.
     /// Cache the run endpoint across nested items; advancing visits each consumed
     /// byte once more, never rescans the remaining run for every ancestor.
@@ -610,6 +664,7 @@ impl<'a> Prefix<'a> {
         self.pos = at;
         self.column = target;
         self.virtual_spaces = column - target;
+        self.partial |= self.virtual_spaces > 0;
         true
     }
 
@@ -661,6 +716,7 @@ impl<'a> Prefix<'a> {
                     && (self.split_tabs || indent_width(b'\t', self.column) == 1))
             {
                 self.virtual_spaces = indent_width(self.bytes[self.pos], self.column) - 1;
+                self.partial |= self.virtual_spaces > 0;
                 self.pos += 1;
                 self.column += 1;
             }
