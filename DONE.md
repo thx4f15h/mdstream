@@ -924,3 +924,14 @@ README/TODO 已同步，仅标记此独立子项。显式目标/引用后缀、�
 独立报告：`nix develop -c cargo nextest run --test gfm_tables --no-fail-fast --success-output immediate`；夹具复核：`python3 scripts/generate_gfm_tables.py /path/to/gfm.html --check`。项目 devShell 验收全部通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 **796 项**、`cargo test --doc` **63 项**、`cargo fmt --all -- --check`、夹具复核及 `git diff --check`。完整日志 `/tmp/mdtui3-gfm-tables-validation.log`；独立分类与分块日志 `/tmp/mdtui3-gfm-tables-targeted.log`；首次公开语义观察 `/tmp/mdtui3-gfm-tables-inspect.log`；独立来源复核和篡改拒绝证据 `/tmp/mdtui3-gfm-tables-fixture-check.log`。
 
 本单元完成官方表格章节评分。8 例均为 ASCII、最长 56 字节，不能据此推断所有 Unicode、长输入、容器表格或完整 GFM 合规；其余标准范围、语法边界和终端表格排版继续保留 TODO。解析核心及其复杂度/预算契约未改动，保持零运行时依赖及禁止 unsafe。
+
+## 2026-10-30 GFM 任务列表标准样例评分交付
+
+- [x] **固定完整官方章节**：`tests/fixtures/gfm_tasks.rs` 收录 GFM 0.29-gfm（2019-04-06）Task list items (extension) 全部 2 例（279–280）的官方 Markdown/HTML，保留每个空格及 LF、HTML 源码行号和样例锚点，附 GitHub / John MacFarlane 归属与 CC BY-SA 4.0 许可。`scripts/generate_gfm_tasks.py` 从本地规范 HTML 离线生成或 `--check`；完整来源 SHA-256 为 `b153d814fdfc8624bb6da7449162c1cd707a637f7d1c1b636eb44b9cf63fa220`，校验章节成员，仅解码展示标记。独立正则提取/HTML 解码与生成器结果逐字符一致，来源篡改会被摘要检查拒绝。
+- [x] **独立分类报告**：`tests/gfm_tasks.rs` 当前 **2 支持、0 刻意差异、0 未支持**。279 覆盖未勾选/已勾选兄弟任务；280 覆盖嵌套任务、各层独立状态和父子边界。逐例直接对照固定官方 HTML，差异即失败，不使用库输出重写期望或动态重分类。
+- [x] **保留评分语义与边界**：投影读取公开容器父关系、tight 状态、块/容器一致的任务元数据及显示片段，保持嵌套、条目顺序、勾选状态和正文/样式。核对任务标记的源码范围、原文与隐藏映射，根据 `checked` 输出语义复选框。两个样例标记后的单个 ASCII 空格经原文和隐藏映射校验后保留；不把其它 padding 归一化为单空格，不扫描源码发现任务标记。正文只去掉一个物理末尾 LF，内部空白及实体生成的首尾空格均保留。多行条目、引用、有序/loose 列表、其它块及不同任务 padding 显式拒绝，不把未覆盖语义静默丢弃后计为通过。
+- [x] **流式与适配器验收**：所有 **66 个切点、64 个逐字符前缀**对照块/容器身份、父关系、范围/状态、任务标记范围和勾选状态、原始/显示片段映射及待分类范围；结束后仍直接比较官方期望。另检查大小写 X 的状态、非任务条目、正文和条目数量、父子关系/兄弟顺序/新列表边界、代码/强调/粗体、空格/tab/实体以及超出投影范围的输入拒绝。共新增 4 项测试，手工变体与官方评分分开。
+
+独立报告：`nix develop -c cargo nextest run --test gfm_tasks --no-fail-fast --success-output immediate`；夹具复核：`python3 scripts/generate_gfm_tasks.py /path/to/gfm.html --check`。项目 devShell 验收全部通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 **800 项**、`cargo test --doc` **63 项**、`cargo fmt --all -- --check`、夹具复核及 `git diff --check`。完整日志 `/tmp/mdtui3-gfm-tasks-validation.log`；独立评分和分块日志 `/tmp/mdtui3-gfm-tasks-targeted.log`；独立来源核验及篡改拒绝 `/tmp/mdtui3-gfm-tasks-fixture-check.log`。
+
+本单元完成官方任务列表章节评分。两个输入均为 ASCII、20/44 字节、最多两层列表，不能据此推断完整任务标记空白、空内容、多行/有序/loose 任务、任意深度、Unicode 或长输入合规。其它标准范围和交互绘制继续保留 TODO；复选框 HTML 仅为评分投影。解析核心及预算/复杂度契约未改动，保持零运行时依赖及禁止 unsafe。

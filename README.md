@@ -2160,4 +2160,25 @@ nix develop -c cargo nextest run --test gfm_tables --no-fail-fast --success-outp
 python3 scripts/generate_gfm_tables.py /path/to/gfm.html --check
 ```
 
+[GFM 0.29-gfm（2019-04-06）Task list items (extension)](https://github.github.com/gfm/#task-list-items-extension-) 的完整章节（279–280，共 2 例）由 `tests/gfm_tasks.rs` 独立评分。`tests/fixtures/gfm_tasks.rs` 逐字固定官方 Markdown/HTML、HTML 源码行号及锚点、GitHub / John MacFarlane 归属和 CC BY-SA 4.0 许可。`scripts/generate_gfm_tasks.py` 从本地规范 HTML 离线生成或复核，使用与表格章节相同的完整来源 SHA-256，检查章节成员并拒绝改动后的来源；只解码代码块展示标记，不调用本库产生期望。
+
+| 分类 | 样例 | 当前判定 |
+| --- | --- | --- |
+| 支持（2） | 279–280 | 未勾选/已勾选任务、兄弟条目顺序、嵌套列表与各层独立状态符合官方期望 |
+| 刻意差异（0） | 无 | 这组样例没有观察到刻意差异 |
+| 未支持（0） | 无 | 这组样例没有观察到未支持项；章节文字中未被样例覆盖的规则不计为通过 |
+
+任务列表投影使用公开 List/Item 父关系、tight 状态、块/容器一致的 `TaskMarker` 和显示片段，保持条目顺序、嵌套边界、勾选状态、正文空白及代码/强调/粗体。根据 `checked` 输出语义复选框，核对标记的源码范围和隐藏状态；本组两个输入在标记后均恰有一个 ASCII 空格，投影检查其原文及隐藏映射，再保留这个空格。不把任意 padding 归一化为单空格，不扫描原文重新发现任务标记，也不修改官方 HTML。只移除正文的一个物理末尾 LF；其它正文空格/tab、实体产生的空格仍保留。
+
+投影仅接受每条目一个物理正文叶块的 tight 无序列表；引用、有序/loose 列表、多行条目、其它块和不同任务 padding 会报错，不能被静默丢弃后计为支持。该投影只是测试适配器，复选框使用官方样例中的 disabled HTML 形式，不是库的 HTML 渲染器或终端 UI。4 项测试覆盖独立评分、全部 66 个切点和 64 个逐字符前缀、状态/结构/文本/样式敏感性及投影边界拒绝。流式快照同时核对块/容器身份、父关系、范围/状态、任务标记范围与勾选状态、原始/显示映射和待分类范围；最终仍直接比较官方 HTML。
+
+两个官方输入均为 ASCII，长度分别为 20 和 44 字节，嵌套仅两层；大写 X 及其它正文/结构变体只用于适配器验收，不混入官方评分。其它任务标记空白、空内容、多行/有序/loose 任务、深嵌套、Unicode、长输入及交互行为未由这两例评分，继续使用已有专项验收或保留待办，不能据此声称完整 GFM 兼容。
+
+独立报告及夹具复核：
+
+```bash
+nix develop -c cargo nextest run --test gfm_tasks --no-fail-fast --success-output immediate
+python3 scripts/generate_gfm_tasks.py /path/to/gfm.html --check
+```
+
 后续修复需保留官方输入/预期，更新当前观察与分类、汇总和 TODO；禁止通过忽略样例、裁剪空白或替换官方期望提升评分。
