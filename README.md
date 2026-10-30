@@ -1119,7 +1119,7 @@ view.heights().viewport_budgeted(0..24, 0, &mut budget, &mut tiles);
 
 每次 append/finish 或连续 Update 批处理后调用 `view.apply`，然后才能查询。对已有折叠，更新检查最多六个开放顶层章节和一个开放代码/数学/表格块；开放容器与内层章节共享一次尾部遮蔽更新；新标题和容器关闭各检查相关作用域的至多六个末尾章节，另检查一个可能增长的旧标题。开启默认收起时还处理新增标题/块/表格/容器的元数据，不枚举历史折叠或开放容器祖先链。新 tile 在 apply 返回前继承遮蔽。开放容器/内层章节/代码/数学/表格的未分类行前缀暂属该范围，闭合/下一块确认后可以收回；Setext 晚确认也能缩短前一章节的范围。普通源码追加不会读取旧正文。重复应用不清掉新测量，错误文档或不连续更新在修改视图之前被拒绝。
 
-折叠导航、锚点恢复、有预算批量操作、临时展开和摘要读取见下文。目录 UI、摘要占位绘制、手工交叉范围继续见 [TODO](TODO.md#折叠支持规划)。
+折叠导航、锚点恢复、有预算批量操作、临时展开和摘要读取见下文。固定手工/宿主源码范围见下文；目录 UI、摘要占位绘制和其它范围策略继续见 [TODO](TODO.md#折叠支持规划)。
 
 ### 整表折叠
 
@@ -1370,6 +1370,55 @@ assert!(doc.source().contains("[ ] review"));
 默认规则只在 `new_containers` 中检查一次类型、深度、任务标记（计 `default_visits`），启用多个字段也不重复遍历；新增 N 个容器、命中 K 个时成本沿用 O(N + K(log H + log C + log F + log T))。普通正文追加不重查历史任务或祖先；不新增解析状态、不改变零运行时依赖及累计复杂度契约。默认 apply 仍按新增事件摊还，任意大更新的单帧硬预算不在该接口承诺内。
 
 `tests/container_folding.rs` 与存储测试覆盖 32 种类型/任务筛选 × 4 种深度策略、UTF-8 全切点/逐前缀、CRLF/失败 marker/EOF、320 轮流式区间/高度模型、千层/百万字及 4096 历史条目；共享预算、独立视图、旧任务/测量拒绝、预览/导航和非容器折叠均有回归。`cargo run -r --example container_policies` 演示视图内完成任务、分帧筛选与预览/导航恢复。任务控件、列表完成率聚合和终端 UI 未由此接口实现。
+
+## 手工及宿主源码范围折叠
+
+`SourceFoldRegistration` 将一个宿主选区或语义对象的固定 `Span` 注册到 `FoldView`。成功后返回 `FoldId::Source(SourceFoldId)`，初始展开；ID 只属于该视图，进程内不复用。宿主可自行保存业务键与 ID 的对应关系，库不修改 Markdown 源码、结构父链或 `Style::HIDDEN`。
+
+```rust
+use mdtui3::*;
+let mut doc = Document::new();
+doc.append("# Root\nkeep secret tail\n\n")?;
+let mut view = FoldView::new(&doc, 1)?;
+let start = doc.source().find("secret").unwrap();
+let selected = Span::new(start, start + 6);
+let mut task = SourceFoldRegistration::new(&doc, &view, selected)?;
+let id = loop {
+    let mut budget = Budget::new(WorkLimit {
+        queries: 1, objects: 1, ..Default::default()
+    });
+    if let Some(id) = task.advance(&doc, &mut view, &mut budget)?.id {
+        break id;
+    }
+};
+view.set_collapsed(&doc, id, true)?;
+let anchor = FoldAnchor::new(&doc, start + 1)?;
+let update = doc.append("later\n")?;
+view.apply(&doc, &update)?;
+assert_eq!(view.fold_candidate(&doc, id)?.unwrap().hidden, selected);
+let mut budget = Budget::new(WorkLimit::unlimited());
+assert_eq!(anchor.resolve(&doc, &view, 10, &mut budget)?.unwrap().hidden_by, Some(id));
+view.set_collapsed(&doc, id, false)?;
+assert_eq!(anchor.resolve(&doc, &view, 10, &mut budget)?.unwrap().target.source,
+           Some(start + 1));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+只接受非空、已存在且两端均为 UTF-8 边界的范围；两端是固定原始字节锚点，旧 EOF 之后追加的内容不会加入。范围须落在 `Document::source_fold_limit()` 返回的保守前缀内：当前叶块、待分类行、表头探测以及可能被 Setext 确认的整个容器正文序列暂不开放。局部关闭后可注册历史正文，无须结束整个输入；`finish` 后全部源码进入此前缀。这是结构边界保证，晚引用解析或行内语义仍可正常失效。当前开放代码、表格、数学或段落需先局部关闭。
+
+同视图内手工范围必须不相交：重复、包含和交叉注册均返回 `InvalidRange`，展开/预览不解除约束；相邻范围各保留一个占位。手工范围与语法候选及已注册表格行范围可以互相包含，但其 `source` 包络和 `hidden` 区间都不能交叉。对仍开放的结构，还拒绝跨越其起点的选区，防止结构后续增长穿过固定终点；例如选择开放章节的标题末尾和当前全部正文，虽然当前 EOF 时不交叉，仍会被拒绝。只选标题或只选已定型正文可以独立成立。后注册表格行范围也检查同一规则，与注册顺序无关。
+
+注册分步检查两端的语法祖先链及表格行前驱，不枚举中间所有候选。创建时只验证固定元数据和手工重叠索引；`advance` 每个端点查找、祖先检查、路径结束及最终提交各扣 1 query / 1 object，零正文字节。`visited` 只统计祖先。预算耗尽保留进度；成功前没有任何注册、折叠或高度修改。取消、交叉错误和任务失效不会留下半成品；追加、reset 或其它视图修改后需重建任务。成功后重复调用免费，外部状态变化仍按版本拒绝旧任务。
+
+`FoldView::fold_candidate` 按 ID 查询，包括已注册源码/表格行范围；移除或其它视图的源码 ID 返回 `None`。`source_fold_at` 查找包含该字节的注册范围，包括展开的范围；`hidden_at` 查询实际遮蔽者。`SourceFoldCandidates` 按共享预算枚举与窗口相交的注册范围，包含起点更早的覆盖范围，且不发现语法候选；文档的 `fold_candidates` / `fold_candidate_at` 保持语法查询职责，`Document::fold_candidate` 对 Source ID 返回 `None`。`remove_source_fold` 释放注册、意愿和对应预览；重新选择边界会生成新 ID，旧 ID 不复用。`source_fold_count` 是当前注册数。
+
+可见性取包含它的最外层已收起区间，完全相同的隐藏范围由语法/表格行范围优先。父级收起后再展开、reset 和追加都保留手工意愿；临时预览、`FoldAnchor`、`FoldNavigation`、摘要读取及预算布局复用现有接口。占位属于隐藏起点 tile，完整内部区间直接遮蔽；任意段内边界不自行补换行，真实占位/换行状态由排版 sink 处理。`summary` 指向选中源码，读取用有界 `summary_text` 或 `DisplayExcerpt`。
+
+手工候选的 `parent` 是注册时最内层的包含其源码包络的语法节点；不将语法节点或表格行范围改挂到手工节点。批量 Subtree/Focus 仍按源码包含关系判断；完全相同的源码包络按容器、叶语法、手工范围顺序打破平局，避免操作手工子树时反向修改同范围的语法祖先。All/Subtree/Siblings/Focus 包含已注册手工范围，AtLevel/Containers 保持原筛选范围。Siblings 也能发现父标题文字中的手工范围，原有语法扫描及预算边界保持不变。默认策略不自动创建手工选区。
+
+R 个非空不相交注册使用 O(R) 空间（不超过源码字节数），删除后不保留 ID 或范围历史；索引查询 O(log R)，单点切换/移除 O(log R + log F + log T)。注册额外按两端路径深度 D 付费，每步固定次数结构索引操作，游标 O(1)；手工注册的深度成本独立于输入解析契约。普通追加不刷新任何历史手工范围，仅当一个收起范围恰好结束于旧 EOF 时，校正一次可能继续增长的 tile；可与代码/数学/表格行既有边界处理共存。解析器没有新增逐字或祖先工作。布局、导航、摘要和批量仍共用帧预算。
+
+`cargo run -r --example source_folding` 演示百万字选区、后续追加、预算布局及源码锚点恢复。`tests/source_folding.rs` 覆盖 2400 组全量结构区间对照、1000 轮随机可见性/高度模型、240 次流式模型、千层注册暂停、4096 历史范围、百万字正文、UTF-8 分块/逐前缀、表格行双向交叉拒绝、批量/预览/导航和旧任务/测量拒绝。自动增长手工范围、手工嵌套、交叉拆分/优先级、重载后的业务身份持久化与终端选区 UI 仍待设计。
 
 ## 表格连续行范围折叠
 
@@ -1763,6 +1812,7 @@ assert_eq!(text, "first\nsecond\n");
 | `src/checkpoints.rs` | 有效检查点的范围失效和前驱查询 |
 | `src/table_preview.rs` | 共享行数/字节上限与 Budget 的表格前几行摘要 |
 | `src/table.rs` | 表格行/单元格、对齐、流式单元格解析和列宽提示 |
+| `src/source_folds.rs` | 手工/宿主固定源码范围身份、两端路径预算验证及窗口枚举 |
 | `src/headings.rs` | 标题 arena、全局/作用域六级索引及源码上下文边界 |
 | `src/heading_search.rs` | 有预算的标题显示名称检索、级别过滤和命中源码映射 |
 | `src/anchors.rs` | revision 绑定的有预算标题 slug、全局消歧和 fragment 解析 |
@@ -1799,6 +1849,7 @@ nix develop -c cargo run -r --example display
 nix develop -c cargo run -r --example excerpt
 nix develop -c cargo run -r --example table_preview
 nix develop -c cargo run -r --example table_row_folding
+nix develop -c cargo run -r --example source_folding
 nix develop -c cargo run -r --example search
 nix develop -c cargo run -r --example heading_search
 nix develop -c cargo run -r --example anchors

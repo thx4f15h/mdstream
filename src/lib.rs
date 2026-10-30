@@ -45,6 +45,7 @@ mod model;
 mod navigation;
 mod references;
 mod search;
+mod source_folds;
 mod table;
 mod table_preview;
 mod utf8;
@@ -90,6 +91,9 @@ pub use model::*;
 pub use navigation::{NavAction, Navigator, ScrollTarget};
 pub use references::MAX_LABEL_BYTES;
 pub use search::{Selection, SourceSearch, TaskState};
+pub use source_folds::{
+    SourceFoldCandidates, SourceFoldId, SourceFoldProgress, SourceFoldRegistration,
+};
 pub use table::{Alignment, Column, Table, TableCell, TableRow};
 pub use table_preview::{TablePreview, TablePreviewEnd, TablePreviewLimits, TablePreviewStep};
 pub use utf8::Utf8Document;

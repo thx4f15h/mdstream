@@ -754,3 +754,18 @@ README/TODO 已同步。完整缩进内层尾部空行向祖先传播、实际�
 项目 devShell 验收全部通过：cargo check --all-targets、cargo clippy --all-targets -- -D warnings、debug/release cargo nextest run --no-fail-fast 各 669 项、cargo test --doc 54 项、cargo fmt --all -- --check 及 git diff --check。新 list_tail_blanks 示例用 3 帧/0 正文字节验证父级迟确认、内层 Tight/Sealed、稳定范围和折叠意愿；既有 list_blanks、list_tightness、containers、container_folding、footnote_blocks 示例通过。完整日志：`/tmp/mdtui3-list-tail-validation.log`；初始两项失败基线：`/tmp/mdtui3-list-tail-baseline.log`。
 
 README/TODO 已同步。实际段落间距、其它容器/tab 规则、分类上限及更完整块确认/撤销、终端 UI 继续保留 TODO；不声明完整 CommonMark 兼容。
+
+## 2026-10-30 手工及宿主固定源码范围折叠交付
+
+本轮交付已定型源码前缀内的手工选区/宿主范围核心；不改变只追加源码、语法结构、零运行时依赖及禁止 unsafe 契约。
+
+- [x] **身份与边界**：`SourceFoldRegistration` 原子注册固定非空 UTF-8 `Span`，生成视图独立、进程内不复用的 `SourceFoldId`；两端固定字节锚点，追加/reset 不改变范围。`source_fold_limit` O(1) 排除当前叶块、待分类行、表头探测及整个待确认容器 Setext 标题；局部关闭后可注册，无需 finish 整篇。
+- [x] **交叉与结构组合**：手工范围之间不相交（含展开/预览状态，重复亦拒绝），与语法候选及注册行范围允许包含；源码包络与隐藏范围均拒绝交叉，后注册表格行也遵守。开放结构另拒绝跨越其起点的固定选区，防止章节正文增长后穿过终点。双端祖先路径验证，不遍历中间所有候选/正文；完全相同范围按容器、叶语法、手工的顺序消歧。
+- [x] **查询与状态**：`FoldView::fold_candidate`、`source_fold_at`、`SourceFoldCandidates` 提供 ID/位置/预算窗口查询，`remove_source_fold` 释放注册及预览/意愿，旧 ID 不复用。语法父链不重挂，手工 parent 指向最内层包含其源码范围的语法节点。独立视图、批量 All/Subtree/Siblings/Focus、预览、源码锚点、导航及有界摘要/布局全部接入；标题级别/容器筛选及未来默认规则保持各自职责。
+- [x] **预算与增量**：注册每个端点查找、祖先检查、路径结束及提交扣 1 query / 1 object，零正文读取；成功前不改视图，取消/错误/失效没有半成品。千层引用两端共 2000 个祖先可逐帧暂停；R 个注册只保存 O(R) 当前索引，单点操作和点查询用有序索引，游标 O(1)。4096 历史范围后的百万字及 1000 次逐字追加不刷新历史范围或增加容器/标题扫描；反复注册/删除不保留历史记录。
+- [x] **布局与 EOF**：最外层有效范围占位，完整内部 tile 直接遮蔽，边界按预算消费；百万字与图片折叠不读取隐藏正文/对象。固定范围结束于旧 EOF 时只校正一次 tile 边界；与已关闭代码/数学遮蔽独立共存。新组合测试发现关闭代码块原有 EOF 遮蔽未刷新，已复用代码/数学/行范围的一次性刷新槽修复，不遍历旧范围。
+- [x] **模型与回归**：新增 `tests/source_folding.rs` 17 项验收，包含 2400 组全量结构区间对照、1000 轮随机区间/高度/布局模型、240 次流式模型、UTF-8 全切点/逐前缀、CRLF/迟确认 Setext/表格、千层/百万字/4096 范围、双向行范围交叉拒绝、预览/同父兄弟/子树/聚焦、旧任务和测量拒绝、通知合并/重放、EOF 同 tile 多范围。保留原有兄弟语法扫描的预算计数，仅为手工范围增加标题区域的枚举。
+
+验收通过：项目 devShell 的 `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 686 项、`cargo test --doc` 55 项、`cargo fmt --all -- --check` 和 `git diff --check`。`source_folding` 示例注册 2 帧、布局 6 帧/56 个计费字节跳过百万字，导航 1 帧恢复源码锚点；既有 `table_row_folding`、`folding`、`fold_batch` 示例通过。日志：`/tmp/mdtui3-source-folds-validation.log`。开放章节交叉与关闭代码 EOF 的失败证据分别保存在 `/tmp/mdtui3-source-folds-boundary-baseline.log`、`/tmp/mdtui3-source-folds-eof-baseline.log`。
+
+自动增长手工范围、尚未定型正文、手工嵌套、交叉拆分/优先级、重载后的业务身份映射、实际段内软换行/占位绘制及终端选区 UI 继续保留 TODO；本轮只标记上述固定范围核心完成。

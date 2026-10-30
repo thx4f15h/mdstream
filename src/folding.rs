@@ -5,11 +5,12 @@ use std::{
 
 use crate::{
     BlockId, BlockKind, Budget, CheckpointIndex, Completion, ContainerId, ContainerKind, Document,
-    DocumentId, HeadingId, HeightIndex, LayoutError, Measurement, Span, SyntaxState, TableId,
-    TileId, Update, WorkLimit,
+    DocumentId, HeadingId, HeightIndex, LayoutError, Measurement, SourceFoldId, Span, SyntaxState,
+    TableId, TileId, Update, WorkLimit,
 };
 
-/// Document-local stable identity. Arbitrary crossing ranges are unsupported.
+/// Syntax IDs are document-local; Source IDs identify one view registration.
+/// Crossing ranges are unsupported.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FoldId {
     Heading(HeadingId),
@@ -18,6 +19,7 @@ pub enum FoldId {
     Table(TableId),
     Container(ContainerId),
     TableRows(TableRowRange),
+    Source(SourceFoldId),
 }
 
 /// Stable document-local body row interval, independent of source/visual width.
@@ -84,26 +86,28 @@ pub struct FoldDefaults {
 pub struct FoldCandidate {
     pub id: FoldId,
     pub parent: Option<FoldId>,
-    /// Whole section, code/math block, table, row range or container, including the retained heading.
+    /// Whole section, code/math block, table, registered range or container, including the retained heading.
     pub source: Span,
     /// Body replaced by a placeholder. Empty bodies produce no placeholder.
     pub hidden: Span,
-    /// Title, fence info, table header, first selected row or container range.
+    /// Title, fence info, table header, first selected row, source or container range.
     pub summary: Option<Span>,
     pub open: bool,
 }
 
 impl FoldCandidate {
     // Preorder tie-break: containers on a physical opener line precede its
-    // leaf block. This distinguishes identical List/Item/Quote/Table ranges.
+    // leaf block, then source registrations. Strict containing source ranges
+    // precede their contents, including when they share a start.
     pub(crate) fn contains_candidate(&self, other: &Self) -> bool {
         let order = |candidate: &Self| match candidate.id {
             FoldId::Container(id) => (candidate.source.start, 0, id.0),
+            FoldId::Source(_) => (candidate.source.start, 2, 0),
             _ => (candidate.source.start, 1, 0),
         };
         self.source.start <= other.source.start
             && other.source.end <= self.source.end
-            && order(self) <= order(other)
+            && (self.source != other.source || order(self) <= order(other))
     }
 
     /// Read only a bounded UTF-8 prefix; no line counting or body scanning.
@@ -253,7 +257,12 @@ pub(crate) struct FoldState {
     // Stable physical starts support overlap validation and point predecessor
     // queries without walking a table's rows or the other registered ranges.
     row_ranges: BTreeMap<usize, TableRowRange>,
-    // A completed row range or math block can end at EOF inside a growable
+    source_ranges: BTreeMap<usize, SourceFoldId>,
+    source_candidates: BTreeMap<SourceFoldId, FoldCandidate>,
+    // At most one disjoint source range ends at the old EOF. It can coexist
+    // with a completed syntax/row boundary, so it needs its own refresh slot.
+    source_boundary: Option<SourceFoldId>,
+    // A completed row range or code/math block can end at EOF inside a growable
     // tile. These cannot share EOF, so one slot suffices for the next refresh.
     fixed_boundary: Option<FoldId>,
     // Six root sections, the active code/math/table and one incomplete row range
@@ -310,6 +319,7 @@ impl Document {
     /// Open containers provisionally include unclassified source, like tables.
     pub fn fold_candidate(&self, id: FoldId) -> Option<FoldCandidate> {
         match id {
+            FoldId::Source(_) => None, // Registrations belong to a FoldView.
             FoldId::TableRows(range) => {
                 if range.start == 0 || range.start >= range.end {
                     return None;
@@ -521,14 +531,26 @@ impl FoldState {
         {
             hidden = Some(mask.candidate);
         }
-        if let Some(candidate) = hidden {
-            return FoldSegment::Hidden(candidate);
-        }
-        if let Some((_, &range)) = self.row_ranges.range(..=offset).next_back()
+        if hidden.is_none()
+            && let Some((_, &range)) = self.row_ranges.range(..=offset).next_back()
             && let Some(mask) = self.collapsed.get(&FoldId::TableRows(range))
             && mask.candidate.hidden.range().contains(&offset)
         {
-            return FoldSegment::Hidden(mask.candidate);
+            hidden = Some(mask.candidate);
+        }
+        if let Some((_, &id)) = self.source_ranges.range(..=offset).next_back()
+            && let Some(mask) = self.collapsed.get(&FoldId::Source(id))
+            && mask.candidate.hidden.range().contains(&offset)
+            && hidden.is_none_or(|inner| {
+                mask.candidate.hidden.start <= inner.hidden.start
+                    && inner.hidden.end <= mask.candidate.hidden.end
+                    && mask.candidate.hidden != inner.hidden
+            })
+        {
+            hidden = Some(mask.candidate);
+        }
+        if let Some(candidate) = hidden {
+            return FoldSegment::Hidden(candidate);
         }
         let end = self
             .starts
@@ -548,6 +570,11 @@ impl FoldState {
         heights.cover(mask.tiles.clone(), false);
         self.starts.remove(&(mask.candidate.hidden.start, id));
         self.growing.remove(&id);
+        if let FoldId::Source(source) = id
+            && self.source_boundary == Some(source)
+        {
+            self.source_boundary = None;
+        }
         if self.fixed_boundary == Some(id) {
             self.fixed_boundary = None;
         }
@@ -595,7 +622,17 @@ impl FoldState {
     }
 
     fn track_fixed_boundary(&mut self, document: &Document, candidate: FoldCandidate) {
-        if matches!(candidate.id, FoldId::TableRows(_) | FoldId::Math(_)) {
+        if let FoldId::Source(id) = candidate.id {
+            if candidate.hidden.end == document.source().len() && !document.is_finished() {
+                self.source_boundary = Some(id);
+            } else if self.source_boundary == Some(id) {
+                self.source_boundary = None;
+            }
+        }
+        if matches!(
+            candidate.id,
+            FoldId::TableRows(_) | FoldId::Code(_) | FoldId::Math(_)
+        ) {
             if !candidate.open
                 && candidate.hidden.end == document.source().len()
                 && !document.is_finished()
@@ -769,9 +806,133 @@ impl<S> FoldView<S> {
         self.version
     }
 
+    /// Query a candidate in this synchronized view, including registered source
+    /// and table-row ranges. Unknown/removed/other-view registrations return None.
+    pub fn fold_candidate(
+        &self,
+        document: &Document,
+        id: FoldId,
+    ) -> Result<Option<FoldCandidate>, LayoutError> {
+        self.check(document)?;
+        Ok(self.candidate(document, id))
+    }
+
+    pub(crate) fn candidate(&self, document: &Document, id: FoldId) -> Option<FoldCandidate> {
+        match id {
+            FoldId::Source(id) => self.state.source_candidates.get(&id).copied(),
+            FoldId::TableRows(range) if !self.has_table_rows(document, range) => None,
+            _ => document.fold_candidate(id),
+        }
+    }
+
+    /// Registered source interval containing a byte, even when expanded.
+    /// O(log R), no ancestor walk or body read. EOF belongs to no interval.
+    pub fn source_fold_at(
+        &self,
+        document: &Document,
+        offset: usize,
+    ) -> Result<Option<FoldCandidate>, LayoutError> {
+        self.check(document)?;
+        if offset > document.source().len() {
+            return Err(LayoutError::InvalidRange);
+        }
+        Ok(self.source_at(offset))
+    }
+
+    fn source_at(&self, offset: usize) -> Option<FoldCandidate> {
+        let (_, id) = self.state.source_ranges.range(..=offset).next_back()?;
+        let candidate = self.state.source_candidates[id];
+        candidate
+            .source
+            .range()
+            .contains(&offset)
+            .then_some(candidate)
+    }
+
+    pub(crate) fn next_source_fold(&self, start: usize, end: usize) -> Option<FoldCandidate> {
+        let (_, id) = self.state.source_ranges.range(start..end).next()?;
+        Some(self.state.source_candidates[id])
+    }
+
+    /// Active registrations only; removing a range releases its registry entries.
+    pub fn source_fold_count(&self) -> usize {
+        self.state.source_ranges.len()
+    }
+
+    pub(crate) fn validate_source_span(&self, source: Span) -> Result<(), LayoutError> {
+        if self
+            .state
+            .source_ranges
+            .range(..source.end)
+            .next_back()
+            .is_some_and(|(_, id)| self.state.source_candidates[id].source.end > source.start)
+        {
+            return Err(LayoutError::InvalidRange);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn row_candidate_at(
+        &self,
+        document: &Document,
+        offset: usize,
+    ) -> Option<FoldCandidate> {
+        let (_, &rows) = self.state.row_ranges.range(..=offset).next_back()?;
+        let candidate = document.fold_candidate(FoldId::TableRows(rows))?;
+        candidate
+            .source
+            .range()
+            .contains(&offset)
+            .then_some(candidate)
+    }
+
+    pub(crate) fn register_source_fold(&mut self, source: Span, parent: Option<FoldId>) -> FoldId {
+        let id = SourceFoldId::new();
+        self.state.source_ranges.insert(source.start, id);
+        self.state.source_candidates.insert(
+            id,
+            FoldCandidate {
+                id: FoldId::Source(id),
+                parent,
+                source,
+                hidden: source,
+                summary: Some(source),
+                open: false,
+            },
+        );
+        self.version += 1;
+        FoldId::Source(id)
+    }
+
+    /// Remove one registration, choice and preview; other IDs never change and
+    /// this ID is never reused. O(log R + log F + log T), no covered-tile scan.
+    pub fn remove_source_fold(
+        &mut self,
+        document: &Document,
+        id: SourceFoldId,
+    ) -> Result<Option<FoldChange>, LayoutError> {
+        self.check(document)?;
+        let Some(candidate) = self.state.source_candidates.remove(&id) else {
+            return Ok(None);
+        };
+        self.state.source_ranges.remove(&candidate.source.start);
+        self.state
+            .remove(document, &mut self.heights, FoldId::Source(id));
+        if self.preview() == Some(FoldId::Source(id)) {
+            self.preview = None;
+        }
+        self.version += 1;
+        self.expire_from(document, candidate.hidden.start)?;
+        Ok(Some(FoldChange {
+            version: self.version,
+            source: candidate.hidden,
+        }))
+    }
+
     /// Register a fixed, nonempty body row interval, initially expanded. Exact
     /// reinsertion preserves its choice. Overlap (including nesting) with any
-    /// registered range in this view is rejected, even while expanded/previewed.
+    /// registered row range in this view is rejected, even while expanded/previewed.
+    /// Crossing a source registration is also rejected; containment is allowed.
     /// Adjacent ranges remain distinct placeholders. No source is read: O(log R).
     /// Registration invalidates view tasks; no document syntax is changed.
     pub fn insert_table_rows(
@@ -790,6 +951,11 @@ impl<S> FoldView<S> {
         let candidate = document
             .fold_candidate(id)
             .ok_or(LayoutError::InvalidRange)?;
+        for offset in [candidate.source.start, candidate.source.end - 1] {
+            if let Some(manual) = self.source_at(offset) {
+                crate::source_folds::validate_pair(manual.source, candidate)?;
+            }
+        }
         let start = candidate.source.start;
         if let Some((_, &previous)) = self.state.row_ranges.range(..=start).next_back() {
             if previous == range {
@@ -861,7 +1027,7 @@ impl<S> FoldView<S> {
             .next()
             .map(|(&at, &range)| (at, range))
     }
-    /// Root section/code/table/row refreshes, a completed EOF row boundary,
+    /// Root section/code/table/row refreshes, completed EOF row/source boundaries,
     /// shared tail checks and event-
     /// driven scoped-section/container refreshes; independent of body size and
     /// still-open depth. Title growth refreshes at most one scoped heading.
@@ -926,6 +1092,7 @@ impl<S> FoldView<S> {
                 FoldId::Table(id) => document.table(id).is_some(),
                 FoldId::Container(id) => document.container(id).is_some(),
                 FoldId::TableRows(range) => self.has_table_rows(document, range),
+                FoldId::Source(id) => self.state.source_candidates.contains_key(&id),
             };
             if !valid {
                 return Err(LayoutError::InvalidRange);
@@ -949,8 +1116,8 @@ impl<S> FoldView<S> {
         }
         let mut source = None;
         if let Some((id, collapsed)) = self.preview.take() {
-            let candidate = document
-                .fold_candidate(id)
+            let candidate = self
+                .candidate(document, id)
                 .expect("stable folding identity");
             source = Some(candidate.hidden);
             if collapsed {
@@ -958,7 +1125,7 @@ impl<S> FoldView<S> {
             }
         }
         if let Some(id) = target {
-            let candidate = document.fold_candidate(id).unwrap();
+            let candidate = self.candidate(document, id).unwrap();
             let collapsed = self.state.remove(document, &mut self.heights, id).is_some();
             self.preview = Some((id, collapsed));
             source = Some(source.map_or(candidate.hidden, |old| {
@@ -1099,14 +1266,9 @@ impl<S> FoldView<S> {
         collapsed: bool,
     ) -> Result<Option<FoldChange>, LayoutError> {
         self.check(document)?;
-        let candidate = document
-            .fold_candidate(id)
+        let candidate = self
+            .candidate(document, id)
             .ok_or(LayoutError::InvalidRange)?;
-        if let FoldId::TableRows(range) = id
-            && !self.has_table_rows(document, range)
-        {
-            return Err(LayoutError::InvalidRange);
-        }
         if self.is_collapsed(id) == collapsed {
             return Ok(None);
         }
@@ -1187,6 +1349,12 @@ impl<S> FoldView<S> {
         let mut dirty = self.state.open_ranges.first().map(|&(start, _)| start);
         if dirty.is_some() {
             self.range_visits += 1; // One shared tail, independent of open depth.
+        }
+        if let Some(id) = self.state.source_boundary.take() {
+            self.range_visits += 1;
+            let candidate = self.state.source_candidates[&id];
+            self.state.refresh(document, &mut self.heights, candidate);
+            dirty = Some(dirty.unwrap_or(usize::MAX).min(candidate.hidden.start));
         }
         if let Some(id) = self.state.fixed_boundary.take() {
             self.range_visits += 1;
