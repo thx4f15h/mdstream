@@ -26,6 +26,11 @@ pub struct FoldDefaults {
     pub heading_levels: [bool; 6],
     pub code: bool,
     pub table: bool,
+    /// Collapse newly identified containers at or below this structural depth
+    /// (`Container::depth >= threshold`). Roots are depth 1; List and Item each
+    /// count as a level. None disables this policy; Some(0) includes all roots.
+    /// Applies to Quote/List/Item alike, regardless of ancestor choices or preview.
+    pub container_depth: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -707,7 +712,7 @@ impl<S> FoldView<S> {
         self.defaults
     }
 
-    /// O(1). Applies only to newly identified headings/code blocks/tables in future
+    /// O(1). Applies only to newly identified headings/code blocks/tables/containers in future
     /// updates, including late syntax recognition. Existing choices stay intact;
     /// use FoldBatch to change them explicitly. Invalidates pending view tasks.
     pub fn set_defaults(&mut self, defaults: FoldDefaults) {
@@ -717,7 +722,7 @@ impl<S> FoldView<S> {
         }
     }
 
-    /// New heading/block/table metadata inspected to initialize default choices.
+    /// New heading/block/table/container metadata inspected to initialize default choices.
     /// No historical candidates or source text are scanned.
     pub fn default_visits(&self) -> u64 {
         self.default_visits
@@ -889,6 +894,19 @@ impl<S> FoldView<S> {
                     .unwrap();
                 self.state.insert(document, &mut self.heights, candidate);
                 dirty = Some(dirty.unwrap_or(usize::MAX).min(candidate.hidden.start));
+            }
+        }
+        if let Some(depth) = self.defaults.container_depth {
+            // Depth is stored on each node: neither historical containers nor
+            // the active ancestor chain need visiting, even for a merged update.
+            for index in update.new_containers.clone() {
+                self.default_visits += 1;
+                let id = ContainerId(index);
+                if document.container(id).unwrap().depth >= depth {
+                    let candidate = document.fold_candidate(FoldId::Container(id)).unwrap();
+                    self.state.insert(document, &mut self.heights, candidate);
+                    dirty = Some(dirty.unwrap_or(usize::MAX).min(candidate.hidden.start));
+                }
             }
         }
         if let Some(start) = dirty {

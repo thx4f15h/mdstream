@@ -287,3 +287,15 @@
 项目 devShell 下 `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 250 项、`cargo test --doc` 23 项、`cargo fmt --all -- --check` 与 `git diff --check` 全通过。`cargo run -r --example container_folding` 展示追加只访问共享容器尾部及开放表格共 2 个范围，父预览保留子意愿，6 个预算帧恢复 quote/item/table 下的源码位置 42。验收日志：`/tmp/mdtui3-container-folds-validation.log`。README、TODO 已同步。
 
 本单元交付显式容器折叠核心，保留内层章节独立折叠、容器深度/类型/任务默认策略、实际摘要和容器布局、终端 UI，以及原有未实现容器语法。开放折叠暂纳入未分类尾部、确认边界后回退，原 Container 结构范围仍只包含已分类输入；不声称整个容器/折叠规划完成。
+
+## 2026-10-30 容器深度默认策略交付
+
+`FoldDefaults::container_depth: Option<usize>` 以包含式结构深度阈值初始化新 Quote/List/Item 的折叠意愿，`None` 禁用；根深度为 1，List 与 Item 各占一层，0 与 1 均覆盖所有容器。只处理后续 `Update.new_containers`，包括晚确认和合并更新中已经关闭的节点；合并更新使用 apply 时的当前策略。已有文档创建视图、修改/关闭策略都不追溯已有节点，显式收放、导航及批量选择在普通追加、关闭、finish、重复 apply 和 resize 后保持。预览期间显式选择修改保存意愿，新子节点独立套用默认策略；父预览不消除子折叠。
+
+实现读取已存的 `Container::depth`，不遍历祖先或历史节点。启用时每个新容器增加一次 `default_visits`；新增 N 个容器、其中 K 个达到阈值时，额外初始化成本 O(N + K(log H + log C + log F + log T))，策略只增加 O(1) 空间。既有折叠状态/稀疏索引和共享尾部机制不变；没有新节点的追加不做默认值检查，关闭只按实际事件处理。apply 仍按输入/事件消费，不宣称任意大更新具有单帧硬预算。零运行时依赖、禁止 unsafe 保持。
+
+新增 8 项测试，覆盖 None/0/1/中间阈值/usize::MAX、明确的 Quote/List/Item 深度、独立视图、已有与显式意愿、父子恢复、全部 UTF-8 切点与逐前缀、逐次/合并更新、All/Subtree/Siblings/Focus 与表格/预览组合、策略修改的旧任务拒绝及相同值无操作。千层容器/百万字正文下初始化检查恰好 1000 个节点，随后 1000 次逐字追加默认检查和容器索引写入均不增长，仅增加 1000 次共享尾部检查；有限布局预算产生一个占位，正文计费/回调字节为 0。4096 个历史兄弟后新增一节点只检查一次。固定种子 240 次流式策略切换、显式收放、批量展开、预览和 resize 对照独立区间/可见性/高度模型。
+
+项目 devShell 下 `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 258 项、`cargo test --doc` 24 项、`cargo fmt --all -- --check` 与 `git diff --check` 全通过。新增 `cargo run -r --example container_defaults` 演示预览中的新子节点、显式展开优先及批量展开后新条目仍默认收起：8 个预算帧展开已有节点，共初始化 5 个容器。原 `container_folding` 示例仍以 6 帧恢复源码位置 42。验收日志：`/tmp/mdtui3-container-defaults-validation.log`。README、TODO 已同步。
+
+本单元完成容器深度默认策略；按类型/任务完成状态筛选、内层章节独立折叠、实际摘要/容器排版与终端 UI，以及原有未实现容器语法继续保留 TODO。

@@ -517,9 +517,9 @@ view.heights().viewport_budgeted(0..24, 0, &mut budget, &mut tiles);
 
 `set_collapsed` / `toggle` 返回源码变化范围和视图版本；从受影响边界起惰性过期后续高度与检查点，旧异步测量和布局继续任务会被拒绝。`view.measure` 验证本视图的测量及检查点依赖；`insert_checkpoint` 同时使下游布局失效。`reset` 保留折叠意愿与遮蔽，只重置基础估计和检查点。保留的高度仍可能是过期估计，展开后仅测量请求窗口；选择远处 tile 时默认局部近似，不能承诺精确绝对行号。`folded_from_checkpoint` 只接受本视图的有效起点及指定字节距离内的恢复，接入方恢复 sink 状态，恢复步骤也使用同一 Budget。
 
-每次 append/finish 或连续 Update 批处理后调用 `view.apply`，然后才能查询。对已有折叠，更新检查最多六个开放顶层章节和一个开放代码/表格块；开放容器共享一次尾部遮蔽更新，关闭容器按实际 close 事件处理。开启默认收起时还处理新增标题/块/表格的元数据，不枚举历史折叠或开放容器祖先链。新 tile 在 apply 返回前继承遮蔽。开放容器/代码/表格的未分类行前缀暂属该范围，闭合/下一块确认后可以收回；Setext 晚确认也能缩短前一章节的范围。普通源码追加不会读取旧正文。重复应用不清掉新测量，错误文档或不连续更新在修改视图之前被拒绝。
+每次 append/finish 或连续 Update 批处理后调用 `view.apply`，然后才能查询。对已有折叠，更新检查最多六个开放顶层章节和一个开放代码/表格块；开放容器共享一次尾部遮蔽更新，关闭容器按实际 close 事件处理。开启默认收起时还处理新增标题/块/表格/容器的元数据，不枚举历史折叠或开放容器祖先链。新 tile 在 apply 返回前继承遮蔽。开放容器/代码/表格的未分类行前缀暂属该范围，闭合/下一块确认后可以收回；Setext 晚确认也能缩短前一章节的范围。普通源码追加不会读取旧正文。重复应用不清掉新测量，错误文档或不连续更新在修改视图之前被拒绝。
 
-折叠导航、锚点恢复、有预算批量操作、临时展开和摘要读取见下文。目录 UI、摘要占位绘制、表格连续行范围折叠、内层章节折叠、容器深度策略、手工交叉范围继续见 [TODO](TODO.md#折叠支持规划)。
+折叠导航、锚点恢复、有预算批量操作、临时展开和摘要读取见下文。目录 UI、摘要占位绘制、表格连续行范围折叠、内层章节折叠、容器类型/任务策略、手工交叉范围继续见 [TODO](TODO.md#折叠支持规划)。
 
 ### 整表折叠
 
@@ -576,11 +576,11 @@ assert!(matches!(view.hidden_at(&doc, 4, &mut budget)?, FoldLookup::Hidden(c) if
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-容器父节点优先是结构父容器，根容器的父节点是所在顶层章节。表格挂在确切容器下；容器内标题仍不是独立候选，因此不会插入折叠父链。顶层章节覆盖容器，最外层已折叠容器覆盖子容器与表格的占位；展开父节点恢复孩子的本地意愿。`All`、`Subtree`、`Siblings`、`Focus`、临时展开、导航与源码锚点均包含容器。新容器初始展开，`FoldDefaults` 的现有字段只控制标题/代码/表格；按容器深度、类型或任务完成状态自动折叠仍在 TODO。
+容器父节点优先是结构父容器，根容器的父节点是所在顶层章节。表格挂在确切容器下；容器内标题仍不是独立候选，因此不会插入折叠父链。顶层章节覆盖容器，最外层已折叠容器覆盖子容器与表格的占位；展开父节点恢复孩子的本地意愿。`All`、`Subtree`、`Siblings`、`Focus`、临时展开、导航与源码锚点均包含容器。新容器默认展开；`FoldDefaults::container_depth` 可按结构深度初始化新节点的收起意愿，具体语义见下文。按类型或任务完成状态自动折叠仍在 TODO。
 
-视图以 ContainerId 的前序索引维护已折叠范围的最大终点，开放节点用开放终点标记，关闭时由 `Update.closed_containers` 写入固定终点。可见性查询先二分起点，再查询最外层遮蔽者，O(log C)，无需逐层读取祖先。全部开放容器位于同一条活动路径，完整 tile 的遮蔽并集只需一个共享范围；追加只更新这个并集，关闭的折叠容器转成固定遮蔽。容器部分的 apply 成本为 O((E + 1)(log C + log F + log T))，E 为实际关闭事件数，不随仍开放的深度增长；这仍是按输入/事件消费的更新接口，没有任意大 Update 的单帧时延承诺。单次索引写入/查询有对数节点访问量，Vec 扩容沿用摊还保证。
+视图以 ContainerId 的前序索引维护已折叠范围的最大终点，开放节点用开放终点标记，关闭时由 `Update.closed_containers` 写入固定终点。可见性查询先二分起点，再查询最外层遮蔽者，O(log C)，无需逐层读取祖先。全部开放容器位于同一条活动路径，完整 tile 的遮蔽并集只需一个共享范围；追加只更新这个并集，关闭的折叠容器转成固定遮蔽。未开启深度默认策略时，容器部分的 apply 成本为 O((E + 1)(log C + log F + log T))，E 为实际关闭事件数，不随仍开放的深度增长；这仍是按输入/事件消费的更新接口，没有任意大 Update 的单帧时延承诺。单次索引写入/查询有对数节点访问量，Vec 扩容沿用摊还保证。
 
-`container_index_visits` 计索引读写的节点访问量，`container_index_nodes` 计保留节点数；反复切换不新增历史快照，节点数不超过完整二叉索引的 O(C) 上界。`tests/container_folding.rs` 验证千层开放链、百万字正文、4096 个关闭兄弟、同起点父子、有预算深层导航、UTF-8 全切点/逐前缀和独立区间/高度模型。`cargo run -r --example container_folding` 展示流式追加、父预览、子意愿及按帧恢复单元格源码锚点。内层章节折叠、深度默认策略、实际摘要/容器排版和终端 UI 继续独立推进。
+`container_index_visits` 计索引读写的节点访问量，`container_index_nodes` 计保留节点数；反复切换不新增历史快照，节点数不超过完整二叉索引的 O(C) 上界。`tests/container_folding.rs` 验证千层开放链、百万字正文、4096 个关闭兄弟、同起点父子、有预算深层导航、UTF-8 全切点/逐前缀和独立区间/高度模型。`cargo run -r --example container_folding` 展示流式追加、父预览、子意愿及按帧恢复单元格源码锚点。内层章节折叠、类型/任务默认策略、实际摘要/容器排版和终端 UI 继续独立推进。
 
 ## 折叠导航与源码锚点
 
@@ -662,11 +662,38 @@ assert!(!view.is_collapsed(FoldId::Heading(HeadingId(1))));
 
 批量任务渐进生效；取消、文档更新、外部折叠操作、默认设置变化或 reset 后，已经完成的修改保留。旧任务会在消费预算或修改视图之前被拒绝；任务自身修改及正常高度测量允许继续，完成后重复调用不再产生修改。每次实际修改复用单节点的高度遮蔽、检查点及测量失效，调用方可以在两次 advance 之间正常绘制。需要原子切换整棵树或取消回滚的宿主，不能将该接口当成事务。
 
-`FoldDefaults` 只规定**后续首次识别**的节点初始意愿：`heading_levels[0..6]` 对应 h1–h6，`code` 控制代码块，`table` 控制表格，默认全部展开。`set_defaults` 为 O(1)，不追溯已有候选，不覆盖显式展开/收起；已有文档创建视图后仍全部展开，需要调整时使用批量命令。默认设置变化增加视图版本，但不改变当前布局；相同设置无操作。批量命令不修改默认设置，因此“全部展开”后新到来的标题仍按当前默认初始化。单节点收放继续保留子节点意愿；resize 保留默认设置和所有节点意愿。
+`FoldDefaults` 只规定**后续首次识别**的节点初始意愿：`heading_levels[0..6]` 对应 h1–h6，`code` 控制代码块，`table` 控制表格，`container_depth` 控制容器深度阈值，默认全部展开。`set_defaults` 为 O(1)，不追溯已有候选，不覆盖显式展开/收起；已有文档创建视图后仍全部展开，需要调整时使用批量命令。默认设置变化增加视图版本，但不改变当前布局；相同设置无操作。批量命令不修改默认设置，因此“全部展开”后新到来的标题仍按当前默认初始化。单节点收放继续保留子节点意愿；resize 保留默认设置和所有节点意愿。
 
-`view.apply` 通过 `Update.new_headings` / `new_blocks` / `new_tables` 初始化新候选，Setext 和表格晚确认使用新 HeadingId/TableId，即使其块早已存在；重复应用不会重置意愿。`default_visits` 计量检查的新增标题/块/表格元数据，`range_visits` 计量最多七个已有开放章节/代码/表格、一次共享容器尾部检查，以及实际关闭的已折叠容器。初始化成本计入新增对象事件，不宣称任意大 Update 的消费具有整帧硬预算；没有新的候选时，不回访历史节点或读取旧正文。合并 Update 在 apply 时统一使用当前默认设置；需要在流中切换默认值时，先应用切换前的更新。
+`view.apply` 通过 `Update.new_headings` / `new_blocks` / `new_tables` / `new_containers` 初始化新候选，Setext 和表格晚确认使用新 HeadingId/TableId，即使其块早已存在；重复应用不会重置意愿。`default_visits` 计量检查的新增标题/块/表格/容器元数据，`range_visits` 计量最多七个已有开放章节/代码/表格、一次共享容器尾部检查，以及实际关闭的已折叠容器。初始化成本计入新增对象事件，不宣称任意大 Update 的消费具有整帧硬预算；没有新的候选时，不回访历史节点或读取旧正文。合并 Update 在 apply 时统一使用当前默认设置；需要在流中切换默认值时，先应用切换前的更新。
 
 可运行示例：`cargo run -r --example fold_batch`。
+
+### 容器深度默认策略
+
+`FoldDefaults::container_depth: Option<usize>` 是包含式阈值：新容器的 `Container::depth >= threshold` 时初始化为收起。`None` 关闭策略，`Some(0)` 与 `Some(1)` 都包括全部根容器，`Some(usize::MAX)` 也无需加减运算。深度按结构父链计数：根为 1，Quote、List、Item 各占一层；例如 `> - text` 的 Quote/List/Item 深度依次为 1/2/3，不按视觉缩进或列表标记个数计算。标题与表格不增加容器深度，任务完成状态不参与判断。
+
+```rust
+use mdtui3::*;
+
+let mut doc = Document::new();
+let mut view = FoldView::new(&doc, 1)?;
+view.set_defaults(FoldDefaults { container_depth: Some(2), ..Default::default() });
+let update = doc.append("- first\n")?;
+view.apply(&doc, &update)?;
+let first = FoldId::Container(ContainerId(1)); // List = 1, Item = 2.
+assert!(!view.is_collapsed(FoldId::Container(ContainerId(0))));
+assert!(view.is_collapsed(first));
+view.set_collapsed(&doc, first, false)?;
+let update = doc.append("- second\n")?;
+view.apply(&doc, &update)?;
+assert!(!view.is_collapsed(first));
+assert!(view.is_collapsed(FoldId::Container(ContainerId(2))));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+策略只消费 `Update.new_containers`，包括同一合并更新内已打开又关闭的容器，以及物理行晚确认的节点。初始化与祖先是否收起或正在预览无关，每个节点保留自己的意愿；预览父节点期间新出现的深层子节点仍按阈值初始化。显式单节点、导航及批量操作修改已有选择；预览期间的显式操作更新预览结束时恢复的选择。更改/关闭默认策略、普通追加、关闭、finish、重复 apply 和 resize 都不会重新初始化已有 ID。`set_defaults` 不影响当前布局，变化会使旧视图任务失效，相同值无操作；合并更新统一使用 apply 当时的策略。
+
+启用策略时每个新容器检查一次已存深度，计入 `default_visits`，无论是否达到阈值；禁用时不访问这些元数据。设 N 为新增容器数，K 为达到阈值的个数，初始化额外成本为 O(N + K(log H + log C + log F + log T))，只增加 O(1) 策略字段，折叠状态沿用 O(F + C) 空间。没有新容器的普通追加不检查历史节点或开放祖先，仍只更新一次共享尾部。apply 按新增对象/开闭事件消费，不承诺任意大更新的单帧时延；查询、批量操作、预览和排版继续共用 Budget。测试覆盖千层/百万字逐字追加、4096 个历史兄弟、UTF-8 全切点/逐前缀及 240 次流式策略/显式操作的区间与高度模型。`cargo run -r --example container_defaults` 演示预览中的新子节点、显式展开优先及批量展开后新条目的默认收起。
 
 ## 表格前几行有界预览
 
