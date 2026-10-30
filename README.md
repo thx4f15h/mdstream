@@ -207,7 +207,7 @@ nav.navigate(&doc, &heights, NavAction::End, 24);
 
 标题动作返回的 `ScrollTarget.source` 是精确目标位置，`top` 是当前高度索引下的估计视口顶行；渲染器需要用局部排版把源码位置映射成实际显示行，再调用 `reconcile`。普通逐行/翻页之后，用 `reconcile_source` 回填实际视口的源码锚点，后续标题查找才会从精确位置出发；未回填时使用片段起点估计。这些接口不通过预排版整篇内容获取精确行号。键盘事件映射和目录选择器列入 [TODO](TODO.md)。
 
-章节/代码块折叠、隐藏目标定位、源码锚点恢复及跳转历史见下方接口。后续的目录、文内 slug 及更多折叠对象见 [标题导航与折叠联动规划](TODO.md#标题导航与折叠联动规划)及[折叠支持规划](TODO.md#折叠支持规划)。
+章节/代码块折叠、隐藏目标定位、源码锚点恢复、文内 slug 及跳转历史见下方接口。后续的目录及更多折叠对象见 [标题导航与折叠联动规划](TODO.md#标题导航与折叠联动规划)及[折叠支持规划](TODO.md#折叠支持规划)。
 
 ## 标题显示名称检索
 
@@ -241,9 +241,59 @@ assert_eq!(doc.text(matches[0].source), Some("a**b**&amp;c"));
 
 任务与已返回命中绑定文档身份及 revision。追加、Setext 晚确认、长 ATX 继续增长和首次 `finish` 后，旧任务在消费预算/修改结果前返回 `StaleContinuation`；错误文档返回 `WrongDocument`。调用方丢弃旧命中并按需重建，库不自动重搜历史标题。空追加及重复 `finish` 不失效；仍在流入的文档也能搜索当前 revision。
 
-查询预处理一次 O(m)，任务存储 O(m + TILE_BYTES)，m 为查询字节数；切换标题只重置位置，不重建查询表、清空映射环或复制标题。设 H 为全部标题数、h 为选中标题数、s 为其内容源码字节数、n 为文档总字节数，单 revision 最坏搜索成本为 O(m + (h + 1) log(H + 1) + s log(n + 1))，输出存储由调用方逐批管理。百万字 Setext 的确认和任务构造不读取标题，扫描在显式预算调用中推进；被过滤标题和正文的长度不增加读取字节。完整显示名称可用已有 `display_cursor(heading.content)` 限量读取，不先生成所有名称。文内 slug 和 `#fragment` 解析仍待实现。
+查询预处理一次 O(m)，任务存储 O(m + TILE_BYTES)，m 为查询字节数；切换标题只重置位置，不重建查询表、清空映射环或复制标题。设 H 为全部标题数、h 为选中标题数、s 为其内容源码字节数、n 为文档总字节数，单 revision 最坏搜索成本为 O(m + (h + 1) log(H + 1) + s log(n + 1))，输出存储由调用方逐批管理。百万字 Setext 的确认和任务构造不读取标题，扫描在显式预算调用中推进；被过滤标题和正文的长度不增加读取字节。完整显示名称可用已有 `display_cursor(heading.content)` 限量读取，不先生成所有名称。文内 slug 和 `#fragment` 解析见下节。
 
 `cargo run -r --example heading_search` 演示级别过滤、逐帧搜索、复用输出缓冲区及跳到折叠内命中。`tests/heading_search.rs` 覆盖重复/空标题、跨 run/tile 和长查询、各预算维度、身份/过期、流式前缀/切点、固定种子朴素模型、百万字正文/Setext 和级别过滤跳过测试。
+
+## 文内 slug 与 fragment
+
+`HeadingAnchors::new(&doc)` 在 O(1) 时间创建当前 revision 的空索引；`advance` 按共享 Budget 读取已索引标题的非隐藏显示内容，忽略正文、代码块和当前解析器未识别的容器内标题。不会在 `append`、Setext 确认或构造任务时扫描旧标题。`indexed_headings()` 报告完成数量，`get(&doc, id)` 为已完成项返回借用的 `HeadingAnchor`，未处理的合法 ID 返回 `None`，非法 ID 返回 `InvalidRange`。
+
+slug 方言明确采用以下规则，不宣称兼容某个平台的完整 slug 算法：Unicode 字母/数字用 Rust `char::is_alphanumeric` 选择并用 `to_lowercase` 小写化；保留 `_`、`-`；每个 Unicode 空白标量变成一个 `-`；删除其余字符。不额外裁剪或合并空白，不做 Unicode 归一化、音译或 emoji 保留；小写映射产生的组合字符保留。输入先经过既有显示语义，因此隐藏标记/链接目标不参与，实体和代码 span 使用显示值。空结果用 `section`。按源码顺序分配全局唯一名称，依次尝试 base、base-1、base-2 等，跳过已经占用的名称。例如 `A`、`A-1`、`A`、`A-1` 分别得到 `a`、`a-1`、`a-2`、`a-1-1`；空标题也参与同一消歧规则。
+
+```rust
+use mdtui3::{Budget, Completion, Document, FragmentStep, HeadingAnchors, HeadingId, WorkLimit};
+let mut doc = Document::new();
+doc.append("# Guide\n## 中文\n## 中文\n")?;
+doc.finish();
+let mut anchors = HeadingAnchors::new(&doc);
+loop {
+    let mut budget = Budget::new(WorkLimit {
+        bytes: 6, queries: 1, objects: 1, ..Default::default()
+    });
+    if anchors.advance(&doc, &mut budget)? == Completion::EndOfDocument { break; }
+}
+let anchor = anchors.get(&doc, HeadingId(2))?.unwrap();
+assert_eq!(anchor.slug.base, "中文");
+assert_eq!(anchor.slug.suffix, Some(1));
+let mut lookup = anchors.fragment("#%E4%B8%AD%E6%96%87-1")?;
+loop {
+    let mut budget = Budget::new(WorkLimit {
+        bytes: 6, queries: 1, objects: 1, ..Default::default()
+    });
+    match lookup.advance(&doc, &mut budget)? {
+        FragmentStep::BudgetExhausted => continue,
+        FragmentStep::Resolved(target) => {
+            assert_eq!(target.heading, Some(HeadingId(2)));
+            assert_eq!(target.source, anchor.target.source);
+            assert!(!target.provisional);
+            break;
+        }
+        other => panic!("unexpected resolution: {other:?}"),
+    }
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`fragment` 只接收以 `#` 开头的 URI fragment，O(1) 借用输入和索引；完整 URL 的拆分以及 Markdown destination 中的实体/反斜杠解码由调用方完成。解析百分号转义一次，校验解码后的 UTF-8，然后按字节精确匹配；`+` 保持字面值，大小写敏感，不再对 fragment 生成 slug。非法转义、非法 UTF-8 或缺少开头 `#` 返回 `InvalidRange`；即使已知名称不存在，也继续按预算校验剩余编码。`#` 表示源码 0，`heading: None`；空标题通过 `#section` 等名字寻址。未完成索引返回 `IndexIncomplete`，调用方释放 lookup、推进索引后重新查询；完整索引中的缺失目标在流式文档返回 `Unresolved`，在 finish 后返回 `NotFound`。完成的查询可免费重复读取。
+
+标题 slug 和目标在首次 `finish` 前一律标为 `provisional`，包括已经局部封口的标题：长 ATX 继续增长、行内晚闭合、晚到引用定义和 Setext 转换都可能改变显示文本及消歧结果。索引、lookup 和输出绑定文档身份/revision，追加或首次 finish 后须丢弃并显式重建；错误文档/过期任务在扣费前返回 `WrongDocument` / `StaleContinuation`，空追加和重复 finish 不失效。finish 后结果固定。库不自动维护跨 revision 的 slug；反复显式重建的总成本由调用方调度，不能当作跨追加增量索引。稳定的 `HeadingId` 与源码目标可继续用于现有导航/书签，但旧 slug 到该目标的对应关系不能沿用。
+
+标题初始化和消歧候选检查各消费 1 query / 1 object；显示读取沿用 `DisplayCursor` 计费（包含隐藏语法和重复前瞻），每个规范化标量另消费输入 UTF-8 字节数与 1 object，每个输出 trie 字节消费 1 byte / 1 object。fragment 每个原始字节或 `%HH` 分别消费 1 或 3 bytes、1 object，最终查询消费 1 query / 1 object；非法编码也计费。两类任务每帧 6 bytes、1 query、1 object 均可持续推进，长标题不会截断或退化成摘要哈希。目标包含精确标题起点，可交给 `FoldNavigation::Reveal` 展开必要路径；索引和查询自身不改变折叠、高度或布局。
+
+索引以字节 trie 保存名字，每个节点至多 256 条有序边，避免长字符串比较和哈希碰撞；重复 base 的后缀计数单调推进，后缀候选从 base 节点开始，不重复遍历长前缀。设 S 为标题内容源码总字节、H 为标题数，单 revision 构建为 O((S + 1) log(n + 1) + H log(H + 1))，空间 O(S + H)。失败的数字候选已属于旧标题，且由唯一的 base 产生，因此总失败探测 O(H)；连续数字的 trie 前缀共享，后缀总节点 O(H)。`AnchorSlug` 只保存借用的 base 和整数后缀；显式 `Display`/`to_string()` 由调用方承担 O(slug 长度) 的格式化成本。借用结果 O(1)，长度 m 的 fragment 查询总计 O(m)、任务空间 O(1)。String/Vec/树节点的分配成本按摊还计，不承诺 allocator 的硬时延。
+
+`cargo run -r --example anchors` 演示小预算索引、碰撞、晚到中文目标、百分号 fragment 和折叠导航。测试覆盖所有 UTF-8 单切点、长 ATX 逐前缀、显示语义、Unicode、错误身份/过期与各预算维度，包含固定种子模型、百万字 Setext/长 fragment 和 4 万标题消歧的工作量与存储检查。链接点击和目录 UI 继续留待接入阶段。
 
 ## 共享预算与增量缓存
 
@@ -672,6 +722,7 @@ assert_eq!(text, "first\nsecond\n");
 | `src/table.rs` | 表格行/单元格、对齐、流式单元格解析和列宽提示 |
 | `src/headings.rs` | 标题 arena 和六个级别的索引 |
 | `src/heading_search.rs` | 有预算的标题显示名称检索、级别过滤和命中源码映射 |
+| `src/anchors.rs` | revision 绑定的有预算标题 slug、全局消歧和 fragment 解析 |
 | `src/navigation.rs` | 逐行/翻页/首尾/标题导航及源码目标 |
 | `src/fold_navigation.rs` | 有预算折叠导航、可见标题跳过及源码锚点投影/恢复 |
 | `src/fold_batch.rs` | 分帧全部/子树/兄弟/级别/聚焦命令及进度 |
@@ -697,6 +748,7 @@ nix develop -c cargo run -r --example excerpt
 nix develop -c cargo run -r --example table_preview
 nix develop -c cargo run -r --example search
 nix develop -c cargo run -r --example heading_search
+nix develop -c cargo run -r --example anchors
 nix develop -c cargo run -r --example folding
 nix develop -c cargo run -r --example fold_batch
 nix develop -c cargo run -r --example history

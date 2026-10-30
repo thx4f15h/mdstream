@@ -221,6 +221,16 @@
 
 项目 devShell 下 `cargo check --all-targets`、clippy `-D warnings`、debug/release nextest 各 196 项、18 项文档测试、格式检查及 `git diff --check` 通过。新增 `cargo run -r --example table_preview`：百万字表格收起后追加一行，9 帧、计费 151 字节读取前两行，结束为 RowLimit，整表保持收起。README 与 TODO 已同步。
 
+## 2026-10-30 文内 slug 与 fragment 交付
+
+- [x] **标题 slug 与全局消歧**：`HeadingAnchors` 显式按预算读取标题非隐藏显示内容；Unicode 字母/数字小写化，保留 `_`/`-`，每个空白变成 `-`，其余字符删除，空结果使用 `section`。不做归一化、音译、裁剪或空白合并。所有标题按源码顺序领取首个未占用的 base、base-1、base-2 等名称，处理天然数字后缀与空标题的碰撞；已完成结果返回借用 base、整数后缀、HeadingId 和精确标题源码起点。
+- [x] **预算及复杂度**：构造 O(1)，Setext 确认不读取旧标题；显示读取、标量转换、输出字节、候选检查共用 Budget，每帧 6 bytes、1 query、1 object 可推进。字节 trie 的单节点扇出至多 256，后缀计数单调递增，从 base 节点继续检查，不重复复制/比较长前缀。标题源码总长 S、标题数 H 时，单 revision 构建 O((S + 1) log(n + 1) + H log(H + 1))、空间 O(S + H)；整数后缀与共享十进制路径避免逐项复制后缀字符串。显式格式化完整 slug 的成本由调用方承担，分配按摊还计。
+- [x] **fragment、流式及导航**：`FragmentLookup` O(1) 借用输入/索引，按预算解码一次百分号并校验 UTF-8，O(m) 时间、O(1) 任务空间；`+` 不转空格，大小写敏感，`#` 返回文档起点，错误输入返回 InvalidRange。区分 IndexIncomplete、流式 Unresolved 和 finish 后 NotFound；标题结果在 finish 前全部暂定，任务/输出绑定身份及 revision，追加和首次 finish 后显式重建，空追加/重复 finish 保留。错误文档/过期在扣费前拒绝；源码目标复用 FoldNavigation 的必要路径展开，索引和解析不修改折叠状态。
+
+验证：新增 8 项集成回归和 1 项内部复杂度回归。覆盖显示实体/强调/代码/链接、Unicode 小写扩展与组合字符、空标题和天然数字后缀冲突、原始/混合/百分号编码、严格 UTF-8 和非法尾部、逐预算维度与重复完成、错误身份/过期、全部 UTF-8 单切点、长 ATX 逐前缀、Setext 和晚到引用；固定种子 60 份文档共 2400 个标题与朴素全字符串模型对照并百分号回查。百万字 Setext 的确认及构造不扫描标题，小预算首帧计费不超过 64 字节；两个相同百万字标题总计费小于输入长度五倍，百万字 fragment 每个输入字节只解码一次。4 万标题（先占用两万个数字名称，再加入两万个重复 base）验证单调候选计数和线性 trie 节点上界。百万字正文不增加索引读取预算，折叠内目标恢复到精确源码且保留无关折叠。
+
+项目 devShell 下 `cargo check --all-targets`、clippy `-D warnings`、debug/release nextest 各 205 项、19 项文档测试、格式检查和 `git diff --check` 全部通过。新增 `cargo run -r --example anchors`：流式索引 4 帧/78 计费字节返回 Unresolved；晚到目标及 finish 后显式重建 6 帧/115 字节，解析重复 slug 和百分号中文目标，恢复源码 37 并保留无关折叠。验收日志：`/tmp/mdtui3-anchors-validation.log`。README 与 TODO 已同步；跨 revision 维护、平台特定 slug 兼容和目录/链接点击 UI 未包含在本次核心接口中。
+
 ## 其他已完成任务
 
 - [x] **章节关系与动作**：当前所属章节、父章节、首个子章节、同父的前后兄弟、严格同级及按级别上限的前后标题分别定义。跨级标题的父节点取最近有效的级别数值更小的标题；章节关系与列表/引用容器父关系分开保存或查询，避免将相同级别误当兄弟。

@@ -16,6 +16,7 @@
 #![forbid(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
+mod anchors;
 mod annotations;
 mod autolink;
 mod block;
@@ -44,6 +45,9 @@ mod table;
 mod table_preview;
 mod utf8;
 
+pub use anchors::{
+    AnchorSlug, AnchorTarget, FragmentLookup, FragmentStep, HeadingAnchor, HeadingAnchors,
+};
 pub use autolink::MAX_AUTOLINK_BYTES;
 pub use block::{BLOCK_LOOKAHEAD, MAX_FENCE_LENGTH};
 pub use budget::{Budget, Completion, WorkLimit};
