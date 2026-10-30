@@ -993,3 +993,36 @@ fn prose_partial_tabs_match_utf8_splits_live_prefixes_and_bounded_fallback() {
         assert_eq!(snapshot(&live), snapshot(&whole));
     }
 }
+
+#[test]
+fn math_partial_tabs_match_all_utf8_splits_live_prefixes_and_classification_bounds() {
+    let sources = [
+        "- $a\r\n\t🙂 &amp;\\$b$\r\n- sibling\n".to_owned(),
+        "- > $$a\n\t>\t中$$\n  > ===\n".to_owned(),
+        "- $$\n\t\n\t  $$\n\t中\r\n\t $$".to_owned(),
+        "- > $$\n\tmissing quote\n- sibling\n".to_owned(),
+        format!("- $a\n\t{}🙂$ | b\n  -|-\n", "x".repeat(1030)),
+        format!("- $$\n\t{}\r\n\t$$\n", "$".repeat(1030)),
+        format!("{}- $a\n{}\t中$\n", ">".repeat(1018), ">".repeat(1018)),
+        format!("{}- $$\n{}\t中\n", ">".repeat(1018), ">".repeat(1018)),
+        format!("- $a\n\t{}late$\n", " ".repeat(1030)),
+    ];
+    for source in sources {
+        for (at, _) in source.char_indices() {
+            check_chunks(&source, &[at]);
+        }
+        let mut live = Document::new();
+        for (at, c) in source.char_indices() {
+            let end = at + c.len_utf8();
+            live.append(&source[at..end]).unwrap();
+            let mut whole = Document::new();
+            whole.append(&source[..end]).unwrap();
+            assert_eq!(snapshot(&live), snapshot(&whole), "prefix {end}");
+        }
+        live.finish();
+        let mut whole = Document::new();
+        whole.append(&source).unwrap();
+        whole.finish();
+        assert_eq!(snapshot(&live), snapshot(&whole));
+    }
+}

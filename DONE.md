@@ -692,3 +692,18 @@ README、TODO 已同步；固定四空格/显式路径方言已完成，分类�
 验收：项目 devShell 的 cargo check --all-targets、cargo clippy --all-targets -- -D warnings、debug/release cargo nextest run --no-fail-fast 各 613 项、cargo test --doc 50 项、格式与 diff 检查通过。prose_tabs 新示例 20 帧/112 计费字节，代码晚闭合后保留映射和条目折叠；既有 partial_tabs、container_tabs、container_inline 示例通过。日志：`/tmp/mdtui3-prose-tabs-validation.log`；初始 3 项失败基线：`/tmp/mdtui3-prose-tabs-baseline.log`。
 
 README/TODO 已同步完成范围。数学内容、新叶块/表头分类、空白/过量缩进/不完整路径的部分 tab、叶块缩进、分类上限及其它容器语义继续保留 TODO；终端 UI 与实际排版仍为后续阶段。
+
+
+## 2026-10-30 数学内容续行部分 tab 核心交付
+
+本单元完成容器行内与已开启独立数学块续行的部分 tab 映射。行内数学沿用已有非空普通正文续行资格：完整路径原子匹配、剩余水平缩进至多三列，不新建叶块规则或表头；虚拟空格衔接美元定界与转义状态，稳定 MathId、物理叶块和源码包络保持。数学块复用围栏路径，接受空白/过量缩进的字面正文，关闭 $$ 前的虚拟列和 ASCII 空格合计须不超过三列；缺失路径、长定界、未闭合 EOF 等继续既有失败语义。
+
+math_content / math_block_content 保持原文；math_payload / math_block_payload 去除前缀并将最终部分 tab 的单字节映射为 1..3 个静态空格，其它 CRLF、正文 tab、反斜线与实体拼写保留。MathChunk.source 连续覆盖原始内容，按实际源码字节、一 query、一 object 收费；一个 tab 字节可原子发出最多三个空格，预算不足不推进也不收费。显示、搜索、摘要复用同一映射，数学读取不应用代码/实体规范化；旧任务与测量拒绝、合并 Update、独立折叠、预览和源码导航保持。
+
+游标固定十个机器字以内、O(1) 构造，首次付费读取 O(log G + log T) 定位已有间隙和 tab，后续 O(1) 合并。复用显示索引的 tab 记录，不保存第二份映射、不按虚拟列分配；候选只记录最后消费位置，省略前缀追加有序间隙。4096 条历史映射后百万字增长及晚闭合不修改旧记录，同一物理行再逐字追加 1000 次不新增间隙或回扫前缀/祖先。数学块仍做 O(log n) 范围失效，注解端点可按新增字节线性增长，未改变原契约。累计 O(n log n)/空间 O(n)、零运行时依赖和禁止 unsafe 保持，不承诺单次解析硬时延。
+
+新增 14 项验收（12 项专用测试、1 项内部存储测试、1 项全局分块测试）：行内/块数学各 400 组独立列宽与源码模型、UTF-8 全切点/逐前缀、CRLF/EOF、转义/定界长度、空白/失败路径/分类窗口、Setext/表头隔离、原文与替代文本的预算读取、稳定对象/合并通知、旧测量/读取/搜索拒绝，以及搜索/摘要/折叠/预览/导航。千层引用、251 层列表及百万字输入通过；收起数学块或容器时正文零字节读取。既有排除样本随本单元方言更新，仍保留未匹配完整路径的回退检查。
+
+验收：项目 devShell 的 cargo check --all-targets、cargo clippy --all-targets -- -D warnings、debug/release cargo nextest run --no-fail-fast 各 627 项、cargo test --doc 51 项、cargo fmt --all -- --check 与 git diff --check 全部通过。math_tabs 新示例以 6 帧/33 源码字节完成共享预算读取，流式关闭后保持折叠意愿；既有 container_math、math_blocks、prose_tabs 示例通过。验收日志：`/tmp/mdtui3-math-tabs-validation.log`；初始两项失败基线：`/tmp/mdtui3-math-tabs-baseline.log`。
+
+README/TODO 已同步；新叶块/表头的部分 tab 分类、一般正文空白/过量缩进/不完整路径、叶块 tab 缩进、分类上限及其余容器规则继续保留 TODO。TeX 排版、额外定界方言及终端 UI 仍属后续阶段。

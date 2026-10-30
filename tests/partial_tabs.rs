@@ -73,7 +73,7 @@ fn failed_complete_path_is_atomic_and_other_leaf_dialects_are_unchanged() {
         ("- > ```\n \tpayload\n", " \tpayload\n"),
         ("- > ```\n  outside\n", "outside\n"),
         ("- ```\n- sibling\n", "sibling\n"),
-        ("- $$\n\tpayload\n", "\tpayload\n"),
+        ("- > $$\n\tpayload\n", "\tpayload\n"),
         ("- first\n\t# literal\n", "first\n\t# literal\n"),
         (">\t# literal\n", "\t# literal\n"),
     ] {

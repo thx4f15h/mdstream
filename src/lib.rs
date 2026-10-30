@@ -904,7 +904,7 @@ impl Document {
             let new_start = self.containers.len();
             let closed_start = update.closed_containers.len();
             let loosened_start = update.loosened_lists.len();
-            let code_line = self.fence.filter(|f| f.byte != b'$').and_then(|_| {
+            let fence_line = self.fence.and_then(|_| {
                 fence_scope.and_then(|_| {
                     self.containers
                         .partial_prefix(&self.source, span, None, &mut self.work)
@@ -914,7 +914,6 @@ impl Document {
                 && header.is_none()
                 && self.container_inline.is_some()
                 && self.container_inline == self.containers.inner()
-                && self.inline.can_continue_partial_tab()
             {
                 self.containers
                     .partial_prefix(&self.source, span, Some(complete), &mut self.work)
@@ -922,7 +921,7 @@ impl Document {
                 None
             };
             let partial_text = text_line.is_some();
-            let line = code_line.or(text_line).or_else(|| {
+            let line = fence_line.or(text_line).or_else(|| {
                 self.containers.line(
                     &self.source,
                     span,
@@ -1250,8 +1249,8 @@ impl Document {
                 self.blocks[id.0].source.end = span.end;
                 if let BlockKind::Math { content: body, .. } = &mut self.blocks[id.0].kind {
                     body.end = span.end;
-                    if content.start > span.start {
-                        self.math_gaps.push(Span::new(span.start, content.start));
+                    if payload.start > span.start {
+                        self.math_gaps.push(Span::new(span.start, payload.start));
                     }
                     self.mark(self.blocks[id.0].source, Style::default(), update);
                 }

@@ -14,7 +14,8 @@ pub enum MathKind {
 
 /// Confirmed, non-nesting syntax. Both ranges remain stable across appends.
 /// Content is a raw source envelope, including any container prefixes. Read
-/// `Document::math_payload` to omit those prefixes without decoding Markdown.
+/// `Document::math_payload` to omit those prefixes and expand their partial
+/// tabs without decoding Markdown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Math {
     pub kind: MathKind,
@@ -37,16 +38,20 @@ impl Document {
             source: self.source(),
             remaining: content,
             gaps: &[],
-            gap: None,
+            gap: usize::MAX,
+            spaces: &[],
+            space: usize::MAX,
         })
     }
 
-    /// Like math_block_content, omitting only matched container prefixes.
-    /// Raw whitespace, CRLF, backslashes and Markdown spelling are preserved.
+    /// Like math_block_content, omitting matched container prefixes and mapping
+    /// retained partial tabs to 1..3 spaces. Other whitespace, CRLF, backslashes
+    /// and Markdown spelling are preserved.
     /// Uses the same mapped chunks and shared budget as math_payload.
     pub fn math_block_payload(&self, id: BlockId) -> Option<MathContent<'_>> {
         let mut cursor = self.math_block_content(id)?;
         cursor.gaps = &self.math_gaps;
+        cursor.spaces = self.display.space_mappings();
         Some(cursor)
     }
 
@@ -78,22 +83,24 @@ impl Document {
             source: self.source(),
             remaining: self.math(id)?.content,
             gaps: &[],
-            gap: None,
+            gap: usize::MAX,
+            spaces: &[],
+            space: usize::MAX,
         })
     }
 
-    /// O(1) prefix-free content cursor, preserving raw CRLF and backslashes.
+    /// O(1) prefix-free content cursor, preserving raw CRLF and backslashes and
+    /// expanding retained partial container tabs to 1..3 spaces.
     /// Each chunk maps to its original source; omitted prefixes return empty
     /// text and still consume source bytes, a query and an object. The first
-    /// successful advance pays for O(log G) lookup in the G recorded gaps;
+    /// successful advance pays for O(log G + log T) lookup in the G recorded
+    /// gaps and T partial tabs; a tab chunk maps to its single source byte;
     /// subsequent chunks take O(1), with no ancestor walk or body allocation.
     pub fn math_payload(&self, id: MathId) -> Option<MathContent<'_>> {
-        Some(MathContent {
-            source: self.source(),
-            remaining: self.math(id)?.content,
-            gaps: &self.math_gaps,
-            gap: None,
-        })
+        let mut cursor = self.math_content(id)?;
+        cursor.gaps = &self.math_gaps;
+        cursor.spaces = self.display.space_mappings();
+        Some(cursor)
     }
 }
 
@@ -138,7 +145,8 @@ impl MathObjects<'_> {
 pub struct MathChunk<'a> {
     /// Consumed original source, including omitted container prefixes.
     pub source: Span,
-    /// Borrows exactly `source`, or is empty for an omitted prefix fragment.
+    /// Borrows exactly `source`, is empty for an omitted prefix fragment, or
+    /// contains 1..3 static spaces mapped to a single partially consumed tab.
     pub text: &'a str,
 }
 
@@ -147,7 +155,10 @@ pub struct MathContent<'a> {
     source: &'a str,
     remaining: Span,
     gaps: &'a [Span],
-    gap: Option<usize>,
+    // MAX means the first paid range lookup has not happened yet.
+    gap: usize,
+    spaces: &'a [(Span, u8)],
+    space: usize,
 }
 
 impl<'a> MathContent<'a> {
@@ -156,7 +167,8 @@ impl<'a> MathContent<'a> {
     }
 
     /// At most TILE_BYTES source UTF-8 bytes, one query and one object per chunk,
-    /// including empty prefix fragments. No Markdown or whitespace decoding.
+    /// including empty prefix fragments. Mapped partial tabs cost one source
+    /// byte and emit at most three spaces atomically; other bytes are not decoded.
     /// Four byte units suffice for any scalar. Too-small budgets do not advance;
     /// the caller can cancel simply by dropping this cursor.
     pub fn advance(&mut self, budget: &mut Budget) -> Result<Option<MathChunk<'a>>, Completion> {
@@ -180,9 +192,17 @@ impl<'a> MathContent<'a> {
         }
         // All remaining paths make progress, so the lookup is paid even when
         // the next gap splits the otherwise available inspection window.
-        let mut gap = self
-            .gap
-            .unwrap_or_else(|| self.gaps.partition_point(|g| g.end <= self.remaining.start));
+        let mut gap = if self.gap == usize::MAX {
+            self.gaps.partition_point(|g| g.end <= self.remaining.start)
+        } else {
+            self.gap
+        };
+        let mut space = if self.space == usize::MAX {
+            self.spaces
+                .partition_point(|s| s.0.end <= self.remaining.start)
+        } else {
+            self.space
+        };
         let mut omitted = false;
         if let Some(g) = self.gaps.get(gap) {
             if self.remaining.start < g.start {
@@ -195,6 +215,20 @@ impl<'a> MathContent<'a> {
                 }
             }
         }
+        // Gaps and retained tab bytes are disjoint source-ordered streams.
+        // Reuse display mappings directly, without copying them at closure or
+        // applying unrelated entity/code normalization to raw math spelling.
+        let mut columns = None;
+        if let Some(&(tab, count)) = self.spaces.get(space) {
+            if self.remaining.start < tab.start {
+                end = end.min(tab.start);
+            } else {
+                debug_assert!(!omitted);
+                end = tab.end;
+                columns = Some(count);
+                space += 1;
+            }
+        }
         let source = Span::new(self.remaining.start, end);
         let charged = budget.charge(WorkLimit {
             queries: 1,
@@ -204,11 +238,14 @@ impl<'a> MathContent<'a> {
         });
         debug_assert!(charged);
         self.remaining.start = end;
-        self.gap = Some(gap);
+        self.gap = gap;
+        self.space = space;
         Ok(Some(MathChunk {
             source,
             text: if omitted {
                 ""
+            } else if let Some(columns) = columns {
+                &"   "[..usize::from(columns)]
             } else {
                 &self.source[source.range()]
             },
@@ -219,6 +256,60 @@ impl<'a> MathContent<'a> {
 #[cfg(test)]
 mod tests {
     use crate::{Budget, Document, MathId, WorkLimit};
+
+    #[test]
+    fn math_tabs_reuse_display_records_and_never_rewrite_history_on_closure() {
+        for block in [false, true] {
+            let mut doc = Document::new();
+            doc.append(if block { "> $$\n" } else { "> $a\n" }).unwrap();
+            for _ in 0..4096 {
+                doc.append(">\tx\n").unwrap();
+            }
+            assert_eq!(doc.math_gaps.len(), 4096);
+            assert_eq!(doc.display.space_mappings().len(), 4096);
+            doc.append(&format!(">\t{}", "x".repeat(1_000_000)))
+                .unwrap();
+            let gaps = doc.math_gaps.clone();
+            let tabs = doc.display.space_mappings().to_vec();
+            let capacity = doc.math_gaps.capacity();
+            let before = doc.work();
+            for _ in 0..1000 {
+                doc.append("x").unwrap();
+            }
+            assert_eq!(doc.math_gaps, gaps);
+            assert_eq!(doc.math_gaps.capacity(), capacity);
+            assert_eq!(doc.display.space_mappings(), tabs);
+            assert_eq!(doc.work().container_steps, before.container_steps);
+            assert_eq!(
+                doc.work().inline_bytes - before.inline_bytes,
+                if block { 0 } else { 1000 }
+            );
+            doc.append(if block { "\n>\t$$\n" } else { "$\n" }).unwrap();
+            assert_eq!(doc.math_gaps, gaps);
+            assert_eq!(doc.display.space_mappings(), tabs);
+            assert!(gaps.iter().all(|gap| doc.text(*gap) == Some(">")));
+            assert!(
+                gaps.iter()
+                    .zip(&tabs)
+                    .all(|(gap, tab)| gap.end == tab.0.start)
+            );
+            let mut cursor = if block {
+                doc.math_block_payload(crate::BlockId(0))
+            } else {
+                doc.math_payload(MathId(0))
+            }
+            .unwrap();
+            let mut budget = Budget::new(WorkLimit::unlimited());
+            let mut replacements = 0;
+            while let Some(chunk) = cursor.advance(&mut budget).unwrap() {
+                if chunk.text == "  " {
+                    replacements += 1;
+                    assert_eq!(doc.text(chunk.source), Some("\t"));
+                }
+            }
+            assert_eq!(replacements, 4097);
+        }
+    }
 
     #[test]
     fn math_blocks_share_ordered_gaps_without_per_append_or_body_storage() {

@@ -60,6 +60,10 @@ impl DisplayIndex {
         self.spaces.push((source, columns));
     }
 
+    pub fn space_mappings(&self) -> &[(Span, u8)] {
+        &self.spaces
+    }
+
     /// Only inspect the endpoints: the inline scanner maintains all-spaces as
     /// bytes arrive, so closing a huge span never rereads its body.
     pub fn code(&mut self, source: Span, text: &str, all_spaces: bool, last: Span) {

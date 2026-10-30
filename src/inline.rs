@@ -225,21 +225,18 @@ pub(crate) struct Inline {
 }
 
 impl Inline {
-    /// Math payload mapping remains byte-for-byte; its partial-tab extension
-    /// is separate. All other state is continued without cloning old openers.
-    pub fn can_continue_partial_tab(&self) -> bool {
-        self.math.is_none()
-    }
-
     /// Feed at most three semantic spaces owned by one original tab byte.
     /// This is only used before a nonblank same-scope continuation, so it can
     /// neither create a delimiter nor become a trailing ordinary line break.
     pub fn virtual_spaces(&mut self, at: usize, columns: u8, effects: &mut Effects<'_>) {
-        debug_assert!(self.math.is_none());
+        self.math_prefix(at, effects);
         for _ in 0..columns {
             effects.work.inline_bytes += 1;
             self.byte(b' ', at, effects);
             self.previous = Some(b' ');
+        }
+        if let Some(math) = &mut self.math {
+            math.end = at + 1;
         }
     }
 
@@ -311,12 +308,9 @@ impl Inline {
         true
     }
 
-    pub fn feed(&mut self, span: Span, effects: &mut Effects<'_>) {
-        if span.is_empty() {
-            return;
-        }
+    fn math_prefix(&self, start: usize, effects: &mut Effects<'_>) {
         if let Some(math) = &self.math
-            && math.end < span.start
+            && math.end < start
             && effects.source.as_bytes()[math.end - 1] == b'\n'
         {
             // Record omitted source once, without inspecting/copying the body
@@ -324,8 +318,15 @@ impl Inline {
             // they cannot overlap a later confirmed object's content.
             // An ATX closing suffix is a same-line gap, not a container prefix.
             debug_assert!(effects.math_gaps.last().is_none_or(|g| g.end <= math.end));
-            effects.math_gaps.push(Span::new(math.end, span.start));
+            effects.math_gaps.push(Span::new(math.end, start));
         }
+    }
+
+    pub fn feed(&mut self, span: Span, effects: &mut Effects<'_>) {
+        if span.is_empty() {
+            return;
+        }
+        self.math_prefix(span.start, effects);
         for pos in span.range() {
             let byte = effects.source.as_bytes()[pos];
             effects.work.inline_bytes += 1;

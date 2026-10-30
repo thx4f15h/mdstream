@@ -95,7 +95,6 @@ fn failed_paths_blank_lines_and_new_leaf_candidates_keep_original_dialect() {
         ("- first\n\t  tail\n", "first\n\t  tail\n"),
         ("- first\n\t\n", "first\n\t\n"),
         ("- first\n\t", "first\n\t"),
-        ("- $a\n\tb$\n", "a\n\tb\n"),
         ("- first\n- sibling\n", "first\nsibling\n"),
     ] {
         let doc = parse(source);
