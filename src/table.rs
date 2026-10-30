@@ -90,6 +90,7 @@ pub(crate) struct HeaderCandidate {
     pub columns: usize,
     // The first-cell prefix may already be consumed. Inherited emphasis openers
     // are discarded on confirmation; published semantics and objects are reused.
+    // An inherited opaque code prefix is consumed as fresh cell syntax instead.
     pub parsed_end: usize,
     pub leading_break: Option<crate::inline::LineBreak>,
     // An eager root continuation grows its paragraph until table confirmation.

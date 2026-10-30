@@ -972,7 +972,8 @@ impl Document {
         }
         // Emphasis openers may be retained while probing: if any inherited
         // opener closes, abandon the probe and keep its published semantics.
-        // Opaque inherited candidates still use the ordinary parser.
+        // Inherited code remains opaque until confirmation, or cancels the
+        // probe when it closes. Other opaque candidates remain unsupported.
         let inherited = self
             .containers
             .inner()
@@ -1353,7 +1354,7 @@ impl Document {
     }
 
     fn reject_streaming_header(&mut self, header: table::HeaderCandidate, update: &mut Update) {
-        // A cross-line pair has already been published. Resume ordinary text
+        // A cross-line pair or code mapping has been published. Resume text
         // once, including any suffix after a pipe in this same input chunk.
         self.inline.cancel_header();
         if let Some(line_break) = header.leading_break {
@@ -1432,11 +1433,9 @@ impl Document {
         update: &mut Update,
     ) {
         let id = TableId(self.tables.len());
-        if header.parsed_end > header.content.start {
-            self.inline.confirm_header(&mut self.work);
-        }
-        let first_cell =
-            (header.parsed_end > header.content.start).then(|| std::mem::take(&mut self.inline));
+        let first_cell = (header.parsed_end > header.content.start
+            && self.inline.confirm_header(&mut self.work))
+        .then(|| std::mem::take(&mut self.inline));
         if let Some(end) = header.paragraph_end {
             self.blocks[self.current.unwrap().0].source.end = end;
         }
@@ -1455,7 +1454,8 @@ impl Document {
         self.tables
             .push(Table::new(block, header.source, delimiter, columns));
         // RowParser still scans the header once for cell boundaries, whitespace
-        // and escaped pipes (also inside code), skipping the consumed semantics.
+        // and escaped pipes (also inside code), skipping reusable semantics.
+        // An inherited code prefix had no cell semantics; parse those here once.
         self.start_table_row(
             id,
             header.source,

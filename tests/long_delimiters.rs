@@ -286,11 +286,18 @@ fn late_header_pipe_requires_isolatable_inline_state_and_other_limits_remain() {
             parse(&format!("{prefix}*prior\n{source}")).tables().len(),
             1
         );
-        // Inherited opaque code still cannot become an independent cell.
+        assert_eq!(
+            parse(&format!("{prefix}`prior\n{source}")).tables().len(),
+            1
+        );
+        // A published cross-line code mapping still cannot be revoked.
         assert!(
-            parse(&format!("{prefix}`prior\n{source}"))
-                .tables()
-                .is_empty()
+            parse(&format!(
+                "{prefix}`prior\n{prefix}end` {}|b\n{prefix}-|-\n",
+                "x".repeat(BLOCK_LOOKAHEAD)
+            ))
+            .tables()
+            .is_empty()
         );
         let source = format!("{prefix}title\n{prefix}{}\n", "=".repeat(2048));
         assert!(parse(&source).headings().entries().is_empty());

@@ -182,6 +182,9 @@ pub struct Reference {
 pub struct Work {
     pub input_bytes: u64,
     pub classified_bytes: u64,
+    /// Actual inline visits, including a confirmed code-inherited header's
+    /// opaque prefix followed by its independent cell parse. That extra pass
+    /// is bounded by table_bytes; failed candidates never replay the prefix.
     pub inline_bytes: u64,
     pub delimiter_steps: u64,
     pub label_bytes: u64,
@@ -189,7 +192,8 @@ pub struct Work {
     pub table_bytes: u64,
     /// Bytes summarized for prospective headers. Each eligible line byte is
     /// inspected once. An isolated first-cell prefix can be parsed immediately;
-    /// the suffix is deferred until success or fallback, never replayed.
+    /// inherited code stays opaque until confirmation. The suffix is deferred
+    /// until success or fallback, never replayed.
     pub table_header_bytes: u64,
     /// Bytes examined by long table-separator probes, once per candidate byte.
     /// A failed probe's source is subsequently consumed once as ordinary text.

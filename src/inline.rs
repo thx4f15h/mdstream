@@ -208,15 +208,17 @@ pub(crate) struct Inline {
     // Track that event, not just stack length (which may grow again).
     header_floor: usize,
     header_crossed: bool,
+    // An inherited code span keeps this line opaque until table confirmation.
+    // Its prefix has no published effects and needs a fresh cell parser then.
+    header_code: bool,
 }
 
 impl Inline {
-    /// Only emphasis openers and the pending break may reach the preceding
+    /// Only emphasis openers, code and the pending break may reach the preceding
     /// line. Inspect fixed state, never walk or clone the delimiter stack.
     pub fn can_isolate_line(&self) -> bool {
         self.previous == Some(b'\n')
             && self.run.is_none()
-            && self.code.is_none()
             && self.math.is_none()
             && self.footnote.is_none()
             && self.bracket.is_none()
@@ -233,6 +235,7 @@ impl Inline {
         debug_assert!(self.can_isolate_line());
         self.header_floor = self.stack.len();
         self.header_crossed = false;
+        self.header_code = self.code.is_some();
         self.previous = None;
         self.line_break.take()
     }
@@ -244,13 +247,22 @@ impl Inline {
     pub fn cancel_header(&mut self) {
         self.header_floor = 0;
         self.header_crossed = false;
+        self.header_code = false;
     }
 
     /// On success discard inherited openers, retaining the first cell's live
     /// candidates and already published objects. Each surviving opener is
     /// rebased only once, when this inline sequence becomes a table cell.
-    pub fn confirm_header(&mut self, work: &mut Work) {
+    /// Return whether the first-cell state can be reused. An opaque code prefix
+    /// is instead parsed once as a cell during the existing row scan. Never
+    /// finish its pending run: that could publish a cross-line code mapping.
+    pub fn confirm_header(&mut self, work: &mut Work) -> bool {
         debug_assert!(!self.header_crossed);
+        if self.header_code {
+            work.delimiter_steps += self.stack.len() as u64;
+            *self = Self::default();
+            return false;
+        }
         if self.header_floor != 0 {
             work.delimiter_steps += self.stack.len() as u64;
             self.stack.drain(..self.header_floor);
@@ -261,6 +273,7 @@ impl Inline {
             }
         }
         self.cancel_header();
+        true
     }
 
     pub fn feed(&mut self, span: Span, effects: &mut Effects<'_>) {
@@ -511,6 +524,7 @@ impl Inline {
             if let Some(code) = &mut self.code {
                 let open = code.open;
                 if open.len() == run.source.len() {
+                    self.header_crossed |= self.header_code;
                     let content = Span::new(open.end, run.source.start);
                     effects
                         .display

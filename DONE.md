@@ -515,3 +515,17 @@ README、TODO 已同步，只将“只继承换行”的子项记为已交付。
 复杂度与资源验收：千层引用下百万字增长只增加新字节摘要/行内计数，分类、delimiter、容器/标题步骤及注解/容器 arena 容量不变；确认/失败不重读首单元格语义。4096 个旧 opener 经 200 轮长候选失败/无管道续行，delimiter 计数不增加，最终确认只清理一次 4096 项。250 层列表、4096 个链接/数学/脚注及 4096 列保持确切作用域，确认没有额外符号工作。预算摘要零预算不推进，8 字节逐帧读取能够完成。
 
 项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 449 项、`cargo test --doc` 38 项、`cargo fmt --all -- --check` 和 `git diff --check`。`cargo run -r --example open_headers` 演示百万字失败恢复和成功表头，摘要 16 帧/110 个计费字节；既有 `inherited_headers`、`late_headers`、`long_headers`、`long_delimiters`、`container_inline`、`container_lazy` 示例均通过。完整日志：`/tmp/mdtui3-open-headers-validation.log`。README、TODO 已同步，零运行时依赖与 `forbid(unsafe_code)` 保持；其余继承候选和跨行语义撤销、其它分类上限、完整容器语义与终端 UI 继续保留待办。
+
+## 2026-10-30 旧代码尚未闭合的晚管道长表头核心交付
+
+本单元交付独立子项：顶层段落或同一 Quote/Item 显式续行继承未闭合代码 span 时，支持首管道晚于分类窗口的表头。允许保留旧强调栈；不支持代码外仍有未闭合标签等其它候选。旧代码若在首管道前已经闭合，保留原跨行代码样式和显示映射并取消该行探测，即使随后重新开启代码也不恢复。早管道、短表头、lazy、块中断和确切容器作用域规则保持；已发布跨行语义的撤销及其它候选仍在 TODO。
+
+模型与实现：代码状态会抑制实体、链接、数学和脚注语义，因此它的前缀不能直接作为独立首单元格复用。探测期间只维护原代码的 run、全空白标志与最后内容区间；首管道之后仍延迟。确认时原代码尚未闭合，当前行没有已发布的行内效果，可一次丢弃旧 Inline（计入旧强调栈清理），由既有 RowParser 扫描当前行并解析各单元格。丢弃时不结算首管道前待定的反引号 run，避免发布需要撤销的旧代码映射。旧对象 ID 保持，候选中的对象只在确认后分配一次，独立单元格显示映射按原规则建立。失败、无管道、作用域变化及 EOF 保留原代码状态，仅消费剩余后缀；之后闭合代码仍只查询端点，不回扫正文。
+
+复杂度证明：每个候选摘要字节一次、原代码状态消费一次；成功时在已有单元格扫描阶段额外消费当前候选行。成功表头互不重叠，因此这部分总量受 `table_bytes` 约束，`inline_bytes <= source().len() + table_bytes`，两个阶段的实际字节均如实计数。失败不重放，普通增长不回扫，确认不读前序代码正文、不重试分类。只增加一个布尔标志，不复制正文或克隆栈；累计解析仍 O(n log n)、核心空间 O(n)，单次确认/回退仍无硬时延保证。有预算显示、摘要与折叠接口保持原契约。
+
+新增 13 项测试：`tests/code_headers.rs` 12 项与 `tests/chunking.rs` 1 项。对照全延迟早管道模型与普通正文模型，覆盖 363 组反引号组合、400 组表格范围、UTF-8 全切点/逐前缀、CRLF/EOF/Setext/长分隔行失败、首管道前待定 run、闭合后重新开启、稳定对象/叶块身份、显示映射的逐标量/tile/预算读取、合并 Update、旧测量拒绝和折叠。既有 `long_delimiters` 将本次支持的拒绝断言改为接受，并保留已经闭合的跨行代码及其它分类上限断言。
+
+资源与复杂度验收：千层引用中保留百万字前序代码，再分 1000 次追加百万字候选，仅增加新字节的摘要/行内计数；分类、delimiter、容器/标题计数与注解/容器 arena 容量不变。成功只重新消费当前候选行；失败只消费 10 个剩余字节。4096 个旧强调 opener 经 200 轮失败/无管道续行不增加 delimiter 步骤，最终代码映射与普通模型一致；250 层列表、4096 个旧 opener、4096 组链接/数学/脚注及 4096 列在确认时各处理一次。零预算摘要不推进，8 字节分帧读取可完成。
+
+项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 462 项、`cargo test --doc` 39 项、`cargo fmt --all -- --check` 和 `git diff --check`。新示例 `cargo run -r --example code_headers` 验证百万字失败恢复与成功表头，预算摘要 15 帧/101 个计费字节；既有 `open_headers`、`inherited_headers`、`late_headers`、`long_headers`、`long_delimiters`、`container_inline`、`container_lazy` 示例均通过。日志：`/tmp/mdtui3-code-headers-validation.log`、`/tmp/mdtui3-code-headers-release.log`。README、TODO 已同步，零运行时依赖与 `forbid(unsafe_code)` 保持。
