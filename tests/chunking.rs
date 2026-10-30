@@ -109,6 +109,10 @@ fn check_chunks(source: &str, boundaries: &[usize]) {
 #[test]
 fn every_single_split_for_small_constructs() {
     for source in [
+        "- ```\r\n\t中🙂\r\n\t ```\r\n- sibling\n",
+        "> ```\n>\tpayload\n>\t  ```\n>\t```\n",
+        "- - - ~~~\n\t\tpayload\n\t\t~~~\n",
+        "- > ```\n \t>\tpayload\n\twrong scope\n",
         "-\t```\r\n\t中🙂\r\n\t```\n-\t[x]\t# task\n",
         "> \t-\tfirst\n> \t\t# title\n> \t-\tlast\n",
         "- first\n\t# lazy\n\t- literal\n- ```\n\toutside\n",
@@ -908,6 +912,34 @@ fn container_tabs_match_all_utf8_splits_and_live_prefixes_at_classification_limi
         format!("> \t-\th|h\r\n> \t\t{}|-\r\n> \t\tx|y\n", "-".repeat(1030)),
         format!("{}-\t中\n{}\t# next\n", ">".repeat(1022), ">".repeat(1022)),
         format!("-{}\t# literal\n\tcontinued\n", " ".repeat(1023)),
+    ];
+    for source in sources {
+        for (at, _) in source.char_indices() {
+            check_chunks(&source, &[at]);
+        }
+        let mut live = Document::new();
+        for (at, c) in source.char_indices() {
+            let end = at + c.len_utf8();
+            live.append(&source[at..end]).unwrap();
+            let mut whole = Document::new();
+            whole.append(&source[..end]).unwrap();
+            assert_eq!(snapshot(&live), snapshot(&whole), "prefix {end}");
+        }
+        live.finish();
+        let mut whole = Document::new();
+        whole.append(&source).unwrap();
+        whole.finish();
+        assert_eq!(snapshot(&live), snapshot(&whole));
+    }
+}
+
+#[test]
+fn partial_tabs_match_all_utf8_splits_and_live_prefixes_at_classification_limit() {
+    let sources = [
+        format!("- ```\n\t中{}🙂\r\n\t```\n- sibling\n", "x".repeat(1030)),
+        format!("> - ```\n>\t{}~~~\n>\t```", " ".repeat(1030)),
+        format!("{}- ```\n{}\t中\n", ">".repeat(1018), ">".repeat(1018)),
+        format!("- ```\n\t{}\n\t```", "`".repeat(1030)),
     ];
     for source in sources {
         for (at, _) in source.char_indices() {

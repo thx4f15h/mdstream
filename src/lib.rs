@@ -891,6 +891,7 @@ impl Document {
         let mut content = span;
         let mut container_line = None;
         let mut container_blank = false;
+        let mut virtual_spaces = 0;
         let mut lazy = false;
         let mut table_text = matches!(classification, Line::Text);
         if self.fence.is_none() || fence_scope.is_some() {
@@ -903,20 +904,28 @@ impl Document {
             let new_start = self.containers.len();
             let closed_start = update.closed_containers.len();
             let loosened_start = update.loosened_lists.len();
-            let line = self.containers.line(
-                &self.source,
-                span,
-                containers::ContainerOptions {
-                    complete,
-                    root_markers,
-                    paragraph: previous_title.and_then(|(id, _)| self.blocks[id.0].container),
-                    lazy_paragraph: self.container_inline,
-                    table_header: header.as_ref().map(|h| (h.container.unwrap(), h.columns)),
-                    fence: fence_scope,
-                },
-                &mut self.work,
-                update,
-            );
+            let code_line = self.fence.filter(|f| f.byte != b'$').and_then(|_| {
+                fence_scope.and_then(|_| {
+                    self.containers
+                        .code_prefix(&self.source, span, &mut self.work)
+                })
+            });
+            let line = code_line.or_else(|| {
+                self.containers.line(
+                    &self.source,
+                    span,
+                    containers::ContainerOptions {
+                        complete,
+                        root_markers,
+                        paragraph: previous_title.and_then(|(id, _)| self.blocks[id.0].container),
+                        lazy_paragraph: self.container_inline,
+                        table_header: header.as_ref().map(|h| (h.container.unwrap(), h.columns)),
+                        fence: fence_scope,
+                    },
+                    &mut self.work,
+                    update,
+                )
+            });
             self.sync_heading_scopes(new_start, closed_start, update);
             self.headings
                 .context(self.containers.inner(), span.start, &mut self.work);
@@ -926,16 +935,26 @@ impl Document {
             }
             if let Some(line) = line {
                 lazy = line.lazy;
+                virtual_spaces = line.virtual_spaces;
                 let same_scope = previous_title
                     .is_some_and(|(id, _)| self.blocks[id.0].container == self.containers.inner());
                 let inner = Span::new(line.prefix, span.end);
                 content = inner;
-                let inner_classification = if lazy {
+                let mut inner_classification = if lazy {
                     Line::Text
                 } else {
                     self.work.classified_bytes += inner.len() as u64;
                     block::classify(&self.source, inner, complete, self.fence, same_scope)
                 };
+                if virtual_spaces > 0 && matches!(inner_classification, Line::FenceClose) {
+                    let spaces = self.source.as_bytes()[inner.range()]
+                        .iter()
+                        .take_while(|&&b| b == b' ')
+                        .count();
+                    if spaces + usize::from(virtual_spaces) > 3 {
+                        inner_classification = Line::Code;
+                    }
+                }
                 container_blank = matches!(inner_classification, Line::Blank);
                 self.containers.observe_payload(
                     container_blank,
@@ -1210,6 +1229,11 @@ impl Document {
             Line::Code => {
                 inline = false;
                 payload.start = content.start;
+                if virtual_spaces > 0 {
+                    payload.start -= 1;
+                    self.display
+                        .spaces(Span::new(payload.start, content.start), virtual_spaces);
+                }
                 let id = self.current.unwrap();
                 self.blocks[id.0].source.end = span.end;
                 if let BlockKind::Math { content: body, .. } = &mut self.blocks[id.0].kind {

@@ -664,3 +664,16 @@ README、TODO 已同步；固定四空格/显式路径方言已完成，分类�
 项目 devShell 验收：cargo check --all-targets、cargo clippy --all-targets -- -D warnings、debug/release nextest 各 586 项、48 项文档测试、fmt 和 diff 检查通过。container_tabs、containers、container_code、footnote_blocks 四个示例通过。日志：`/tmp/mdtui3-container-tabs-validation.log`（check/clippy、release、doc、示例及格式），`/tmp/mdtui3-container-tabs-debug.log`（全量 debug）；初始失败基线：`/tmp/mdtui3-container-tabs-baseline.log`。
 
 按账本允许的独立子项交付完整 tab 边界规则。README/TODO 已同步；部分 tab 的虚拟空格表示、叶块 tab 缩进、分类上限扩展及其它容器规则继续保留未完成条目，不宣称完整 CommonMark 缩进或终端排版已完成。
+
+
+## 2026-10-30 围栏代码续行部分 tab 核心交付
+
+本单元完成容器部分 tab 的独立子项：已开启反引号/波浪线围栏的显式续行。原有字节源码保持不变，Item 缩进和引用分隔可部分消费物理行四列 tab，同一 tab 可供多个嵌套帧使用。整条旧路径先原子探测；失败回到原作用域/兄弟分类，不产生半条路径的替换。余下 1..3 列映射为静态空格，并参与关闭围栏的至多三列缩进判定；超过阈值、错定界、尾随正文和长分类候选保持字面代码。CRLF/EOF、空行、稳定 BlockId/ContainerId、原始范围与流式更新沿用已有契约。
+
+每条含余量的正文行只保存一个单字节源码区间及列数，不复制正文、按虚拟列分配或回扫旧显示记录。前缀游标只增加常数状态，同一个 tab 最多供四列；空白串末端缓存避免按祖先重复扫描，失败至多重试一次原有有界前缀。显示索引在原始 runs 之上返回 `DisplayRun.replacement`，每个 tab 只有一个范围/tile 拥有其替代输出。预算游标在收费失败时保持位置；搜索可把多个空格命中映射回同一 tab，有界摘要即使截断替代文本也保留完整映射。`RenderRun` 继续保留原字节，调用方用显示接口取得替换。
+
+新增 14 项验收（13 项专用测试与 1 项全局分块测试），并扩充既有短样本全切点：UTF-8 全切点/逐前缀与分类窗口、嵌套共享 tab/引用分隔、关闭缩进、CRLF/EOF/空行/失败回退、稳定身份/合并 Update/旧测量与游标拒绝、逐标量/tile/预算显示、搜索/摘要映射及折叠回归。既有列宽模型扩展为 3072 组含部分 tab 的结果对照；另有 400 组嵌套字面正文和围栏范围模型。250 层列表的 200 条短续行每行只访问 250 帧；千层引用/250 层列表百万字正文后 1000 次追加不增加前缀、容器、章节或分类工作，不增加容器容量/注解节点。4096 个历史替换后追加新代码只做常数前缀工作，局部查询少于 200 次注解访问；折叠百万字代码零正文计费。
+
+验收：项目 devShell 的 `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 600 项、`cargo test --doc` 49 项、格式与 diff 检查通过。新示例 `partial_tabs` 9 帧/49 计费字节，输出两列空格及中文/emoji，追加关闭后保持折叠意愿。
+
+按账本允许的独立子项交付，未声称全部部分 tab 方言完成。一般正文、数学内容、新叶块分类及缩进代码的 tab 扩展、分类上限与其它容器规则保留 TODO；终端排版仍属后续阶段。

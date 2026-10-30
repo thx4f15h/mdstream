@@ -176,7 +176,7 @@ assert_eq!(doc.container(item).unwrap().state, SyntaxState::Sealed);
 当前方言与边界：
 
 - 支持显式 `>`、`>>`、`> >`，以及 `-`/`+`/`*` 和 1..9 位数字加 `.`/`)` 列表；可混合嵌套。每层容器标记前允许 0..3 列水平空白，tab 按物理行每四列对齐；`>` 后最多消费一个可选空格，或恰好占一列的 tab。相同父级、相同列缩进、相同 bullet/有序分隔符延续 List；改变数字只创建新 Item，改变标记类型创建新 List。
-- 列表标记后须为空格、tab 或完整行结束；消费标记后的全部水平空白。续行须用空格/tab 补足该 Item 从父前缀到正文的列宽（包含标记前缩进；空条目按标记末端列宽），再匹配子层。每个兄弟按自己的数字/空白宽度确定续行要求；任务标记及其后空白不计入条目续行宽度。仅在真实字节边界匹配，不拆分 tab；部分 tab 的失败和源码保留规则见[容器 tab 列对齐](#容器-tab-列对齐)。
+- 列表标记后须为空格、tab 或完整行结束；消费标记后的全部水平空白。续行须用空格/tab 补足该 Item 从父前缀到正文的列宽（包含标记前缩进；空条目按标记末端列宽），再匹配子层。每个兄弟按自己的数字/空白宽度确定续行要求；任务标记及其后空白不计入条目续行宽度。通常在真实字节边界匹配；已开启围栏代码的续行另支持部分 tab，失败和源码保留规则见[容器 tab 列对齐](#容器-tab-列对齐)。
 - 显式引用续行重复 `>`，列表续行补足缩进；连续非空正文也支持省略部分或全部前缀的 [lazy continuation](#容器-lazy-continuation)。无前缀空行关闭全部容器；显式 `>` 空行保留引用，缩进足够的空行保留对应条目。不满足 lazy 条件时，缺失某层前缀只保留已经匹配的外层，内层关闭。空条目和空任务保留条目身份；任务只识别最内层新条目的正文开头，任务标记之后继续识别标题或普通行内正文。
 - 容器正文保留逐物理行叶块身份；同一确切容器的显式续行可衔接强调、代码 span 及软/硬换行，见[容器内行内续行](#容器内行内续行)。容器内 ATX 和多物理行 Setext 标题及章节作用域见下节，表格识别及索引见[容器内表格](#容器内表格)。容器内围栏/缩进代码见[容器内代码块](#容器内代码块)；链接与脚注定义见[容器内定义](#容器内定义)；独立分隔线仍作为正文，不生成对应块对象（仍按行内方言处理）。顶层表格分隔行确认、分隔线/Setext 和已打开围栏的优先级保持。列表/引用整段折叠见[容器折叠](#容器折叠)；容器内标题独立折叠见[容器内章节折叠](#容器内章节折叠)，tight/loose 元数据见[列表 tight/loose](#列表-tightloose)，终端布局仍待接入。
 - 结构仅从既有 1024 字节分类前缀（UTF-8 边界最多额外 3 字节）识别。前缀中的完整 `>` 可以开层，列表/任务候选必须在前缀内有分隔符或完整行末；截断候选和前缀后的标记保留正文，不在后续追加中重新分类。深度受前缀字节限制；不声称支持无限深度或完整 CommonMark/GFM 容器规则。
@@ -187,11 +187,11 @@ assert_eq!(doc.container(item).unwrap().state, SyntaxState::Sealed);
 
 ## 容器 tab 列对齐
 
-本次支持容器前缀在**完整 tab 边界**上的缩进匹配，不声明完整 CommonMark tab 语义。物理行从第 0 列开始；前缀里的 ASCII 字符占一列，tab 前进到下一个 4 的倍数列。嵌套时不重置列号，源码偏移仍是 UTF-8 字节偏移。`BlockKind::ListItem.indent` 表示相对父前缀的列缩进。
+一般容器前缀支持**完整 tab 边界**上的缩进匹配；已开启围栏代码的部分 tab 扩展见下节，不声明完整 CommonMark tab 语义。物理行从第 0 列开始；前缀里的 ASCII 字符占一列，tab 前进到下一个 4 的倍数列。嵌套时不重置列号，源码偏移仍是 UTF-8 字节偏移。`BlockKind::ListItem.indent` 表示相对父前缀的列缩进。
 
 - 列表标记后的全部 space/tab 照常属于前缀，Item 保存其相对父前缀的正文列距离；例如 `-\tfirst` 正文从第 4 列开始，续行可用四个空格、一个 tab 或等价混合空白。有序编号和每个兄弟独立计算；新任务的 `[x]` 及其后的空白不会加到续行距离中。
-- 续行每匹配一个列表层，都要求其目标列恰好落在某个字节之后。若目标位于 tab 内部，该层整个匹配失败，连同该层 tab 前的空格都不消费；已成功匹配的外层仍保留。活动正文可按原 lazy 规则保持整条路径，否则关闭未匹配作用域。例如 `- first\n\t# literal` 是含原始 tab 的 lazy 正文；`- ```\n\tpayload` 结束条目内围栏，第二行回到根。一个 tab 也不能拆给两个各需两列的嵌套 Item。
-- `>` 后的可选分隔只消费一列：`  >\t# title` 的 tab 恰好占一列，随后识别标题；`>\t# literal` 的三列 tab 留给正文。剩余空白可以作为下一层容器标记前的至多三列缩进，例如 `> \t-\tfirst`；后续 `> \t\tcontinued` 匹配同一 Item。所有被消费的 tab 只隐藏真实源码字节，不生成替代空格。
+- 围栏代码以外的续行每匹配一个列表层，都要求其目标列恰好落在某个字节之后。若目标位于 tab 内部，该层整个匹配失败，连同该层 tab 前的空格都不消费；已成功匹配的外层仍保留。活动正文可按原 lazy 规则保持整条路径，否则关闭未匹配作用域。例如 `- first\n\t# literal` 是含原始 tab 的 lazy 正文；`- $$\n\tpayload` 结束条目内数学块，第二行回到根。一般正文中的一个 tab 也不能拆给两个各需两列的嵌套 Item。
+- `>` 后的可选分隔只消费一列：`  >\t# title` 的 tab 恰好占一列，随后识别标题；`>\t# literal` 的三列 tab 留给正文。剩余空白可以作为下一层容器标记前的至多三列缩进，例如 `> \t-\tfirst`；后续 `> \t\tcontinued` 匹配同一 Item。这些完整边界匹配只隐藏真实源码字节；代码续行的部分 tab 使用下述替代空格。
 - 容器前缀消费后，叶块分类保持原方言：缩进代码和脚注正文续行仍要求四个 ASCII 空格；标题、围栏、定义和 Setext 前的 tab 不自动展开。正文里的 tab 保留原文。完整前缀后的既有块、表格分隔行探测、内联对象、tight/loose、折叠与源码映射均使用相同容器身份。
 
 ```rust
@@ -210,7 +210,38 @@ assert_eq!(doc.container_count(), 3); // one list, two items
 
 仍按换行、EOF 或既有 1024 字节前缀上限提交；上限按字节计，不按展开列计。截断的空白/标记保持原有提交和失败规则，不因新字节到来回扫历史前缀。匹配器只增加常数大小的列号和空白末端摘要；相邻列表层复用同一空白串扫描，每个消费字节至多再访问一次。首次失配只做一次有界 lazy 判定，不扫描余下祖先；长物理行的后续追加不调用前缀匹配。累计解析 O(n log n)、空间 O(n) 和共享预算契约保持，无单次 append 的硬时延承诺。
 
-`tests/container_tabs.rs` 覆盖 3072 组独立列宽/字节边界模型、嵌套与失败前缀、既有块/表格/脚注/数学规则、映射预算、稳定身份和合并通知；全局分块快照覆盖 UTF-8 全切点/逐前缀及分类边界。250 层混合缩进、千层/百万字增长的计数测试验证没有祖先或正文回扫。`cargo run -r --example container_tabs` 演示 tab 前缀去除、有预算数学读取及折叠意愿保留。部分 tab 的虚拟空格表示、叶块 tab 缩进和分类上限扩展继续保留 TODO。
+`tests/container_tabs.rs` 覆盖 3072 组独立列宽/字节边界模型、嵌套与失败前缀、既有块/表格/脚注/数学规则、映射预算、稳定身份和合并通知；全局分块快照覆盖 UTF-8 全切点/逐前缀及分类边界。250 层混合缩进、千层/百万字增长的计数测试验证没有祖先或正文回扫。`cargo run -r --example container_tabs` 演示 tab 前缀去除、有预算数学读取及折叠意愿保留。一般正文及数学内容的部分 tab、叶块 tab 缩进和分类上限扩展继续保留 TODO。
+
+### 围栏代码续行的部分 tab
+
+已开启的容器内反引号/波浪线围栏允许部分消费前缀 tab。按物理行四列对齐：每层 Item 先消费所需列数，同一个 tab 的剩余列可继续供子 Item 或引用标记前的缩进使用；`>` 后可选分隔只消费一列。整条已有路径匹配成功后才提交，最末 tab 留下的 1..3 列成为代码正文的虚拟空格。例如 `- ```\n\tpayload` 的 tab 用两列续接 Item，另外两列显示在 payload 前；`- - ```\n\tpayload` 的四列全部用于两层 Item，不产生显示空格。已消费路径之外的 tab 仍保留字面，不自动展开整个代码正文。
+
+余下虚拟列参与关闭围栏的至多三列缩进判定：两列 Item 之后的 tab 还剩两列，再加一个 ASCII 空格和合法关闭标记可关闭；再加两个空格则共有四列，仍为字面代码行。定界长度、尾随空白、CRLF/EOF、1 KiB 分类窗口与超长候选规则沿用原方言。空行也保留余下空格。新围栏的起始分类、缩进代码、普通段落、数学块及其它叶块尚未接入该扩展。任一容器层失配时整个探测不生效，仍由原匹配器处理兄弟和作用域边界；例如 `- > ```\n\tpayload` 不会把未匹配的引用保留下来，也不发布替代空格。
+
+`source()`、`runs()` 和块范围保留原字节；`display_runs[_in]` / `display_cursor` 把最末部分 tab 的一个源码字节映射到静态空格。`DisplayRun.source` 和 `replacement` 都是该 tab 的完整单字节区间，只有包含该字节的 tile/范围发出替代文本，其样式仍为 CODE。隐藏的前缀与关闭行不会变成显示空格。显示搜索和有界摘要复用这个映射：两个空格命中可指向同一个 tab，摘要截断在某个空格后仍保留完整 tab 映射。共享 Budget 在读取前收费，耗尽时不移动游标；一个替换最多输出三个字节，已有六字节、一 query、一 object 的基本预算足以推进。原始 `RenderRun` 排版消费者需要主动使用显示接口取得展开结果。
+
+```rust
+use mdtui3::{Budget, DisplayStep, Document, Span, Style, WorkLimit};
+let mut doc = Document::new();
+doc.append("- ```\n\t中🙂\n\t```\n")?;
+doc.finish();
+assert_eq!(doc.blocks().len(), 1);
+let tab = doc.source().find('\t').unwrap();
+let mut cursor = doc.display_cursor(Span::new(tab, tab + 1)).unwrap();
+let mut budget = Budget::new(WorkLimit {
+    bytes: 3, queries: 1, objects: 1, ..Default::default()
+});
+let DisplayStep::Run(run) = cursor.next(&doc, &mut budget)? else { panic!() };
+assert_eq!(run.text, "  ");
+assert_eq!(run.replacement, Some(Span::new(tab, tab + 1)));
+assert_eq!(doc.text(run.source), Some("\t"));
+assert!(run.style.contains(Style::CODE));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+探测只保存当前字节、逻辑列和至多三列余量，复用空白末端缓存；每个保留的层消耗正列数，一个 tab 最多承担四列，不扫描无输入支撑的全部祖先。失败最多重试一次原有有界前缀；成功每个含余量的正文行只追加一条固定大小显示记录，无正文复制、无按列分配。已分类长行后续追加不再调用匹配器。累计 O(n log n)、空间 O(n) 保持，不承诺单次解析硬时延。
+
+`tests/partial_tabs.rs` 和分块快照覆盖 400 组嵌套范围模型、UTF-8 全切点/逐前缀、关闭失败/路径回退、预算与搜索映射、百万字折叠和 4096 个历史替换；`tests/container_tabs.rs` 的 3072 组独立列宽模型已包含部分 tab。`cargo run -r --example partial_tabs` 演示小预算读取、源码映射和流式折叠意愿保持。
 
 ## 列表 tight/loose
 
@@ -1600,6 +1631,7 @@ nix develop -c cargo run -r --example structure
 nix develop -c cargo run -r --example containers
 nix develop -c cargo run -r --example container_headings
 nix develop -c cargo run -r --example container_setext
+nix develop -c cargo run -r --example partial_tabs
 nix develop -c cargo run -r --example container_sections
 nix develop -c cargo run -r --example container_tables
 nix develop -c cargo run -r --example scaling

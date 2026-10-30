@@ -128,6 +128,8 @@ pub(crate) struct ContainerOptions {
 
 pub(crate) struct ContainerLine {
     pub prefix: usize,
+    // Unconsumed columns of the tab at prefix - 1, only for fenced code.
+    pub virtual_spaces: u8,
     pub kind: BlockKind,
     pub lazy: bool,
 }
@@ -160,6 +162,31 @@ impl Containers {
 
     pub fn inner(&self) -> Option<ContainerId> {
         self.active.last().map(|a| a.inner())
+    }
+
+    /// Match an existing code fence's entire path before committing any partial
+    /// tabs. Failure leaves the normal sibling/scope classifier untouched.
+    pub fn code_prefix(&self, source: &str, span: Span, work: &mut Work) -> Option<ContainerLine> {
+        let mut prefix = Prefix::new(source, span, false);
+        prefix.split_tabs = true;
+        let mut matched = true;
+        for frame in &self.active {
+            work.container_steps += 1;
+            matched = match *frame {
+                Active::Quote(_) => prefix.quote(),
+                Active::List { content_indent, .. } => prefix.consume_indent(content_indent),
+            };
+            if !matched {
+                break;
+            }
+        }
+        work.container_bytes += prefix.inspected;
+        matched.then_some(ContainerLine {
+            prefix: prefix.pos,
+            virtual_spaces: prefix.virtual_spaces as u8,
+            kind: BlockKind::Paragraph,
+            lazy: false,
+        })
     }
 
     /// Read-only probe of the bounded physical prefix. A long separator may
@@ -390,6 +417,7 @@ impl Containers {
             work.container_bytes += prefix.inspected;
             return Some(ContainerLine {
                 prefix: prefix.pos,
+                virtual_spaces: 0,
                 kind,
                 lazy: true,
             });
@@ -486,6 +514,7 @@ impl Containers {
         work.container_bytes += prefix.inspected;
         self.inner().map(|_| ContainerLine {
             prefix: prefix.pos,
+            virtual_spaces: 0,
             kind,
             lazy: false,
         })
@@ -503,6 +532,8 @@ struct Prefix<'a> {
     bytes: &'a [u8],
     pos: usize,
     column: usize,
+    split_tabs: bool,
+    virtual_spaces: usize,
     end: usize,
     complete: bool,
     spaces_end: usize,
@@ -516,6 +547,8 @@ impl<'a> Prefix<'a> {
             bytes: source.as_bytes(),
             pos: span.start,
             column: 0,
+            split_tabs: false,
+            virtual_spaces: 0,
             end: crate::block::body_end(source, span),
             complete,
             spaces_end: span.start,
@@ -528,7 +561,7 @@ impl<'a> Prefix<'a> {
     fn spaces(&mut self) -> usize {
         if self.spaces_end <= self.pos {
             self.spaces_end = self.pos;
-            self.spaces_column = self.column;
+            self.spaces_column = self.column + self.virtual_spaces;
             while self.spaces_end < self.end {
                 self.inspected += 1;
                 let byte = self.bytes[self.spaces_end];
@@ -542,8 +575,8 @@ impl<'a> Prefix<'a> {
         self.spaces_column - self.column
     }
 
-    /// Do not split a tab into virtual spaces. A failed match leaves the entire
-    /// prefix untouched, so lazy text or the new scope keeps the original bytes.
+    /// Partial tabs are opt-in for an atomic code-fence path probe. Otherwise a
+    /// failed match leaves the entire prefix untouched for the original dialect.
     /// Cache the run endpoint across nested items; advancing visits each consumed
     /// byte once more, never rescans the remaining run for every ancestor.
     fn consume_indent(&mut self, columns: usize) -> bool {
@@ -554,25 +587,29 @@ impl<'a> Prefix<'a> {
         if target == self.spaces_column {
             self.pos = self.spaces_end;
             self.column = target;
+            self.virtual_spaces = 0;
             return true;
         }
-        if self.spaces_column - self.column == self.spaces_end - self.pos {
+        if self.virtual_spaces == 0
+            && self.spaces_column - self.column == self.spaces_end - self.pos
+        {
             self.pos += columns;
             self.column = target;
             return true;
         }
         let mut at = self.pos;
-        let mut column = self.column;
+        let mut column = self.column + self.virtual_spaces;
         while column < target {
             self.inspected += 1;
             column += indent_width(self.bytes[at], column);
             at += 1;
         }
-        if column != target {
+        if column != target && !self.split_tabs {
             return false;
         }
         self.pos = at;
-        self.column = column;
+        self.column = target;
+        self.virtual_spaces = column - target;
         true
     }
 
@@ -616,11 +653,14 @@ impl<'a> Prefix<'a> {
         }
         self.pos = at + 1;
         self.column = self.spaces_column + 1;
+        self.virtual_spaces = 0;
         if self.pos < self.end {
             self.inspected += 1;
             if self.bytes[self.pos] == b' '
-                || (self.bytes[self.pos] == b'\t' && indent_width(b'\t', self.column) == 1)
+                || (self.bytes[self.pos] == b'\t'
+                    && (self.split_tabs || indent_width(b'\t', self.column) == 1))
             {
+                self.virtual_spaces = indent_width(self.bytes[self.pos], self.column) - 1;
                 self.pos += 1;
                 self.column += 1;
             }

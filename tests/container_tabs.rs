@@ -49,7 +49,7 @@ fn a_quote_consumes_a_tab_separator_only_when_it_is_one_column() {
 }
 
 #[test]
-fn partial_tabs_are_atomic_and_preserve_existing_lazy_or_scope_boundary_rules() {
+fn partial_tabs_keep_lazy_rules_and_extend_existing_code_fences() {
     for whitespace in ["\t", " \t"] {
         let doc = parse(&format!("- first\n{whitespace}# literal\n"));
         assert_eq!(doc.blocks()[0].container, doc.blocks()[1].container);
@@ -57,9 +57,9 @@ fn partial_tabs_are_atomic_and_preserve_existing_lazy_or_scope_boundary_rules() 
         assert_eq!(visible(&doc), format!("first\n{whitespace}# literal\n"));
     }
     let doc = parse("- ```\n\tpayload\n");
-    assert_eq!(doc.blocks()[0].source.end, 6);
-    assert!(doc.blocks()[1].container.is_none());
-    assert_eq!(visible(&doc), "\tpayload\n");
+    assert_eq!(doc.blocks().len(), 1);
+    assert!(doc.blocks()[0].container.is_some());
+    assert_eq!(visible(&doc), "  payload\n");
 }
 
 #[test]
@@ -154,8 +154,8 @@ fn long_table_delimiters_share_the_column_matcher_and_failed_probes_keep_source(
     assert!(doc.tables().is_empty()); // Partial tab cannot match this exact scope.
 }
 
-// An independent oracle expands complete whitespace prefixes, then asks whether
-// an existing byte boundary reaches the required column. Fences disable lazy
+// An independent oracle expands whitespace prefixes, then finds the byte that
+// reaches/passes the required column. Fences disable lazy
 // continuation so accepted/rejected indentation is directly observable.
 fn column(text: &str, mut at: usize) -> usize {
     for c in text.chars() {
@@ -165,7 +165,7 @@ fn column(text: &str, mut at: usize) -> usize {
 }
 
 #[test]
-fn whitespace_combinations_match_independent_byte_boundary_and_range_model() {
+fn whitespace_combinations_match_independent_column_and_range_model() {
     let mut cases = 0;
     for parent in ["", "> "] {
         for marker in ["-", "1.", "123.", "123456789."] {
@@ -177,7 +177,7 @@ fn whitespace_combinations_match_independent_byte_boundary_and_range_model() {
                         .map(|n| if bits & (1 << n) == 0 { ' ' } else { '\t' })
                         .collect();
                     let consumed = (0..=space.len())
-                        .find(|&end| column(&space[..end], parent.len()) == target);
+                        .find(|&end| column(&space[..end], parent.len()) >= target);
                     let text = format!("{open}{parent}{space}payload\n");
                     let doc = parse(&text);
                     let code = &doc.blocks()[0];
@@ -194,7 +194,11 @@ fn whitespace_combinations_match_independent_byte_boundary_and_range_model() {
                     if let Some(bytes) = consumed {
                         assert_eq!(
                             visible(&doc),
-                            format!("{}payload\n", &space[bytes..]),
+                            format!(
+                                "{}{}payload\n",
+                                " ".repeat(column(&space[..bytes], parent.len()) - target),
+                                &space[bytes..]
+                            ),
                             "{text:?}"
                         );
                         assert_eq!(doc.blocks().len(), 1);

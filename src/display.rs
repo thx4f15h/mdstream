@@ -30,6 +30,7 @@ struct Entry {
 
 enum Kind {
     Entity(String),
+    Spaces(u8),
     Code { leading: Span, trailing: Span },
 }
 
@@ -48,6 +49,12 @@ impl DisplayIndex {
 
     pub fn entity(&mut self, source: Span, text: String) {
         self.push(source, Kind::Entity(text));
+    }
+
+    /// A partially consumed container tab in literal fenced-code content.
+    pub fn spaces(&mut self, source: Span, columns: u8) {
+        debug_assert!((1..=3).contains(&columns));
+        self.push(source, Kind::Spaces(columns));
     }
 
     /// Only inspect the endpoints: the inline scanner maintains all-spaces as
@@ -152,6 +159,10 @@ impl<'a> Iterator for DisplayRuns<'a> {
             } else {
                 end = end.min(entry.source.end);
                 match &entry.kind {
+                    Kind::Spaces(columns) => {
+                        replacement = Some(entry.source);
+                        substitute = Some(&"   "[..usize::from(*columns)]);
+                    }
                     Kind::Entity(text) => {
                         replacement = Some(entry.source);
                         substitute = Some(if start == entry.source.start {
