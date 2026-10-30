@@ -12,6 +12,8 @@ struct Snapshot {
     headings: Vec<mdtui3::Heading>,
     tables: Vec<mdtui3::Table>,
     maths: Vec<mdtui3::Math>,
+    footnotes: Vec<mdtui3::Footnote>,
+    footnote_references: Vec<mdtui3::FootnoteReference>,
     runs: Vec<(Span, Option<mdtui3::BlockId>, Style, Option<mdtui3::LinkId>)>,
     display: Vec<(Span, Option<Span>, String)>,
 }
@@ -34,6 +36,8 @@ fn snapshot(doc: &Document) -> Snapshot {
         headings: doc.headings().entries().to_vec(),
         tables: doc.tables().to_vec(),
         maths: doc.maths().to_vec(),
+        footnotes: doc.footnotes().to_vec(),
+        footnote_references: doc.footnote_references().to_vec(),
         runs: doc
             .runs_in(Span::new(0, doc.source().len()))
             .unwrap()
@@ -67,6 +71,9 @@ fn check_chunks(source: &str, boundaries: &[usize]) {
 fn every_single_split_for_small_constructs() {
     for source in [
         "**a _b_ c**",
+        "[^中] [^a] [^中]\r\n\n[^a]: first\n[^中]: **raw**\n[^a]: duplicate\n",
+        "> [^x]\n| [^x] | b |\n| -- | -- |\n| [^y] | [^x] |\n\n[^x]: body\n",
+        "[^a b] [^] [^a\\b] [^open\n\n[^last]",
         "[x](a(b)c) [y][z]\n\n[z]: url\n",
         "```rs\r\nx\r\n```\r\n",
         "# title #\n\ntext\n===\n",
@@ -89,6 +96,7 @@ fn every_single_split_for_small_constructs() {
 #[test]
 fn every_inline_split_after_lookahead_exercises_live_parser_states() {
     for suffix in [
+        "[^中] [^a] [^unclosed",
         "**中🙂** [a](<a b> \"t\\\"t\")\r\nnext\n",
         "![alt](a(b) 'title') [b][key]\n\n[key]: /u (title)\n",
         "a  \r\nb\\\r\nc\\\\\nd\n",
@@ -138,7 +146,7 @@ fn streaming_unicode_table_rows_match_single_chunk_input() {
 fn deterministic_fuzz_chunk_invariance_and_source_coverage() {
     let alphabet = [
         "a", " ", "\n", "\r", "*", "_", "`", "~", "[", "]", "(", ")", "\\", ":", "#", ">", "-",
-        "é", "🙂", "|", "!", "<", ">", "\"", "'", "\t", "&", "$",
+        "é", "🙂", "|", "!", "<", ">", "\"", "'", "\t", "&", "$", "^",
     ];
     let mut state = 0x1234_5678_u64;
     let mut random = || {
@@ -174,6 +182,7 @@ fn deterministic_fuzz_chunk_invariance_and_source_coverage() {
 fn provisional_semantics_match_at_every_observed_prefix() {
     let parts = [
         "**a _b_ c** ",
+        "[^中] [^missing]\n\n[^中]: raw **body**\r\n",
         "[x](<a b> 'title') ",
         "![图][key] ",
         "  \r\n",

@@ -9,6 +9,8 @@ pub struct DependencyKey {
     tile: TileId,
     key: TileKey,
     symbols: Vec<(SymbolId, u64)>,
+    footnotes: Vec<(crate::FootnoteId, u64)>,
+    finished: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,7 +48,32 @@ impl DependencyKey {
                 symbols.push((symbol, document.references()[symbol.0].revision));
             }
         }
-        Ok(Some(Self { tile, key, symbols }))
+        let mut footnotes = Vec::new();
+        let entries = document.footnote_references();
+        let start = entries.partition_point(|r| r.source.end <= key.source.start);
+        for reference in entries[start..]
+            .iter()
+            .take_while(|r| r.source.start < key.source.end)
+        {
+            if !budget.charge(WorkLimit {
+                objects: 1,
+                dependencies: 1,
+                ..Default::default()
+            }) {
+                return Ok(None);
+            }
+            footnotes.push((
+                reference.symbol,
+                document.footnote(reference.symbol).unwrap().revision,
+            ));
+        }
+        Ok(Some(Self {
+            tile,
+            key,
+            symbols,
+            footnotes,
+            finished: document.is_finished(),
+        }))
     }
 
     pub fn validate(
@@ -59,7 +86,7 @@ impl DependencyKey {
         }
         if !budget.charge(WorkLimit {
             queries: 1,
-            dependencies: self.symbols.len(),
+            dependencies: self.symbols.len() + self.footnotes.len(),
             ..Default::default()
         }) {
             return Ok(CacheValidity::BudgetExhausted);
@@ -70,6 +97,11 @@ impl DependencyKey {
         Ok(
             if key.source != self.key.source
                 || key.syntax_revision != self.key.syntax_revision
+                || self.footnotes.iter().any(|(id, version)| {
+                    let note = document.footnote(*id).unwrap();
+                    note.revision != *version
+                        || (note.definition.is_none() && self.finished != document.is_finished())
+                })
                 || self
                     .symbols
                     .iter()

@@ -33,6 +33,7 @@ mod fold_batch;
 mod fold_navigation;
 mod fold_ranges;
 mod folding;
+mod footnotes;
 mod frame;
 mod heading_search;
 mod headings;
@@ -68,6 +69,11 @@ pub use fold_navigation::{
 pub use folding::{
     FoldCandidate, FoldCandidates, FoldChange, FoldDefaults, FoldId, FoldLookup, FoldPlaceholder,
     FoldPreviewProgress, FoldView,
+};
+pub use footnotes::{
+    Footnote, FootnoteChunk, FootnoteContent, FootnoteDefinition, FootnoteId, FootnoteReference,
+    FootnoteReferenceId, FootnoteReferences, FootnoteResolution, FootnoteTarget,
+    MAX_FOOTNOTE_LABEL_BYTES,
 };
 pub use frame::{FoldLayoutSink, LayoutPass, LayoutSink};
 pub use heading_search::{HeadingMatch, HeadingSearch};
@@ -163,6 +169,7 @@ pub struct Document {
     container_title: Option<(BlockId, Span)>,
     table_row: Option<table::RowParser>,
     references: References,
+    footnotes: footnotes::Footnotes,
     annotations: Annotations,
     display: display::DisplayIndex,
     inline: Inline,
@@ -379,6 +386,7 @@ impl Document {
             source,
             syntax_revision: self.annotations.newest(source),
             reference_revision: self.references.revision,
+            footnote_revision: self.footnotes.revision,
         })
     }
 
@@ -492,11 +500,19 @@ impl Document {
         self.line_start = self.source.len();
         self.fence = None;
         self.finished = true;
+        if let Some(first) = self.footnotes.references.first() {
+            self.footnotes.revision = self.revision;
+            update.change(
+                Span::new(first.source.start, self.source.len()),
+                ChangeKind::Structure,
+            );
+        }
         self.complete_update(update);
     }
 
     fn begin_update(&self, start: usize, update: &mut Update) {
         let mut dirty = std::mem::take(&mut update.dirty);
+        let mut footnotes_changed = std::mem::take(&mut update.footnotes_changed);
         let mut references_changed = std::mem::take(&mut update.references_changed);
         let mut tables_changed = std::mem::take(&mut update.tables_changed);
         let mut rows_changed = std::mem::take(&mut update.rows_changed);
@@ -504,6 +520,7 @@ impl Document {
         let mut closed_containers = std::mem::take(&mut update.closed_containers);
         dirty.clear();
         references_changed.clear();
+        footnotes_changed.clear();
         tables_changed.clear();
         rows_changed.clear();
         changes.clear();
@@ -524,6 +541,10 @@ impl Document {
             changes,
             new_links: self.links.len()..self.links.len(),
             new_maths: self.maths.len()..self.maths.len(),
+            new_footnotes: self.footnotes.entries.len()..self.footnotes.entries.len(),
+            new_footnote_references: self.footnotes.references.len()
+                ..self.footnotes.references.len(),
+            footnotes_changed,
             new_containers: self.containers.len()..self.containers.len(),
             closed_containers,
             container_end: self.containers.end,
@@ -540,6 +561,8 @@ impl Document {
         update.new_tables.end = self.tables.len();
         update.new_links.end = self.links.len();
         update.new_maths.end = self.maths.len();
+        update.new_footnotes.end = self.footnotes.entries.len();
+        update.new_footnote_references.end = self.footnotes.references.len();
         update.new_containers.end = self.containers.len();
         update.container_end = self.containers.end;
         if update.base_revision != update.revision {
@@ -582,6 +605,7 @@ impl Document {
             links: &mut self.links,
             link_info: &mut self.link_info,
             maths: &mut self.maths,
+            footnotes: &mut self.footnotes,
             update,
             work: &mut self.work,
         }
@@ -602,6 +626,10 @@ impl Document {
         inline.finish(&mut self.effects(update));
         self.inline = inline;
         if let Some(id) = self.current.take() {
+            if let BlockKind::FootnoteDefinition { symbol } = self.blocks[id.0].kind {
+                self.footnotes
+                    .seal(symbol, id, self.source.len(), update, &mut self.work);
+            }
             self.blocks[id.0].state = SyntaxState::Sealed;
         }
     }
@@ -752,6 +780,37 @@ impl Document {
             }
             return;
         }
+        if let Line::FootnoteDefinition { label, content } = classification {
+            let symbol = self
+                .footnotes
+                .intern(&self.source[label.range()], &mut self.work);
+            let id = self.new_block(span, BlockKind::FootnoteDefinition { symbol }, update);
+            self.footnotes.define(
+                symbol,
+                FootnoteDefinition {
+                    block: id,
+                    content,
+                    state: SyntaxState::Growing,
+                },
+                span,
+                update,
+                &mut self.work,
+            );
+            self.mark(span, Style::HIDDEN, update);
+            let line = StreamingLine {
+                block: id,
+                inline: false,
+                standalone: true,
+                hidden: true,
+                table: false,
+            };
+            if complete {
+                self.end_line(line, update);
+            } else {
+                self.streaming = Some(line);
+            }
+            return;
+        }
         if let Line::Definition {
             label,
             destination,
@@ -898,7 +957,7 @@ impl Document {
                 inline = false;
                 self.new_block(span, BlockKind::ThematicBreak, update)
             }
-            Line::Definition { .. } => unreachable!(),
+            Line::Definition { .. } | Line::FootnoteDefinition { .. } => unreachable!(),
         };
         // A classification change invalidates provisional raw runs, even without
         // any hidden delimiter (e.g. an indented code block).
@@ -959,6 +1018,16 @@ impl Document {
         self.containers.end = span.end;
         self.headings.parsed_end = span.end;
         self.blocks[line.block.0].source.end = span.end;
+        if let BlockKind::FootnoteDefinition { symbol } = self.blocks[line.block.0].kind {
+            self.footnotes.extend(
+                symbol,
+                line.block,
+                block::body_end(&self.source, self.blocks[line.block.0].source),
+                span,
+                update,
+                &mut self.work,
+            );
+        }
         if let Some((id, content)) = &mut self.container_title
             && *id == line.block
         {

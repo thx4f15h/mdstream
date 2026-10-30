@@ -13,6 +13,10 @@ pub(crate) struct Fence {
 pub(crate) enum Line {
     Text,
     Blank,
+    FootnoteDefinition {
+        label: Span,
+        content: Span,
+    },
     Definition {
         label: Span,
         destination: Span,
@@ -85,6 +89,27 @@ pub(crate) fn classify(
     }
     if text.is_empty() {
         return Line::Text;
+    }
+    if text.starts_with(b"[^")
+        && let Some(close) = text.iter().position(|&b| b == b']')
+        && text.get(close + 1) == Some(&b':')
+        && crate::footnotes::valid_label(
+            &source[span.start + spaces + 2..span.start + spaces + close],
+        )
+    {
+        let mut start = span.start + spaces + close + 2;
+        if source
+            .as_bytes()
+            .get(start)
+            .is_some_and(|b| matches!(b, b' ' | b'\t'))
+            && start < end
+        {
+            start += 1;
+        }
+        return Line::FootnoteDefinition {
+            label: Span::new(span.start + spaces + 2, span.start + spaces + close),
+            content: Span::new(start, end),
+        };
     }
     if complete {
         if paragraph && let Some(level) = setext_level(text) {
@@ -164,7 +189,7 @@ pub(crate) fn classify(
 
 fn definition(source: &str, start: usize, end: usize) -> Option<Line> {
     let text = &source.as_bytes()[start..end];
-    if text.first() != Some(&b'[') {
+    if text.first() != Some(&b'[') || text.get(1) == Some(&b'^') {
         return None;
     }
     let close = text.iter().position(|&b| b == b']')?;

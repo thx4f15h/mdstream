@@ -331,3 +331,18 @@
 项目 devShell 下 `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 281 项、`cargo test --doc` 26 项、`cargo fmt --all -- --check` 及 `git diff --check` 全通过。`cargo run -r --example math` 展示流式确认、共享对象预算和 5 帧 / 16 字节读取原始公式；未闭合尾部不新增对象。验收日志：`/tmp/mdtui3-math-validation.log`。README 与 TODO 已同步。
 
 本单元交付定界数学区间和预算消费核心；独立数学块、其他定界方言、TeX 解析/排版、实际数学对象回调、脚注及终端 UI 继续保留待办，不宣称完整数学 Markdown 扩展兼容。
+
+
+## 2026-10-30 脚注核心交付
+
+本轮仅实现脚注解析、符号间接寻址、稳定编号及有预算查询；不交付终端 UI。`[^label]` 引用与顶层单物理行 `[^label]: body` 定义使用明确的有界标签方言，详细规则见 [README](README.md#脚注核心)。
+
+- `FootnoteId` 与 `FootnoteReferenceId` 分离符号和引用对象；首次确认引用分配从 1 开始的永久编号，定义先到不占号、重复引用共享编号、未定义引用也占号。首个合法定义生效，空正文有效，重复定义隐藏但不覆盖。
+- 定义正文为原始单物理行，可超出分类窗口持续增长；保持源码区间与 Growing/Sealed 状态，CRLF 仅调整尾端，不解析或复制正文。失败、超长、未闭合引用候选不回放已消费前缀；既有代码/数学/链接上下文和块/表格边界优先。
+- `Update.new_footnotes`、`new_footnote_references`、`footnotes_changed` 支持逐次消费、merge 与缓冲复用。晚定义/增长只更新当前符号，以最早使用位置发出 Structure 范围失效；`TileKey` 保守版本、`DependencyKey` 按符号预算校验及 EOF 转换均接入。旧布局 ticket 不能跨语义变化提交，无关定义保留直接依赖缓存。
+- `footnote_references_in` 在首次扣费后 O(log R) 定位窗口，后续逐对象 O(1)；`resolve_footnote` O(1) 间接解析，区分 Unresolved/Missing/Defined。`footnote_content` 按共享 Budget 和 TILE_BYTES 上限读取原始 UTF-8 字节，原子暂停并保持继续位置；不复制完整正文。
+- 新增 11 项脚注验收，既有分块/fuzz 快照纳入脚注：覆盖 Unicode 标签、失败/未闭合、定义顺序和重复、原文回退、上下文/容器/表格、逐前缀增长及 CRLF、通知重建/合并、预算推进、缓存与布局失效。4096 个符号/引用窗口对照朴素区间模型；两万次旧引用后的晚定义仅 3 次符号步骤 / 1 个标签字节、无旧引用遍历；百万字定义后的 1000 次逐字追加仅 1000 次增长步骤，无正文、标签或分类回扫；失败候选计数线性。
+
+验收在项目 devShell 内通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo nextest run --no-fail-fast`（292 项）、`cargo nextest run --release --no-fail-fast`（292 项）、`cargo test --doc`（27 项）、`cargo fmt --all -- --check`、`git diff --check`。`cargo run -r --example footnotes` 验证晚定义保留编号，6 帧读取 40 字节正文。日志：`/tmp/mdtui3-footnotes-validation.log`。
+
+保留零运行时依赖、`forbid(unsafe_code)`、累计解析 O(n log n) 与空间 O(n)。多行/多段及容器内定义、正文 Markdown 排版、编号上标和文末脚注区、双向跳转/返回与实际对象回调仍见 TODO；通用显示暂时保留 `[^label]` 原文标记，隐藏顶层定义。

@@ -867,7 +867,43 @@ assert_eq!(content.advance(&mut budget), Err(Completion::BudgetExhausted));
 
 解析只增加一个 O(1) 候选；每个美元串只决议一次（`Work::math_steps`），所有正文只走既有单遍 `inline_bytes` 消费。闭合做常数次 O(log n) 区间标记，不查正文；额外对象存储 O(M)，全库保持累计 O(n log n)、空间 O(n)。Vec 扩容及批量解析仍是摊还保证，不承诺单次 append 的硬时延。`tests/math.rs` 和现有分块/fuzz 快照验证方言、预算、失败输入、百万字晚闭合及索引模型；`cargo run -r --example math` 演示流式确认与逐帧原始内容读取。
 
-后续仍保留独立数学块、`\(...\)` / `\[...\]` 等额外定界方言、TeX 解析/排版和实际对象回调接入；脚注是另一个尚未实现的核心项。
+后续仍保留独立数学块、`\(...\)` / `\[...\]` 等额外定界方言、TeX 解析/排版和实际对象回调接入；脚注的独立核心接口见下节。
+
+## 脚注核心
+
+支持 `[^label]` 与顶层单物理行 `[^label]: body`。label 为 1..999 个 UTF-8 字节，由 `char::is_alphanumeric` 接受的 Unicode 标量、ASCII `_`、`-` 组成；区分大小写、不做 Unicode 规范化，不支持空白、转义、实体或其它标点。脚注与普通引用链接使用独立命名空间；顶层 `[^` 定义前缀保留给脚注，非法定义不会成为普通链接定义。这里只定义本库方言，不承诺其它 Markdown 脚注扩展的全部行为。
+
+定义允许至多三个前导空格，冒号后可紧接正文，也可省略恰好一个 space/tab；其余空白原样保留。空正文有效。正文是原始单物理行区间，不解析 Markdown、数学或嵌套脚注；排除行尾 LF/CRLF，裸 CR 保留。后续缩进/空行不延续定义。第一个合法定义生效，后续同标签定义隐藏但不覆盖正文。容器内定义仍是普通行内文本（其中 `[^label]` 可成为引用），围栏和缩进代码优先；顶层定义可以结束段落或表格。多行、多段和容器内定义仍待实现。
+
+沿用 1 KiB 块分类前缀：短行在 LF/EOF 分类，长行到达前缀上限时确认定义，后续正文单遍追加，无正文长度上限。`FootnoteDefinition { block, content, state }` 先为 Growing，在 LF/EOF 变为 Sealed；未到 LF 的 CR 暂属正文，后续 LF 到来时只调整尾端。引用在行内解析器读到 `]` 时确认，不等待定义、不转换成后续直接链接；未分类行仍暂时显示原文。`[^` 候选不跨物理行、块或单元格，失败、超限、EOF 未闭合时不回放已消费前缀，不分配符号或编号；拒绝字节继续按普通行内规则处理。
+
+行内代码、数学、链接目标/title、引用链接后缀和自动链接等正在消费的上下文先于脚注。`\[^x]` 不创建引用，`![^x]` 沿用普通引用图片，`[text][^x]` 沿用普通引用链接；不支持嵌套链接 label 的特殊脚注语义，遵守已有单括号候选规则。脚注 label 自身不解析行内标记，外层强调仍可覆盖整个标记。标题、显式容器正文及表格单元格均可包含脚注引用。
+
+`FootnoteId` 是按首次遇见引用或定义分配的文档内稳定符号，`FootnoteReferenceId` 是按源码顺序分配的独立引用对象 ID。`Footnote.number` 只在该符号首次确认引用时分配，从 1 开始；定义先到不占号，重复引用共享编号，未定义符号也占号。编号一经分配不变，晚定义与重复定义不会重排。引用只保存符号及完整源码区间；`resolve_footnote` 经符号 O(1) 解析到编号和定义快照，区分流式 Unresolved、EOF Missing、Defined。定义的 Growing/Sealed 与整个文档 EOF 独立。对象及快照只属于原文档，跨 revision 使用已复制快照时由调用方检查语义版本和 EOF 状态。
+
+`Update.new_footnotes` / `new_footnote_references` 报告新增范围，`footnotes_changed` 报告编号分配、定义确认、增长和封口，可有重复 ID，支持 merge 和复用缓冲。每符号 revision 按新增定义源码字节和编号/开闭事件递增，与 append 分块无关；全局 `TileKey.footnote_revision` 保守失效。`DependencyKey` 按预算捕获并校验当前 tile 的脚注符号版本，未定义目标另检查 EOF，无关定义可保留直接语义缓存。晚定义/增长只用符号的 first_use 发出 Structure 范围变化，旧高度及后续检查点按既有区间协议失效，不枚举历史引用；关闭尺寸策略也不能忽略这类对象语义变更。首次 finish 对存在脚注引用的文档发布保守范围失效并改变全局脚注版本，保证 Unresolved → Missing 不漏通知；这一转换不逐符号发事件，消费者也需观察 `is_finished()`。
+
+`footnote_references_in(range)` 构造 O(1) 借用游标，首个 advance 在扣费后 O(log R) 定位重叠标记，其后每项 O(1)。每个结果和终止查询各计 1 query / 1 object，不读取 label/body；空范围与完成后的重复读取免费。`resolve_footnote` 每次计 1 query / 1 object / 1 dependency，无效 ID 返回 None。`footnote_content(id)` 构造 O(1) 原文游标，advance 每次最多 TILE_BYTES 个 UTF-8 字节，计实际返回字节及 1 query / 1 object。所有接口共用调用方 Budget；不足时不推进且不扣费，4 bytes 足以读取任意标量。游标借用文档，消费期间不能追加；释放后可按稳定 ID 重建。
+
+```rust
+use mdtui3::{Budget, Document, FootnoteReferenceId, FootnoteTarget, WorkLimit};
+let mut doc = Document::new();
+doc.append("See [^note] twice [^note].\n").unwrap();
+let mut budget = Budget::new(WorkLimit::unlimited());
+let first = doc.resolve_footnote(FootnoteReferenceId(0), &mut budget).unwrap().unwrap();
+assert_eq!(first.number, 1);
+assert_eq!(first.target, FootnoteTarget::Unresolved);
+doc.append("\n[^note]: 原始 **正文**\n").unwrap();
+doc.finish();
+let second = doc.resolve_footnote(FootnoteReferenceId(1), &mut budget).unwrap().unwrap();
+assert_eq!((first.symbol, first.number), (second.symbol, second.number));
+let mut body = doc.footnote_content(second.symbol).unwrap();
+assert_eq!(body.advance(&mut budget).unwrap().unwrap().text, "原始 **正文**");
+```
+
+解析器只保留一个 O(1) 行内候选；有界 label 使用 BTreeMap 确定性 O(log S) 符号寻址，编号/定义/增长均只更新当前符号。额外存储 O(S + R)，全库维持累计 O(n log n)、空间 O(n)，Vec 扩容仍为摊还保证。`Work.footnote_steps` 统计符号操作与定义增长/封口，`footnote_label_bytes` 统计实际 intern 的有界标签，正文与失败候选的检查分别计入已有 input/classified/inline 字节计数。两万次旧引用后定义只做三次符号步骤；百万字定义后逐字追加不回扫正文。窗口索引、分块/fuzz、预算、通知和缓存验收见 `tests/footnotes.rs`、`tests/chunking.rs`；`cargo run -r --example footnotes` 演示晚定义和逐帧正文读取。
+
+通用显示与 LayoutPass 仍原样显示 `[^label]` 标记，并隐藏顶层定义；脚注编号上标、文末脚注区、定义正文 Markdown 排版、双向跳转/返回及对象回调仍待接入，读取核心不自动展开或排版脚注区。
 
 ## 明确支持的 Markdown 方言
 
@@ -883,6 +919,7 @@ assert_eq!(content.advance(&mut budget), Err(Completion::BudgetExhausted));
 - 同块行内软换行、双空格/反斜线硬换行的结构化标记。
 - 显示语义读取支持实体/数字字符引用及已闭合代码 span 空白规范化，映射和上下文限制见上一节。
 - `$…$` / `$$…$$` 数学内容区间和预算读取，具体规则及未实现边界见[定界数学核心](#定界数学核心)。
+- `[^label]` 引用、顶层单物理行脚注定义、稳定编号及有预算读取，方言与布局边界见[脚注核心](#脚注核心)。
 
 取舍：
 
@@ -892,7 +929,7 @@ assert_eq!(content.advance(&mut budget), Err(Completion::BudgetExhausted));
 - URL 和 title 各最多 4096 字节，左括号后的链接后缀候选最多 8256 字节（包括空白和闭合右括号）。支持平衡括号和转义定界，但返回的 destination/title 是原文；不提供多行目标/title、URL 解码或安全过滤。后缀失败时保留原文及已有 shortcut 引用，不回扫后缀中的其它语法。
 - 引用定义、Setext、分隔线、闭合 fence 必须在块分类前缀内完成。超长候选行按普通内容/代码处理；超长 opening fence 的 info 只保留已分类前缀，其余该行隐藏。超长标题末尾的 closing hashes 不再回看识别。
 - 自动链接候选最多 4096 字节，URI scheme 为 2..32 个 ASCII 字符；email 按 CommonMark 0.31.2 的 ASCII 地址规则。失败或 EOF 未完成的候选不重放内部行内语法；新自动链接中止未完成的外层方括号候选，保持链接源码有序且不重叠。返回原始 URI，不做 percent encoding。
-- 不处理 HTML、GFM 裸 URL 自动链接、脚注等额外语义。它们可能包含上述方言仍能识别的普通行内标记。数学仅提供上述定界核心，不解析 TeX。HTML 不在当前需求范围。
+- 不处理 HTML、GFM 裸 URL 自动链接等额外语义。它们可能包含上述方言仍能识别的普通行内标记。数学仅提供上述定界核心，不解析 TeX。HTML 不在当前需求范围。
 - 支持只追加，不支持任意位置编辑、撤回已有源码或移除定义。文档销毁会释放 O(n) 状态，这是一次性清理成本。
 
 ## 有界显示摘要
@@ -941,6 +978,7 @@ assert_eq!(text, "first\nsecond\n");
 | `src/containers.rs` | 显式容器 arena、活动栈、共享开放末端与有预算祖先查询 |
 | `src/inline.rs` | 单遍分隔符、代码和链接状态机 |
 | `src/math.rs` | 定界数学元数据、窗口索引与共享预算原文读取 |
+| `src/footnotes.rs` | 脚注符号/引用、稳定编号、晚定义与预算查询/原文读取 |
 | `src/destination.rs` | 链接/定义共享的有界目标及 title 状态机 |
 | `src/display.rs` / `src/entity.rs` | 显示片段、替代文本源码映射、预算游标及字符引用解码 |
 | `src/excerpt.rs` | 限制源码/输出字节和逻辑行数的有预算显示摘要 |

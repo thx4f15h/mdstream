@@ -99,6 +99,9 @@ pub enum BlockKind {
     Definition {
         symbol: SymbolId,
     },
+    FootnoteDefinition {
+        symbol: crate::FootnoteId,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -195,6 +198,10 @@ pub struct Work {
     pub heading_steps: u64,
     /// Maximal dollar runs resolved once, including mismatches and literal runs.
     pub math_steps: u64,
+    /// Symbol operations and individual definition growth/close events.
+    pub footnote_steps: u64,
+    /// Bounded label bytes interned; no historical reference/body reads.
+    pub footnote_label_bytes: u64,
 }
 
 /// Actual Vec arena capacity and allocation/reallocation calls. Allocator headers,
@@ -224,6 +231,10 @@ pub struct Update {
     pub new_links: Range<usize>,
     /// Confirmed math objects only; their source/content never grow or retract.
     pub new_maths: Range<usize>,
+    pub new_footnotes: Range<usize>,
+    pub new_footnote_references: Range<usize>,
+    /// Number assignment and definition start/growth/seal; duplicates permitted.
+    pub footnotes_changed: Vec<crate::FootnoteId>,
     pub new_containers: Range<usize>,
     /// Exact close events, innermost first; no event per growing ancestor.
     pub closed_containers: Vec<crate::ContainerId>,
@@ -366,6 +377,9 @@ impl Update {
         self.new_tiles.end = next.new_tiles.end;
         self.new_links.end = next.new_links.end;
         self.new_maths.end = next.new_maths.end;
+        self.new_footnotes.end = next.new_footnotes.end;
+        self.new_footnote_references.end = next.new_footnote_references.end;
+        self.footnotes_changed.append(&mut next.footnotes_changed);
         self.new_headings.end = next.new_headings.end;
         self.new_tables.end = next.new_tables.end;
         self.new_containers.end = next.new_containers.end;
@@ -401,4 +415,5 @@ pub struct TileKey {
     pub source: Span,
     pub syntax_revision: u64,
     pub reference_revision: u64,
+    pub footnote_revision: u64,
 }

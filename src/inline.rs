@@ -13,6 +13,7 @@ pub(crate) struct Effects<'a> {
     pub links: &'a mut Vec<LinkTarget>,
     pub link_info: &'a mut Vec<LinkInfo>,
     pub maths: &'a mut Vec<crate::Math>,
+    pub footnotes: &'a mut crate::footnotes::Footnotes,
     pub update: &'a mut Update,
     pub work: &'a mut Work,
 }
@@ -175,6 +176,7 @@ pub(crate) struct Inline {
     run: Option<Run>,
     code: Option<Code>,
     math: Option<MathCandidate>,
+    footnote: Option<usize>,
     bracket: Option<Bracket>,
     bang: Option<usize>,
     tail: Option<Tail>,
@@ -293,6 +295,28 @@ impl Inline {
             }
             // Failed candidates remain literal; process just the rejecting byte.
         }
+        if let Some(start) = self.footnote.take() {
+            if byte == b']' {
+                let label = &effects.source[start + 2..pos];
+                if crate::footnotes::valid_label(label) {
+                    let symbol = effects.footnotes.intern(label, effects.work);
+                    let source = Span::new(start, pos + 1);
+                    effects
+                        .footnotes
+                        .reference(symbol, source, effects.update, effects.work);
+                    effects.mark(source, Style::default(), None);
+                }
+                return;
+            }
+            if pos - start - 2 < crate::MAX_FOOTNOTE_LABEL_BYTES
+                && (byte >= 128 || byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+            {
+                self.footnote = Some(start);
+                return;
+            }
+            // Failed candidates never replay their opaque prefix. Only the
+            // rejecting byte is processed normally, like other inline candidates.
+        }
         if self.carriage && byte != b'\n' {
             self.spaces = None;
             self.escape = None;
@@ -326,6 +350,12 @@ impl Inline {
         }
         let bang = self.bang.take();
         match byte {
+            b'^' if self
+                .bracket
+                .is_some_and(|b| b.image.is_none() && b.open + 1 == pos) =>
+            {
+                self.footnote = self.bracket.take().map(|b| b.open);
+            }
             b'&' => self.entity = Some(pos),
             b'<' => {
                 self.autolink = Some(pos);
@@ -561,6 +591,7 @@ impl Inline {
         self.last = [None; 5];
         self.code = None;
         self.math = None;
+        self.footnote = None;
         self.bracket = None;
         self.bang = None;
         self.tail = None;
