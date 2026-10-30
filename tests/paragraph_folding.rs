@@ -2376,3 +2376,141 @@ fn container_paragraph_nested_list_registration_charges_both_ancestor_paths() {
     assert_eq!(c.source.end, doc.source().len());
     assert!(!c.open);
 }
+
+fn auto_policy(doc: &Document, view: &mut FoldView, update: &Update) {
+    let mut task = ParagraphAutoFold::for_update(doc, view, update).unwrap();
+    for _ in 0..100_000 {
+        if task.advance(doc, view, &mut one()).unwrap().completion == Completion::Covered {
+            return;
+        }
+    }
+    panic!("automatic policy stalled");
+}
+
+#[test]
+fn paragraph_auto_streaming_choices_match_interval_and_height_model() {
+    let mut doc = Document::new();
+    doc.append("> # Root\n").unwrap();
+    let mut view = FoldView::new(&doc, 3).unwrap();
+    view.set_defaults(FoldDefaults {
+        paragraphs: Some(ParagraphFoldPolicy {
+            min_bytes: 24,
+            preview_bytes: 3,
+        }),
+        ..Default::default()
+    });
+    let mut expected = Vec::new();
+    let mut seed = 991u64;
+    for turn in 0..240 {
+        let start = doc.source().len();
+        let u = doc.append("> short\n").unwrap();
+        view.apply(&doc, &u).unwrap();
+        auto_policy(&doc, &mut view, &u);
+        assert!(view.source_fold_at(&doc, start).unwrap().is_none());
+        let u = doc
+            .append(&format!("> {}\n", "x".repeat(24 + turn % 7 * 127)))
+            .unwrap();
+        view.apply(&doc, &u).unwrap();
+        auto_policy(&doc, &mut view, &u);
+        let c = view.source_fold_at(&doc, start).unwrap().unwrap();
+        assert_eq!(c.source, Span::new(start, doc.source().len()));
+        assert_eq!(c.hidden.start, start + 3);
+        assert!(view.is_collapsed(c.id));
+        let end = doc.source().len();
+        let promoted = turn % 3 == 0;
+        let u = doc
+            .append(if promoted { "> ===\n>\n" } else { ">\n" })
+            .unwrap();
+        view.apply(&doc, &u).unwrap();
+        auto_policy(&doc, &mut view, &u);
+        if promoted {
+            assert!(view.fold_candidate(&doc, c.id).unwrap().is_none());
+        } else {
+            let c = view.fold_candidate(&doc, c.id).unwrap().unwrap();
+            assert_eq!(c.source, Span::new(start, end));
+            assert!(!c.open);
+            expected.push(c);
+        }
+        assert_eq!(view.source_fold_count(), expected.len());
+        let mut candidates = expected.clone();
+        candidates.push(
+            doc.fold_candidate(FoldId::Container(ContainerId(0)))
+                .unwrap(),
+        );
+        for i in 0..doc.headings().entries().len() {
+            candidates.push(doc.fold_candidate(FoldId::Heading(HeadingId(i))).unwrap());
+        }
+        for _ in 0..4 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let target = candidates[(seed >> 32) as usize % candidates.len()].id;
+            view.toggle(&doc, target).unwrap();
+            if seed.is_multiple_of(7) {
+                view.set_preview(&doc, Some(target), &mut one()).unwrap();
+            }
+            if seed.is_multiple_of(13) {
+                view.reset(2).unwrap();
+            }
+            verify_model(&doc, &view, &candidates);
+        }
+    }
+}
+
+#[test]
+fn paragraph_auto_layout_is_budgeted_and_invalidates_old_measurements_and_passes() {
+    for prefix in ["", "> ", "- "] {
+        for bytes in [0, 3, 5, 8, 17, 31] {
+            let source = format!("{prefix}中🙂 *bold* {}\n\nnext\n", "x".repeat(4096));
+            let doc = parse(&source);
+            let mut automatic = FoldView::new(&doc, 1).unwrap();
+            let mut manual = FoldView::new(&doc, 1).unwrap();
+            automatic.set_defaults(FoldDefaults {
+                paragraphs: Some(ParagraphFoldPolicy {
+                    min_bytes: 100,
+                    preview_bytes: bytes,
+                }),
+                ..Default::default()
+            });
+            let ticket = automatic.heights().ticket(TileId(0)).unwrap();
+            automatic.insert_checkpoint(TileId(0), ()).unwrap();
+            let mut stale = LayoutPass::folded(&doc, &automatic, TileId(0), 100).unwrap();
+            let mut task =
+                ParagraphAutoFold::new(&doc, &automatic, Span::new(0, source.len())).unwrap();
+            loop {
+                if task
+                    .advance(&doc, &mut automatic, &mut one())
+                    .unwrap()
+                    .completion
+                    == Completion::Covered
+                {
+                    break;
+                }
+            }
+            assert_eq!(automatic.source_fold_count(), 1);
+            assert!(automatic.measure(ticket, 9).is_err());
+            assert!(automatic.checkpoints().token(TileId(0)).is_none());
+            assert_eq!(
+                stale.advance_folded(&doc, &mut automatic, &mut one(), &mut Sink::default()),
+                Err(LayoutError::StaleContinuation)
+            );
+            let id = if prefix.is_empty() {
+                register(&doc, &mut manual, BlockId(0), bytes)
+            } else {
+                register_container(&doc, &mut manual, BlockId(0), bytes)
+            };
+            manual.set_collapsed(&doc, id, true).unwrap();
+            for width in [1, 7, 19, 80] {
+                automatic.reset(1).unwrap();
+                manual.reset(1).unwrap();
+                let got = render(&doc, &mut automatic, TileId(0), width, true);
+                let want = render(&doc, &mut manual, TileId(0), width, false);
+                assert_eq!(got.text, want.text);
+                assert_eq!(got.positions, want.positions);
+                assert_eq!(got.ends, want.ends);
+                assert_eq!(got.total, want.total);
+                assert_eq!(automatic.heights().total_rows(), u128::from(got.total));
+                assert!(got.bytes < 80);
+                assert_eq!(got.objects, 0);
+            }
+        }
+    }
+}

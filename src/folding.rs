@@ -62,7 +62,8 @@ impl ContainerFoldFilter {
     }
 }
 
-/// Initial choices for candidates first discovered by a subsequent `apply`.
+/// Initial choices for syntax candidates first discovered by a subsequent
+/// `apply`, and paragraph registrations created by ParagraphAutoFold.
 /// Existing choices are never overwritten, including explicit expansions.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FoldDefaults {
@@ -80,6 +81,10 @@ pub struct FoldDefaults {
     /// Task states start from the source marker. Neither later state overrides
     /// nor defaults changes reapply initialization to an existing container.
     pub containers: ContainerFoldFilter,
+    /// Opt-in source-byte paragraph policy. Unlike syntax defaults, registration
+    /// requires running ParagraphAutoFold with a shared budget. Only newly
+    /// registered paragraphs are initialized; existing choices stay intact.
+    pub paragraphs: Option<crate::ParagraphFoldPolicy>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -782,6 +787,7 @@ pub struct FoldView<S = ()> {
     range_visits: u64,
     defaults: FoldDefaults,
     default_visits: u64,
+    pub(crate) paragraph_auto_excluded: BTreeSet<BlockId>,
     // Only values differing from the source marker; bounded by task item count.
     task_overrides: BTreeMap<ContainerId, bool>,
     // The active node is temporarily absent from the effective masks. Keep only
@@ -811,6 +817,7 @@ impl<S> FoldView<S> {
             range_visits: 0,
             defaults: FoldDefaults::default(),
             default_visits: 0,
+            paragraph_auto_excluded: BTreeSet::new(),
             task_overrides: BTreeMap::new(),
             preview: None,
         })
@@ -956,7 +963,9 @@ impl<S> FoldView<S> {
     }
 
     /// Remove one registration, choice and preview; other IDs never change and
-    /// this ID is never reused. O(log R + log F + log T), no covered-tile scan.
+    /// this ID is never reused. A paragraph removal also excludes its BlockId
+    /// from automatic registration; clear with set_paragraph_auto_excluded.
+    /// O(log R + log F + log T + log E), no covered-tile scan.
     pub fn remove_source_fold(
         &mut self,
         document: &Document,
@@ -967,6 +976,9 @@ impl<S> FoldView<S> {
             return Ok(None);
         };
         let candidate = entry.candidate;
+        if let Some(block) = entry.paragraph {
+            self.paragraph_auto_excluded.insert(block);
+        }
         self.state.source_ranges.remove(&candidate.source.start);
         if self.state.open_paragraph == Some(id) {
             self.state.open_paragraph = None;
@@ -1206,6 +1218,32 @@ impl<S> FoldView<S> {
         self.defaults
     }
 
+    /// Opt a logical paragraph out of (or back into) automatic registration,
+    /// even before its length reaches the threshold. Existing registrations and
+    /// their choices are unchanged. O(log E), one entry per excluded BlockId;
+    /// survives reset/default changes and never transfers to another paragraph.
+    /// Manual registration remains available. Changes invalidate view tasks.
+    pub fn set_paragraph_auto_excluded(
+        &mut self,
+        document: &Document,
+        block: BlockId,
+        excluded: bool,
+    ) -> Result<(), LayoutError> {
+        self.check(document)?;
+        if document.open_paragraph_source(block).is_none() {
+            return Err(LayoutError::InvalidRange);
+        }
+        let changed = if excluded {
+            self.paragraph_auto_excluded.insert(block)
+        } else {
+            self.paragraph_auto_excluded.remove(&block)
+        };
+        if changed {
+            self.version += 1;
+        }
+        Ok(())
+    }
+
     /// This view's effective task state, or None for a non-task container.
     /// O(log U), where U is the number of overridden task items. Invalid IDs
     /// and unsynchronized/wrong documents are rejected before lookup.
@@ -1268,7 +1306,8 @@ impl<S> FoldView<S> {
 
     /// O(1). Applies only to newly identified headings/code blocks/tables/containers in future
     /// updates, including late syntax recognition. Existing choices stay intact;
-    /// use FoldBatch to change them explicitly. Invalidates pending view tasks.
+    /// use FoldBatch to change them explicitly. Paragraph policy is consumed by
+    /// ParagraphAutoFold, not apply. Invalidates pending view tasks.
     pub fn set_defaults(&mut self, defaults: FoldDefaults) {
         if self.defaults != defaults {
             self.defaults = defaults;

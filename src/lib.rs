@@ -90,7 +90,10 @@ pub use layout::{
 pub use math::{Math, MathChunk, MathContent, MathId, MathKind, MathObjects};
 pub use model::*;
 pub use navigation::{NavAction, Navigator, ScrollTarget};
-pub use paragraph_folds::{ParagraphFoldCandidate, ParagraphFoldCandidates};
+pub use paragraph_folds::{
+    ParagraphAutoFold, ParagraphAutoFoldProgress, ParagraphFoldCandidate, ParagraphFoldCandidates,
+    ParagraphFoldPolicy,
+};
 pub use references::MAX_LABEL_BYTES;
 pub use search::{Selection, SourceSearch, TaskState};
 pub use source_folds::{

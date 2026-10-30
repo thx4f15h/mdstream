@@ -981,3 +981,24 @@ README/TODO 已同步；已交付显式源码前缀核心。自动发现/长度�
 项目 devShell 验收全部通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 **844 项**、`cargo test --doc` **66 项**、`cargo fmt --all -- --check` 及 `git diff --check`。新 `paragraph_discovery` release 示例：从百万字中段发现原首叶块仅 **1 query/object、0 正文字节**，共享预算注册合计 **8 帧**，追加后局部窗口保持身份；既有 container_paragraph_folding 示例仍为 **6 帧/32 字节/一次段尾回调**。完整日志 `/tmp/mdtui3-paragraph-discovery-validation.log`；专项日志 `/tmp/mdtui3-paragraph-discovery-targeted.log`。
 
 README/TODO 已同步，本单元完成有预算候选发现。自动注册/默认长度策略、逻辑/显示行数前缀、完整字素/对象截断、媒体详情、完整容器方言及终端 UI 保留 TODO；零运行时依赖、禁止 unsafe 和累计复杂度契约保持。
+
+## 2026-10-30 长段落自动注册与长度默认策略交付
+
+新增 `ParagraphFoldPolicy`、`FoldDefaults::paragraphs` 与 `ParagraphAutoFold` / `ParagraphAutoFoldProgress`。以已分类原始源码字节为包含式准入下限，固定源码前缀向下对齐 UTF-8/CRLF，自动注册并收起有剩余后缀的顶层及容器逻辑段落。任务按窗口或 `for_update` 的首个变化块/追加起点到 EOF 发现，包含新段落、流式跨阈值、finish 和合并通知；不按旧正文样式/引用失效范围扫描历史。复用既有发现和注册算法，没有新增解析状态、索引或运行时依赖。
+
+默认策略只初始化新注册。已有手工/自动注册、显式展开及临时预览保持；原始区间重叠或结构交叉计入跳过并继续。`set_paragraph_auto_excluded` 支持阈值前排除/恢复，显式移除段落注册也排除首叶块，避免任务重加；排除状态属于视图、跨 reset/默认值变更保留，O(E) 空间且不积累历史快照。其它视图、父节点及批量意愿独立，手工注册不受排除限制。
+
+普通增长/封口保持身份；晚表头收缩仍有后缀时保留 ID、前缀和用户意愿，即使低于准入阈值。Setext/整表改型或后缀消失沿用 apply 移除。准入时机明确：回退前已准入与回退后才驱动的视图可有不同注册结果，不声称不同通知/预算调度下默认选择相同；相同处理时机的增量窗口与全窗策略逐前缀一致。未完成任务的 `remaining_range` 可与新窗口合并后重建，防止只处理最新通知丢失积压；没有隐式后台队列。
+
+共享 Budget 原子扣发现、两端祖先与最终注册步骤；最后一步同时初始化收起。任务 O(1) 空间、无正文回扫，未完成注册不修改视图，取消/失效保留已完成部分。结果返回累计检查/注册/跳过及当次变化包络；外部文档/视图变更使旧任务失效，新的收起区间按既有规则使测量、检查点与布局任务失效。
+
+新增 16 项验收（14 项 `tests/paragraph_auto_folding.rs`、2 项复用既有布局模型），覆盖：
+
+- 400 个独立段落包络/400 随机窗口长度模型，240 轮/960 次切换的流式区间与高度模型，72 组自动/手工及大小预算布局对照。
+- UTF-8 全切点/逐前缀、CRLF/无换行 EOF/孤立 CR、部分 tab/lazy、分类阈值、极值参数、晚表头收缩与 Setext/整表改型、多视图/排除/移除/预览/批量、未完成窗口跨合并更新恢复、通知重放及旧任务/测量拒绝。
+- 千层引用首次注册需 2006 个 query/object 步骤，250 层列表需 1006 步；预算耗尽时未完成注册不可见，已完成部分可见。4096 非段落逐个付费，4096 物理叶块整段只发现一次。
+- 4096 历史注册后追加百万字，随后逐字追加 1000 次（顶层/千层引用各一组），每次仅一步发现和一次活动范围刷新；无历史/正文/祖先回扫。隐藏布局只读取前缀与可见后文。
+
+项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 860 项、`cargo test --doc` 67 项、`cargo fmt --all -- --check`、`git diff --check`。完整日志 `/tmp/mdtui3-paragraph-auto-validation.log`；专项日志 `/tmp/mdtui3-paragraph-auto-targeted.log`、`/tmp/mdtui3-paragraph-auto-targeted-extra.log`。新 release 示例 `paragraph_auto_folding` 为 8 帧、零正文读取、显式展开跨封口保留；既有 `paragraph_discovery` 与 `container_paragraph_folding` release 示例也通过（后者 6 帧/32 源码字节）。
+
+README/TODO 已同步。本单元完成有预算自动注册与源码字节长度默认策略；逻辑/显示行数前缀、完整字素/对象截断、媒体详情、完整容器方言及终端 UI 继续保留 TODO。零运行时依赖、禁止 unsafe 和累计复杂度契约保持。
