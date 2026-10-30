@@ -875,3 +875,17 @@ README/TODO 已同步，仅标记此独立子项。显式目标/引用后缀、�
 项目 devShell 验收全部通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 770 项、`cargo test --doc` 61 项、`cargo fmt --all -- --check`、官方夹具 `--check` 和 `git diff --check`。另外验证修改过的上游输入会被摘要检查拒绝。独立报告命令：`nix develop -c cargo nextest run --test commonmark_atx --no-fail-fast --success-output immediate`。完整日志 `/tmp/mdtui3-commonmark-atx-validation.log`；专项分类日志 `/tmp/mdtui3-commonmark-atx-targeted.log`；原始评分观察 `/tmp/mdtui3-commonmark-atx-baseline.log`。
 
 本次完成该章节的固定样例覆盖与分类。标题空白缺口、完整缩进规则、其余 CommonMark/GFM 范围及终端 UI 继续保留 TODO。
+
+## 2026-10-30 ATX 原始空白与关闭尾缀交付
+
+修复固定 CommonMark 0.31.2 ATX 样例 67、71–73 的空白缺口。解析核心在行内消费前去除标题原始首尾 space/tab、合法关闭井号及其前面的空白；短行和超过 1 KiB 分类窗口的已识别标题共用流式状态机。开头井号的分隔符限定为 space/tab 或行结束；转义井号、非关闭串、Unicode/form-feed 空白、实体生成的空格及代码 span 内部空白保留各自语义。顶层、显式容器及已支持的部分 tab 标题使用同一路径。
+
+候选只保存正文首尾、井号末端和待确认 CR 的源码位置，空间 O(1)。`Work.atx_bytes` 统计每个新增正文/候选字节；已确认正文即时消费，待确认尾缀暂按原始内容显示，失败时只向行内解析提交一次。LF/EOF 成功确认仅隐藏尾缀并收缩原 Heading.content，无需回扫标题、历史对象或容器祖先；持续前导空白随到达隐藏。源码、BlockId/HeadingId、已完成链接/数学对象身份保持；通知使旧 tile、测量、检查点及 revision 绑定任务失效。CRLF 支持跨追加，物理 LF 保留；孤立 CR 仍按库的 LF/CRLF 方言作为正文。
+
+官方夹具及投影的空白保留规则未改动。18 例独立评分更新为 17 支持（62–69、71–79）、1 刻意差异（70，既有缩进代码可中断段落）、0 未支持；全部 430 个切点及逐字符输入通过。适配器继续检查内部重复空格、强调、级别和块边界，未以 trim 或替换官方期望消除缺口。两个既有容器测试的尾空格断言随修复更新。
+
+新增 10 项验收：tests/atx_whitespace.rs 9 项及 tests/chunking.rs 1 项。包括 1600 组固定种子的独立原始区间模型、UTF-8 全切点/逐前缀快照、空标题/CRLF/EOF/失败尾缀、显式容器/部分 tab、原始和显示映射、逐 tile/逐标量读取、小共享预算暂停/恢复、名称搜索/slug、通知合并和旧任务/缓存/测量拒绝。百万字正文加百万字空白或井号尾缀，在千层引用中逐字增长不扫描祖先、不增加注解节点或容器容量，EOF 不读取隐藏尾缀；百万字前导空白不进入行内解析，失败尾缀仅一次消费。4096 个历史标题和行内对象后关闭只处理当前标题。累计 O(n log n)、空间 O(n)，不新增运行时依赖或 unsafe；失败尾缀的一次性消费仍属摊还保证，不承诺单次 append 硬时延。
+
+项目 devShell 验收全部通过：cargo check --all-targets、cargo clippy --all-targets -- -D warnings、debug/release cargo nextest run --no-fail-fast 各 780 项、cargo test --doc 62 项、cargo fmt --all -- --check、官方夹具摘要与生成结果 --check、git diff --check。anchors、container_headings、heading_search 三个相关 release 示例通过；新增 README 示例演示长空白与跨追加 CRLF。完整日志 `/tmp/mdtui3-atx-whitespace-validation.log`；独立评分与专项日志 `/tmp/mdtui3-atx-whitespace-targeted.log`、`/tmp/mdtui3-atx-whitespace-regression.log`；修改前两项失败基线 `/tmp/mdtui3-atx-whitespace-baseline.log`。
+
+本单元完成 ATX 原始空白与长尾缀需求。分类前缀上限、完整缩进/容器规则、其它 CommonMark/GFM 范围及终端 UI 继续保留 TODO。

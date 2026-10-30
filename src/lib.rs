@@ -182,6 +182,7 @@ pub struct Document {
     annotations: Annotations,
     display: display::DisplayIndex,
     inline: Inline,
+    atx: Option<block::Atx>,
     // Inline continuity is independent of the physical leaf-block identity.
     container_inline: Option<ContainerId>,
     current: Option<BlockId>,
@@ -1174,7 +1175,6 @@ impl Document {
         }
         let body_end = block::body_end(&self.source, span);
         let mut payload = span;
-        let mut suffix = None;
         let mut inline = true;
         let mut standalone = false;
         let mut hidden = false;
@@ -1287,19 +1287,13 @@ impl Document {
                     self.new_block(span, BlockKind::Code { info: None }, update)
                 }
             }
-            Line::Heading {
-                level,
-                prefix,
-                body_end: content_end,
-            } => {
+            Line::Heading { level, prefix } => {
                 standalone = true;
                 payload.start = prefix;
                 virtual_spaces = 0;
-                if content_end < body_end {
-                    suffix = Some(Span::new(content_end, body_end));
-                    payload.end = content_end;
-                }
-                self.new_block(span, BlockKind::Heading { level }, update)
+                let id = self.new_block(span, BlockKind::Heading { level }, update);
+                self.atx = Some(block::Atx::new(prefix));
+                id
             }
             Line::Container { prefix, kind } => {
                 payload.start = prefix;
@@ -1344,9 +1338,6 @@ impl Document {
         if payload.start > span.start {
             self.mark(Span::new(span.start, payload.start), Style::HIDDEN, update);
         }
-        if let Some(suffix) = suffix {
-            self.mark(suffix, Style::HIDDEN, update);
-        }
         if body_end + 2 == span.end {
             self.mark(Span::new(body_end, body_end + 1), Style::HIDDEN, update);
         }
@@ -1358,9 +1349,10 @@ impl Document {
                 self.inline = parser;
                 fed.start += 1;
             }
-            self.feed(fed, update);
-            if suffix.is_some() {
-                self.feed(Span::new(body_end, span.end), update);
+            if self.atx.is_some() {
+                self.feed_atx(fed, update);
+            } else {
+                self.feed(fed, update);
             }
         }
         if container_text {
@@ -1373,7 +1365,12 @@ impl Document {
                     container: self.blocks[id.0].container,
                     level,
                     source: span,
-                    content: Span::new(payload.start, payload.end.min(body_end)),
+                    content: Span::new(
+                        self.atx
+                            .as_ref()
+                            .map_or(payload.start, |atx| atx.content.start),
+                        body_end,
+                    ),
                 },
                 &mut self.work,
             );
@@ -1417,18 +1414,23 @@ impl Document {
             self.feed_table_row(span, update);
             return;
         }
-        if matches!(self.blocks[line.block.0].kind, BlockKind::Heading { .. }) {
-            self.headings.extend(
-                line.block,
-                span.end,
-                block::body_end(&self.source, self.blocks[line.block.0].source),
-            );
-        }
         if line.hidden {
             self.mark(span, Style::HIDDEN, update);
         }
         if line.inline {
-            self.feed(span, update);
+            if self.atx.is_some() {
+                self.feed_atx(span, update);
+                self.headings.extend(
+                    line.block,
+                    span.end,
+                    Span::new(
+                        self.atx.as_ref().unwrap().content.start,
+                        block::body_end(&self.source, self.blocks[line.block.0].source),
+                    ),
+                );
+            } else {
+                self.feed(span, update);
+            }
         }
         if self.source.as_bytes()[span.end - 1] == b'\n'
             && span.end >= 2
@@ -1439,6 +1441,16 @@ impl Document {
     }
 
     fn end_line(&mut self, line: StreamingLine, update: &mut Update) {
+        if let Some(mut atx) = self.atx.take() {
+            let old_end = atx.content.end;
+            atx.finish();
+            self.feed(Span::new(old_end, atx.content.end), update);
+            let source = self.blocks[line.block.0].source;
+            let body_end = block::body_end(&self.source, source);
+            self.mark(Span::new(atx.content.end, body_end), Style::HIDDEN, update);
+            self.feed(Span::new(body_end, source.end), update);
+            self.headings.extend(line.block, source.end, atx.content);
+        }
         if line.table {
             let mut parser = self.table_row.take().unwrap();
             let mut tables = std::mem::take(&mut self.tables);
@@ -1454,6 +1466,22 @@ impl Document {
         } else if line.inline && self.container_inline.is_some() {
             self.end_container_text(line.block);
         }
+    }
+
+    fn feed_atx(&mut self, span: Span, update: &mut Update) {
+        let mut atx = self.atx.take().unwrap();
+        let previous = atx.content;
+        atx.feed(&self.source, span, &mut self.work);
+        self.mark(
+            Span::new(previous.start, atx.content.start),
+            Style::HIDDEN,
+            update,
+        );
+        self.feed(
+            Span::new(previous.end.max(atx.content.start), atx.content.end),
+            update,
+        );
+        self.atx = Some(atx);
     }
 
     fn end_container_text(&mut self, block: BlockId) {

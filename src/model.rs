@@ -195,6 +195,9 @@ pub struct Reference {
 pub struct Work {
     pub input_bytes: u64,
     pub classified_bytes: u64,
+    /// ATX payload bytes inspected once for leading whitespace and a possible
+    /// closing suffix. Rejected suffixes enter inline parsing at most once.
+    pub atx_bytes: u64,
     /// Actual inline visits, including a confirmed code-inherited header's
     /// opaque prefix followed by its independent cell parse. That extra pass
     /// is bounded by table_bytes; failed candidates never replay the prefix.

@@ -49,7 +49,7 @@ fn mixed_atx_setext_and_task_titles_keep_source_identity_and_inline_mapping() {
         (0..7).map(|id| title(&doc, id)).collect::<Vec<_>>(),
         [
             "root",
-            "AB&C ",
+            "AB&C",
             "task",
             "Title code",
             "nested",

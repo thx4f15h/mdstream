@@ -25,7 +25,7 @@ fn atx_tabs_keep_scope_and_source_offsets_without_feeding_hidden_columns() {
     assert_eq!(heading.block, BlockId(1));
     assert_eq!(heading.source.start, source.find('\t').unwrap());
     assert_eq!(heading.content.start, source.find('中').unwrap());
-    assert_eq!(visible(&doc, heading.content), "中🙂 & x ");
+    assert_eq!(visible(&doc, heading.content), "中🙂 & x");
     assert_eq!(doc.links().len(), 1);
     assert!(
         doc.runs_in(heading.content)

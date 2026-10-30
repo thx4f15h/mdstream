@@ -1364,3 +1364,33 @@ fn explicit_link_suffix_headers_match_utf8_splits_and_live_prefixes() {
         assert_eq!(snapshot(&live), snapshot(&whole));
     }
 }
+
+#[test]
+fn atx_whitespace_matches_all_utf8_splits_live_prefixes_and_eof() {
+    for source in [
+        "# *中🙂* &#32; ` x `  ### \t\r\n#\t\n".to_owned(),
+        format!("> - ##\t{}中🙂  ###\t\r\n>   tail\n", " \t".repeat(520)),
+        format!("# {}*中* [x](u) $y$ ### ##\t", "x".repeat(1020)),
+        format!("# {} \\## #\\## ### a \t\r\n", "x".repeat(1023)),
+        format!("# a{}###\t", " \t".repeat(520)),
+        format!("# {} ##\r \t##\r", "x".repeat(1020)),
+        format!("# {}[open ##\t\r\n- next\n", "x".repeat(1020)),
+    ] {
+        for (at, _) in source.char_indices() {
+            check_chunks(&source, &[at]);
+        }
+        let mut live = Document::new();
+        for (at, c) in source.char_indices() {
+            let end = at + c.len_utf8();
+            live.append(&source[at..end]).unwrap();
+            let mut whole = Document::new();
+            whole.append(&source[..end]).unwrap();
+            assert_eq!(snapshot(&live), snapshot(&whole), "prefix {end}");
+        }
+        live.finish();
+        let mut whole = Document::new();
+        whole.append(&source).unwrap();
+        whole.finish();
+        assert_eq!(snapshot(&live), snapshot(&whole));
+    }
+}

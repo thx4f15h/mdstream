@@ -97,10 +97,6 @@ enum Assessment {
         reason: &'static str,
         observed: &'static str,
     },
-    Unsupported {
-        reason: &'static str,
-        observed: &'static str,
-    },
 }
 
 // These are CURRENT observations, not replacements for the upstream oracle.
@@ -108,26 +104,10 @@ enum Assessment {
 // reclassification; neither mismatches nor improvements silently change scores.
 fn assessment(number: usize) -> Assessment {
     match number {
-        62..=66 | 68..=69 | 74..=79 => Assessment::Supported,
+        62..=69 | 71..=79 => Assessment::Supported,
         70 => Assessment::DeliberateDifference {
             reason: "indented code interrupts paragraphs in the existing dialect (README: container code blocks)",
             observed: "<p>foo</p>\n<pre><code># bar\n</code></pre>\n",
-        },
-        67 => Assessment::Unsupported {
-            reason: "ATX trailing content spaces are not trimmed (TODO: ATX whitespace)",
-            observed: "<h1>foo                     </h1>\n",
-        },
-        71 => Assessment::Unsupported {
-            reason: "spaces before the ATX closing sequence remain visible (TODO: ATX whitespace)",
-            observed: "<h2>foo </h2>\n<h3>bar    </h3>\n",
-        },
-        72 => Assessment::Unsupported {
-            reason: "spaces before the ATX closing sequence remain visible (TODO: ATX whitespace)",
-            observed: "<h1>foo </h1>\n<h5>foo </h5>\n",
-        },
-        73 => Assessment::Unsupported {
-            reason: "spaces before the ATX closing sequence remain visible (TODO: ATX whitespace)",
-            observed: "<h3>foo </h3>\n",
         },
         _ => panic!("unclassified upstream example {number}"),
     }
@@ -138,8 +118,7 @@ fn check_case(number: usize, markdown: &str, expected: &str, actual: &str) {
         Assessment::Supported => {
             assert_eq!(actual, expected, "example {number}, input {markdown:?}");
         }
-        Assessment::DeliberateDifference { observed, .. }
-        | Assessment::Unsupported { observed, .. } => {
+        Assessment::DeliberateDifference { observed, .. } => {
             assert_ne!(
                 actual, expected,
                 "example {number} now agrees with upstream; review its classification"
@@ -163,12 +142,11 @@ fn pinned_commonmark_atx_report() {
         let (category, label, reason) = match assessment(number) {
             Assessment::Supported => (0, "supported", "matches upstream"),
             Assessment::DeliberateDifference { reason, .. } => (1, "deliberate difference", reason),
-            Assessment::Unsupported { reason, .. } => (2, "unsupported", reason),
         };
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [13, 1, 4]);
+    assert_eq!(counts, [17, 1, 0]);
     eprintln!(
         "CommonMark 0.31.2 ATX headings (62–79): {} supported, {} deliberate difference, {} unsupported; other sections not scored by this test",
         counts[0], counts[1], counts[2]
@@ -208,7 +186,8 @@ fn atx_projection_preserves_text_styles_block_boundaries_and_empty_headings() {
     );
     assert_ne!(project(&parse("# *a*\n")), project(&parse("# a\n")));
     assert_ne!(project(&parse("# a\n")), project(&parse("## a\n")));
-    assert_ne!(project(&parse("# a \n")), project(&parse("# a\n")));
+    assert_ne!(project(&parse("# a  b\n")), project(&parse("# a b\n")));
+    assert_eq!(project(&parse("# a \n")), project(&parse("# a\n")));
     assert_eq!(
         project(&parse("    a  \n")),
         "<pre><code>a  \n</code></pre>\n"

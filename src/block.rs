@@ -36,7 +36,6 @@ pub(crate) enum Line {
     Heading {
         level: u8,
         prefix: usize,
-        body_end: usize,
     },
     Container {
         prefix: usize,
@@ -190,36 +189,89 @@ pub(crate) fn classify_indented(
         let level = text.iter().take_while(|&&b| b == b'#').count();
         if (1..=6).contains(&level)
             && ((level == text.len() && complete)
-                || text.get(level).is_some_and(u8::is_ascii_whitespace))
+                || text.get(level).is_some_and(|b| matches!(b, b' ' | b'\t')))
         {
             let mut prefix = span.start + spaces + level;
-            while prefix < end && source.as_bytes()[prefix].is_ascii_whitespace() {
+            while prefix < end && matches!(source.as_bytes()[prefix], b' ' | b'\t') {
                 prefix += 1;
-            }
-            let mut body_end = end;
-            if complete {
-                let trimmed = source[prefix..end].trim_ascii_end();
-                let hashes = trimmed
-                    .as_bytes()
-                    .iter()
-                    .rev()
-                    .take_while(|&&b| b == b'#')
-                    .count();
-                let stop = prefix + trimmed.len() - hashes;
-                if hashes > 0
-                    && (stop == prefix || source.as_bytes()[stop - 1].is_ascii_whitespace())
-                {
-                    body_end = stop;
-                }
             }
             return Line::Heading {
                 level: level as u8,
                 prefix,
-                body_end,
             };
         }
     }
     Line::Text
+}
+
+/// A possible ATX suffix is only spaces/tabs, or a whitespace-separated hash
+/// run followed by spaces/tabs. Keep its endpoints, never a copy of the line.
+/// `content.end` advances monotonically: rejected suffixes enter inline parsing
+/// once, while a suffix confirmed by LF/EOF never enters it at all.
+pub(crate) struct Atx {
+    pub content: Span,
+    hashes_end: Option<usize>,
+    cr: Option<usize>,
+}
+
+impl Atx {
+    pub fn new(start: usize) -> Self {
+        Self {
+            content: Span::new(start, start),
+            hashes_end: None,
+            cr: None,
+        }
+    }
+
+    pub fn feed(&mut self, source: &str, span: Span, work: &mut crate::Work) {
+        for pos in span.range() {
+            let byte = source.as_bytes()[pos];
+            work.atx_bytes += 1;
+            if let Some(cr) = self.cr.take()
+                && byte != b'\n'
+            {
+                self.byte(b'\r', cr);
+            }
+            match byte {
+                b'\r' => self.cr = Some(pos),
+                b'\n' => (),
+                _ => self.byte(byte, pos),
+            }
+        }
+    }
+
+    pub fn finish(&mut self) {
+        if let Some(cr) = self.cr.take() {
+            self.byte(b'\r', cr);
+        }
+    }
+
+    fn byte(&mut self, byte: u8, pos: usize) {
+        match byte {
+            b' ' | b'\t' => {
+                if self.content.start == pos {
+                    self.content = Span::new(pos + 1, pos + 1);
+                }
+            }
+            b'#' if self.hashes_end.is_some()
+                || self.content.end < pos
+                || self.content.start == pos =>
+            {
+                if let Some(end) = self.hashes_end
+                    && end < pos
+                {
+                    // In "a ### ###", the first run is content, and only the
+                    // whitespace immediately before the second run is pending.
+                    self.content.end = end;
+                }
+                self.hashes_end = Some(pos + 1);
+            }
+            _ => {
+                self.content.end = pos + 1;
+                self.hashes_end = None;
+            }
+        }
+    }
 }
 
 fn definition(source: &str, start: usize, end: usize) -> Option<Line> {

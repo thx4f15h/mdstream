@@ -11,6 +11,8 @@ pub struct Heading {
     pub source: Span,
     /// Title source envelope without outer heading markers. Intervening container
     /// prefixes remain in source; display runs hide them without flattening text.
+    /// ATX leading spaces/tabs are excluded; a possible trailing suffix remains
+    /// provisional until LF/EOF trims it. Entity-generated whitespace is content.
     pub content: Span,
 }
 
@@ -273,12 +275,12 @@ impl HeadingIndex {
         id
     }
 
-    pub(crate) fn extend(&mut self, block: BlockId, end: usize, content_end: usize) {
+    pub(crate) fn extend(&mut self, block: BlockId, end: usize, content: Span) {
         if let Some(heading) = self.entries.last_mut()
             && heading.block == block
         {
             heading.source.end = end;
-            heading.content.end = content_end;
+            heading.content = content;
         }
     }
 }
