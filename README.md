@@ -2043,6 +2043,30 @@ nix develop -c cargo run -r --example history
 
 2026-10-30 在 ark 上的 release 样本：524,286 字节密集标记产生 854,391 个语义节点；子索引改用 `Option<NonZeroUsize>` 后，节点大小由 88 降至 72 字节，对应 arena 容量由 92,274,688 降至 75,497,472 字节（约 18.2%）。写入访问数 8,010,100、固定视口查询访问数 13,022 均未改变，分配次数同为 20。缩小了节点常数，没有增加全树压缩过程。峰值 arena 容量等于当前容量，因为该 arena 不缩容；这不是整个进程峰值内存。语义/修订存储拆分与查询 scratch 复用尚未实施。
 
-标准样例固定为 [CommonMark 0.31.2 autolinks](https://spec.commonmark.org/0.31.2/#autolinks)，离线夹具保存在 `tests/fixtures/commonmark_autolinks.rs`，保留上游 CC BY-SA 4.0 归属信息。19 个样例中，18 个在源码文本/目标语义上符合；606 为刻意差异：失败候选内部的反斜线不重新解析。URI percent encoding 属输出层，因此对照时归一化目标编码。其它 CommonMark 章节与 GFM 全集未评分；现有容器展平、强调/代码回退和语法长度限制仍按上文方言约定，不以自比较分块测试充当完整规范合规率。
+标准样例固定为 [CommonMark 0.31.2 autolinks](https://spec.commonmark.org/0.31.2/#autolinks)，离线夹具保存在 `tests/fixtures/commonmark_autolinks.rs`，保留上游 CC BY-SA 4.0 归属信息。19 个样例中，18 个在源码文本/目标语义上符合；606 为刻意差异：失败候选内部的反斜线不重新解析。URI percent encoding 属输出层，因此对照时归一化目标编码。其它已评分子集见下文，其余 CommonMark 范围与 GFM 全集未评分；现有容器展平、强调/代码回退和语法长度限制仍按上文方言约定，不以自比较分块测试充当完整规范合规率。
 
 显示语义另固定了 24 个 CommonMark 0.31.2 文本样例（25–30、35–37、39–40、328–340），离线夹具 `tests/fixtures/commonmark_display.rs` 同样保留归属信息，只对照移除 HTML 标签后的文字。HTML、属性解码、列表结构及完整代码回退未计入这组评分；不将局部样例通过表述为整个章节合规。`tests/display.rs` 另外验证源码映射、跨 tile/逐标量查询、逐前缀/逐切点一致性、百万字代码晚闭合、错误候选线性计数、预算推进和旧游标拒绝。
+
+[CommonMark 0.31.2 ATX headings](https://spec.commonmark.org/0.31.2/#atx-headings) 的完整章节（62–79，共 18 例）另由 `tests/commonmark_atx.rs` 独立评分。`tests/fixtures/commonmark_atx.rs` 保存官方 Markdown 与 HTML 原值，附 John MacFarlane / CC BY-SA 4.0 归属、版本、规范行号及完整 `spec.json` 的 SHA-256。生成器只读取另行下载的本地文件，先校验摘要与完整章节成员；构建和测试不联网，也不调用本库生成预期。
+
+| 分类 | 样例 | 当前判定 |
+| --- | --- | --- |
+| 支持（13） | 62–66、68–69、74–79 | 块类型/顺序、标题级别、显示文字及强调与官方预期相同 |
+| 刻意差异（1） | 70 | 既有缩进代码方言允许中断正文，得到段落后代码块；规范要求同一个段落。方言见上方容器代码规则，完整缩进规则仍待扩展 |
+| 未支持（4） | 67、71–73 | 标题尾空格或关闭井号前的空格未裁剪；作为缺口保留 TODO，不称为刻意差异 |
+
+测试投影只处理这些样例中的段落、标题、缩进代码、分隔线和行内强调，检查标题索引与块一致；跳过结构空行、去掉段落/标题的一个物理末尾 LF，保留代码 LF、内部换行及所有空格。不执行 `trim`、重解析 Markdown 或按样例编号修正输出，不代表库提供了 HTML 渲染器或支持其它 HTML 语义。非支持项同时断言仍不同于官方预期、且精确等于单独记录的当前观察值；回归或实现改善均要求重新审查分类。全部样例另做所有切点和逐字符输入对照，适配器有空标题、空白、级别、强调及块边界敏感性检查。这些短样例不替代已有长输入/预算/复杂度测试。
+
+独立运行并显示逐例分类与汇总：
+
+```bash
+nix develop -c cargo nextest run --test commonmark_atx --no-fail-fast --success-output immediate
+```
+
+用另行下载的官方 `spec.json` 复核夹具（只读取文件）：
+
+```bash
+python3 scripts/generate_commonmark_atx.py /path/to/spec.json --check
+```
+
+后续修复需保留官方输入/预期，更新当前观察与分类、汇总和 TODO；禁止通过忽略样例、裁剪空白或替换官方期望提升评分。

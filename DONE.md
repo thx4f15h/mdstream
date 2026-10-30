@@ -863,3 +863,15 @@ README/TODO 已同步，仅标记此独立子项。显式目标/引用后缀、�
 项目 devShell 全部通过：cargo check --all-targets、cargo clippy --all-targets -- -D warnings、debug/release cargo nextest run --no-fail-fast 各 767 项、cargo test --doc 61 项、cargo fmt --all -- --check 和 git diff --check。新 link_suffix_headers 示例验证百万字成功局部引用/失败晚定义、稳定图片 ID 和预算预览（16 帧/112 个计费源码字节）；既有 closed_link_headers、link_headers、closed_headers、closed_code_headers、closed_math_headers 示例全部通过。完整日志 `/tmp/mdtui3-link-suffix-headers-validation.log`；初始两项失败基线 `/tmp/mdtui3-link-suffix-headers-baseline.log`；专项 `/tmp/mdtui3-link-suffix-headers-targeted.log`。
 
 按可独立验收子项交付。含行内语法字符的显式后缀、闭合后其它语法、多行目标/title、通用对象/符号撤销及其余分类/容器/终端 UI 需求仍在 TODO。
+
+## 2026-10-30 CommonMark ATX 标准样例评分交付
+
+选定此前未评分的 CommonMark 0.31.2 ATX headings 完整章节（62–79，共 18 例）。`tests/fixtures/commonmark_atx.rs` 保留官方 Markdown 和 HTML 原值、John MacFarlane / CC BY-SA 4.0 归属、版本、来源及规范行号；`scripts/generate_commonmark_atx.py` 只读取本地官方 `spec.json`，以 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20` 固定完整输入并校验章节成员，支持 `--check` 复核生成结果。字符串转义保留每个字符，避免源文件尾部不可见空格；构建和测试离线且零新增依赖。
+
+独立 `tests/commonmark_atx.rs` 按块类型/顺序、标题级别、可见文字和强调比较官方 HTML，并核对标题索引。测试适配器保留所有空格、内部换行和代码 LF，只跳过结构空块及段落/标题的一个物理末尾 LF；不重解析 Markdown、不按样例修正输出。评分结果：13 支持（62–66、68–69、74–79）；1 刻意差异（70，既有缩进代码可中断段落）；4 未支持（67、71–73，标题尾部或关闭井号前的空格未裁剪）。四项缺口明确列入 TODO；未修改官方期望或宣称其符合规范。非支持项同时检查与官方不同、与单独固定的当前观察值相同，回归或改善均须复审分类。
+
+新增 3 项测试：逐例分类与固定汇总、18 例全部 430 个切点及逐字符输入、适配器对空标题/空白/强调/级别/块边界/代码换行的敏感性。所有流式结果独立对照官方期望或已分类观察，不以整次解析自比较充当标准评分。样例最长仅 54 字节，不据此声称长输入或完整语法兼容；解析核心、复杂度与预算契约无改动。
+
+项目 devShell 验收全部通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 770 项、`cargo test --doc` 61 项、`cargo fmt --all -- --check`、官方夹具 `--check` 和 `git diff --check`。另外验证修改过的上游输入会被摘要检查拒绝。独立报告命令：`nix develop -c cargo nextest run --test commonmark_atx --no-fail-fast --success-output immediate`。完整日志 `/tmp/mdtui3-commonmark-atx-validation.log`；专项分类日志 `/tmp/mdtui3-commonmark-atx-targeted.log`；原始评分观察 `/tmp/mdtui3-commonmark-atx-baseline.log`。
+
+本次完成该章节的固定样例覆盖与分类。标题空白缺口、完整缩进规则、其余 CommonMark/GFM 范围及终端 UI 继续保留 TODO。
