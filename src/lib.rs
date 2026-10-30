@@ -1042,8 +1042,8 @@ impl Document {
         }
         // Emphasis openers and separable close-only pairs may be retained while
         // probing. Other inherited pairs cancel with their original semantics.
-        // Inherited code/math remains opaque until confirmation, or cancels the
-        // probe when it closes. Labels retain local effects and cancel on an
+        // Inherited code stays isolated through an inert suffix after closure;
+        // math cancels on closure. Labels retain local effects and cancel on an
         // inherited closing bracket, including labels too long for references.
         let inherited = self
             .containers

@@ -290,10 +290,10 @@ fn late_header_pipe_requires_isolatable_inline_state_and_other_limits_remain() {
             parse(&format!("{prefix}`prior\n{source}")).tables().len(),
             1
         );
-        // A published cross-line code mapping still cannot be revoked.
+        // Code followed by new semantics still commits rather than revoking.
         assert!(
             parse(&format!(
-                "{prefix}`prior\n{prefix}end` {}|b\n{prefix}-|-\n",
+                "{prefix}`prior\n{prefix}end` &amp; {}|b\n{prefix}-|-\n",
                 "x".repeat(BLOCK_LOOKAHEAD)
             ))
             .tables()

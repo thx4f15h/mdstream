@@ -799,3 +799,19 @@ README/TODO 已同步。开放段落自动增长、容器跨物理叶块段落�
 项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 714 项、`cargo test --doc` 57 项、`cargo fmt --all -- --check` 和 `git diff --check`。新示例 `cargo run -r --example closed_headers` 验证百万字失败提交与成功丢弃、稳定链接和共享预算摘要，后者 17 帧/119 个计费字节；既有 open/inherited/late/long headers、long_delimiters、code/math/link headers 示例均通过。完整日志 `/tmp/mdtui3-closed-headers-validation.log`；两项失败基线 `/tmp/mdtui3-closed-headers-baseline.log`；专项 `/tmp/mdtui3-closed-headers-targeted.log` 与 `/tmp/mdtui3-closed-headers-chunking.log`。
 
 README、TODO 只标记本子项；无法隔离的旧强调闭合、通用已发布样式撤销、其它候选/分类上限、更完整容器语义和终端 UI 继续保留待办。零运行时依赖与禁止 unsafe 保持。
+
+## 2026-10-30 旧代码可隔离闭合的晚管道长表头核心交付
+
+本单元交付顶层或同一显式 Quote/Item 续行中，旧代码 span 已在首管道前闭合、且闭合后只有普通文本/空白及不启动行内语法的标点的晚管道长表头。分类窗口、短行/早管道优先级、lazy/部分 tab 和其它块规则保持既有方言；闭合后遇到实体、链接、强调、代码等语法的起始字符即恢复普通解析，不声称通用代码映射撤销已经完成。完整字符边界与示例见 [README](README.md#表格任务列表与图片)。
+
+先复现两项失败基线：原实现拒绝这种表头，并立即提交跨行代码样式/空白规范化。显示替换索引要求源码有序，不能直接移除已发布代码或把它插回后来的实体之前；本次使用固定大小隔离。等长反引号闭合时只保存原 Code 摘要及 closer，继续逐字消费普通长尾；成功丢弃该闭合与旧 Inline，在已有行扫描中独立解析当前表头。旧代码内的当前行对象只在确认时按单元格语义发布一次，旧 LinkId/MathId/脚注编号不变，不读取前序代码正文。当前行的等长反引号可能在独立单元格里变成 opener，故不复用原代码状态。
+
+闭合后遇到不支持的语法字节，必须先提交旧映射，再处理新字节，防止同一次 feed 中实体/代码映射先于旧源码范围进入索引；后续再开代码也不重启探测。无管道 LF/EOF、非法分隔行、Setext 或作用域退出只提交一次原样式/端点映射，再消费未处理的后缀。正常范围失效覆盖旧缓存、测量、显示游标与搜索任务。没有延迟全部普通长行、回放失败正文、撤销对象或重编号；CRLF、全空白/两端裁剪和历史部分 tab 的源码归属保持。
+
+额外状态 O(1)，每次探测最多保存一个闭合摘要；提交/丢弃计一个 delimiter_steps。成功只额外消费互不重叠的当前表头，失败不重放，满足 inline_bytes <= source().len() + table_bytes；累计解析 O(n log n)/空间 O(n)，不承诺单次确认硬时延。千层引用中前序百万字代码加当前百万字长尾，后续每字只增加一次 inline_bytes/table_header_bytes，无分类/容器/章节/祖先或 delimiter 工作，注解和容器容量不变。4096 历史链接、4096 旧 opener、当前行 4096 链接/数学/脚注及 4096 列保持一次消费；历史对象不变。内部测试确认百万字期间摘要端点不变、200 轮成功/失败/取消后释放且不累积历史。
+
+新增 12 项验收：tests/closed_code_headers.rs 10 项、全局 UTF-8 全切点/逐前缀快照 1 项、内部状态 1 项。覆盖独立早管道语义对照、四种 run 长度/三个闭合位置/四种作用域、12 种取消后缀、400 组范围/长分隔行模型、CRLF/EOF/Setext/作用域退出、共享预算原子暂停、逐标量/tile/预算源码映射、有界摘要/搜索、稳定 BlockId/对象、通知合并与旧任务失效；容器折叠百万字正文零读取。四处旧拒绝断言改为带语法后缀的明确拒绝案例或接受新增可隔离分支，保留原模型和回退验证。
+
+项目 devShell 全部通过：cargo check --all-targets、cargo clippy --all-targets -- -D warnings、debug/release cargo nextest run --no-fail-fast 各 726 项、cargo test --doc 58 项、cargo fmt --all -- --check 和 git diff --check。新 closed_code_headers 示例验证百万字成功丢弃/失败提交、稳定链接和预算预览（15 帧/101 个计费源码字节）；既有 code_headers、closed_headers、math_headers、link_headers 示例通过。完整日志 `/tmp/mdtui3-closed-code-headers-validation.log`；初始两项失败基线 `/tmp/mdtui3-closed-code-headers-baseline.log`；专项 `/tmp/mdtui3-closed-code-headers-targeted.log`。
+
+README/TODO 已同步，仅标记上述独立子项。闭合后带其它行内语法的代码表头、通用已发布映射撤销、其它分类/容器限制与终端 UI 继续保留 TODO。零运行时依赖与禁止 unsafe 保持。

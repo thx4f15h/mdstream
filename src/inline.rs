@@ -147,6 +147,27 @@ struct Code {
     last: Span,
 }
 
+struct CodePair {
+    code: Code,
+    close: Span,
+}
+
+impl CodePair {
+    fn commit(self, effects: &mut Effects<'_>) {
+        let content = Span::new(self.code.open.end, self.close.start);
+        effects.display.code(
+            content,
+            effects.source,
+            self.code.all_spaces,
+            self.code.last,
+        );
+        effects.update.change(content, ChangeKind::Text);
+        effects.mark(content, Style::CODE, None);
+        effects.hide(self.code.open);
+        effects.hide(self.close);
+    }
+}
+
 struct MathCandidate {
     open: Span,
     escaped: bool,
@@ -240,6 +261,10 @@ pub(crate) struct Inline {
     // Inherited code or math keeps this line opaque until table confirmation.
     // Its prefix has no published effects and needs a fresh cell parser then.
     header_opaque: bool,
+    // At most one inherited code closure can wait. Only inert suffix bytes
+    // are allowed until the pipe: no later display entry/object may precede
+    // this mapping's commit, nor survive a fresh independent-cell parse.
+    header_code: Option<CodePair>,
 }
 
 impl Inline {
@@ -276,6 +301,7 @@ impl Inline {
     pub fn isolate_line(&mut self) -> Option<LineBreak> {
         debug_assert!(self.can_isolate_line());
         debug_assert!(self.header_pairs.is_empty());
+        debug_assert!(self.header_code.is_none());
         self.header_floor = self.stack.len();
         self.header_crossed = false;
         self.header_bracket = self.bracket.map(|b| b.open);
@@ -289,6 +315,10 @@ impl Inline {
     }
 
     pub fn cancel_header(&mut self, effects: &mut Effects<'_>) {
+        if let Some(pair) = self.header_code.take() {
+            effects.work.delimiter_steps += 1;
+            pair.commit(effects);
+        }
         effects.work.delimiter_steps += self.header_pairs.len() as u64;
         for pair in self.header_pairs.drain(..) {
             pair.commit(effects);
@@ -313,6 +343,7 @@ impl Inline {
         debug_assert!(!self.header_crossed);
         work.delimiter_steps += self.header_pairs.len() as u64;
         self.header_pairs.clear();
+        work.delimiter_steps += u64::from(self.header_code.take().is_some());
         if self.header_opaque {
             work.delimiter_steps += self.stack.len() as u64;
             *self = Self::default();
@@ -386,6 +417,19 @@ impl Inline {
                 return;
             }
             self.finish_run(Some(byte), effects);
+        }
+        if self.header_code.is_some()
+            && matches!(
+                byte,
+                b'&' | b'<' | b'\\' | b'*' | b'_' | b'~' | b'`' | b'$' | b'!' | b'[' | b']'
+            )
+        {
+            // Flush before this byte can publish a source-ordered replacement
+            // (e.g. an entity later in the same feed). Rejection is permanent
+            // for this line, even if its next code span is still open at '|'.
+            effects.work.delimiter_steps += 1;
+            self.header_code.take().unwrap().commit(effects);
+            self.header_crossed = true;
         }
         if let Some(math) = &mut self.math {
             if math.escaped {
@@ -628,15 +672,16 @@ impl Inline {
             if let Some(code) = &mut self.code {
                 let open = code.open;
                 if open.len() == run.source.len() {
-                    self.header_crossed |= self.header_opaque;
-                    let content = Span::new(open.end, run.source.start);
-                    effects
-                        .display
-                        .code(content, effects.source, code.all_spaces, code.last);
-                    effects.update.change(content, ChangeKind::Text);
-                    effects.mark(Span::new(open.end, run.source.start), Style::CODE, None);
-                    effects.hide(open);
-                    effects.hide(run.source);
+                    let pair = CodePair {
+                        code: *code,
+                        close: run.source,
+                    };
+                    if self.header_opaque && !self.header_crossed {
+                        debug_assert!(self.header_code.is_none());
+                        self.header_code = Some(pair);
+                    } else {
+                        pair.commit(effects);
+                    }
                     self.code = None;
                 } else {
                     code.all_spaces = false;
@@ -821,6 +866,37 @@ impl Inline {
 #[cfg(test)]
 mod tests {
     use crate::{Document, LinkId};
+
+    #[test]
+    fn isolated_code_stores_one_summary_and_releases_it_on_every_resolution() {
+        let mut doc = Document::new();
+        doc.append(&format!("> a ` old\n> end` {}", "x".repeat(1030)))
+            .unwrap();
+        let pair = doc.inline.header_code.as_ref().unwrap();
+        let endpoints = (pair.code.open, pair.code.last, pair.close);
+        let before = doc.work();
+        doc.append(&"x".repeat(1_000_000)).unwrap();
+        let pair = doc.inline.header_code.as_ref().unwrap();
+        assert_eq!((pair.code.open, pair.code.last, pair.close), endpoints);
+        assert_eq!(doc.work().delimiter_steps, before.delimiter_steps);
+        doc.append("\n").unwrap();
+        assert!(doc.inline.header_code.is_none());
+        assert_eq!(doc.work().delimiter_steps - before.delimiter_steps, 1);
+        for i in 0..200 {
+            doc.append(&format!("> a ` old\n> end` {}", "x".repeat(1030)))
+                .unwrap();
+            assert!(doc.inline.header_code.is_some());
+            doc.append(match i % 4 {
+                0 => "\n",
+                1 => "|b\n> -|-\n\n",
+                2 => "|b\n> wrong\n",
+                _ => "&amp; [h](u)\n",
+            })
+            .unwrap();
+            assert!(doc.inline.header_code.is_none());
+        }
+        assert!(doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().table_bytes);
+    }
 
     #[test]
     fn isolated_emphasis_storage_tracks_consumed_openers_not_body_or_history() {

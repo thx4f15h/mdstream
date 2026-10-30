@@ -385,7 +385,8 @@ fn generated_tables_and_rejections_match_independent_scope_and_range_model() {
         ));
         let delimiter_end = source.len();
         source.push_str(&format!("{prefix}v|z\n"));
-        if i % 3 != 0 && i % 5 != 0 {
+        // Both still-open and closed-with-inert-suffix code can isolate.
+        if i % 5 != 0 {
             expected.push((
                 Span::new(start, source.len()),
                 Span::new(delimiter_start, delimiter_end),

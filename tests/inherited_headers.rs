@@ -161,7 +161,7 @@ fn open_cross_line_candidates_keep_their_existing_semantics() {
             ("*open", "end*next ", Style::EMPHASIS),
             ("**open", "end**next ", Style::STRONG),
             ("~~open", "end~~next ", Style::STRIKE),
-            ("`open", "end` ", Style::CODE),
+            ("`open", "end` &amp; ", Style::CODE),
         ] {
             let prior = format!("{prefix}{open}\n");
             let mut doc = Document::new();
