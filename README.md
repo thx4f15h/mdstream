@@ -2096,7 +2096,7 @@ nix develop -c cargo run -r --example history
 
 2026-10-30 在 ark 上的 release 样本：524,286 字节密集标记产生 854,391 个语义节点；子索引改用 `Option<NonZeroUsize>` 后，节点大小由 88 降至 72 字节，对应 arena 容量由 92,274,688 降至 75,497,472 字节（约 18.2%）。写入访问数 8,010,100、固定视口查询访问数 13,022 均未改变，分配次数同为 20。缩小了节点常数，没有增加全树压缩过程。峰值 arena 容量等于当前容量，因为该 arena 不缩容；这不是整个进程峰值内存。语义/修订存储拆分与查询 scratch 复用尚未实施。
 
-标准样例固定为 [CommonMark 0.31.2 autolinks](https://spec.commonmark.org/0.31.2/#autolinks)，离线夹具保存在 `tests/fixtures/commonmark_autolinks.rs`，保留上游 CC BY-SA 4.0 归属信息。19 个样例中，18 个在源码文本/目标语义上符合；606 为刻意差异：失败候选内部的反斜线不重新解析。URI percent encoding 属输出层，因此对照时归一化目标编码。其它已评分子集见下文，其余 CommonMark 范围与 GFM 全集未评分；现有容器展平、强调/代码回退和语法长度限制仍按上文方言约定，不以自比较分块测试充当完整规范合规率。
+标准样例固定为 [CommonMark 0.31.2 autolinks](https://spec.commonmark.org/0.31.2/#autolinks)，离线夹具保存在 `tests/fixtures/commonmark_autolinks.rs`，保留上游 CC BY-SA 4.0 归属信息。19 个样例中，18 个在源码文本/目标语义上符合；606 为刻意差异：失败候选内部的反斜线不重新解析。URI percent encoding 属输出层，因此对照时归一化目标编码。其它已评分子集见下文，其余 CommonMark/GFM 范围未评分；现有容器展平、强调/代码回退和语法长度限制仍按上文方言约定，不以自比较分块测试充当完整规范合规率。
 
 显示语义另固定了 24 个 CommonMark 0.31.2 文本样例（25–30、35–37、39–40、328–340），离线夹具 `tests/fixtures/commonmark_display.rs` 同样保留归属信息，只对照移除 HTML 标签后的文字。HTML、属性解码、列表结构及完整代码回退未计入这组评分；不将局部样例通过表述为整个章节合规。`tests/display.rs` 另外验证源码映射、跨 tile/逐标量查询、逐前缀/逐切点一致性、百万字代码晚闭合、错误候选线性计数、预算推进和旧游标拒绝。
 
@@ -2139,6 +2139,25 @@ Setext 投影只覆盖这些样例涉及的块、根引用、根无序 tight 列
 ```bash
 nix develop -c cargo nextest run --test commonmark_setext --no-fail-fast --success-output immediate
 python3 scripts/generate_commonmark_setext.py /path/to/spec.json --check
+```
+
+[GFM 0.29-gfm（2019-04-06）Tables (extension)](https://github.github.com/gfm/#tables-extension-) 的完整章节（198–205，共 8 例）由 `tests/gfm_tables.rs` 独立评分。`tests/fixtures/gfm_tables.rs` 固定官方 Markdown/HTML 原值、HTML 源码行号和样例锚点、GitHub / John MacFarlane 归属及 CC BY-SA 4.0 许可。官方站点不提供 `spec.json`，生成器 `scripts/generate_gfm_tables.py` 读取另行下载的完整规范 HTML，以 SHA-256 `b153d814fdfc8624bb6da7449162c1cd707a637f7d1c1b636eb44b9cf63fa220` 固定来源，并校验完整章节成员；仅解码网页用于展示代码块的实体和空格 span，不改变样例内容。生成、复核、构建与测试不联网，不使用库输出生成期望。
+
+| 分类 | 样例 | 当前判定 |
+| --- | --- | --- |
+| 支持（8） | 198–205 | 表头/正文、居中/右对齐、可选外侧管道、文本/代码/粗体中的转义管道、引用和空行终止、无管道稀疏行、列数不符回退、缺失/多余单元格及无正文表格与官方一致 |
+| 刻意差异（0） | 无 | 这组样例没有观察到刻意差异 |
+| 未支持（0） | 无 | 这组样例没有观察到未支持项；未覆盖的规则不计为通过 |
+
+表格投影从公开 Table/Column/Row/Cell 元数据及显示片段生成用于比较的 HTML，保持块/表/行/列顺序、表头与正文区分、列对齐、代码/强调/粗体和引用边界；同时核对表 ID、所属块和源码范围。缺失单元格按库已声明的隐式空单元格语义输出，多余单元格必须已被解析器排除；不会在适配器中重新分割管道、去反斜线或裁剪空白。只跳过结构空块及段落的一个物理末尾 LF；原始内部空格/tab、实体生成的首尾空格及源码映射均保留。这个窄投影只接受本组涉及的块和根引用，不是通用 HTML 渲染器，未评分容器内表格或其它 GFM 规则。
+
+8 例全部 361 个单切点和 353 个逐字符前缀另核对块/标题/容器/表格身份、列宽提示、行/单元格源码范围、完成状态、原始/显示样式和待分类范围；最终结果直接对照官方 HTML。适配器敏感性检查覆盖列/行顺序、默认与左/中/右对齐、空表与空行、稀疏/多余单元格、嵌套样式、空格/tab/实体、段落和引用边界。本章节全部是 ASCII、最长 56 字节；不据此声称已验证全部 Unicode、长输入复杂度、预算或终端表格排版，既有相关验收继续保留。
+
+独立报告及夹具复核（第二条只读取下载好的官方 HTML，来源改动会拒绝）：
+
+```bash
+nix develop -c cargo nextest run --test gfm_tables --no-fail-fast --success-output immediate
+python3 scripts/generate_gfm_tables.py /path/to/gfm.html --check
 ```
 
 后续修复需保留官方输入/预期，更新当前观察与分类、汇总和 TODO；禁止通过忽略样例、裁剪空白或替换官方期望提升评分。

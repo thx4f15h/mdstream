@@ -913,3 +913,14 @@ README/TODO 已同步，仅标记此独立子项。显式目标/引用后缀、�
 项目 devShell 验收全部通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 **793 项**、`cargo test --doc` **63 项**、`cargo fmt --all -- --check`、官方 ATX/Setext 夹具 `--check` 和 `git diff --check`。`container_setext`、`heading_search`、`anchors` 三个 release 示例通过。完整日志 `/tmp/mdtui3-setext-whitespace-validation.log`；修改前官方评分的三项失败基线 `/tmp/mdtui3-setext-whitespace-baseline.log`；初次独立评分与容器回归 `/tmp/mdtui3-setext-whitespace-targeted.log`；专项分块/预算/复杂度 `/tmp/mdtui3-setext-whitespace-new-tests.log`；最终独立评分和文档复核 `/tmp/mdtui3-setext-whitespace-final-doc.log`。
 
 本单元完成已识别 Setext 标题的原始首尾空白需求。普通段落空白、完整缩进/空行规则、Setext 分类上限、剩余容器/tab 规则、其它 CommonMark/GFM 范围及终端 UI 继续按 TODO 推进；零运行时依赖及禁止 unsafe 保持。
+
+## 2026-10-30 GFM 表格标准样例评分交付
+
+- [x] **固定完整官方章节**：`tests/fixtures/gfm_tables.rs` 收录 GFM 0.29-gfm（2019-04-06）Tables (extension) 全部 8 例（198–205）的官方 Markdown 和 HTML，保留每个空格及 LF，附 GitHub / John MacFarlane 归属、CC BY-SA 4.0 许可、HTML 源码行号和样例锚点。`scripts/generate_gfm_tables.py` 读取另行下载的官方规范 HTML，以 SHA-256 `b153d814fdfc8624bb6da7449162c1cd707a637f7d1c1b636eb44b9cf63fa220` 固定整页来源；校验完整章节成员，只解码代码块的展示标记，离线生成或 `--check`。独立正则提取与 HTML 解码逐字符核验了 8 对输入/期望，篡改来源会被摘要校验拒绝。
+- [x] **独立分类和报告**：`tests/gfm_tables.rs` 当前 **8 支持、0 刻意差异、0 未支持**。覆盖表头/正文、居中/右对齐、可选外侧管道、文本/代码/粗体中的转义管道、引用和空行终止、无管道稀疏行、表头/分隔行列数不符回退、缺失及多余单元格、无正文表格。每例直接比较固定官方 HTML，任一不符都会失败；没有用库输出替换标准期望或动态重分类。
+- [x] **保留评分语义**：窄投影仅读取公开表/列/行/单元格元数据及显示片段，核对表 ID、所属块与源码范围，保持表头/正文、顺序、对齐、代码/强调/粗体和根引用边界。隐式空单元格沿用公开语义，多余单元格必须已被解析器排除；不重新切管道、去反斜线、裁剪空白或按样例编号调整输出。只跳过结构空块及段落的一个物理末尾 LF；内部空格/tab 和实体生成的首尾空格均保留。
+- [x] **流式和适配器验收**：全部 **361 个切点、353 个逐字符前缀**对照块/标题/容器/表格身份、列宽提示、行/单元格源码范围及完成状态、原始/显示样式与待分类范围；最终输出仍直接比较官方期望。敏感性验收覆盖列/行顺序、默认与左/中/右对齐、无正文与空正文行、缺失/多余单元格、嵌套样式、空格/tab/实体、段落和引用边界。新增 3 项独立测试。
+
+独立报告：`nix develop -c cargo nextest run --test gfm_tables --no-fail-fast --success-output immediate`；夹具复核：`python3 scripts/generate_gfm_tables.py /path/to/gfm.html --check`。项目 devShell 验收全部通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 **796 项**、`cargo test --doc` **63 项**、`cargo fmt --all -- --check`、夹具复核及 `git diff --check`。完整日志 `/tmp/mdtui3-gfm-tables-validation.log`；独立分类与分块日志 `/tmp/mdtui3-gfm-tables-targeted.log`；首次公开语义观察 `/tmp/mdtui3-gfm-tables-inspect.log`；独立来源复核和篡改拒绝证据 `/tmp/mdtui3-gfm-tables-fixture-check.log`。
+
+本单元完成官方表格章节评分。8 例均为 ASCII、最长 56 字节，不能据此推断所有 Unicode、长输入、容器表格或完整 GFM 合规；其余标准范围、语法边界和终端表格排版继续保留 TODO。解析核心及其复杂度/预算契约未改动，保持零运行时依赖及禁止 unsafe。
