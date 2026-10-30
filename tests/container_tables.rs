@@ -273,7 +273,7 @@ fn every_utf8_cut_and_live_prefix_preserves_tables_and_display() {
 }
 
 #[test]
-fn header_pipe_window_counts_container_prefix_but_candidates_can_stream() {
+fn header_pipe_can_follow_the_window_with_an_explicit_fresh_container() {
     let prefix = ">".repeat(BLOCK_LOOKAHEAD - 4);
     let accepted = parse(&format!("{prefix}a|b\n{prefix}-|-\n"));
     assert_eq!(accepted.tables().len(), 1);
@@ -281,10 +281,10 @@ fn header_pipe_window_counts_container_prefix_but_candidates_can_stream() {
     let accepted = parse(&format!("{prefix}a|b\n{prefix}-|-\n"));
     assert_eq!(accepted.tables().len(), 1);
     let prefix = ">".repeat(BLOCK_LOOKAHEAD - 1);
-    let rejected = parse(&format!("{prefix}a|b\n{prefix}-|-\n"));
-    assert!(rejected.tables().is_empty());
+    let accepted = parse(&format!("{prefix}a|b\n{prefix}-|-\n"));
+    assert_eq!(accepted.tables().len(), 1);
     for (source, tables) in [
-        (format!("> {}|b\n> -|-\n", "x".repeat(BLOCK_LOOKAHEAD)), 0),
+        (format!("> {}|b\n> -|-\n", "x".repeat(BLOCK_LOOKAHEAD)), 1),
         (format!("> a|b\n> {}|-\n", "-".repeat(BLOCK_LOOKAHEAD)), 1),
     ] {
         let doc = parse(&source);

@@ -88,6 +88,9 @@ pub(crate) struct HeaderCandidate {
     pub content: Span,
     pub container: Option<ContainerId>,
     pub columns: usize,
+    // A fresh inline sequence can already have consumed the first-cell prefix.
+    // Reuse that state on confirmation; never publish its objects twice.
+    pub parsed_end: usize,
 }
 
 pub(crate) struct StreamingHeader {
@@ -96,7 +99,7 @@ pub(crate) struct StreamingHeader {
 }
 
 /// Column count for split/trim grammar, without storing cells or source text.
-/// An early pipe opts a long text line into delayed semantic commitment.
+/// After the first pipe, defer semantic commitment until the delimiter arrives.
 #[derive(Default)]
 pub(crate) struct HeaderSummary {
     columns: usize,
@@ -107,10 +110,13 @@ pub(crate) struct HeaderSummary {
 }
 
 impl HeaderSummary {
-    pub fn feed(&mut self, text: &str, work: &mut crate::Work) {
-        for byte in text.bytes() {
+    /// Return the first unescaped pipe offset in this chunk, if any.
+    pub fn feed(&mut self, text: &str, work: &mut crate::Work) -> Option<usize> {
+        let mut first_pipe = None;
+        for (offset, byte) in text.bytes().enumerate() {
             work.table_header_bytes += 1;
             if byte == b'|' && !self.escaped {
+                first_pipe.get_or_insert(offset);
                 self.pipe = true;
                 self.columns += usize::from(self.started);
                 self.tail = false;
@@ -120,6 +126,7 @@ impl HeaderSummary {
             self.started |= !byte.is_ascii_whitespace();
             self.escaped = byte == b'\\' && !self.escaped;
         }
+        first_pipe
     }
 
     pub fn columns(&self) -> Option<usize> {
@@ -303,6 +310,7 @@ pub(crate) struct RowParser {
     after_pipe: bool,
     complete: bool,
     inline: Inline,
+    parsed_end: usize,
 }
 
 impl RowParser {
@@ -327,7 +335,13 @@ impl RowParser {
             after_pipe: false,
             complete: false,
             inline: Inline::default(),
+            parsed_end: content_start,
         }
+    }
+
+    pub fn resume_header(&mut self, inline: Inline, parsed_end: usize) {
+        self.inline = inline;
+        self.parsed_end = parsed_end;
     }
 
     pub fn feed(&mut self, span: Span, table: &mut Table, effects: &mut Effects<'_>) {
@@ -383,7 +397,12 @@ impl RowParser {
 
     fn feed_content(&mut self, span: Span, table: &Table, effects: &mut Effects<'_>) {
         if self.column < table.columns.len() {
-            self.inline.feed(span, effects);
+            if span.end > self.parsed_end {
+                self.inline.feed(
+                    Span::new(span.start.max(self.parsed_end), span.end),
+                    effects,
+                );
+            }
         } else {
             effects.mark(span, Style::HIDDEN, None);
         }
@@ -460,14 +479,34 @@ mod tests {
             let text = std::str::from_utf8(&bytes).unwrap();
             let mut summary = HeaderSummary::default();
             let mut work = crate::Work::default();
-            for byte in text.as_bytes().chunks(1) {
-                summary.feed(std::str::from_utf8(byte).unwrap(), &mut work);
+            let mut first_pipe = None;
+            for (at, byte) in text.as_bytes().chunks(1).enumerate() {
+                if summary
+                    .feed(std::str::from_utf8(byte).unwrap(), &mut work)
+                    .is_some()
+                {
+                    first_pipe.get_or_insert(at);
+                }
             }
+            let expected = bytes.iter().enumerate().position(|(at, byte)| {
+                *byte == b'|'
+                    && bytes[..at]
+                        .iter()
+                        .rev()
+                        .take_while(|&&b| b == b'\\')
+                        .count()
+                        % 2
+                        == 0
+            });
+            assert_eq!(first_pipe, expected, "{text:?}");
+            let mut whole = HeaderSummary::default();
+            assert_eq!(whole.feed(text, &mut crate::Work::default()), expected);
             assert_eq!(
                 summary.columns(),
                 split(text, Span::new(0, 6)).map(|c| c.len()),
                 "{text:?}"
             );
+            assert_eq!(summary.columns(), whole.columns());
             assert_eq!(work.table_header_bytes, 6);
         }
     }

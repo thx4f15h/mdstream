@@ -288,8 +288,9 @@ impl Document {
     /// A bounded provisional line prefix, already included in the tiles as raw
     /// text. It is classified at newline, EOF, or the lookahead limit. A long
     /// separator probe retains this bounded prefix while its raw tail grows.
-    /// An eligible long header has already been classified; its raw payload is
-    /// deferred separately and does not enlarge this pending prefix.
+    /// An eligible long header has already been classified; its deferred payload
+    /// (after a late first pipe, or the whole early-pipe header) is kept separately
+    /// and does not enlarge this pending prefix.
     pub fn pending(&self) -> Span {
         if let Some(delimiter) = &self.table_delimiter {
             delimiter.prefix
@@ -474,9 +475,15 @@ impl Document {
                         break;
                     }
                 }
-                candidate
+                let eager = !candidate.summary.pipe;
+                let first_pipe = candidate
                     .summary
                     .feed(&self.source[start..cursor], &mut self.work);
+                if eager {
+                    let parsed_end = first_pipe.map_or(cursor, |offset| start + offset);
+                    self.feed(Span::new(start, parsed_end), update);
+                    candidate.header.parsed_end = parsed_end;
+                }
                 candidate.header.source.end = cursor;
                 candidate.header.content.end = cursor;
                 if let Some(block) = candidate.header.block {
@@ -950,7 +957,7 @@ impl Document {
             if table_text && self.blocks[block.0].container == self.containers.inner() {
                 self.blocks[block.0].source.end = span.end;
                 self.mark(span, Style::default(), update);
-                self.start_table_row(id, span, content.start, complete, update);
+                self.start_table_row(id, span, content.start, complete, None, update);
                 return;
             }
             self.close_current(update);
@@ -959,7 +966,18 @@ impl Document {
         if table_text && (complete || allow_long_header) {
             summary.feed(&self.source[content.range()], &mut self.work);
         }
-        if summary.pipe && (!complete || summary.columns().is_some()) {
+        // Only a fresh inline sequence is identical to the first table cell.
+        // An inherited paragraph state may already have changed old semantics;
+        // it still requires an early pipe to opt into deferred consumption.
+        let eager = table_text
+            && !complete
+            && allow_long_header
+            && !summary.pipe
+            && self
+                .containers
+                .inner()
+                .map_or(!paragraph, |scope| self.container_inline != Some(scope));
+        if eager || (summary.pipe && (!complete || summary.columns().is_some())) {
             let block = if paragraph && self.containers.inner().is_none() {
                 None
             } else {
@@ -979,6 +997,7 @@ impl Document {
                 content,
                 container: self.containers.inner(),
                 columns: summary.columns().unwrap_or(0),
+                parsed_end: if eager { content.end } else { content.start },
             };
             if complete {
                 self.table_header = Some(header);
@@ -990,6 +1009,9 @@ impl Document {
             let end = block::body_end(&self.source, span);
             if end + 2 == span.end {
                 self.mark(Span::new(end, end + 1), Style::HIDDEN, update);
+            }
+            if eager {
+                self.feed(content, update);
             }
             return;
         }
@@ -1318,6 +1340,15 @@ impl Document {
         if let Some(columns) = candidate.summary.columns() {
             candidate.header.columns = columns;
             self.table_header = Some(candidate.header);
+        } else if !candidate.summary.pipe {
+            // No pipe arrived: this was ordinary streaming text all along.
+            // Do not add a whole-line annotation or revisit its semantics.
+            if candidate.header.container.is_some() {
+                let block = candidate.header.block.unwrap();
+                self.container_title =
+                    Some((block, Span::new(candidate.header.content.start, end)));
+                self.end_container_text(block);
+            }
         } else {
             self.feed_header(candidate.header, update);
         }
@@ -1328,7 +1359,7 @@ impl Document {
             self.blocks[self.current.unwrap().0].source.end = header.source.end;
         }
         self.mark(header.source, Style::default(), update);
-        self.feed(header.content, update);
+        self.feed(Span::new(header.parsed_end, header.content.end), update);
         if header.container.is_some() {
             self.end_container_text(header.block.unwrap());
         }
@@ -1342,12 +1373,14 @@ impl Document {
         update: &mut Update,
     ) {
         let id = TableId(self.tables.len());
+        let first_cell =
+            (header.parsed_end > header.content.start).then(|| std::mem::take(&mut self.inline));
         let block = header
             .block
             .unwrap_or_else(|| self.new_block(header.source, BlockKind::Table { id }, update));
         if header.container.is_some() {
-            // A pending header has not consumed inline bytes. Confirmation
-            // discards the preceding paragraph state before parsing its cells.
+            // A late header's first-cell state was moved above. An early header
+            // discards its inherited paragraph state before parsing the cells.
             self.close_current(update);
             self.current = Some(block);
             self.blocks[block.0].state = SyntaxState::Growing;
@@ -1356,7 +1389,16 @@ impl Document {
         self.blocks[block.0].source.end = delimiter.end;
         self.tables
             .push(Table::new(block, header.source, delimiter, columns));
-        self.start_table_row(id, header.source, header.content.start, true, update);
+        // RowParser still scans the header once for cell boundaries, whitespace
+        // and escaped pipes (also inside code), skipping the consumed semantics.
+        self.start_table_row(
+            id,
+            header.source,
+            header.content.start,
+            true,
+            first_cell.map(|inline| (inline, header.parsed_end)),
+            update,
+        );
         self.tables[id.0].source.end = delimiter.end;
         self.mark(
             Span::new(header.source.start, delimiter.end),
@@ -1372,14 +1414,15 @@ impl Document {
         span: Span,
         content_start: usize,
         complete: bool,
+        parsed: Option<(Inline, usize)>,
         update: &mut Update,
     ) {
-        self.table_row = Some(table::RowParser::new(
-            id,
-            &mut self.tables[id.0],
-            span.start,
-            content_start,
-        ));
+        let mut parser =
+            table::RowParser::new(id, &mut self.tables[id.0], span.start, content_start);
+        if let Some((inline, parsed_end)) = parsed {
+            parser.resume_header(inline, parsed_end);
+        }
+        self.table_row = Some(parser);
         self.mark(Span::new(span.start, content_start), Style::HIDDEN, update);
         self.feed_table_row(Span::new(content_start, span.end), update);
         let line = StreamingLine {

@@ -277,10 +277,15 @@ fn confirmation_invalidates_layout_and_fold_updates_can_be_merged() {
 }
 
 #[test]
-fn late_first_header_pipe_and_other_long_block_candidates_remain_out_of_scope() {
+fn late_header_pipe_requires_fresh_inline_state_and_other_limits_remain() {
     for prefix in ["", "> "] {
         let source = format!("{prefix}{}|b\n{prefix}-|-\n", "x".repeat(BLOCK_LOOKAHEAD));
-        assert!(parse(&source).tables().is_empty());
+        assert_eq!(parse(&source).tables().len(), 1);
+        assert!(
+            parse(&format!("{prefix}prior\n{source}"))
+                .tables()
+                .is_empty()
+        );
         let source = format!("{prefix}title\n{prefix}{}\n", "=".repeat(2048));
         assert!(parse(&source).headings().entries().is_empty());
     }

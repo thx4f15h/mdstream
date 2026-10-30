@@ -128,7 +128,7 @@ fn pipe_eligibility_escape_parity_and_late_first_pipe_are_explicit() {
     }
     for prefix in ["", "> "] {
         let doc = parse(&format!("{prefix}{}|b\n{prefix}-|-\n", "x".repeat(2048)));
-        assert!(doc.tables().is_empty());
+        assert_eq!(doc.tables().len(), 1);
         // A leading pipe with only whitespace has zero cells and falls back.
         let doc = parse(&format!("{prefix}|{}\n{prefix}|-\n", " ".repeat(2048)));
         assert!(doc.tables().is_empty());
