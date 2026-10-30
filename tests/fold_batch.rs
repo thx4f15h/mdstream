@@ -29,7 +29,7 @@ fn candidates(doc: &Document) -> Vec<FoldCandidate> {
 }
 
 fn finish(task: &mut FoldBatch, doc: &Document, view: &mut FoldView) -> FoldBatchProgress {
-    for _ in 0..doc.blocks().len() + 2 {
+    for _ in 0..doc.blocks().len() + doc.container_count() + 2 {
         let mut budget = tiny();
         let progress = task.advance(doc, view, &mut budget).unwrap();
         assert_eq!(budget.used().bytes, 0);
@@ -253,14 +253,15 @@ fn siblings_limit_discovery_to_parent_and_budget_even_unmatched_blocks() {
         task.advance(&doc, &mut view, &mut tiny()).unwrap().visited,
         0
     );
-    for visited in 1..=2000 {
+    // The list is a sibling; its 2000 items and 2000 blocks are budgeted too.
+    for visited in 1..=4001 {
         let progress = task.advance(&doc, &mut view, &mut tiny()).unwrap();
         assert_eq!(progress.visited, visited);
-        assert_eq!(progress.changed, 0);
+        assert_eq!(progress.changed, 1);
     }
     let old_ticket = view.heights().ticket(TileId(0)).unwrap();
     let progress = task.advance(&doc, &mut view, &mut tiny()).unwrap();
-    assert_eq!(progress.changed, 1);
+    assert_eq!(progress.changed, 2);
     assert_eq!(
         progress.change.unwrap().source,
         doc.fold_candidate(heading(1)).unwrap().hidden
@@ -269,8 +270,8 @@ fn siblings_limit_discovery_to_parent_and_budget_even_unmatched_blocks() {
     // Unrelated earlier measurements remain valid and do not stale the task.
     view.measure(old_ticket, 2).unwrap();
     let progress = finish(&mut task, &doc, &mut view);
-    assert_eq!(progress.visited, 2004);
-    assert_eq!(progress.changed, 1);
+    assert_eq!(progress.visited, 4005);
+    assert_eq!(progress.changed, 2);
     for id in [0, 2, 3, 4, 5] {
         assert!(!view.is_collapsed(heading(id)));
     }
@@ -332,13 +333,14 @@ fn every_block_is_budgeted_and_cancellation_keeps_partial_results() {
     }
     let init = task.advance(&doc, &mut view, &mut tiny()).unwrap();
     assert_eq!(init.visited, 0);
-    for step in 1..=2000 {
+    // List + item openers interleave with the original leaf blocks.
+    for step in 1..=4001 {
         let progress = task.advance(&doc, &mut view, &mut tiny()).unwrap();
         assert_eq!(progress.visited, step);
-        assert_eq!(progress.changed, 0);
+        assert_eq!(progress.changed, 1 + step / 2);
     }
     let progress = task.advance(&doc, &mut view, &mut tiny()).unwrap();
-    assert_eq!(progress.changed, 1);
+    assert_eq!(progress.changed, 2002);
     assert!(progress.change.is_some());
     assert_eq!(progress.completion, Completion::BudgetExhausted);
     // Stop advancing this task; its changes are already visible.

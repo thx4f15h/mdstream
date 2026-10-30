@@ -113,6 +113,11 @@ impl Containers {
         self.nodes.len()
     }
 
+    pub fn starting_before(&self, offset: usize) -> usize {
+        self.nodes
+            .partition_point(|node| node.source.start < offset)
+    }
+
     pub fn get(&self, id: ContainerId) -> Option<Container> {
         let mut node = *self.nodes.get(id.0)?;
         if node.state == SyntaxState::Growing {

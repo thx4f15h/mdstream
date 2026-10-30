@@ -1,6 +1,6 @@
 use crate::{
-    BlockKind, Budget, Completion, Document, DocumentId, FoldCandidates, FoldChange, FoldId,
-    FoldView, LayoutError, Span, WorkLimit,
+    BlockKind, Budget, Completion, Document, DocumentId, FoldCandidate, FoldCandidates, FoldChange,
+    FoldId, FoldView, LayoutError, Span, WorkLimit,
 };
 
 /// Explicit commands on candidates present at the task's document revision.
@@ -36,7 +36,7 @@ pub enum FoldBatchAction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FoldBatchProgress {
     pub completion: Completion,
-    /// Cumulative blocks inspected, including blocks without a fold candidate.
+    /// Cumulative blocks and container openers inspected, including non-candidates.
     pub visited: usize,
     /// Cumulative candidates whose local collapsed choice changed.
     pub changed: usize,
@@ -46,7 +46,7 @@ pub struct FoldBatchProgress {
 
 /// Resumable, non-atomic batch editing. Intermediate choices are immediately
 /// usable by layout. Dropping/invalidating the task keeps completed changes.
-/// Storage is O(1); each budgeted step visits at most one block. Appends, reset,
+/// Storage is O(1); each budgeted step visits one block or container opener. Appends, reset,
 /// defaults changes and external fold operations invalidate the continuation.
 pub struct FoldBatch {
     document: DocumentId,
@@ -55,7 +55,7 @@ pub struct FoldBatch {
     version: u64,
     action: FoldBatchAction,
     candidates: Option<FoldCandidates>,
-    focus: usize,
+    root: Option<FoldCandidate>,
     parent: Option<FoldId>,
     visited: usize,
     changed: usize,
@@ -85,6 +85,7 @@ impl FoldBatch {
                         .block(id)
                         .is_some_and(|block| matches!(block.kind, BlockKind::Code { .. })),
                     FoldId::Table(id) => document.table(id).is_some(),
+                    FoldId::Container(id) => document.container(id).is_some(),
                 };
                 if !valid {
                     return Err(LayoutError::InvalidRange);
@@ -99,7 +100,7 @@ impl FoldBatch {
             version: view.version(),
             action,
             candidates: None,
-            focus: 0,
+            root: None,
             parent: None,
             visited: 0,
             changed: 0,
@@ -107,7 +108,7 @@ impl FoldBatch {
     }
 
     /// One query and one object pay for initialization, or for inspecting one
-    /// block and changing its candidate. Each step uses a fixed number of index
+    /// block/container and changing its candidate. Each step uses a fixed number of index
     /// operations; neither source bytes nor covered tiles are enumerated.
     pub fn advance<S>(
         &mut self,
@@ -144,7 +145,8 @@ impl FoldBatch {
             let Some(candidates) = &mut self.candidates else {
                 let range = match self.action {
                     FoldBatchAction::Subtree { root, .. } => {
-                        document.fold_candidate(root).unwrap().source
+                        self.root = document.fold_candidate(root);
+                        self.root.unwrap().source
                     }
                     FoldBatchAction::Siblings { target, .. } => {
                         self.parent = document.fold_candidate(target).unwrap().parent;
@@ -156,17 +158,21 @@ impl FoldBatch {
                     _ => Span::new(0, document.source().len()),
                 };
                 if let FoldBatchAction::Focus { target } = self.action {
-                    self.focus = document.fold_candidate(target).unwrap().source.start;
+                    self.root = document.fold_candidate(target);
                 }
                 self.candidates = Some(document.fold_candidates(range)?);
                 continue;
             };
             self.visited += 1;
-            let Some(candidate) = candidates.next_block(document) else {
+            let Some(candidate) = candidates.next_candidate(document) else {
                 continue;
             };
             let collapsed = match self.action {
-                FoldBatchAction::All { collapsed } | FoldBatchAction::Subtree { collapsed, .. } => {
+                FoldBatchAction::All { collapsed } => collapsed,
+                FoldBatchAction::Subtree { collapsed, .. } => {
+                    if !self.root.unwrap().contains_candidate(&candidate) {
+                        continue;
+                    }
                     collapsed
                 }
                 FoldBatchAction::Siblings { target, collapsed } => {
@@ -184,7 +190,7 @@ impl FoldBatch {
                     }
                     collapsed
                 }
-                FoldBatchAction::Focus { .. } => !candidate.source.range().contains(&self.focus),
+                FoldBatchAction::Focus { .. } => !candidate.contains_candidate(&self.root.unwrap()),
             };
             if let Some(applied) = view.set_collapsed(document, candidate.id, collapsed)? {
                 self.changed += 1;

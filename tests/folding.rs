@@ -414,6 +414,17 @@ fn oracle(doc: &Document, ids: &[FoldId]) -> String {
                     },
                 )
             }
+            FoldId::Container(id) => {
+                let container = doc.container(id).unwrap();
+                Span::new(
+                    container.source.start,
+                    if container.state == SyntaxState::Sealed {
+                        container.source.end
+                    } else {
+                        doc.source().len()
+                    },
+                )
+            }
             FoldId::Table(id) => {
                 let table = doc.table(id).unwrap();
                 Span::new(
@@ -1026,7 +1037,7 @@ fn table_preview_restores_latest_range_after_append_close_and_resize() {
 }
 
 #[test]
-fn container_table_folds_keep_root_parent_retract_boundaries_and_restore_intent() {
+fn container_table_folds_keep_container_parent_retract_boundaries_and_restore_intent() {
     let mut doc = Document::new();
     let mut view = FoldView::new(&doc, 1).unwrap();
     view.set_defaults(FoldDefaults {
@@ -1038,7 +1049,12 @@ fn container_table_folds_keep_root_parent_retract_boundaries_and_restore_intent(
         view.apply(&doc, &update).unwrap();
     }
     let table = FoldId::Table(TableId(0));
-    assert_eq!(doc.fold_candidate(table).unwrap().parent, Some(heading(0)));
+    assert_eq!(
+        doc.fold_candidate(table).unwrap().parent,
+        Some(FoldId::Container(
+            doc.block(doc.tables()[0].block).unwrap().container.unwrap()
+        ))
+    );
     assert!(doc.fold_candidate(heading(1)).is_none());
     assert!(view.is_collapsed(table));
     assert_eq!(render(&doc, &mut view, true).text, "Root\ninner\n[fold]\n");

@@ -4,17 +4,18 @@ use std::{
 };
 
 use crate::{
-    BlockId, BlockKind, Budget, CheckpointIndex, Completion, Document, DocumentId, HeadingId,
-    HeightIndex, LayoutError, Measurement, Span, SyntaxState, TableId, TileId, Update, WorkLimit,
+    BlockId, BlockKind, Budget, CheckpointIndex, Completion, ContainerId, Document, DocumentId,
+    HeadingId, HeightIndex, LayoutError, Measurement, Span, SyntaxState, TableId, TileId, Update,
+    WorkLimit,
 };
 
-/// Document-local stable identity. Containers and arbitrary crossing ranges are
-/// deliberately outside this first folding dialect.
+/// Document-local stable identity. Arbitrary crossing ranges are unsupported.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FoldId {
     Heading(HeadingId),
     Code(BlockId),
     Table(TableId),
+    Container(ContainerId),
 }
 
 /// Initial choices for candidates first discovered by a subsequent `apply`.
@@ -31,16 +32,28 @@ pub struct FoldDefaults {
 pub struct FoldCandidate {
     pub id: FoldId,
     pub parent: Option<FoldId>,
-    /// Whole section, code block or table, including the retained heading.
+    /// Whole section, code block, table or container, including the retained heading.
     pub source: Span,
     /// Body replaced by a placeholder. Empty bodies produce no placeholder.
     pub hidden: Span,
-    /// Heading title, fence info or table header; a source reference, not copied text.
+    /// Title, fence info, table header or container range; borrowed source metadata.
     pub summary: Option<Span>,
     pub open: bool,
 }
 
 impl FoldCandidate {
+    // Preorder tie-break: containers on a physical opener line precede its
+    // leaf block. This distinguishes identical List/Item/Quote/Table ranges.
+    pub(crate) fn contains_candidate(&self, other: &Self) -> bool {
+        let order = |candidate: &Self| match candidate.id {
+            FoldId::Container(id) => (candidate.source.start, 0, id.0),
+            _ => (candidate.source.start, 1, 0),
+        };
+        self.source.start <= other.source.start
+            && other.source.end <= self.source.end
+            && order(self) <= order(other)
+    }
+
     /// Read only a bounded UTF-8 prefix; no line counting or body scanning.
     /// None means the budget cannot pay for this read (even with no summary).
     pub fn summary_text<'a>(
@@ -101,22 +114,34 @@ pub enum FoldLookup {
 }
 
 /// Bounded discovery of candidates whose opener block intersects a source
-/// range. Parent sections starting before the range are queried with
+/// range, plus containers starting in it. Earlier ancestors are queried with
 /// `fold_candidate_at` / `FoldCandidate::parent`, not duplicated in every page.
 pub struct FoldCandidates {
     document: DocumentId,
     revision: u64,
     next: usize,
     end: usize,
+    container_next: usize,
+    container_end: usize,
 }
 
 impl FoldCandidates {
     pub(crate) fn is_done(&self) -> bool {
-        self.next == self.end
+        self.next == self.end && self.container_next == self.container_end
     }
 
-    /// Caller pays for one block, including blocks without a candidate.
-    pub(crate) fn next_block(&mut self, document: &Document) -> Option<FoldCandidate> {
+    /// Caller pays for one container opener or block, even without a candidate.
+    pub(crate) fn next_candidate(&mut self, document: &Document) -> Option<FoldCandidate> {
+        if self.container_next < self.container_end {
+            let id = ContainerId(self.container_next);
+            let container = document.container(id).unwrap();
+            if self.next == self.end
+                || container.source.start <= document.blocks()[self.next].source.start
+            {
+                self.container_next += 1;
+                return document.fold_candidate(FoldId::Container(id));
+            }
+        }
         let block = &document.blocks()[self.next];
         let id = match block.kind {
             BlockKind::Code { .. } => Some(FoldId::Code(BlockId(self.next))),
@@ -144,7 +169,7 @@ impl FoldCandidates {
             return Err(LayoutError::StaleContinuation);
         }
         out.clear();
-        while self.next < self.end {
+        while !self.is_done() {
             // Non-candidate blocks also consume work; discovery cannot scan an
             // arbitrarily large paragraph/list arena in one frame.
             if !budget.charge(WorkLimit {
@@ -154,7 +179,7 @@ impl FoldCandidates {
             }) {
                 return Ok(crate::Completion::BudgetExhausted);
             }
-            if let Some(candidate) = self.next_block(document) {
+            if let Some(candidate) = self.next_candidate(document) {
                 out.push(candidate);
             }
         }
@@ -171,9 +196,14 @@ struct Mask {
 pub(crate) struct FoldState {
     collapsed: BTreeMap<FoldId, Mask>,
     starts: BTreeSet<(usize, FoldId)>,
-    // Only the six still-open heading sections and the active code/table block can
-    // change existing ranges on append. Closed historical folds are untouched.
+    // At most six root sections and the active code/table block need individual
+    // range refreshes. Containers use the separate shared tail below.
     growing: BTreeSet<FoldId>,
+    containers: crate::container_folds::ContainerFolds,
+    // All open containers form a single ancestor chain. Their complete-tile
+    // union has one shared mask; no ancestor is refreshed on ordinary append.
+    open_containers: BTreeSet<(usize, ContainerId)>,
+    open_tiles: Range<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -210,12 +240,40 @@ impl Document {
             revision: self.revision(),
             next,
             end,
+            container_next: self.containers.starting_before(range.start),
+            container_end: self.containers.starting_before(range.end),
         })
     }
 
     /// O(log headings), with at most six levels; never reads section contents.
+    /// Open containers provisionally include unclassified source, like tables.
     pub fn fold_candidate(&self, id: FoldId) -> Option<FoldCandidate> {
         match id {
+            FoldId::Container(id) => {
+                let container = self.container(id)?;
+                let open = container.state != SyntaxState::Sealed && !self.is_finished();
+                let source = Span::new(
+                    container.source.start,
+                    if open {
+                        self.source().len()
+                    } else {
+                        container.source.end
+                    },
+                );
+                Some(FoldCandidate {
+                    id: FoldId::Container(id),
+                    parent: container.parent.map(FoldId::Container).or_else(|| {
+                        self.headings()
+                            .root_current(source.start)
+                            .map(FoldId::Heading)
+                    }),
+                    source,
+                    hidden: source,
+                    // A source reference only; summary_text still bounds reads.
+                    summary: Some(source),
+                    open,
+                })
+            }
             FoldId::Heading(id) => {
                 let headings = self.headings();
                 let heading = headings.get(id)?;
@@ -252,10 +310,11 @@ impl Document {
                 );
                 Some(FoldCandidate {
                     id: FoldId::Code(id),
-                    parent: self
-                        .headings()
-                        .root_current(source.start)
-                        .map(FoldId::Heading),
+                    parent: block.container.map(FoldId::Container).or_else(|| {
+                        self.headings()
+                            .root_current(source.start)
+                            .map(FoldId::Heading)
+                    }),
                     source,
                     hidden: source,
                     summary: info,
@@ -278,10 +337,11 @@ impl Document {
                 );
                 Some(FoldCandidate {
                     id: FoldId::Table(id),
-                    parent: self
-                        .headings()
-                        .root_current(source.start)
-                        .map(FoldId::Heading),
+                    parent: block.container.map(FoldId::Container).or_else(|| {
+                        self.headings()
+                            .root_current(source.start)
+                            .map(FoldId::Heading)
+                    }),
                     source,
                     hidden: source,
                     summary: Some(table.row(0)?.source),
@@ -291,7 +351,7 @@ impl Document {
         }
     }
 
-    /// Innermost candidate, including a pending tail of an open code/table block.
+    /// Innermost supported candidate, including an open container/code/table tail.
     pub fn fold_candidate_at(&self, offset: usize) -> Option<FoldCandidate> {
         if offset >= self.source().len() {
             return None;
@@ -305,6 +365,16 @@ impl Document {
         if let Some(index) = self.blocks().len().checked_sub(1)
             && let Some(candidate) = self.leaf_fold_candidate(BlockId(index))
             && candidate.open
+            && candidate.source.range().contains(&offset)
+        {
+            return Some(candidate);
+        }
+        let container = self
+            .block_at(offset)
+            .and_then(|id| self.block(id)?.container)
+            .or_else(|| self.containers.inner());
+        if let Some(id) = container
+            && let Some(candidate) = self.fold_candidate(FoldId::Container(id))
             && candidate.source.range().contains(&offset)
         {
             return Some(candidate);
@@ -334,6 +404,14 @@ impl FoldState {
             heading = document.headings().parent(id);
         }
         if hidden.is_none()
+            && offset < document.source().len()
+            && let Some(id) = self
+                .containers
+                .covering(document.containers.starting_before(offset + 1), offset)
+        {
+            hidden = document.fold_candidate(FoldId::Container(id));
+        }
+        if hidden.is_none()
             && let Some(candidate) = document.fold_candidate_at(offset)
             && let Some(mask) = self.collapsed.get(&candidate.id)
             && mask.candidate.hidden.range().contains(&offset)
@@ -351,26 +429,67 @@ impl FoldState {
         FoldSegment::Text { end }
     }
 
-    fn remove(&mut self, heights: &mut HeightIndex, id: FoldId) -> Option<Mask> {
+    fn remove(
+        &mut self,
+        document: &Document,
+        heights: &mut HeightIndex,
+        id: FoldId,
+    ) -> Option<Mask> {
         let mask = self.collapsed.remove(&id)?;
         heights.cover(mask.tiles.clone(), false);
         self.starts.remove(&(mask.candidate.hidden.start, id));
         self.growing.remove(&id);
+        if let FoldId::Container(container) = id {
+            self.containers.set(container, 0);
+            self.open_containers
+                .remove(&(mask.candidate.hidden.start, container));
+            self.refresh_open_tiles(document, heights);
+        }
         Some(mask)
     }
 
     fn insert(&mut self, document: &Document, heights: &mut HeightIndex, candidate: FoldCandidate) {
         let hidden = candidate.hidden;
-        let tiles = Self::interior(document, hidden);
+        let open_container = matches!(candidate.id, FoldId::Container(_)) && candidate.open;
+        let tiles = if open_container {
+            0..0
+        } else {
+            Self::interior(document, hidden)
+        };
+        if let FoldId::Container(id) = candidate.id {
+            self.containers.set(
+                id,
+                if candidate.open {
+                    usize::MAX
+                } else {
+                    hidden.end
+                },
+            );
+            if candidate.open {
+                self.open_containers.insert((hidden.start, id));
+                self.refresh_open_tiles(document, heights);
+            }
+        }
         if !hidden.is_empty() {
             self.starts.insert((hidden.start, candidate.id));
         }
         heights.cover(tiles.clone(), true);
-        if candidate.open {
+        if candidate.open && !open_container {
             self.growing.insert(candidate.id);
         }
         self.collapsed
             .insert(candidate.id, Mask { candidate, tiles });
+    }
+
+    fn refresh_open_tiles(&mut self, document: &Document, heights: &mut HeightIndex) {
+        let tiles = self.open_containers.first().map_or(0..0, |&(start, _)| {
+            Self::interior(document, Span::new(start, document.source().len()))
+        });
+        if self.open_tiles != tiles {
+            heights.cover(self.open_tiles.clone(), false);
+            heights.cover(tiles.clone(), true);
+            self.open_tiles = tiles;
+        }
     }
 
     fn interior(document: &Document, hidden: Span) -> Range<usize> {
@@ -416,6 +535,10 @@ impl FoldState {
             self.growing.remove(&candidate.id);
         }
         mask.candidate = candidate;
+        if let FoldId::Container(id) = candidate.id {
+            self.containers.set(id, candidate.hidden.end);
+            self.open_containers.remove(&(candidate.hidden.start, id));
+        }
     }
 }
 
@@ -472,9 +595,18 @@ impl<S> FoldView<S> {
     pub fn version(&self) -> u64 {
         self.version
     }
-    /// Existing open ranges inspected during updates, independent of body size.
+    /// Existing section/code/table refreshes, shared container-tail checks and
+    /// collapsed container close events, independent of body size and open depth.
     pub fn range_visits(&self) -> u64 {
         self.range_visits
+    }
+    /// Container index nodes visited by mutations and visibility queries.
+    pub fn container_index_visits(&self) -> u64 {
+        self.state.containers.visits()
+    }
+    /// Retained sparse index nodes, bounded by O(container_count), not toggles.
+    pub fn container_index_nodes(&self) -> usize {
+        self.state.containers.node_count()
     }
     /// Local choice, including the choice temporarily overridden by preview.
     /// Use hidden_at to query actual visibility under ancestors and preview.
@@ -495,7 +627,7 @@ impl<S> FoldView<S> {
     /// preview. Appends and reset preserve preview, using current ranges on exit.
     ///
     /// A change atomically costs one query and one object for at most two nodes'
-    /// fixed index operations, O(log H + log F + log T), with O(1) extra storage.
+    /// fixed index operations, O(log H + log C + log F + log T), with O(1) extra storage.
     /// No source or covered tiles are scanned. An identical request is free.
     /// Rendering the newly visible window still needs its own shared budget.
     pub fn set_preview(
@@ -516,6 +648,7 @@ impl<S> FoldView<S> {
                     .block(id)
                     .is_some_and(|block| matches!(block.kind, BlockKind::Code { .. })),
                 FoldId::Table(id) => document.table(id).is_some(),
+                FoldId::Container(id) => document.container(id).is_some(),
             };
             if !valid {
                 return Err(LayoutError::InvalidRange);
@@ -549,7 +682,7 @@ impl<S> FoldView<S> {
         }
         if let Some(id) = target {
             let candidate = document.fold_candidate(id).unwrap();
-            let collapsed = self.state.remove(&mut self.heights, id).is_some();
+            let collapsed = self.state.remove(document, &mut self.heights, id).is_some();
             self.preview = Some((id, collapsed));
             source = Some(source.map_or(candidate.hidden, |old| {
                 Span::new(
@@ -642,7 +775,7 @@ impl<S> FoldView<S> {
         } else if collapsed {
             self.state.insert(document, &mut self.heights, candidate);
         } else {
-            self.state.remove(&mut self.heights, id);
+            self.state.remove(document, &mut self.heights, id);
         }
         self.version += 1;
         self.expire_from(document, candidate.hidden.start)?;
@@ -687,7 +820,19 @@ impl<S> FoldView<S> {
         for (slot, &id) in growing.iter_mut().zip(&self.state.growing) {
             *slot = Some(id);
         }
-        let mut dirty = None::<usize>;
+        let mut dirty = self.state.open_containers.first().map(|&(start, _)| start);
+        if dirty.is_some() {
+            self.range_visits += 1; // One shared tail, independent of open depth.
+        }
+        for &id in &update.closed_containers {
+            if self.state.collapsed.contains_key(&FoldId::Container(id)) {
+                self.range_visits += 1;
+                let new = document.fold_candidate(FoldId::Container(id)).unwrap();
+                self.state.refresh(document, &mut self.heights, new);
+                dirty = Some(dirty.unwrap_or(usize::MAX).min(new.hidden.start));
+            }
+        }
+        self.state.refresh_open_tiles(document, &mut self.heights);
         for id in growing.into_iter().flatten() {
             self.range_visits += 1;
             let old = self.state.collapsed[&id].candidate;

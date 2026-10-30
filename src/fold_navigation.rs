@@ -83,7 +83,8 @@ impl FoldNavigation {
     /// action, checking visibility and opening/skipping one enclosing fold, or
     /// locating the final estimated row. No body scan or tile layout is performed;
     /// source boundary validation only needs a constant-time UTF-8 boundary check.
-    /// At most six heading ancestors and one code fold can hide a destination.
+    /// Deep container paths resume after each opened ancestor; lookup uses an
+    /// index and does not walk the rest of the path in the same step.
     /// Visible-only traversal resumes after each skipped range, not at its start.
     pub fn advance<S>(
         &mut self,

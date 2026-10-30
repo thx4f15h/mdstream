@@ -273,3 +273,17 @@
 - [x] **章节关系与动作**：当前所属章节、父章节、首个子章节、同父的前后兄弟、严格同级及按级别上限的前后标题分别定义。跨级标题的父节点取最近有效的级别数值更小的标题；章节关系与列表/引用容器父关系分开保存或查询，避免将相同级别误当兄弟。
 
 - [x] 增补标准语法样例覆盖，单独报告具体支持范围，不把自身回归测试通过当作 CommonMark/GFM 合规率。已固定 CommonMark 0.31.2 autolink 19 个样例及 24 个选定显示文本样例；其余范围及 GFM 全集仍未评分，见 README。
+
+## 2026-10-30 显式容器折叠核心交付
+
+`FoldId::Container(ContainerId)` 将显式 Quote/List/Item 的稳定身份和范围接入独立 `FoldView`，支持整段引用、列表、条目、空内容与任务条目。范围覆盖物理行及前缀，共用一个占位；摘要仅借用源码，读取受字节上限与共享 Budget 约束。容器父节点是结构父容器，根容器挂在顶层章节下；容器内表格改为挂在确切容器下，内层标题仍不作为独立折叠候选。父收放、临时展开、resize 和流式追加保留子意愿，源码及解析属性不变。
+
+候选游标二分并归并块与容器 opener，每步消费一个 query/object，同起点按容器前序外到内输出后再输出叶块。批量 All/Subtree/Siblings/Focus 接入容器，同起点且同范围的 List/Item/Table 通过前序消歧，避免误改祖先/后代。Reveal 每步只展开一个遮蔽者，任意深路径可跨帧恢复；VisibleOnly 跳过整段，源码锚点保留原始位置。旧任务、测量 ticket、错误文档、预算原子性和重复 Update 行为保持。
+
+视图新增按 ContainerId 索引的稀疏最大终点树，开放范围使用开放终点标记，关闭事件才固化；查询最外层容器 O(log C)，不遍历祖先。开放容器同在活动路径，共享一次完整 tile 遮蔽并集更新；每次 apply 的容器成本 O((E + 1)(log C + log F + log T))，E 为关闭事件数，与仍开放的深度无关。独立范围仅处理最多六个顶层章节和一个代码/表格块。`container_index_visits` / `container_index_nodes` 提供访问与存储证据；索引保留位置为 O(C)，反复切换不积累快照。诊断计数保留 FoldView 的 Send/Sync，仍为零运行时依赖、禁止 unsafe。
+
+新增 12 项验收：UTF-8 全切点、逐前缀和合并更新；同 tile/同起点父子与章节/表格组合；空内容/EOF/任务元数据；预览跨增长、关闭和 finish；200 层导航逐帧计费；千层开放链下百万字正文、1000 次逐字追加只做 1000 次共享尾部检查且无容器索引写入；有限布局预算内一个占位、正文回调/计费字节为 0；4096 个关闭兄弟的查询计数与反复切换节点上界；固定种子 2000 次操作及 240 次混合流式更新对照独立区间/高度模型。既有批量测试同步计入新容器候选的访问和状态变化，原来的非候选叶块仍逐步计费。
+
+项目 devShell 下 `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 250 项、`cargo test --doc` 23 项、`cargo fmt --all -- --check` 与 `git diff --check` 全通过。`cargo run -r --example container_folding` 展示追加只访问共享容器尾部及开放表格共 2 个范围，父预览保留子意愿，6 个预算帧恢复 quote/item/table 下的源码位置 42。验收日志：`/tmp/mdtui3-container-folds-validation.log`。README、TODO 已同步。
+
+本单元交付显式容器折叠核心，保留内层章节独立折叠、容器深度/类型/任务默认策略、实际摘要和容器布局、终端 UI，以及原有未实现容器语法。开放折叠暂纳入未分类尾部、确认边界后回退，原 Container 结构范围仍只包含已分类输入；不声称整个容器/折叠规划完成。
