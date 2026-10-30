@@ -453,3 +453,19 @@
 项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 394 项、`cargo test --doc` 34 项、`cargo fmt --all -- --check` 和 `git diff --check`。`cargo run -r --example long_delimiters` 检查 1000008 个分隔行字节，13 帧/72 个计费字节读取表头与正文摘要（跨帧读取窗口可重叠）。日志：`/tmp/mdtui3-long-delimiters-validation.log`、`/tmp/mdtui3-long-delimiters-release.log`。
 
 本单元未移除表头长度上限；长表头成功后的单元格语义提交、失败后的前序行内状态恢复，以及其它 Setext/fence/容器分类上限继续保留 TODO。未实现终端 UI，也不声明整个语法上限方向已完成。
+
+## 2026-10-30 早管道长表头识别核心交付
+
+本单元交付长表头的独立子项：分类前缀内已有未转义 `|` 的顶层或显式容器普通正文，可以延伸任意长的表头候选。沿用既有不完整行分类、确切容器作用域、首尾管道/空白及反斜线奇偶规则；不在长尾重试容器、标题或定义分类。首个管道晚于窗口的长行仍保持即时普通行内解析，余项明确保留 TODO。完整方言与示例见 [README](README.md#表格任务列表与图片)。
+
+算法先用列数和少量布尔状态逐字节摘要，不分配单元格数组或复制候选原文。LF 后固定列数，等待紧邻分隔行；CRLF 可跨分块。候选不提前发布行内样式、链接、数学或脚注对象；成功时结束前序状态、按独立单元格语义消费一次，失败/EOF 时把候选交给保留的段落/容器行内状态一次。原块身份、单行 Setext 回退、原顶层段落端点、容器共享末端及范围失效协议保持。长分隔行晚失败只回退原有有界前缀，禁止在该行重开长表头候选。
+
+`Work.table_header_bytes` 统计摘要检查，候选每个字节至多一次；另一次语义消费只发生在确认或回退时，已解析历史正文不重放。候选附加状态 O(1)，分隔行对齐数组 O(表头列数)，确认后才创建正式列/单元格；稀疏行不补空矩阵，原始 String、tile 和正式语义索引保持总空间 O(n)，累计解析 O(n log n)。早管道长表头已分类，`pending()` 为空，原文可按 tile 预览；长分隔行探测继续保留有界 pending 前缀。长表头确认/失败可能单次消费全部延迟内容，未承诺解析调用硬时延或字节预算。
+
+新增 15 项验收：`tests/long_headers.rs` 13 项、`tests/chunking.rs` 1 项、摘要语法模型 1 项。117649 组独立 split/trim 对照验证列数、转义奇偶、首尾管道和空白；UTF-8 全切点/逐标量中间快照覆盖成功、失败、EOF、CRLF、窗口处转义及原有段落状态。表格/容器组合覆盖任务/有序列表、兄弟/嵌套/lazy 拒绝、代码优先、单元格隔离、对象仅发布一次、长分隔行回退、稳定 BlockId 与源码范围、旧测量/缓存失效、合并 Update、章节父关系及父子折叠意愿。
+
+复杂度与内存验收：千层引用下百万字候选只增加新字节摘要计数，分类、行内、容器/标题步骤、容器及注解 arena 容量不变；成功/失败后不重复消费。250 层列表保持 500 个容器身份；1000 个连续失败候选的摘要量等于一次行内消费量。4096 列加 4000 个稀疏正文行只分配 8096 个真实单元格；400 组成功/失败输入对照独立表/行/单元格范围模型。共享 Budget 摘要在 64 字节源码上限停止，零预算不推进；百万字表头折叠后追加新行，实际布局仅回调一个占位、正文及计费字节均为 0。
+
+项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 409 项、`cargo test --doc` 35 项、`cargo fmt --all -- --check` 和 `git diff --check`。`cargo run -r --example long_headers` 摘要扫描 1000012 字节、显示摘要 15 帧/100 个计费字节；原 `long_delimiters` 示例仍为 13 帧/72 个计费字节。完整日志：`/tmp/mdtui3-long-headers-validation.log`。
+
+README、TODO 已同步；只勾选已交付的早管道长表头子项。晚管道表头的语义撤销/延迟策略、其它分类长度限制和终端 UI 继续保留待办。

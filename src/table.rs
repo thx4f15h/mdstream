@@ -90,7 +90,45 @@ pub(crate) struct HeaderCandidate {
     pub columns: usize,
 }
 
-/// A long separator keeps only one finite-state cell and at most the bounded
+pub(crate) struct StreamingHeader {
+    pub header: HeaderCandidate,
+    pub summary: HeaderSummary,
+}
+
+/// Column count for split/trim grammar, without storing cells or source text.
+/// An early pipe opts a long text line into delayed semantic commitment.
+#[derive(Default)]
+pub(crate) struct HeaderSummary {
+    columns: usize,
+    started: bool,
+    escaped: bool,
+    tail: bool,
+    pub pipe: bool,
+}
+
+impl HeaderSummary {
+    pub fn feed(&mut self, text: &str, work: &mut crate::Work) {
+        for byte in text.bytes() {
+            work.table_header_bytes += 1;
+            if byte == b'|' && !self.escaped {
+                self.pipe = true;
+                self.columns += usize::from(self.started);
+                self.tail = false;
+            } else if !byte.is_ascii_whitespace() {
+                self.tail = true;
+            }
+            self.started |= !byte.is_ascii_whitespace();
+            self.escaped = byte == b'\\' && !self.escaped;
+        }
+    }
+
+    pub fn columns(&self) -> Option<usize> {
+        let count = self.columns + usize::from(self.tail);
+        (self.pipe && count > 0).then_some(count)
+    }
+}
+
+/// A long separator keeps only one finite-state cell and at most the
 /// header's column count. Each candidate byte is examined once; no source copy.
 pub(crate) struct DelimiterCandidate {
     pub prefix: Span,
@@ -408,6 +446,31 @@ impl RowParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn header_summary_matches_split_grammar_with_constant_storage() {
+        let alphabet = b"a|\\ \t\r\n";
+        assert!(std::mem::size_of::<HeaderSummary>() <= 2 * std::mem::size_of::<usize>());
+        for mut value in 0..7_usize.pow(6) {
+            let mut bytes = [b' '; 6];
+            for byte in &mut bytes {
+                *byte = alphabet[value % 7];
+                value /= 7;
+            }
+            let text = std::str::from_utf8(&bytes).unwrap();
+            let mut summary = HeaderSummary::default();
+            let mut work = crate::Work::default();
+            for byte in text.as_bytes().chunks(1) {
+                summary.feed(std::str::from_utf8(byte).unwrap(), &mut work);
+            }
+            assert_eq!(
+                summary.columns(),
+                split(text, Span::new(0, 6)).map(|c| c.len()),
+                "{text:?}"
+            );
+            assert_eq!(work.table_header_bytes, 6);
+        }
+    }
 
     #[test]
     fn streaming_delimiter_matches_bounded_grammar_exhaustively() {

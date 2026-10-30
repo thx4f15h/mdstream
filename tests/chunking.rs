@@ -253,6 +253,46 @@ fn streaming_unicode_table_rows_match_single_chunk_input() {
 }
 
 #[test]
+fn long_headers_match_utf8_splits_live_prefixes_confirmation_and_fallback() {
+    for source in [
+        format!(
+            "> - *prior\n>   end*|{} `x\\|y` [x](u) $m$ [^n]\r\n>   |-|-\r\n>   v|z\n",
+            "中🙂".repeat(160)
+        ),
+        format!(
+            "*prior\nend*|{}\n|{}|-\n",
+            "x".repeat(1030),
+            "-".repeat(1030)
+        ),
+        format!(
+            "> *prior\n> end*|{}\r\n> wrong\n> ---\n",
+            "中🙂".repeat(160)
+        ),
+        format!("> |{}\r\n", " ".repeat(1030)),
+        format!("|{}\\|tail|last\r\n|-|-", "x".repeat(1022)),
+        format!("intro\n|**{}**|b", "中🙂".repeat(160)),
+    ] {
+        for (at, _) in source.char_indices() {
+            check_chunks(&source, &[at]);
+        }
+        let mut live = Document::new();
+        for (at, c) in source.char_indices() {
+            let end = at + c.len_utf8();
+            live.append(&source[at..end]).unwrap();
+            let mut whole = Document::new();
+            whole.append(&source[..end]).unwrap();
+            assert_eq!(snapshot(&live), snapshot(&whole), "prefix {end}");
+            assert!(live.pending().len() <= BLOCK_LOOKAHEAD + 3);
+        }
+        live.finish();
+        let mut whole = Document::new();
+        whole.append(&source).unwrap();
+        whole.finish();
+        assert_eq!(snapshot(&live), snapshot(&whole));
+    }
+}
+
+#[test]
 fn deterministic_fuzz_chunk_invariance_and_source_coverage() {
     let alphabet = [
         "a", " ", "\n", "\r", "*", "_", "`", "~", "[", "]", "(", ")", "\\", ":", "#", ">", "-",

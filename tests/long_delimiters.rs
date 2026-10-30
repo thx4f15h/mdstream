@@ -277,7 +277,7 @@ fn confirmation_invalidates_layout_and_fold_updates_can_be_merged() {
 }
 
 #[test]
-fn bounded_header_and_other_long_block_candidates_remain_out_of_scope() {
+fn late_first_header_pipe_and_other_long_block_candidates_remain_out_of_scope() {
     for prefix in ["", "> "] {
         let source = format!("{prefix}{}|b\n{prefix}-|-\n", "x".repeat(BLOCK_LOOKAHEAD));
         assert!(parse(&source).tables().is_empty());

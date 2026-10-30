@@ -166,6 +166,7 @@ pub struct Document {
     headings: HeadingIndex,
     tables: Vec<Table>,
     table_header: Option<table::HeaderCandidate>,
+    streaming_header: Option<table::StreamingHeader>,
     table_delimiter: Option<table::DelimiterCandidate>,
     // One physical inline payload can become a container Setext heading on the
     // next explicit line. Its text is never copied or reparsed on confirmation.
@@ -287,10 +288,12 @@ impl Document {
     /// A bounded provisional line prefix, already included in the tiles as raw
     /// text. It is classified at newline, EOF, or the lookahead limit. A long
     /// separator probe retains this bounded prefix while its raw tail grows.
+    /// An eligible long header has already been classified; its raw payload is
+    /// deferred separately and does not enlarge this pending prefix.
     pub fn pending(&self) -> Span {
         if let Some(delimiter) = &self.table_delimiter {
             delimiter.prefix
-        } else if self.streaming.is_some() {
+        } else if self.streaming.is_some() || self.streaming_header.is_some() {
             Span::new(self.source.len(), self.source.len())
         } else {
             Span::new(self.line_start, self.source.len())
@@ -461,6 +464,32 @@ impl Document {
                 } else {
                     self.table_delimiter = Some(delimiter);
                 }
+            } else if let Some(mut candidate) = self.streaming_header.take() {
+                let start = cursor;
+                while cursor < end {
+                    let newline = self.source.as_bytes()[cursor] == b'\n';
+                    cursor += 1;
+                    self.work.input_bytes += 1;
+                    if newline {
+                        break;
+                    }
+                }
+                candidate
+                    .summary
+                    .feed(&self.source[start..cursor], &mut self.work);
+                candidate.header.source.end = cursor;
+                candidate.header.content.end = cursor;
+                if let Some(block) = candidate.header.block {
+                    self.blocks[block.0].source.end = cursor;
+                }
+                self.containers.end = cursor;
+                self.headings.parsed_end = cursor;
+                if self.source.as_bytes()[cursor - 1] == b'\n' {
+                    self.finish_header(candidate, update);
+                    self.line_start = cursor;
+                } else {
+                    self.streaming_header = Some(candidate);
+                }
             } else if let Some(line) = self.streaming {
                 let start = cursor;
                 while cursor < end {
@@ -488,7 +517,7 @@ impl Document {
                     if !newline && self.probe_long_delimiter(span) {
                         continue;
                     }
-                    self.commit_line(span, newline, update);
+                    self.commit_line(span, newline, true, update);
                     if newline {
                         self.line_start = cursor;
                     }
@@ -516,10 +545,17 @@ impl Document {
         update.revision = self.revision;
         if let Some(delimiter) = self.table_delimiter.take() {
             self.finish_long_delimiter(delimiter, self.source.len(), update);
+        } else if let Some(candidate) = self.streaming_header.take() {
+            self.finish_header(candidate, update);
         } else if let Some(line) = self.streaming.take() {
             self.end_line(line, update);
         } else if self.line_start < self.source.len() {
-            self.commit_line(Span::new(self.line_start, self.source.len()), true, update);
+            self.commit_line(
+                Span::new(self.line_start, self.source.len()),
+                true,
+                true,
+                update,
+            );
         }
         self.flush_table_header(update);
         self.close_current(update);
@@ -764,7 +800,7 @@ impl Document {
         // Reclassify only the original bounded prefix, using the same incomplete
         // line rules as before this extension. Consume the delayed suffix once;
         // it cannot become another header/probe or trigger a full-line retry.
-        self.commit_line(prefix, false, update);
+        self.commit_line(prefix, false, false, update);
         let line = self.streaming.unwrap();
         if end > prefix.end {
             self.extend_line(line, Span::new(prefix.end, end), update);
@@ -776,7 +812,13 @@ impl Document {
         }
     }
 
-    fn commit_line(&mut self, span: Span, complete: bool, update: &mut Update) {
+    fn commit_line(
+        &mut self,
+        span: Span,
+        complete: bool,
+        allow_long_header: bool,
+        update: &mut Update,
+    ) {
         self.work.classified_bytes += span.len() as u64;
         self.containers.end = span.end;
         self.headings.parsed_end = span.end;
@@ -913,10 +955,11 @@ impl Document {
             }
             self.close_current(update);
         }
-        if complete
-            && table_text
-            && let Some(cells) = table::split(&self.source, content)
-        {
+        let mut summary = table::HeaderSummary::default();
+        if table_text && (complete || allow_long_header) {
+            summary.feed(&self.source[content.range()], &mut self.work);
+        }
+        if summary.pipe && (!complete || summary.columns().is_some()) {
             let block = if paragraph && self.containers.inner().is_none() {
                 None
             } else {
@@ -930,13 +973,18 @@ impl Document {
                     self.new_block(span, kind, update)
                 })
             };
-            self.table_header = Some(table::HeaderCandidate {
+            let header = table::HeaderCandidate {
                 block,
                 source: span,
                 content,
                 container: self.containers.inner(),
-                columns: cells.len(),
-            });
+                columns: summary.columns().unwrap_or(0),
+            };
+            if complete {
+                self.table_header = Some(header);
+            } else {
+                self.streaming_header = Some(table::StreamingHeader { header, summary });
+            }
             self.mark(span, Style::default(), update);
             self.mark(Span::new(span.start, content.start), Style::HIDDEN, update);
             let end = block::body_end(&self.source, span);
@@ -1259,6 +1307,19 @@ impl Document {
     fn flush_table_header(&mut self, update: &mut Update) {
         if let Some(header) = self.table_header.take() {
             self.feed_header(header, update);
+        }
+    }
+
+    fn finish_header(&mut self, mut candidate: table::StreamingHeader, update: &mut Update) {
+        let end = block::body_end(&self.source, candidate.header.source);
+        if end + 2 == candidate.header.source.end {
+            self.mark(Span::new(end, end + 1), Style::HIDDEN, update);
+        }
+        if let Some(columns) = candidate.summary.columns() {
+            candidate.header.columns = columns;
+            self.table_header = Some(candidate.header);
+        } else {
+            self.feed_header(candidate.header, update);
         }
     }
 

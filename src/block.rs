@@ -1,7 +1,7 @@
 use crate::Span;
 
 /// General block classification prefix bound (+3 to finish UTF-8). A long
-/// table-separator probe can defer a raw suffix without buffering/copying it.
+/// table header/separator can defer a raw suffix without buffering/copying it.
 pub const BLOCK_LOOKAHEAD: usize = 1024;
 pub const MAX_FENCE_LENGTH: usize = 32;
 

@@ -273,11 +273,14 @@ fn every_utf8_cut_and_live_prefix_preserves_tables_and_display() {
 }
 
 #[test]
-fn header_limit_counts_container_prefix_but_delimiters_can_stream() {
+fn header_pipe_window_counts_container_prefix_but_candidates_can_stream() {
     let prefix = ">".repeat(BLOCK_LOOKAHEAD - 4);
     let accepted = parse(&format!("{prefix}a|b\n{prefix}-|-\n"));
     assert_eq!(accepted.tables().len(), 1);
     let prefix = ">".repeat(BLOCK_LOOKAHEAD - 3);
+    let accepted = parse(&format!("{prefix}a|b\n{prefix}-|-\n"));
+    assert_eq!(accepted.tables().len(), 1);
+    let prefix = ">".repeat(BLOCK_LOOKAHEAD - 1);
     let rejected = parse(&format!("{prefix}a|b\n{prefix}-|-\n"));
     assert!(rejected.tables().is_empty());
     for (source, tables) in [
