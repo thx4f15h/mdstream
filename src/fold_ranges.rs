@@ -37,6 +37,8 @@ impl FoldRanges {
     }
 
     pub fn set(&mut self, id: usize, end: usize) {
+        // id is a source position or an allocated arena index (< isize::MAX).
+        // The usize::MAX open sentinel is an endpoint only, never a tree key.
         while id >= self.capacity {
             let root = self.nodes.len();
             self.nodes.push(Node {

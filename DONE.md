@@ -1023,3 +1023,28 @@ README/TODO 已同步。本单元完成有预算自动注册与源码字节长�
 项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 **867 项**、`cargo test --doc` **67 项**、`cargo fmt --all -- --check`、`git diff --check`。完整日志 `/tmp/mdtui3-syntax-fuzz-validation.log`；专项及旧分块回归 `/tmp/mdtui3-syntax-fuzz-targeted.log`；CLI 生成/故障/重放 `/tmp/mdtui3-syntax-fuzz-cli.log`，原件及缩减文件在 `/tmp/mdtui3-syntax-fuzz-{lose-style,bad-range,split-crlf}.case[.min]`。
 
 README/TODO 已同步。完成可复现语法生成和失败缩减，不将自比较当作 CommonMark/GFM 合规率或覆盖率引导 fuzz；32 位索引执行、更广性能矩阵、其余语法边界及终端 UI 继续保留 TODO。
+
+## 2026-10-30 32 位索引边界验证交付
+
+审计四类稀疏索引的容量倍增、中点、端点/开放哨兵、arena 索引和容量字节乘积，以及高度宽整数转换、预算累计、源码窗口、对象查询和有界语法整数。`HeightIndex::grow_to` 保持长度不超过 `isize::MAX`，`CheckpointIndex::insert` 保持 ID 小于该上限；树容量最多到 `isize::MAX + 1`。内部标注范围来自 String 或已验证的高度端点，折叠树键来自 arena；开放终点 `usize::MAX` 不作为树键。高度先扩为 u128 再乘，定位商/余数分别受子树宽度/u64 高度限制。README 的审计表记录了各项前提及未验证边界。
+
+修复 `HeightIndex::ticket(TileId(usize::MAX))` 在检查结果为 false 时仍因 `then_some` 急切构造而计算 `+1` 的问题。新增回归在原代码上确实触发 debug 溢出（`/tmp/mdtui3-index32-reproduction.log`），改成 `then` 延迟构造后正常返回 None；公开 API、有效测量行为和复杂度不变。其余生产代码仅补充边界说明，没有增加运行时依赖或 unsafe，也没有改动解析方言/标准期望。
+
+新增 `src/index_boundaries.rs` 共 **11 项**独立验收，使用 u128 坐标的线性区间、稀疏写入日志和 BTreeMap 对照实际索引，不复制二叉树实现、不分配巨型源码/叶数组。32 位运行覆盖全部二次幂附近、2,147,483,647 长度与最后有效 tile；64 位同时运行上述边界和本机 `isize::MAX` 边界。覆盖：
+
+- 每个边界的增长、前缀高度、超过 u64 的总高度、`u64::MAX` 单片高度与双向定位；每种长度上限 160 次赋值/置零/失效/重置模型及嵌套遮蔽/基础高度保留。
+- 检查点 80 次插入/区间失效与有序前驱模型，最大距离查询、版本令牌/旧测量拒绝、最后有效位置及单步共享预算回收。
+- 标注 48 次覆盖的全部常值区间/点样式、链接优先级、最新版本和可见位置；折叠 128 次稀疏登记/关闭与严格 before/offset、开放终点模型。
+- 六维极值预算的宽整数原子扣费模型，`u128::MAX` 视口与尾部三片分帧恢复，最大无效 ID/源码范围拒绝及源码窗口裁剪。
+
+四类树的修改和折叠候选查询访问数按字长上限验收，标注遍历按写入数×字长限制访问数；高度每次修改至多分配两条边界路径、reset 仅一次操作。没有通过增大预算或枚举稀疏空洞来使测试通过。
+
+新增仅 `x86_64-linux` 提供的 `index32` devShell，使用现有 flake.lock 的 Rust **1.99.1**、i686 std、Nix i686 GCC/glibc；默认环境保持原工具链，flake.lock 未改。`nix develop .#index32 -c bash scripts/check-index32.sh` 可复跑目标的 check/clippy、debug/release nextest、文档与格式检查，无法链接/执行时直接报错。通过 nextest JSON 查询真实测试路径并读取 ELF 头确认 **ELFCLASS32 / little endian / EM_386**，不是仅模拟 u32 或仅完成交叉编译。
+
+项目 devShell 完整验收通过：x86_64 与 i686 各执行 `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 **878 项、0 skipped**，两个目标的文档测试各 **67 项**；`cargo fmt --all -- --check`、`nixfmt --check flake.nix`、`bash -n scripts/check-index32.sh`、`git diff --check` 通过。既有标准样例、144 例固定种子语法 fuzz/19,536 开放前缀、百万字/深嵌套及预算回归全部保留并在两种字长执行。日志：
+
+- x86_64 完整验收：`/tmp/mdtui3-index32-native-validation.log`。
+- i686 完整验收：`/tmp/mdtui3-index32-validation.log`；工具链准备/首次目标检查：`/tmp/mdtui3-index32-bootstrap.log`。
+- 两种字长的 11 项专项：`/tmp/mdtui3-index32-targeted-final.log`；ELF 核验：`/tmp/mdtui3-index32-elf.log`。
+
+README/TODO 已同步。稀疏索引验证不保证接近 2 GiB 的真实文档/密集 arena 可分配；OOM/分配失败恢复、进程级身份耗尽、u64 revision/序列/计数器绕回及其它 32 位 ABI/无 64 位原子的平台未实测。更广性能矩阵、其余语法边界及终端 UI 继续保留 TODO。

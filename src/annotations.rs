@@ -69,6 +69,8 @@ impl Annotations {
         if span.is_empty() {
             return;
         }
+        // Callers supply source String endpoints or validated HeightIndex
+        // endpoints (<= isize::MAX); doubling can reach but not exceed its +1.
         while self.capacity < span.end {
             let root = self.nodes.len();
             self.push_node(Node {

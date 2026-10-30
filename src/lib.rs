@@ -38,6 +38,8 @@ mod frame;
 mod heading_search;
 mod headings;
 mod history;
+#[cfg(test)]
+mod index_boundaries;
 mod inline;
 mod layout;
 mod math;

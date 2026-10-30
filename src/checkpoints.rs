@@ -119,6 +119,8 @@ impl<S> CheckpointIndex<S> {
         self.visits
     }
 
+    /// Tile indices must be below `isize::MAX`, matching HeightIndex's maximum
+    /// length and keeping the exclusive power-of-two capacity representable.
     pub fn insert(&mut self, tile: TileId, state: S) -> Result<Option<S>, LayoutError> {
         if tile.0 >= isize::MAX as usize {
             return Err(LayoutError::InvalidRange);

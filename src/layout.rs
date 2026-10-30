@@ -222,6 +222,8 @@ impl HeightIndex {
     }
 
     /// Grow without visiting the new leaves. Shrinking is intentionally unsupported.
+    /// Lengths above `isize::MAX` are rejected; the power-of-two tree capacity
+    /// can then reach at most `isize::MAX + 1`, which still fits in `usize`.
     pub fn grow_to(&mut self, len: usize) -> Result<(), LayoutError> {
         if len < self.len || len > isize::MAX as usize {
             return Err(LayoutError::InvalidRange);
@@ -286,7 +288,7 @@ impl HeightIndex {
     }
 
     pub fn ticket(&self, tile: TileId) -> Option<Measurement> {
-        (tile.0 < self.len).then_some(Measurement {
+        (tile.0 < self.len).then(|| Measurement {
             tile,
             epoch: self.layout_epoch,
             view: self.identity,
@@ -397,6 +399,8 @@ impl HeightIndex {
                     height
                 };
                 // A zero subtree cannot contain a row selected from a positive sum.
+                // rest is below this subtree's sum, so the quotient is < hi-lo
+                // and the remainder is < height, even with 32-bit tile indices.
                 let tile = lo + (rest / u128::from(height)) as usize;
                 return Some(Anchor {
                     tile: TileId(tile),
