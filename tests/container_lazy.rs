@@ -336,6 +336,7 @@ fn streaming_ranges_and_closures_match_independent_lazy_quote_model() {
                 kind: ContainerKind::Quote,
                 source: Span::new(old_end, old_end),
                 state: SyntaxState::Growing,
+                list_tightness: None,
             });
         }
         let update = doc.append(&line).unwrap();

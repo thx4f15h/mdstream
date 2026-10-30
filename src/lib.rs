@@ -57,7 +57,9 @@ pub use block::{BLOCK_LOOKAHEAD, MAX_FENCE_LENGTH};
 pub use budget::{Budget, Completion, WorkLimit};
 pub use cache::{CacheValidity, DependencyKey, SourceSnapshot};
 pub use checkpoints::{CheckpointIndex, CheckpointToken};
-pub use containers::{Container, ContainerAncestors, ContainerId, ContainerKind, ListMarker};
+pub use containers::{
+    Container, ContainerAncestors, ContainerId, ContainerKind, ListMarker, ListTightness,
+};
 pub use destination::{MAX_DESTINATION_BYTES, MAX_LINK_SUFFIX_BYTES, MAX_LINK_TITLE_BYTES};
 pub use display::{DisplayCursor, DisplayRun, DisplayRuns, DisplayStep};
 pub use display_search::{DisplayMatch, DisplaySearch};
@@ -520,6 +522,7 @@ impl Document {
         let mut rows_changed = std::mem::take(&mut update.rows_changed);
         let mut changes = std::mem::take(&mut update.changes);
         let mut closed_containers = std::mem::take(&mut update.closed_containers);
+        let mut loosened_lists = std::mem::take(&mut update.loosened_lists);
         dirty.clear();
         references_changed.clear();
         footnotes_changed.clear();
@@ -527,6 +530,7 @@ impl Document {
         rows_changed.clear();
         changes.clear();
         closed_containers.clear();
+        loosened_lists.clear();
         *update = Update {
             document: Some(self.id),
             base_revision: self.revision,
@@ -549,6 +553,7 @@ impl Document {
             footnotes_changed,
             new_containers: self.containers.len()..self.containers.len(),
             closed_containers,
+            loosened_lists,
             container_end: self.containers.end,
             changed_blocks: self.blocks.len()..self.blocks.len(),
             changed_links: self.links.len()..self.links.len(),
@@ -714,6 +719,7 @@ impl Document {
         );
         let mut content = span;
         let mut container_line = None;
+        let mut container_blank = false;
         let mut lazy = false;
         let mut table_text = matches!(classification, Line::Text);
         if self.fence.is_none() || fence_scope.is_some() {
@@ -725,6 +731,7 @@ impl Document {
             );
             let new_start = self.containers.len();
             let closed_start = update.closed_containers.len();
+            let loosened_start = update.loosened_lists.len();
             let line = self.containers.line(
                 &self.source,
                 span,
@@ -758,6 +765,13 @@ impl Document {
                     self.work.classified_bytes += inner.len() as u64;
                     block::classify(&self.source, inner, complete, self.fence, same_scope)
                 };
+                container_blank = matches!(inner_classification, Line::Blank);
+                self.containers.observe_payload(
+                    container_blank,
+                    span.start,
+                    &mut self.work,
+                    update,
+                );
                 table_text = !lazy && matches!(inner_classification, Line::Text);
                 classification = match inner_classification {
                     leaf @ (Line::Heading { .. }
@@ -774,6 +788,12 @@ impl Document {
                     },
                 };
                 container_line = Some(line);
+            }
+            // A list's spacing is shared metadata. Invalidate its old source
+            // interval once without touching any old item, block or tile.
+            for index in loosened_start..update.loosened_lists.len() {
+                let list = self.containers.get(update.loosened_lists[index]).unwrap();
+                self.mark(list.source, Style::default(), update);
             }
         }
         if let Some(header) = header {
@@ -995,10 +1015,7 @@ impl Document {
             }
             Line::Container { prefix, kind } => {
                 payload.start = prefix;
-                let blank = complete
-                    && self.source[prefix..body_end]
-                        .bytes()
-                        .all(|b| b.is_ascii_whitespace());
+                let blank = container_blank;
                 inline = !blank;
                 container_text = !blank;
                 standalone = blank;

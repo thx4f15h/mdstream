@@ -27,6 +27,14 @@ pub enum ContainerKind {
     },
 }
 
+/// List spacing in the explicit-container dialect. Tight can become Loose
+/// until the list is Sealed; Loose never reverts. This does not perform layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ListTightness {
+    Tight,
+    Loose,
+}
+
 /// A current-revision snapshot. Growing ranges share a single parsed endpoint;
 /// querying a parent does not traverse its descendants. Root depth is one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,6 +44,9 @@ pub struct Container {
     pub kind: ContainerKind,
     pub source: Span,
     pub state: SyntaxState,
+    /// Present only on List nodes. Read the parent list instead of copying its
+    /// spacing onto every Item or leaf block. See ListTightness for finality.
+    pub list_tightness: Option<ListTightness>,
 }
 
 /// Borrowed ancestry walk, starting with the requested container. The borrow
@@ -76,7 +87,14 @@ enum Active {
         item: ContainerId,
         indent: usize,
         content_indent: usize,
+        spacing: ItemSpacing,
     },
+}
+
+#[derive(Clone, Copy, Default)]
+struct ItemSpacing {
+    has_content: bool,
+    pending_blank: bool,
 }
 
 impl Active {
@@ -169,6 +187,8 @@ impl Containers {
             kind,
             source: Span::new(start, start),
             state: SyntaxState::Growing,
+            list_tightness: matches!(kind, ContainerKind::List { .. })
+                .then_some(ListTightness::Tight),
         });
         work.container_steps += 1;
         id
@@ -194,6 +214,50 @@ impl Containers {
                     self.close(item, end, work, update);
                     self.close(list, end, work, update);
                 }
+            }
+        }
+    }
+
+    fn loosen(&mut self, list: ContainerId, work: &mut Work, update: &mut Update) {
+        if self.nodes[list.0].list_tightness == Some(ListTightness::Tight) {
+            self.nodes[list.0].list_tightness = Some(ListTightness::Loose);
+            update.loosened_lists.push(list);
+            work.list_steps += 1;
+        }
+    }
+
+    /// Observe only an item's direct payload or a newly opened direct child.
+    /// Blanks inside a quote/nested list never walk or update ancestor items.
+    /// A marker-only first line is not a separator; trailing blanks alone do
+    /// not loosen a list. A later sibling can confirm even an empty old item.
+    pub fn observe_payload(
+        &mut self,
+        blank: bool,
+        start: usize,
+        work: &mut Work,
+        update: &mut Update,
+    ) {
+        let Some(Active::List {
+            list,
+            item,
+            spacing,
+            ..
+        }) = self.active.last_mut()
+        else {
+            return;
+        };
+        work.list_steps += 1;
+        if blank {
+            if self.nodes[item.0].source.start != start {
+                spacing.pending_blank = true;
+            }
+        } else {
+            let loosen = spacing.has_content && spacing.pending_blank;
+            spacing.has_content = true;
+            spacing.pending_blank = false;
+            let list = *list;
+            if loosen {
+                self.loosen(list, work, update);
             }
         }
     }
@@ -238,6 +302,7 @@ impl Containers {
                     item,
                     indent,
                     content_indent,
+                    spacing,
                 } => {
                     let spaces = prefix.spaces();
                     if (keep > 0 || root_markers)
@@ -250,6 +315,10 @@ impl Containers {
                             })
                         {
                             break;
+                        }
+                        work.list_steps += 1;
+                        if spacing.pending_blank {
+                            self.loosen(list, work, update);
                         }
                         self.close_to(keep + 1, span.start, work, update);
                         self.close(item, span.start, work, update);
@@ -267,6 +336,7 @@ impl Containers {
                             item,
                             indent,
                             content_indent: marker.end - prefix.pos,
+                            spacing: ItemSpacing::default(),
                         };
                         prefix.pos = marker.end;
                         kind = BlockKind::ListItem {
@@ -329,12 +399,14 @@ impl Containers {
                 }
             }
             if prefix.quote() {
+                self.observe_payload(false, span.start, work, update);
                 let id = self.open(ContainerKind::Quote, self.inner(), span.start, work);
                 self.push(Active::Quote(id));
                 quotes += 1;
                 kind = BlockKind::Quote { depth: quotes };
                 new_item = None;
             } else if let Some(marker) = prefix.marker() {
+                self.observe_payload(false, span.start, work, update);
                 let list = self.open(
                     ContainerKind::List {
                         marker: marker.kind,
@@ -357,6 +429,7 @@ impl Containers {
                     item,
                     indent,
                     content_indent: marker.end - prefix.pos,
+                    spacing: ItemSpacing::default(),
                 });
                 prefix.pos = marker.end;
                 kind = BlockKind::ListItem {

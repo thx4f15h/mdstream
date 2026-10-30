@@ -70,6 +70,9 @@ fn check_chunks(source: &str, boundaries: &[usize]) {
 #[test]
 fn every_single_split_for_small_constructs() {
     for source in [
+        "- **中**\r\n  \r\n- 🙂\r\n",
+        "> - a\n>   \n>   - b\n>     \n>     c\n> - d\n",
+        "- ```\n  \n  ```\n  \n  tail\n",
         "> > **中\r\n> _🙂_**\\\r\nlazy\n> # end\n",
         "> - [x] ` 中\n> 🙂\nend`\n- next\n",
         "> *a|b\n|--|--|\nend*\n> title\n===\n> ---\n",
@@ -257,6 +260,8 @@ fn deterministic_fuzz_chunk_invariance_and_source_coverage() {
 #[test]
 fn provisional_semantics_match_at_every_observed_prefix() {
     let parts = [
+        "- **中**\r\n  \r\n- 🙂\r\n",
+        "> - a\n>   \n>   - b\n>     \n>     c\n> - d\n",
         "> > **中\r\n> 🙂**\nmissing\n> # end\n",
         "> - *a|b\n|--|--|\nend*\n# root\n",
         "**a _b_ c** ",

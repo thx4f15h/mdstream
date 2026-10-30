@@ -195,6 +195,9 @@ pub struct Work {
     pub container_bytes: u64,
     /// Active-frame checks and individual container opens/closes.
     pub container_steps: u64,
+    /// Direct item payload/sibling checks and one-time Tight -> Loose changes.
+    /// No descendant or ancestor scans are included or required.
+    pub list_steps: u64,
     /// Heading scope opens/closes, classified context checks and heading inserts.
     /// Each step performs at most six index operations; no ancestor/body scans.
     pub heading_steps: u64,
@@ -240,6 +243,9 @@ pub struct Update {
     pub new_containers: Range<usize>,
     /// Exact close events, innermost first; no event per growing ancestor.
     pub closed_containers: Vec<crate::ContainerId>,
+    /// Exact Tight -> Loose events, once per list (including new lists).
+    /// Closing a still-tight list is reported through closed_containers.
+    pub loosened_lists: Vec<crate::ContainerId>,
     /// Shared end of all still-open containers; excludes unclassified input.
     pub container_end: usize,
     /// Conservative contiguous object deltas, including new objects. The last
@@ -387,6 +393,7 @@ impl Update {
         self.new_containers.end = next.new_containers.end;
         self.container_end = next.container_end;
         self.closed_containers.append(&mut next.closed_containers);
+        self.loosened_lists.append(&mut next.loosened_lists);
         for (old, new) in [
             (&mut self.changed_blocks, next.changed_blocks),
             (&mut self.changed_links, next.changed_links),

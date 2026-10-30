@@ -274,6 +274,7 @@ fn quote_depth_changes_match_a_generated_independent_range_model() {
                 kind: ContainerKind::Quote,
                 source: Span::new(start, start),
                 state: SyntaxState::Growing,
+                list_tightness: None,
             });
         }
         start += line.len();

@@ -422,3 +422,17 @@
 附加巡检发现 `examples/container_tables.rs:30` 仍把表格折叠父节点断言为顶层标题，实际已是条目容器；在改动前提交 `a976459` 的独立源码副本中复现相同失败（`/tmp/mdtui3-lazy-baseline-example.log`）。此为既有示例断言问题，本单元未修改它；表格相关核心测试全部通过。
 
 本单元完成有界 lazy continuation 核心；tight/loose、完整 tab 缩进、分类上限、多物理行 Setext、跨行链接/图片/数学内容表示及更完整块确认/撤销规则保留 TODO，终端 UI 仍留待后续。
+
+## 2026-10-30 列表 tight/loose 显式方言核心交付
+
+列表通过 `Container.list_tightness` 共享 `ListTightness::Tight/Loose` 元数据，Quote/Item 为 None。新列表的 Tight 在 Growing 时暂定、Sealed 后最终确定；Loose 单调成立。只有确切 Item 作用域的显式空行记为待定分隔，后续直接内容、新直接子容器或同列表兄弟才确认 Loose。首行空标记、前导/末尾空行、嵌套作用域隔离、围栏代码空白及有界分类语义见 [README](README.md#列表-tightloose)。沿用无前缀空行关闭容器的既有行为，未扩大为完整 CommonMark 空行规则。
+
+`Update.loosened_lists` 每个列表只报告一次转换，可与新建/关闭事件及共享末端重建全部快照；合并只移动增量，append_into/finish_into 保留 Vec 容量，空追加与重复 EOF 无事件。确认时只改列表节点，并对源码包络做一次 O(log n) 结构/语法版本失效；历史叶块、条目、样式及链接无需回访或改写。旧 TileKey/DependencyKey、测量及检查点正常失效，屏外保留估计高度，折叠意愿不变；查询复用每层 1 query / 1 object 的祖先预算，不实现实际间距排版。
+
+新增 `tests/list_tightness.rs` 的 15 项验收，并扩充全局 UTF-8 全切点/逐前缀样本。覆盖 bullet/有序/任务/引用列表、空条目、前导/末尾/连续空行、嵌套直接子节点、标记变化、代码/标题/表格/定义及失败候选、CRLF、EOF/长空白分类上限、通知重建/合并/容量复用、缓存/旧测量失效、隐藏布局预算与分块一致性。400 组固定种子混合嵌套模板对照独立 spacing 预期，并以随机分块及一次追加对照全快照。
+
+复杂度证据：64/128/250 层列表各处理 1000 条显式空行，`list_steps` 均只增 1000，后续正文确认只增 2 步且仅最内层列表 Loose；千层引用中的列表经过 4096 条无前缀 lazy 行只增 4096 次帧检查/直接内容检查。1 与 4096 个旧条目后的晚确认同为 3 次 list_steps、3 次 container_steps，区间树访问少于 1000；历史叶块保持原值。百万字正文后 1000 次逐字追加只增 1000 inline bytes，分类/前缀/spacing 计数均不增长；已 Loose 列表不重复全范围失效。折叠百万字列表后晚确认，LayoutPass 不触发正文回调且计费 0 字节。新增持久状态为列表属性及每个活动列表帧的两个布尔摘要，不扫描祖先或子树；累计 O(n log n)、空间 O(n)、零运行时依赖与禁止 unsafe 保持。
+
+项目 devShell 验收全部通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 379 项、`cargo test --doc` 33 项、`cargo fmt --all -- --check` 和 `git diff --check`。`cargo run -r --example list_tightness` 验证两个列表的晚确定通知，6 帧读取 5 个容器并完成路径查询。日志：`/tmp/mdtui3-list-tightness-validation.log`。
+
+本单元交付有独立价值的显式方言 tight/loose 元数据与失效核心；跨无前缀空行保持列表身份、嵌套末尾空行传播、更完整缩进/块边界、实际段落间距和终端 UI 保留 TODO，不声明整个容器语义已完成。
