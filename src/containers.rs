@@ -96,6 +96,12 @@ pub(crate) struct Containers {
     allocations: u64,
 }
 
+pub(crate) struct ContainerOptions {
+    pub complete: bool,
+    pub root_markers: bool,
+    pub paragraph: Option<ContainerId>,
+}
+
 pub(crate) struct ContainerLine {
     pub prefix: usize,
     pub kind: BlockKind,
@@ -187,11 +193,15 @@ impl Containers {
         &mut self,
         source: &str,
         span: Span,
-        complete: bool,
-        root_markers: bool,
+        options: ContainerOptions,
         work: &mut Work,
         update: &mut Update,
     ) -> Option<ContainerLine> {
+        let ContainerOptions {
+            complete,
+            root_markers,
+            paragraph,
+        } = options;
         let mut prefix = Prefix::new(source, span, complete);
         let mut keep = 0;
         let mut quotes = 0;
@@ -263,6 +273,15 @@ impl Containers {
             let indent = prefix.spaces();
             if indent > 3 {
                 break;
+            }
+            // A continuing paragraph's underline wins over opening an empty
+            // nested list, but cannot consume a sibling item's marker.
+            if complete && paragraph.is_some() && paragraph == self.inner() {
+                let text = &prefix.bytes[prefix.pos + indent..prefix.end];
+                prefix.inspected += text.len() as u64;
+                if crate::block::setext_level(text).is_some() {
+                    break;
+                }
             }
             if prefix.quote() {
                 let id = self.open(ContainerKind::Quote, self.inner(), span.start, work);

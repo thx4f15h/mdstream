@@ -188,6 +188,9 @@ pub struct Work {
     pub container_bytes: u64,
     /// Active-frame checks and individual container opens/closes.
     pub container_steps: u64,
+    /// Heading scope opens/closes, classified context checks and heading inserts.
+    /// Each step performs at most six index operations; no ancestor/body scans.
+    pub heading_steps: u64,
 }
 
 /// Actual Vec arena capacity and allocation/reallocation calls. Allocator headers,

@@ -87,12 +87,8 @@ pub(crate) fn classify(
         return Line::Text;
     }
     if complete {
-        let trimmed = text.trim_ascii_end();
-        if paragraph
-            && matches!(trimmed.first(), Some(b'=' | b'-'))
-            && trimmed.iter().all(|b| *b == trimmed[0])
-        {
-            return Line::Setext(if trimmed[0] == b'=' { 1 } else { 2 });
+        if paragraph && let Some(level) = setext_level(text) {
+            return Line::Setext(level);
         }
         if let Some(definition) = definition(source, span.start + spaces, end) {
             return definition;
@@ -132,7 +128,10 @@ pub(crate) fn classify(
     }
     if text[0] == b'#' {
         let level = text.iter().take_while(|&&b| b == b'#').count();
-        if (1..=6).contains(&level) && (level == text.len() || text[level].is_ascii_whitespace()) {
+        if (1..=6).contains(&level)
+            && ((level == text.len() && complete)
+                || text.get(level).is_some_and(u8::is_ascii_whitespace))
+        {
             let mut prefix = span.start + spaces + level;
             while prefix < end && source.as_bytes()[prefix].is_ascii_whitespace() {
                 prefix += 1;
@@ -201,4 +200,11 @@ fn definition(source: &str, start: usize, end: usize) -> Option<Line> {
         destination,
         title,
     })
+}
+
+/// Caller has already removed up to three leading spaces and the physical LF.
+pub(crate) fn setext_level(text: &[u8]) -> Option<u8> {
+    let trimmed = text.trim_ascii_end();
+    (matches!(trimmed.first(), Some(b'=' | b'-')) && trimmed.iter().all(|b| *b == trimmed[0]))
+        .then(|| if trimmed[0] == b'=' { 1 } else { 2 })
 }

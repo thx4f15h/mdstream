@@ -154,6 +154,9 @@ pub struct Document {
     headings: HeadingIndex,
     tables: Vec<Table>,
     table_header: Option<table::HeaderCandidate>,
+    // One physical inline payload can become a container Setext heading on the
+    // next explicit line. Its text is never copied or reparsed on confirmation.
+    container_title: Option<(BlockId, Span)>,
     table_row: Option<table::RowParser>,
     references: References,
     annotations: Annotations,
@@ -476,8 +479,12 @@ impl Document {
         }
         self.flush_table_header(update);
         self.close_current(update);
+        let closed_start = update.closed_containers.len();
         self.containers
             .close_to(0, self.source.len(), &mut self.work, update);
+        self.sync_heading_scopes(self.containers.len(), closed_start, update);
+        self.headings
+            .context(None, self.source.len(), &mut self.work);
         self.line_start = self.source.len();
         self.fence = None;
         self.finished = true;
@@ -606,9 +613,21 @@ impl Document {
         id
     }
 
+    fn sync_heading_scopes(&mut self, new_start: usize, closed_start: usize, update: &Update) {
+        for &id in &update.closed_containers[closed_start..] {
+            let end = self.containers.get(id).unwrap().source.end;
+            self.headings.close_scope(id, end, &mut self.work);
+        }
+        for i in new_start..self.containers.len() {
+            let container = self.containers.get(ContainerId(i)).unwrap();
+            self.headings.open_scope(container.parent, &mut self.work);
+        }
+    }
+
     fn commit_line(&mut self, span: Span, complete: bool, update: &mut Update) {
         self.work.classified_bytes += span.len() as u64;
         self.containers.end = span.end;
+        self.headings.parsed_end = span.end;
         if let Some(header) = self.table_header.take() {
             if complete && let Some(columns) = table::delimiter(&self.source, span, header.columns)
             {
@@ -632,30 +651,48 @@ impl Document {
             }
             self.feed_header(header, update);
         }
+        let previous_title = self.container_title.take();
         let paragraph = self
             .current
             .is_some_and(|id| self.blocks[id.0].kind == BlockKind::Paragraph);
         let mut classification =
             block::classify(&self.source, span, complete, self.fence, paragraph);
         if self.fence.is_none() {
-            // Preserve root-level rule/Setext precedence. Inside containers only
-            // explicit prefixes and inline payload are supported in this phase.
+            // Preserve root-level rule/Setext precedence. The inner payload
+            // recognizes headings; other container block syntax stays literal.
             let root_markers = matches!(
                 classification,
                 Line::Indented { .. } | Line::Text | Line::Blank
             );
-            if let Some(line) = self.containers.line(
+            let new_start = self.containers.len();
+            let closed_start = update.closed_containers.len();
+            let line = self.containers.line(
                 &self.source,
                 span,
-                complete,
-                root_markers,
+                containers::ContainerOptions {
+                    complete,
+                    root_markers,
+                    paragraph: previous_title.and_then(|(id, _)| self.blocks[id.0].container),
+                },
                 &mut self.work,
                 update,
-            ) {
-                classification = Line::Container {
-                    prefix: line.prefix,
-                    kind: line.kind,
-                };
+            );
+            self.sync_heading_scopes(new_start, closed_start, update);
+            self.headings
+                .context(self.containers.inner(), span.start, &mut self.work);
+            if let Some(line) = line {
+                let same_scope = previous_title
+                    .is_some_and(|(id, _)| self.blocks[id.0].container == self.containers.inner());
+                let inner = Span::new(line.prefix, span.end);
+                self.work.classified_bytes += inner.len() as u64;
+                classification =
+                    match block::classify(&self.source, inner, complete, None, same_scope) {
+                        heading @ (Line::Heading { .. } | Line::Setext(_)) => heading,
+                        _ => Line::Container {
+                            prefix: line.prefix,
+                            kind: line.kind,
+                        },
+                    };
             }
         }
         if let Some(block) = self.current
@@ -722,6 +759,7 @@ impl Document {
         let mut inline = true;
         let mut standalone = false;
         let mut hidden = false;
+        let mut container_text = false;
         let id = match classification {
             Line::Text => {
                 if paragraph {
@@ -738,20 +776,31 @@ impl Document {
                 self.new_block(span, BlockKind::Blank, update)
             }
             Line::Setext(level) => {
-                let id = self.current.unwrap();
-                let content = Span::new(
-                    self.blocks[id.0].source.start,
-                    block::body_end(&self.source, self.blocks[id.0].source),
-                );
+                let (id, content) = if self.containers.inner().is_some() {
+                    previous_title.unwrap()
+                } else {
+                    let id = self.current.unwrap();
+                    (
+                        id,
+                        Span::new(
+                            self.blocks[id.0].source.start,
+                            block::body_end(&self.source, self.blocks[id.0].source),
+                        ),
+                    )
+                };
                 self.blocks[id.0].kind = BlockKind::Heading { level };
                 self.blocks[id.0].source.end = span.end;
                 let whole = self.blocks[id.0].source;
-                self.headings.push(Heading {
-                    block: id,
-                    level,
-                    source: whole,
-                    content,
-                });
+                self.headings.push(
+                    Heading {
+                        block: id,
+                        container: self.blocks[id.0].container,
+                        level,
+                        source: whole,
+                        content,
+                    },
+                    &mut self.work,
+                );
                 self.mark(whole, Style::default(), update);
                 self.mark(span, Style::HIDDEN, update);
                 self.close_current(update);
@@ -811,6 +860,7 @@ impl Document {
                         .bytes()
                         .all(|b| b.is_ascii_whitespace());
                 inline = !blank;
+                container_text = !blank;
                 let kind = if blank && kind == BlockKind::Paragraph {
                     BlockKind::Blank
                 } else {
@@ -851,13 +901,20 @@ impl Document {
                 self.feed(Span::new(body_end, span.end), update);
             }
         }
+        if container_text {
+            self.container_title = Some((id, Span::new(payload.start, body_end)));
+        }
         if let BlockKind::Heading { level } = self.blocks[id.0].kind {
-            self.headings.push(Heading {
-                block: id,
-                level,
-                source: span,
-                content: Span::new(payload.start, payload.end.min(body_end)),
-            });
+            self.headings.push(
+                Heading {
+                    block: id,
+                    container: self.blocks[id.0].container,
+                    level,
+                    source: span,
+                    content: Span::new(payload.start, payload.end.min(body_end)),
+                },
+                &mut self.work,
+            );
         }
         let line = StreamingLine {
             block: id,
@@ -875,7 +932,13 @@ impl Document {
 
     fn extend_line(&mut self, line: StreamingLine, span: Span, update: &mut Update) {
         self.containers.end = span.end;
+        self.headings.parsed_end = span.end;
         self.blocks[line.block.0].source.end = span.end;
+        if let Some((id, content)) = &mut self.container_title
+            && *id == line.block
+        {
+            content.end = block::body_end(&self.source, self.blocks[line.block.0].source);
+        }
         if line.table {
             self.feed_table_row(span, update);
             return;

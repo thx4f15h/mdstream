@@ -112,7 +112,7 @@ fn marker_styles_split_lists_but_numbers_and_item_widths_do_not() {
 }
 
 #[test]
-fn blanks_explicit_continuations_empty_tasks_and_unsupported_inner_blocks() {
+fn blanks_explicit_continuations_empty_tasks_and_other_unsupported_inner_blocks() {
     let source = "- [ ]\n  # inner\n  ---\n  ```\n  a | b\n  - | -\n  \n  tail\n\n- fresh\n>\n> >\nplain\n# outer\n";
     let doc = parsed(source);
     let b = doc.blocks();
@@ -124,7 +124,7 @@ fn blanks_explicit_continuations_empty_tasks_and_unsupported_inner_blocks() {
     assert_eq!(b[1].container, Some(item));
     assert_eq!(b[2].container, Some(item));
     assert_eq!(b[3].container, Some(item));
-    assert_eq!(doc.headings().entries().len(), 1);
+    assert_eq!(doc.headings().entries().len(), 2);
     assert!(doc.tables().is_empty());
     assert!(b.iter().all(|b| !matches!(b.kind, BlockKind::Code { .. })));
     let blank = source.find("\n\n").unwrap() + 1;
@@ -133,7 +133,7 @@ fn blanks_explicit_continuations_empty_tasks_and_unsupported_inner_blocks() {
         doc.block(doc.block_at(blank).unwrap()).unwrap().container,
         None
     );
-    assert!(visible(&doc).contains("# inner\n---\n```\n"));
+    assert!(visible(&doc).contains("inner\n---\n```\n"));
     // Root code and table classification retain priority over marker-looking bytes.
     let doc = parsed("```\n> - literal\n```\na | b\n- | -\nvalue | row\n\n    > code\n");
     assert_eq!(doc.container_count(), 0);

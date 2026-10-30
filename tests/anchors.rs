@@ -148,6 +148,8 @@ fn display_dialect_unicode_empty_and_global_suffix_collisions() {
         "a-3",
         "section-2",
         "fj-a_z",
+        "quote-only",
+        "list-only",
     ];
     for limit in [tiny(), WorkLimit::unlimited()] {
         let (index, _) = build(&doc, limit);
@@ -159,13 +161,7 @@ fn display_dialect_unicode_empty_and_global_suffix_collisions() {
                 Ok(heading(&doc, id))
             );
         }
-        for name in [
-            "body-only",
-            "secret",
-            "code-only",
-            "quote-only",
-            "list-only",
-        ] {
+        for name in ["body-only", "secret", "code-only"] {
             assert_eq!(
                 lookup(&doc, &index, &format!("#{name}"), tiny()),
                 Ok(FragmentStep::NotFound)

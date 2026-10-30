@@ -243,6 +243,19 @@
 
 本次仅完成独立可用的显式结构核心。lazy continuation、tight/loose、tab stop 缩进、容器内标题/表格/定义/代码块、跨物理行行内语义、前缀上限扩展及容器折叠/章节作用域继续保留 TODO；不声明完整 CommonMark/GFM 容器兼容性，终端 UI 未包含在本单元。
 
+## 2026-10-30 容器内标题与章节作用域交付
+
+- [x] 显式 Quote/Item 内识别 ATX 和单物理行 Setext；`Heading.container` 保存确切作用域，标题/块稳定身份、行内显示及源码映射复用既有模型。Setext 不跨兄弟条目、嵌套边界或空行，不扫描旧正文；hash run 在分类窗口内缺分隔符/完整行末时保留正文。
+- [x] 全局六级索引包含容器内标题；父子/兄弟只比较同一作用域。章节止于下一同作用域的同级/更高标题或容器边界，外层章节包含容器；`current` 通过源码上下文边界和进入时的外层章节摘要恢复，无祖先链扫描。
+- [x] 范围随共享已解析末端增长，未分类尾部沿用旧上下文，关闭后末端固定；作用域开闭各 O(1)，标题追加摊还 O(1)，查询 O(log n)，空间 O(H + C + R)。`heading_steps` 对作用域开闭、上下文检查及标题插入计数；关闭和新标题事件驱动派生范围，不枚举历史标题通知。
+- [x] 名称搜索、slug/fragment、全局/结构导航沿用预算接口；顶层折叠使用根作用域索引，内层 h1 不会截断外层章节。容器内标题暂不提供独立折叠候选，显式预览/批量目标在扣费前拒绝，保留最多六个开放顶层折叠章节的上界。
+
+验收：项目 devShell 中 `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 226 项、`cargo test --doc` 21 项、`cargo fmt --all -- --check`、`git diff --check` 全通过。`cargo run -r --example container_headings` 输出 4 个标题及精确作用域/范围，slug 以 55 帧小预算构建。日志：`/tmp/mdtui3-container-headings-validation.log`。
+
+`tests/container_headings.rs` 的 10 项验收包含混合嵌套/任务/CRLF、单行 Setext 优先级与边界、全部 UTF-8 单切点和逐标量中间快照、1200 行固定种子线性章节/导航模型、千层容器中的百万字追加和 Setext 无回扫、500 个同时开放的章节作用域以及 1 KiB 截断候选。百万字追加的 `heading_steps`/`container_steps` 不增长；Setext 确认只有 2 个 heading steps、行内扫描增量为 0；批量关闭 1000 层只处理 1001 个 heading steps。深层搜索/slug 共用每帧 6 bytes、1 query、1 object，折叠导航不读标题或正文。
+
+后续仍保留多物理行 Setext、其它容器内块、跨行行内语义、lazy continuation、tight/loose、tab 缩进/分类窗口扩展，以及容器与内层章节折叠、深度策略和终端 UI；本交付不宣称完整 CommonMark/GFM 容器支持。
+
 ## 其他已完成任务
 
 - [x] **章节关系与动作**：当前所属章节、父章节、首个子章节、同父的前后兄弟、严格同级及按级别上限的前后标题分别定义。跨级标题的父节点取最近有效的级别数值更小的标题；章节关系与列表/引用容器父关系分开保存或查询，避免将相同级别误当兄弟。

@@ -67,7 +67,8 @@ for tile in heights.viewport(100..124, 4, 32) {
 | 检查点写入、区间失效、查找最近有效前驱 | O(log T) |
 | 清空所有检查点的有效性 | O(1) |
 | 标题索引追加/按 ID 读取 | 摊还 O(1) / O(1)，不复制标题文字 |
-| 按级别查找前后标题 | O(log H)，H 为标题数，至多查六个级别 |
+| 按级别查找前后标题、同作用域父子/兄弟/范围 | O(log H)，H 为标题数，至多六级 |
+| 按源码找当前章节 | O(log n)，上下文边界二分，不遍历容器祖先 |
 | 逐行、翻页、首尾导航 | O(log T)，基于当前高度估计 |
 | 标题导航 | O(log H + log n + log T) |
 | 容器按 ID 读取范围、父 ID、深度 | O(1)，开放末端共用已解析位置 |
@@ -86,10 +87,10 @@ for tile in heights.viewport(100..124, 4, 32) {
 3. 样式和隐藏标记保存在动态二叉区间树。闭合分隔符只向覆盖区间的 O(log n) 个节点写 tag；查询继承这些 tag。源码不需要移动、包裹或重新分词。节点同时聚合最新 revision 和“全部隐藏”信息。
 4. 引用保留 `LinkId -> SymbolId -> destination` 间接关系。定义只更新一个符号版本和一个保守全局引用 epoch，没有反向引用列表遍历。`DependencyKey` 只检查自身引用符号；尺寸变化从符号最早使用位置保守失效后续布局状态。
 5. 高度树支持 lazy assignment、子树和以及按累计高度选择。零高度区域可整段跳过。重复 resize 重用节点，不累计废弃树。
-6. 容器独立 arena 只保存父 ID、深度和属性；活动栈每保留一层必须消费本行的显式标记或正长度缩进，空格串只扫描一次。开放范围共用一个已解析末端，长行追加不更新祖先；容器各开闭一次，不复制祖先链。
+6. 容器独立 arena 只保存父 ID、深度和属性；活动栈每保留一层必须消费本行的显式标记或正长度缩进，空格串只扫描一次。开放范围共用一个已解析末端，长行追加不更新祖先；容器各开闭一次，不复制祖先链。标题作用域保存独立六级索引和进入时的外层章节摘要；上下文只在容器切换时追加边界，范围由下一同作用域标题及容器末端派生。
 7. 检查点子树记录有效计数。失效只把覆盖子树的计数置零，查找前驱直接剪枝。失效时不逐个运行调用者状态的析构函数；旧状态在该位置被覆盖或整个索引销毁时释放。
 
-`Document::work()` 暴露输入扫描量、块分类输入量、行内扫描量、分隔符操作数、标签规范化字节数、区间树实际写入访问次数、表格行扫描字节数与自动链接候选检查字节数；`container_bytes` 计容器前缀检查，`container_steps` 计活动帧匹配及单个容器开闭。分类字节量是分类器接收的字节数，分类器内部对这些字节只做固定次数的线性扫描。它不是 CPU 指令计数。测试使用这些指标约束增长，不依赖机器跑分来“证明”复杂度。
+`Document::work()` 暴露输入扫描量、块分类输入量、行内扫描量、分隔符操作数、标签规范化字节数、区间树实际写入访问次数、表格行扫描字节数与自动链接候选检查字节数；`container_bytes` 计容器前缀检查，`container_steps` 计活动帧匹配及单个容器开闭；`heading_steps` 计作用域开闭、已分类行的上下文检查和标题插入，每步至多六个固定索引操作，不含查询和标题区间的 O(1) 延长。分类字节量是分类器接收的字节数，分类器内部对这些字节只做固定次数的线性扫描。它不是 CPU 指令计数。测试使用这些指标约束增长，不依赖机器跑分来“证明”复杂度。
 
 `Runs::annotation_visits()` 单独统计本次查询访问的区间节点，不修改文档统计。查询只在开始时二分定位块，之后顺序跨越块边界并遍历样式区间，不对每个字符从根重查；均匀长区间可以直接跳过。片段划分直接跳到最多 256 字节处，再回退至 UTF-8 边界，无需逐字符解码整段新增输入。
 
@@ -176,13 +177,43 @@ assert_eq!(doc.container(item).unwrap().state, SyntaxState::Sealed);
 
 - 支持显式 `>`、`>>`、`> >`，以及 `-`/`+`/`*` 和 1..9 位数字加 `.`/`)` 列表；可混合嵌套。每层标记前允许 0..3 个 ASCII 空格，`>` 后最多消费一个可选空格。相同父级、相同缩进、相同 bullet/有序分隔符延续 List；改变数字只创建新 Item，改变标记类型创建新 List。
 - 列表标记后须为空格、tab 或完整行结束；消费标记后的全部水平空白。续行须用 ASCII 空格补足该 Item 从父前缀到正文的字节宽度（包含标记前缩进；空条目按标记末端宽度），再匹配子层。tab 只作为列表标记/任务后的分隔字节，每个算 1，不展开为 tab stop；不接受 tab 作为续行缩进。每个兄弟按自己的数字/空白宽度确定续行要求。
-- 引用续行必须重复 `>`；列表续行必须有足够缩进。不推断 lazy continuation。无前缀空行关闭全部容器；显式 `>` 空行保留引用，缩进足够的空行保留对应条目。缺失某层前缀只保留已经匹配的外层，内层关闭。空条目和空任务保留条目身份；任务只识别最内层新条目的正文开头，任务标记之后作为普通行内正文。
-- 容器内叶块按物理行独立解析行内语法；强调、代码 span 及软/硬换行不跨这些叶块。容器内标题、表格、引用定义、围栏/缩进代码、分隔线仍作为正文，不生成对应块对象（仍按行内方言处理）。顶层表格分隔行确认、分隔线/Setext 和已打开围栏的优先级保持。列表/引用的整段折叠、tight/loose、容器内章节作用域及终端布局尚未接入。
+- 引用续行必须重复 `>`；列表续行必须有足够缩进。不推断 lazy continuation。无前缀空行关闭全部容器；显式 `>` 空行保留引用，缩进足够的空行保留对应条目。缺失某层前缀只保留已经匹配的外层，内层关闭。空条目和空任务保留条目身份；任务只识别最内层新条目的正文开头，任务标记之后继续识别标题或普通行内正文。
+- 容器内叶块按物理行独立解析行内语法；强调、代码 span 及软/硬换行不跨这些叶块。容器内 ATX 和单物理行 Setext 标题及章节作用域见下节。表格、引用定义、围栏/缩进代码、分隔线仍作为正文，不生成对应块对象（仍按行内方言处理）。顶层表格分隔行确认、分隔线/Setext 和已打开围栏的优先级保持。列表/引用的整段折叠、容器内标题的独立折叠、tight/loose 及终端布局尚未接入。
 - 结构仅从既有 1024 字节分类前缀（UTF-8 边界最多额外 3 字节）识别。前缀中的完整 `>` 可以开层，列表/任务候选必须在前缀内有分隔符或完整行末；截断候选和前缀后的标记保留正文，不在后续追加中重新分类。深度受前缀字节限制；不声称支持无限深度或完整 CommonMark/GFM 容器规则。
 
-容器新增解析工作累计 O(n + 开闭次数)，容器/活动栈空间 O(n)；保留一层必定消费正长度前缀，失败只做一次退出并批量弹栈，列表续行共享空格扫描结果。整库仍累计 O(n log n)。`container_arena_stats` 统计节点和活动栈实际容量字节及 Vec 增长次数，不含源码、分配器元数据或 Update。批量关闭和 EOF 仍可能一次处理整个活动栈；解析不承诺单次调用硬预算。有预算的查询不会枚举正文或子树。
+容器新增解析工作累计 O(n + 开闭次数)，容器/活动栈空间 O(n)；保留一层必定消费正长度前缀，失败只做一次退出并批量弹栈，列表续行共享空格扫描结果。整库仍累计 O(n log n)。`container_arena_stats` 统计节点和活动栈实际容量字节及 Vec 增长次数，不含标题索引/作用域、源码、分配器元数据或 Update。批量关闭和 EOF 仍可能一次处理整个活动栈；解析不承诺单次调用硬预算。有预算的查询不会枚举正文或子树。
 
 `cargo run -r --example containers` 展示混合嵌套、续行、兄弟切换、未分类尾部及分帧祖先读取。`tests/containers.rs` 验证独立范围模型、增量快照重建、1000 层引用、深列表单次空格扫描、百万字长续行、空行批量关闭及分块一致性；现有分块/fuzz 快照也包含容器。
+
+## 容器内标题与章节作用域
+
+显式引用和列表条目内识别 ATX h1–h6，以及紧邻下一物理行的 Setext `=` / `-` 下划线。先消费显式容器前缀、列表续行缩进及任务标记，再按既有标题方言分类；相对正文最多三格缩进。标题保留完整物理行 `source`，`content` 去掉容器/标题前缀、CRLF 和受支持的 closing hashes；行内显示、实体和源码映射沿用原实现。条目即使变成标题，任务/编号仍可从 `ContainerKind::Item` 读取。
+
+容器 Setext 只转换同一 `ContainerId` 中紧邻的一个非空正文叶块，不合并多行、不跨空行、兄弟条目或嵌套容器。该叶块的 `BlockId` 保持，确认时增加 `HeadingId`，隐藏整条下划线；旧正文及行内语义不重扫。`> text\n> -\n` 与 `- text\n  -\n` 中下划线优先于新建空子列表；`- text\n-\n` 的第二个 `-` 是兄弟条目。超长标题内容可以流式增长，但下划线仍须在包含容器前缀的 1 KiB 分类窗口内完整出现；ATX 的 hash run 必须在窗口内遇到空白分隔符或完整行末，否则作为正文；超长 ATX 的尾部 closing hashes 不回看。其它内层块语法及跨物理行的行内语义继续待办。
+
+每个 `Heading.container` 表示确切作用域：`None` 是文档根，否则是最内层 Quote/Item。`parent`、`first_child`、兄弟查询只比较同一作用域的标题级别，跳级仍取最近更浅标题，不凭容器嵌套创建标题父关系。章节包含嵌套容器；内层标题不会终止外层章节。`section(id, source_end)` 止于下一同作用域、同级或更高级标题的行首，否则止于该容器边界；根章节末尾仍使用调用方的 `source_end`。所以范围只会包含或不相交。`section_end` 只返回同作用域的后继标题 ID，返回 `None` 也可能表示已经在容器边界结束，不能单凭它判断章节是否开放。
+
+`current(offset)` 返回当前位置最内层可用章节；当前容器尚无本地标题时使用进入容器时捕获的外层章节，退出后恢复外层。源码行前缀尚未分类时沿用最近已分类上下文，容器章节末端仍停在 `Update.container_end`；换行、lookahead 或 EOF 确认边界后更新。容器范围不包含 EOF，finish 后 EOF 位置回到根章节。全局 `entries`、`at_level`、前后/严格级别导航、名称搜索和 slug 仍按源码顺序包含全部标题；slug 在所有容器间共同消歧。
+
+```rust
+use mdtui3::{Document, HeadingId};
+let mut doc = Document::new();
+doc.append("# root\n> ## quote\n> - # item\n> ## peer\noutside\n")?;
+doc.finish();
+let h = doc.headings();
+assert_eq!(h.parent(HeadingId(2)), None); // Item 内章节根
+assert_eq!(h.next_sibling(HeadingId(1)), Some(HeadingId(3)));
+assert_eq!(h.section(HeadingId(2), doc.source().len()).unwrap().end,
+           doc.source().find("> ## peer").unwrap());
+assert_eq!(h.current(doc.source().find("outside").unwrap()), Some(HeadingId(0)));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+元数据只随新标题、作用域开闭和上下文切换增长：H 个标题、C 个容器、R 次上下文切换占 O(H + C + R) 空间，均为 O(n)。每个容器进入时从父作用域六个末尾 ID 捕获外层章节，开闭 O(1)，不复制路径；长行追加仅更新当前块/标题和共享末端。标题插入摊还 O(1)，结构查询最多六级二分，`current` 另外二分上下文边界；确认 Setext 的区间失效仍 O(log n)。容器关闭事件及 `new_headings` 改变派生章节范围，不因此给全部旧标题发送 `changed_headings` 事件；消费方应按这些索引/事件查询，不能只缓存旧范围。查询不读取标题文字，名称读取、搜索、slug 继续显式共享 Budget；解析本身仍是摊还保证，无单次调用硬预算。
+
+顶层章节折叠继续覆盖容器内容，内部 h1 不会截断它；Reveal 可按既有预算展开遮住内层标题的顶层章节。容器内标题目前不是独立 `FoldCandidate`：显式折叠、预览和以其为根的批量命令返回 `InvalidRange`，候选枚举及默认设置跳过它们，以保留最多六个开放折叠章节的契约。容器和内层章节折叠仍需单独的增量消费设计。
+
+`cargo run -r --example container_headings` 展示晚确认、作用域切换及小预算 slug。测试覆盖 UTF-8 全切点/逐前缀、1200 行固定种子线性范围模型、千层嵌套、百万字 Setext 无回扫、500 个同时开放的章节作用域、共享预算搜索/slug/折叠导航。
 
 ## 表格、任务列表与图片
 
@@ -227,7 +258,7 @@ assert!(doc.runs_in(Span::new(0, doc.source().len())).unwrap()
 
 ## 标题索引与导航
 
-`doc.headings()` 提供文档顺序的 `HeadingIndex`。每个 `Heading` 包含稳定 ID 对应的块、级别、整个标题的源码区间和不含标题标记的内容区间。标题文字不复制；超长 Setext 标题也只保存区间。`at_level(level)` 直接返回该级别的 ID 列表；`next(offset, max_level)` / `previous(...)` 查找严格位于指定源码位置之后/之前、级别不超过上限的标题。`Update.new_headings` 给出新加入的 ID 范围。长 ATX 标题的区间会随追加更新；索引不含当前方言尚未解析的容器内标题。
+`doc.headings()` 提供文档顺序的 `HeadingIndex`。每个 `Heading` 包含稳定 ID 对应的块、容器作用域、级别、整个标题的源码区间和不含标题标记的内容区间。标题文字不复制；超长 Setext 标题也只保存区间。`at_level(level)` 直接返回该级别的 ID 列表；`next(offset, max_level)` / `previous(...)` 查找严格位于指定源码位置之后/之前、级别不超过上限的标题。`Update.new_headings` 给出新加入的 ID 范围。长 ATX 标题的区间会随追加更新；全局索引包含上述方言支持的容器内标题，结构关系遵循确切容器作用域。
 
 ```rust
 use mdtui3::{Document, HeadingId, HeightIndex, NavAction, Navigator};
@@ -252,7 +283,7 @@ nav.navigate(&doc, &heights, NavAction::End, 24);
 
 ## 标题显示名称检索
 
-`HeadingSearch::new(&doc, query, max_level)` 只搜索标题索引中各标题 `content` 的非 `HIDDEN` 显示文本，复用实体解码、代码 span 规范化和源码映射。`max_level` 与标题导航一致：选择级别不超过上限的标题，大于 6 按 6 处理，0 不选择标题。空查询返回 `InvalidRange`。匹配区分大小写，保留重叠命中，不做额外空白处理、Unicode 归一化或模糊匹配；标题之间独立匹配，不串接名称，也不读取正文、代码块和当前方言尚未索引的容器内标题。
+`HeadingSearch::new(&doc, query, max_level)` 只搜索标题索引中各标题 `content` 的非 `HIDDEN` 显示文本，复用实体解码、代码 span 规范化和源码映射。`max_level` 与标题导航一致：选择级别不超过上限的标题，大于 6 按 6 处理，0 不选择标题。空查询返回 `InvalidRange`。匹配区分大小写，保留重叠命中，不做额外空白处理、Unicode 归一化或模糊匹配；标题之间独立匹配，不串接名称，包含已识别的容器内标题，不读取正文或代码块。
 
 ```rust
 use mdtui3::{Budget, Completion, Document, HeadingId, HeadingSearch, WorkLimit};
@@ -288,7 +319,7 @@ assert_eq!(doc.text(matches[0].source), Some("a**b**&amp;c"));
 
 ## 文内 slug 与 fragment
 
-`HeadingAnchors::new(&doc)` 在 O(1) 时间创建当前 revision 的空索引；`advance` 按共享 Budget 读取已索引标题的非隐藏显示内容，忽略正文、代码块和当前解析器未识别的容器内标题。不会在 `append`、Setext 确认或构造任务时扫描旧标题。`indexed_headings()` 报告完成数量，`get(&doc, id)` 为已完成项返回借用的 `HeadingAnchor`，未处理的合法 ID 返回 `None`，非法 ID 返回 `InvalidRange`。
+`HeadingAnchors::new(&doc)` 在 O(1) 时间创建当前 revision 的空索引；`advance` 按共享 Budget 读取已索引标题的非隐藏显示内容，包括容器内标题，忽略正文和代码块。不会在 `append`、Setext 确认或构造任务时扫描旧标题。`indexed_headings()` 报告完成数量，`get(&doc, id)` 为已完成项返回借用的 `HeadingAnchor`，未处理的合法 ID 返回 `None`，非法 ID 返回 `InvalidRange`。
 
 slug 方言明确采用以下规则，不宣称兼容某个平台的完整 slug 算法：Unicode 字母/数字用 Rust `char::is_alphanumeric` 选择并用 `to_lowercase` 小写化；保留 `_`、`-`；每个 Unicode 空白标量变成一个 `-`；删除其余字符。不额外裁剪或合并空白，不做 Unicode 归一化、音译或 emoji 保留；小写映射产生的组合字符保留。输入先经过既有显示语义，因此隐藏标记/链接目标不参与，实体和代码 span 使用显示值。空结果用 `section`。按源码顺序分配全局唯一名称，依次尝试 base、base-1、base-2 等，跳过已经占用的名称。例如 `A`、`A-1`、`A`、`A-1` 分别得到 `a`、`a-1`、`a-2`、`a-1-1`；空标题也参与同一消歧规则。
 
@@ -356,7 +387,7 @@ Update 携带文档身份及 `base_revision -> revision`。空追加、重复 EO
 
 `changes` 将文本、隐藏性、样式、块结构、引用和表格宽度提示分开。`changed_blocks`、`changed_headings`、`changed_links` 是有界增量范围，允许额外包含最后一个没有变化的旧对象；`rows_changed` 报告表格行范围。`SyntaxState` 区分暂定、增长中、局部封口，标题的状态读取其所属块；封口不代表引用定义不会晚到。Update 对象事件用于对象状态缓存，TileKey 用于显示语义缓存。
 
-`HeadingIndex` 提供 `current`、`parent`、`first_child`、`next_sibling`、`previous_sibling`、`section` / `section_end` 和严格同级前后查询，对应动作已接入 `Navigator`。跳级标题按最近更浅级别确定父节点，兄弟不等于同级。章节末尾可随追加增长，查询不读取标题文本。
+`HeadingIndex` 提供 `current`、`parent`、`first_child`、`next_sibling`、`previous_sibling`、`section` / `section_end` 和严格同级前后查询，对应动作已接入 `Navigator`。跳级标题按最近更浅级别确定父节点，兄弟不等于同级。章节末尾可随追加增长，查询不读取标题文本；父子/兄弟和范围遵循上文容器作用域，`current` 退出容器后恢复外层。
 
 `SourceSearch` 是按字节预算推进的固定查询 KMP 任务，支持跨追加和重叠匹配；失败回退也计入预算。更换查询新建任务，历史搜索不会隐式同步完成。`Selection` 绑定文档身份及源码区间，`TaskState` 保存独立的复选框覆盖状态，二者都不修改追加源码。这些接口为后续 UI 提供基础；显示文本搜索见下文，折叠联动另行实现。
 
@@ -525,7 +556,7 @@ assert!(view.is_collapsed(FoldId::Heading(HeadingId(1))));
 
 `Reveal` 是默认策略，只展开实际遮住目标的章节/代码块；目标标题自身正文和无关子树的折叠意愿保留。`VisibleOnly` 不改变折叠：`NextHeading` / `PreviousHeading` 与严格同级的 `NextAtLevel` / `PreviousAtLevel` 遇到隐藏标题时，按最外层折叠范围端点重新查索引，跳过整段。显式 `Heading` / `Source` 及父/子/兄弟等结构动作若目标隐藏，返回无目标，不改成另一种结构关系。级别上限与严格同级的语义沿用现有索引。逐行、翻页及首尾动作直接使用折叠后的高度索引。
 
-每个有界步骤消费 1 query、1 object：解析动作、检查可见性并展开/跳过一个遮蔽范围、或查询最终估计行。当前方言的祖先最多六级标题加一个代码块；一次步骤含固定数量的索引操作，不读取正文或标题文本。只给上述最小预算也可推进。耗尽返回 `BudgetExhausted`，保存目标或已经跳过的区间；`Covered` 表示动作结束，`target: None` 表示无匹配目标。`change` 是**本次调用**已展开区间的包络和最新视图版本，已同步更新高度/检查点失效；取消或失效不会撤销已完成的展开。任务存储 O(1)，Reveal 最多打开七个节点；VisibleOnly 总工作按实际跳过的折叠区间数计费，每步 O(log H + log F + log T)，不会逐个检查被隐藏的标题。
+每个有界步骤消费 1 query、1 object：解析动作、检查可见性并展开/跳过一个遮蔽范围、或查询最终估计行。当前可折叠祖先最多六级顶层标题加一个代码块；一次步骤含固定数量的索引操作，不读取正文或标题文本。只给上述最小预算也可推进。耗尽返回 `BudgetExhausted`，保存目标或已经跳过的区间；`Covered` 表示动作结束，`target: None` 表示无匹配目标。`change` 是**本次调用**已展开区间的包络和最新视图版本，已同步更新高度/检查点失效；取消或失效不会撤销已完成的展开。任务存储 O(1)，Reveal 最多打开七个节点；VisibleOnly 总工作按实际跳过的折叠区间数计费，每步 O(log H + log F + log T)，不会逐个检查被隐藏的标题。
 
 任务绑定文档身份/revision、视图身份及折叠版本，文档追加/首次 finish、外部折叠操作和 reset 后拒绝旧任务；错误返回前不消费预算或修改视图。自身展开更新其版本，期间的正常高度测量不使任务失效；最终定位使用最新高度。完成后重复调用返回原结果且不重复展开，返回行仍是当时的估计。任务不改写原 Navigator；调用方只应用当前有效任务的结果，新的用户导航应丢弃旧任务。用 `Navigator::apply_target` 应用结果，它在 source 为 None 的普通滚动后清除旧的精确源码目标。远处定位、同 tile 多标题和折叠占位仍由局部 `LayoutPass` 在共享 Budget 下细化，随后再 reconcile；此接口不排整篇前缀，也不承诺精确绝对行号。
 
@@ -685,7 +716,7 @@ loop {
 
 - 段落与空行；ATX 标题；Setext 标题；分隔线。
 - 缩进代码；反引号/波浪线围栏代码，opening fence 长度 3..32；代码 info 保留源码区间。
-- 显式引用/列表容器 ID、父关系及流式开闭，支持有缩进的条目续行和混合嵌套；具体前缀、空行、深度和未实现规则见[容器方言](#显式列表与引用容器)。
+- 显式引用/列表容器 ID、父关系及流式开闭，支持有缩进的条目续行、混合嵌套、内层 ATX/单行 Setext 及章节作用域；具体前缀、空行、深度和未实现规则见[容器方言](#显式列表与引用容器)。
 - 管道表格、列对齐、单元格行内语法；任务列表复选框状态。
 - `*em*`、`_em_`、`**strong**`、`__strong__`、`~~strike~~`，以及精确长度匹配的反引号代码 span。支持跨同一段落的多行输入。
 - ASCII 标点反斜线转义；内联链接 `[text](destination)`；shortcut/full/collapsed 引用链接；单行引用定义；裸目标和尖括号目标，可选 title。
@@ -762,7 +793,7 @@ assert_eq!(text, "first\nsecond\n");
 | `src/checkpoints.rs` | 有效检查点的范围失效和前驱查询 |
 | `src/table_preview.rs` | 共享行数/字节上限与 Budget 的表格前几行摘要 |
 | `src/table.rs` | 表格行/单元格、对齐、流式单元格解析和列宽提示 |
-| `src/headings.rs` | 标题 arena 和六个级别的索引 |
+| `src/headings.rs` | 标题 arena、全局/作用域六级索引及源码上下文边界 |
 | `src/heading_search.rs` | 有预算的标题显示名称检索、级别过滤和命中源码映射 |
 | `src/anchors.rs` | revision 绑定的有预算标题 slug、全局消歧和 fragment 解析 |
 | `src/navigation.rs` | 逐行/翻页/首尾/标题导航及源码目标 |
@@ -784,6 +815,7 @@ nix develop -c cargo fmt --all -- --check
 nix develop -c cargo run -r --example stream
 nix develop -c cargo run -r --example structure
 nix develop -c cargo run -r --example containers
+nix develop -c cargo run -r --example container_headings
 nix develop -c cargo run -r --example scaling
 nix develop -c cargo run -r --example budget
 nix develop -c cargo run -r --example display

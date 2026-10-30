@@ -120,16 +120,11 @@ fn searches_display_names_with_absolute_mapping_and_level_filtering() {
     assert_eq!(f.source, j.source);
     assert_eq!(f.display, 0..1);
     assert_eq!(j.display, 1..2);
-    for absent in [
-        "body-only",
-        "secret",
-        "**",
-        "amp",
-        "code-only",
-        "quote-only",
-        "list-only",
-    ] {
+    for absent in ["body-only", "secret", "**", "amp", "code-only"] {
         assert!(search(&doc, absent, 6, tiny()).0.is_empty(), "{absent}");
+    }
+    for present in ["quote-only", "list-only"] {
+        assert_eq!(search(&doc, present, 6, tiny()).0.len(), 1);
     }
     assert!(search(&doc, "AB&C", 6, tiny()).0.is_empty());
 }

@@ -219,6 +219,10 @@ impl Document {
             FoldId::Heading(id) => {
                 let headings = self.headings();
                 let heading = headings.get(id)?;
+                // Container heading folds need a separate bounded update model.
+                if heading.container.is_some() {
+                    return None;
+                }
                 let end = headings.section_end(id);
                 let source = headings.section(id, self.source().len())?;
                 Some(FoldCandidate {
@@ -248,7 +252,10 @@ impl Document {
                 );
                 Some(FoldCandidate {
                     id: FoldId::Code(id),
-                    parent: self.headings().current(source.start).map(FoldId::Heading),
+                    parent: self
+                        .headings()
+                        .root_current(source.start)
+                        .map(FoldId::Heading),
                     source,
                     hidden: source,
                     summary: info,
@@ -271,7 +278,10 @@ impl Document {
                 );
                 Some(FoldCandidate {
                     id: FoldId::Table(id),
-                    parent: self.headings().current(source.start).map(FoldId::Heading),
+                    parent: self
+                        .headings()
+                        .root_current(source.start)
+                        .map(FoldId::Heading),
                     source,
                     hidden: source,
                     summary: Some(table.row(0)?.source),
@@ -299,7 +309,7 @@ impl Document {
         {
             return Some(candidate);
         }
-        self.fold_candidate(FoldId::Heading(self.headings().current(offset)?))
+        self.fold_candidate(FoldId::Heading(self.headings().root_current(offset)?))
     }
 
     fn leaf_fold_candidate(&self, block: BlockId) -> Option<FoldCandidate> {
@@ -314,7 +324,7 @@ impl Document {
 impl FoldState {
     pub(crate) fn segment(&self, document: &Document, offset: usize) -> FoldSegment {
         let mut hidden = None;
-        let mut heading = document.headings().current(offset);
+        let mut heading = document.headings().root_current(offset);
         while let Some(id) = heading {
             if let Some(mask) = self.collapsed.get(&FoldId::Heading(id))
                 && mask.candidate.hidden.range().contains(&offset)
@@ -498,7 +508,10 @@ impl<S> FoldView<S> {
         // Validate IDs in O(1), before charging or changing the old preview.
         if let Some(id) = target {
             let valid = match id {
-                FoldId::Heading(id) => document.headings().get(id).is_some(),
+                FoldId::Heading(id) => document
+                    .headings()
+                    .get(id)
+                    .is_some_and(|heading| heading.container.is_none()),
                 FoldId::Code(id) => document
                     .block(id)
                     .is_some_and(|block| matches!(block.kind, BlockKind::Code { .. })),
@@ -701,7 +714,9 @@ impl<S> FoldView<S> {
             for index in update.new_headings.clone() {
                 self.default_visits += 1;
                 let heading = document.headings().get(HeadingId(index)).unwrap();
-                if self.defaults.heading_levels[usize::from(heading.level - 1)] {
+                if heading.container.is_none()
+                    && self.defaults.heading_levels[usize::from(heading.level - 1)]
+                {
                     let candidate = document
                         .fold_candidate(FoldId::Heading(HeadingId(index)))
                         .unwrap();
