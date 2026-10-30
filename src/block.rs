@@ -64,6 +64,20 @@ pub(crate) fn classify(
     fence: Option<Fence>,
     paragraph: bool,
 ) -> Line {
+    classify_indented(source, span, complete, fence, paragraph, 0)
+}
+
+/// Unconsumed columns of a container-prefix tab precede this source slice.
+/// They affect indentation only; all returned offsets remain source bytes.
+pub(crate) fn classify_indented(
+    source: &str,
+    span: Span,
+    complete: bool,
+    fence: Option<Fence>,
+    paragraph: bool,
+    virtual_spaces: u8,
+) -> Line {
+    debug_assert!(virtual_spaces <= 3);
     let end = body_end(source, span);
     let body = &source.as_bytes()[span.start..end];
     let spaces = body.iter().take_while(|&&b| b == b' ').count();
@@ -71,7 +85,7 @@ pub(crate) fn classify(
     if let Some(fence) = fence {
         let run = text.iter().take_while(|&&b| b == fence.byte).count();
         return if complete
-            && spaces <= 3
+            && spaces + usize::from(virtual_spaces) <= 3
             && if fence.byte == b'$' {
                 run == 2
             } else {
@@ -92,9 +106,9 @@ pub(crate) fn classify(
     if complete && body.iter().all(u8::is_ascii_whitespace) {
         return Line::Blank;
     }
-    if spaces >= 4 {
+    if spaces + usize::from(virtual_spaces) >= 4 {
         return Line::Indented {
-            prefix: span.start + 4,
+            prefix: span.start + 4 - usize::from(virtual_spaces),
         };
     }
     if text.is_empty() {

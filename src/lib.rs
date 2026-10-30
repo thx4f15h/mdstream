@@ -892,6 +892,7 @@ impl Document {
         let mut container_line = None;
         let mut container_blank = false;
         let mut virtual_spaces = 0;
+        let mut partial_leaf = false;
         let mut lazy = false;
         let mut table_text = matches!(classification, Line::Text);
         if self.fence.is_none() || fence_scope.is_some() {
@@ -907,21 +908,22 @@ impl Document {
             let fence_line = self.fence.and_then(|_| {
                 fence_scope.and_then(|_| {
                     self.containers
-                        .partial_prefix(&self.source, span, None, &mut self.work)
+                        .partial_prefix(&self.source, span, None, false, &mut self.work)
                 })
             });
-            let text_line = if self.fence.is_none()
-                && header.is_none()
-                && self.container_inline.is_some()
-                && self.container_inline == self.containers.inner()
-            {
-                self.containers
-                    .partial_prefix(&self.source, span, Some(complete), &mut self.work)
+            let partial_line = if self.fence.is_none() && self.containers.inner().is_some() {
+                self.containers.partial_prefix(
+                    &self.source,
+                    span,
+                    Some(complete),
+                    header.is_none() && self.container_inline == self.containers.inner(),
+                    &mut self.work,
+                )
             } else {
                 None
             };
-            let partial_text = text_line.is_some();
-            let line = fence_line.or(text_line).or_else(|| {
+            let partial = partial_line.is_some();
+            let line = fence_line.or(partial_line).or_else(|| {
                 self.containers.line(
                     &self.source,
                     span,
@@ -951,21 +953,20 @@ impl Document {
                     .is_some_and(|(id, _)| self.blocks[id.0].container == self.containers.inner());
                 let inner = Span::new(line.prefix, span.end);
                 content = inner;
-                let mut inner_classification = if lazy || partial_text {
+                let inner_classification = if lazy {
                     Line::Text
                 } else {
                     self.work.classified_bytes += inner.len() as u64;
-                    block::classify(&self.source, inner, complete, self.fence, same_scope)
+                    block::classify_indented(
+                        &self.source,
+                        inner,
+                        complete,
+                        self.fence,
+                        same_scope,
+                        virtual_spaces,
+                    )
                 };
-                if virtual_spaces > 0 && matches!(inner_classification, Line::FenceClose) {
-                    let spaces = self.source.as_bytes()[inner.range()]
-                        .iter()
-                        .take_while(|&&b| b == b' ')
-                        .count();
-                    if spaces + usize::from(virtual_spaces) > 3 {
-                        inner_classification = Line::Code;
-                    }
-                }
+                partial_leaf = partial && !matches!(inner_classification, Line::Text);
                 container_blank = matches!(inner_classification, Line::Blank);
                 self.containers.observe_payload(
                     container_blank,
@@ -973,7 +974,7 @@ impl Document {
                     &mut self.work,
                     update,
                 );
-                table_text = !lazy && !partial_text && matches!(inner_classification, Line::Text);
+                table_text = !lazy && !partial && matches!(inner_classification, Line::Text);
                 classification = match inner_classification {
                     leaf @ (Line::Heading { .. }
                     | Line::Setext(_)
@@ -1000,6 +1001,9 @@ impl Document {
         if let Some(header) = header {
             if header.container == self.containers.inner()
                 && !lazy
+                // Four columns (including virtual ones) start literal code,
+                // never a separator for the pending header in this extension.
+                && !partial_leaf
                 && complete
                 && let Some(columns) = table::delimiter(&self.source, content, header.columns)
             {
@@ -1259,6 +1263,7 @@ impl Document {
             Line::Indented { prefix } => {
                 inline = false;
                 payload.start = prefix;
+                virtual_spaces = 0;
                 if let Some(id) = self.current
                     && matches!(self.blocks[id.0].kind, BlockKind::Code { .. })
                     && self.blocks[id.0].container == self.containers.inner()
@@ -1276,6 +1281,7 @@ impl Document {
             } => {
                 standalone = true;
                 payload.start = prefix;
+                virtual_spaces = 0;
                 if content_end < body_end {
                     suffix = Some(Span::new(content_end, body_end));
                     payload.end = content_end;

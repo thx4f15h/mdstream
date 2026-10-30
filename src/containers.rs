@@ -164,17 +164,19 @@ impl Containers {
         self.active.last().map(|a| a.inner())
     }
 
-    /// Match the entire existing path before committing partial tabs. Text
-    /// probes additionally require a nonblank ordinary continuation; all other
-    /// lines retain the original sibling/leaf classifier without side effects.
+    /// Match the entire existing path before committing partial tabs.
+    /// Non-fence probes accept ATX/fence/indented-code leaves, or (when allowed)
+    /// nonblank ordinary continuations. Other lines retain the original
+    /// sibling/leaf classifier without side effects.
     pub fn partial_prefix(
         &self,
         source: &str,
         span: Span,
-        text: Option<bool>,
+        complete: Option<bool>,
+        text: bool,
         work: &mut Work,
     ) -> Option<ContainerLine> {
-        if text.is_some() {
+        if complete.is_some() {
             // Only prefix spelling can contain a consumable tab. Skip the
             // speculative path walk for ordinary space/quote continuations,
             // and stop at the first payload byte rather than reading the body.
@@ -194,7 +196,7 @@ impl Containers {
                 return None;
             }
         }
-        let mut prefix = Prefix::new(source, span, text.unwrap_or(false));
+        let mut prefix = Prefix::new(source, span, complete.unwrap_or(false));
         prefix.split_tabs = true;
         let mut matched = true;
         let mut quotes = 0;
@@ -211,21 +213,30 @@ impl Containers {
                 break;
             }
         }
-        if matched && let Some(complete) = text {
+        if matched && let Some(complete) = complete {
             let payload = Span::new(prefix.pos, span.end);
-            // Virtual columns participate in this bound. New leaves, blank
-            // lines and new markers deliberately use the original dialect.
-            matched = prefix.partial
-                && prefix.spaces() <= 3
-                && prefix.spaces_end < prefix.end
-                && prefix.bytes[prefix.spaces_end] != b'>'
-                && prefix.marker().is_none();
+            matched = prefix.partial;
             if matched {
                 work.classified_bytes += payload.len() as u64;
-                matched = matches!(
-                    crate::block::classify(source, payload, complete, None, true),
-                    crate::block::Line::Text
-                );
+                matched = match crate::block::classify_indented(
+                    source,
+                    payload,
+                    complete,
+                    None,
+                    true,
+                    prefix.virtual_spaces as u8,
+                ) {
+                    crate::block::Line::Heading { .. }
+                    | crate::block::Line::FenceOpen { .. }
+                    | crate::block::Line::Indented { .. } => true,
+                    crate::block::Line::Text if text => {
+                        prefix.spaces() <= 3
+                            && prefix.spaces_end < prefix.end
+                            && prefix.bytes[prefix.spaces_end] != b'>'
+                            && prefix.marker().is_none()
+                    }
+                    _ => false,
+                };
             }
         }
         work.container_bytes += prefix.inspected;

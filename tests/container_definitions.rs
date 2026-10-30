@@ -353,7 +353,9 @@ fn nested_list_definition_prefixes_are_linear_and_symbol_history_adds_no_refresh
         doc.work().container_steps - before.container_steps,
         depth as u64
     );
-    assert!(doc.work().container_bytes - before.container_bytes < 4 * depth as u64);
+    // The leaf/tab probe checks the supplied whitespace once, then the
+    // unchanged matcher scans it once; neither walks history or rescans per level.
+    assert!(doc.work().container_bytes - before.container_bytes < 4 * depth as u64 + 64);
     doc.append("outside\n").unwrap();
     doc.append(
         &(0..4096)

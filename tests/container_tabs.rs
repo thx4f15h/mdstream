@@ -49,12 +49,12 @@ fn a_quote_consumes_a_tab_separator_only_when_it_is_one_column() {
 }
 
 #[test]
-fn partial_tabs_keep_lazy_rules_and_extend_existing_code_fences() {
+fn partial_tabs_classify_atx_leaves_and_extend_existing_code_fences() {
     for whitespace in ["\t", " \t"] {
-        let doc = parse(&format!("- first\n{whitespace}# literal\n"));
+        let doc = parse(&format!("- first\n{whitespace}# title\n"));
         assert_eq!(doc.blocks()[0].container, doc.blocks()[1].container);
-        assert!(doc.headings().entries().is_empty());
-        assert_eq!(visible(&doc), format!("first\n{whitespace}# literal\n"));
+        assert_eq!(doc.headings().entries().len(), 1);
+        assert_eq!(visible(&doc), "first\ntitle\n");
     }
     let doc = parse("- ```\n\tpayload\n");
     assert_eq!(doc.blocks().len(), 1);

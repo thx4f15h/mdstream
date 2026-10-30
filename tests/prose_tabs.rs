@@ -86,13 +86,13 @@ fn late_code_closure_overlays_spaces_and_trims_one_virtual_column() {
 }
 
 #[test]
-fn failed_paths_blank_lines_and_new_leaf_candidates_keep_original_dialect() {
+fn failed_paths_and_blanks_keep_original_dialect_while_selected_leaves_interrupt() {
     for (source, expected) in [
         ("- > first\n\ttail\n", "first\n\ttail\n"),
-        ("- first\n\t# title\n", "first\n\t# title\n"),
+        ("- first\n\t# title\n", "first\ntitle\n"),
         ("- first\n\t- nested\n", "first\n\t- nested\n"),
         ("- first\n\t> nested\n", "first\n\t> nested\n"),
-        ("- first\n\t  tail\n", "first\n\t  tail\n"),
+        ("- first\n\t  tail\n", "first\ntail\n"),
         ("- first\n\t\n", "first\n\t\n"),
         ("- first\n\t", "first\n\t"),
         ("- first\n- sibling\n", "first\nsibling\n"),

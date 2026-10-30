@@ -1026,3 +1026,37 @@ fn math_partial_tabs_match_all_utf8_splits_live_prefixes_and_classification_boun
         assert_eq!(snapshot(&live), snapshot(&whole));
     }
 }
+
+#[test]
+fn new_leaf_partial_tabs_match_all_utf8_splits_live_prefixes_and_bounds() {
+    for source in [
+        "- [old](u)\n\t## 中🙂 &amp; [new](v) ##\r\n\t### child\n- sibling\n".to_owned(),
+        "- first\n\t```rs\n\t中🙂\r\n\t  ```\n\t```\n\t$$\n\tx\n\t$$".to_owned(),
+        "- - - old\n\t\t# h\n\t\t  # literal\n\t\t   next\n".to_owned(),
+        "- > old\n\t>\t# h\n\t>\t~~~\n\t>\t中🙂\n\tmissing\n".to_owned(),
+        "- h|h\n\t  -|-\n  h|h\n  -|-\n\t# next\n".to_owned(),
+        "- old\n\ta|b\n  -|-\n\t===\n\t\t# literal\n".to_owned(),
+        format!("- old\n\t# {}🙂\n", "x".repeat(1030)),
+        format!("- old\n\t  {}|h\n  -|-\n", "-".repeat(1030)),
+        format!("- old\n\t$${}\n", " ".repeat(1030)),
+        format!("{}- old\n{}\t# 中🙂\n", ">".repeat(1018), ">".repeat(1018)),
+        format!("{}- old\n{}\t# 中🙂\n", ">".repeat(1022), ">".repeat(1022)),
+    ] {
+        for (at, _) in source.char_indices() {
+            check_chunks(&source, &[at]);
+        }
+        let mut live = Document::new();
+        for (at, c) in source.char_indices() {
+            let end = at + c.len_utf8();
+            live.append(&source[at..end]).unwrap();
+            let mut whole = Document::new();
+            whole.append(&source[..end]).unwrap();
+            assert_eq!(snapshot(&live), snapshot(&whole), "prefix {end}");
+        }
+        live.finish();
+        let mut whole = Document::new();
+        whole.append(&source).unwrap();
+        whole.finish();
+        assert_eq!(snapshot(&live), snapshot(&whole));
+    }
+}

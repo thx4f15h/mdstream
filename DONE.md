@@ -707,3 +707,20 @@ math_content / math_block_content 保持原文；math_payload / math_block_paylo
 验收：项目 devShell 的 cargo check --all-targets、cargo clippy --all-targets -- -D warnings、debug/release cargo nextest run --no-fail-fast 各 627 项、cargo test --doc 51 项、cargo fmt --all -- --check 与 git diff --check 全部通过。math_tabs 新示例以 6 帧/33 源码字节完成共享预算读取，流式关闭后保持折叠意愿；既有 container_math、math_blocks、prose_tabs 示例通过。验收日志：`/tmp/mdtui3-math-tabs-validation.log`；初始两项失败基线：`/tmp/mdtui3-math-tabs-baseline.log`。
 
 README/TODO 已同步；新叶块/表头的部分 tab 分类、一般正文空白/过量缩进/不完整路径、叶块 tab 缩进、分类上限及其余容器规则继续保留 TODO。TeX 排版、额外定界方言及终端 UI 仍属后续阶段。
+
+
+## 2026-10-30 容器所选新叶块部分 tab 核心交付
+
+本单元交付新叶块分类的独立子项：已有容器路径完整原子匹配后，部分 tab 的虚拟余量参与 ATX 标题、反引号/波浪线围栏、独占行 $$ 数学块及四列缩进代码分类。保持 ContainerId、原始物理行范围及标题/代码 info/数学内容的字节偏移；不合成展开源码。虚拟列加 ASCII 空格至多三列时沿用标题/围栏规则，达到四列时优先作为字面代码，只剥离四列，其余真实空格保留。已有围栏仍优先处理字面内容和关闭行。
+
+新叶块结束旧行内候选、待确认表头或已确认表格；四列缩进的 -|- 不确认表格，也不启动长分隔行探测。隐藏的 tab 不送入新标题的行内状态机、不生成替换记录；围栏内容中的余量沿用原有单字节映射。块、章节和对象身份、合并 Update、缓存/测量失效、默认折叠、预览及源码导航复用既有接口。Setext、定义、表头、普通新段落、新容器首行、空白及路径不完整时仍保留原方言；前缀之外的额外 tab 不扩展为叶块缩进。
+
+复杂度：只在当前有界分类窗口内探测一次完整路径，失败至多再执行一次原匹配器；空白末端缓存跨祖先复用，一个 tab 最多提供四列。无 tab 时只增加一次实际前缀字节检查，不遍历活动栈；已有定义的计数验收显式计入这次检查，250 层定义续行仍只访问 250 帧，前缀读取小于 4 × depth + 64。分类器用常数大小的虚拟列参数调整阈值及源码端点，无新持久结构、正文副本或语义回放。含前缀 1 KiB 提交窗口和流式时机不变，长行追加不重新匹配；累计 O(n log n)、空间 O(n)、零运行时依赖和禁止 unsafe 保持，不承诺单次解析硬时延。
+
+新增 15 项验收（14 项专用测试与 1 项全局分块快照）：576 组列阈值/真实空格对照、400 组随机嵌套空格模型、UTF-8 全切点/逐前缀、CRLF/EOF、边界内外截断标记、长失败候选、百万字分隔行外观代码、失败路径与范围身份。覆盖标题首个多字节字符/行内对象、代码合并、数学闭合、表格中断、旧测量/任务拒绝和通知重建；预算显示、逐标量/tile、搜索/摘要映射及折叠/预览/导航均通过。千层引用和 251 层列表的百万字标题/代码/数学再逐字追加 1000 次，前缀/祖先/分类/章节计数和容器容量不变；250 层共享 tab 每行只访问 250 帧，4096 个历史标题后只访问当前一层。收起新叶块正文零字节读取。
+
+项目 devShell 验收：cargo check --all-targets、cargo clippy --all-targets -- -D warnings、debug/release cargo nextest run --no-fail-fast 各 642 项、cargo test --doc 52 项、cargo fmt --all -- --check 及 git diff --check 通过。leaf_tabs 新示例 14 帧/215 计费字节，保持标题和代码/数学的确切作用域与流式折叠意愿；math_tabs、prose_tabs、container_headings、table_preview 示例通过。核心验收及示例日志：`/tmp/mdtui3-leaf-tabs-validation.log`、`/tmp/mdtui3-leaf-tabs-final-doc.log`；初始三项失败基线：`/tmp/mdtui3-leaf-tabs-baseline.log`。
+
+额外检查发现既有 container_tables 示例在第 30 行仍断言表格直接以顶层 Heading 为折叠父级，实际父级已是 Item 容器。在修改前 d47813f 的独立源码副本中复现同一失败，见 `/tmp/mdtui3-leaf-tabs-existing-example-baseline.log`；该示例的失败位于核心检查全部通过之后，未将其记为通过，也未扩展本单元去修改这个既有断言。
+
+README/TODO 已同步完成范围。剩余新叶块类型与表头、普通新段落、新容器首行、空白/不完整路径、叶块内部 tab、分类上限及其它容器语义继续保留 TODO；未声称全部部分 tab 方言或终端 UI 已完成。
