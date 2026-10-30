@@ -358,3 +358,20 @@
 - [x] **项目 devShell**：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 305 项、`cargo test --doc` 28 项、`cargo fmt --all -- --check` 和 `git diff --check` 通过。`cargo run -r --example table_row_folding` 用 6 帧/38 个计费字节跳过百万字隐藏行，保留表头、前行及后续追加行。完整验收日志：`/tmp/mdtui3-table-row-folding-validation.log`。
 
 本轮交付固定、不相交正文行范围核心；没有改变 Markdown 源码、解析方言或零运行时依赖/禁止 unsafe 契约。真实表格与占位绘制、自动增长尾部策略、重叠/嵌套行区间及手工任意源码范围仍单独设计，终端 UI 不在本轮范围。
+
+
+## 2026-10-30 容器内代码块核心交付
+
+显式 Quote/Item 内围栏与四空格缩进代码复用 `BlockKind::Code`、稳定 `BlockId` 和确切 `Block.container`。块范围包含完整物理行，显示隐藏容器前缀/围栏或四格缩进，字面正文不解析行内或容器语法。围栏只匹配已有容器路径；缺失前缀、切换兄弟、显式 closer 和 EOF 封闭范围，未闭合围栏保持代码语义。缩进代码仅在同一确切作用域合并相邻行，沿用完整空白行即终止的顶层方言。失败/超长候选、CRLF、opener info、1024 字节分类窗口及不回看语义详见 [README](README.md#容器内代码块)。
+
+代码候选直接接入已有独立折叠视图：父节点取同作用域当前章节，否则为所属容器；整块占位、info 摘要、`code` 默认初始化、子意愿、批量/兄弟、预览、源码导航、独立视图和旧测量失效均沿用预算接口。Growing 代码暂覆盖未分类尾部，边界确认时回退，合并更新可恢复正确状态；前几行摘要使用 `DisplayExcerpt`，隐藏前缀计入共享预算和源码上限。
+
+生产实现仅增加容器围栏的作用域/前缀决议和同作用域缩进合并检查，无新增依赖、公共对象或独立索引。长行追加只增长当前块与共享尾部，无行内扫描或祖先更新；显式前缀按新增字节匹配，关闭按实际事件消费。全库累计解析 O(n log n)、空间 O(n)、禁止 unsafe 和预算契约保持。
+
+新增 15 项测试（`tests/container_code.rs` 10 项、`tests/container_sections.rs` 4 项、`tests/chunking.rs` 1 项），并扩充现有 UTF-8 全切点/逐前缀/fuzz 样本及旧方言回归。覆盖嵌套/兄弟/作用域退出、字面内容、闭合失败、分类窗口、长行/CRLF/EOF、稳定身份及更新、合并更新、默认/预览/导航/表格组合、预算暂停、源码截断与过期任务/测量。400 个生成代码块与独立物理范围/显示模型一致，240 次流式收放/预览/resize 与独立线性区间/父链/高度模型一致。
+
+复杂度验收：1000 层引用内，围栏与缩进代码各追加 1000 次 × 1000 字节，输入只增长百万字，分类/行内/容器/标题计数及容器/章节索引访问均不增长；离开容器只关闭 1000 个节点，不读取旧正文。250 层列表的两个续行恰好匹配 500 个活动帧，缩进串扫描线性且正文不创建子节点。4096 个已关闭代码块之后追加只检查一个新块，无历史刷新。折叠百万字代码在有限 query/object/tile 预算内生成一个占位，正文回调及计费字节均为零。
+
+项目 devShell 验收通过：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、debug/release `cargo nextest run --no-fail-fast` 各 320 项、`cargo test --doc` 29 项、`cargo fmt --all -- --check` 与 `git diff --check`。`cargo run -r --example container_code` 用 7 帧/45 个计费字节读取首行代码摘要，再用 6 帧恢复源码位置 30，缩进代码兄弟保持折叠。日志：`/tmp/mdtui3-container-code-validation.log`、`/tmp/mdtui3-container-code-release.log`。TODO 与 README 已同步。
+
+本单元交付容器内围栏/缩进代码核心；容器内定义、多物理行 Setext、lazy continuation、tight/loose、完整 CommonMark 缩进/空行/tab 规则、实际代码排版与终端 UI 继续保留待办。

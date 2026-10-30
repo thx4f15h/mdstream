@@ -76,6 +76,8 @@ fn every_single_split_for_small_constructs() {
         "[^a b] [^] [^a\\b] [^open\n\n[^last]",
         "[x](a(b)c) [y][z]\n\n[z]: url\n",
         "```rs\r\nx\r\n```\r\n",
+        "> - [x] ```rs\r\n>   > # *中🙂*\r\n>   ```\n>       $raw$\n> - ~~~\n>   [^x]: raw\nout\n",
+        "> ```\n> - literal\n> > literal\n>\n> ````\n>     code\n>\n>     next\n",
         "# title #\n\ntext\n===\n",
         "\\*a* `b` 中文🙂\n",
         "a\r\nb\n",
@@ -123,6 +125,21 @@ fn character_chunks_through_lookahead_and_fence_boundaries() {
         "x".repeat(1500),
         "x".repeat(5000),
         "[x] ".repeat(1000)
+    );
+    check_chunks(
+        &source,
+        &source.char_indices().map(|(i, _)| i).collect::<Vec<_>>(),
+    );
+}
+
+#[test]
+fn container_code_character_chunks_cross_classification_and_crlf_boundaries() {
+    let source = format!(
+        "> - ```rs {}\r\n>   > {}\r\n>   ```{}\n>   ```\n>       {}\r\n> - next\n",
+        "中🙂".repeat(300),
+        "*中🙂* &amp; ".repeat(400),
+        " ".repeat(BLOCK_LOOKAHEAD),
+        "`raw` ".repeat(300),
     );
     check_chunks(
         &source,
@@ -198,6 +215,7 @@ fn provisional_semantics_match_at_every_observed_prefix() {
         "` a\r\nb ` ",
         "$x$ $$中🙂 &amp; \\alpha$$ $a$$b$ $unclosed\n\n",
         "> - item\n>   > quote\n> - sibling\n  - nested list\n    continuation\n",
+        "> - ```rs\n>   # raw\n>   > raw\n>   ```\n>       code\n> - next\n",
     ];
     let mut state = 981_u64;
     for _ in 0..24 {

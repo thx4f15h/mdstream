@@ -101,6 +101,9 @@ pub(crate) struct ContainerOptions {
     pub root_markers: bool,
     pub paragraph: Option<ContainerId>,
     pub table_header: Option<(ContainerId, usize)>,
+    // Match this fence's existing path, but do not interpret its payload as
+    // new containers. A missing prefix/sibling still ends that exact scope.
+    pub fence: Option<ContainerId>,
 }
 
 pub(crate) struct ContainerLine {
@@ -208,6 +211,7 @@ impl Containers {
             root_markers,
             paragraph,
             table_header,
+            fence,
         } = options;
         let mut prefix = Prefix::new(source, span, complete);
         let mut keep = 0;
@@ -277,6 +281,9 @@ impl Containers {
         }
         self.close_to(keep, span.start, work, update);
         while !self.active.is_empty() || root_markers {
+            if fence.is_some() && fence == self.inner() {
+                break;
+            }
             // Only a delimiter in the header's exact retained scope wins over
             // a new list marker (e.g. `> - | -`). Sibling items already changed
             // identity above. Inspect at most one bounded payload per line.

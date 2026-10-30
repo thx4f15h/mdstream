@@ -685,13 +685,21 @@ impl Document {
         let paragraph = self.current.is_some_and(|id| {
             self.blocks[id.0].kind == BlockKind::Paragraph && self.blocks[id.0].container.is_none()
         });
-        let mut classification =
-            block::classify(&self.source, span, complete, self.fence, paragraph);
+        let fence_scope = self
+            .fence
+            .and_then(|_| self.blocks[self.current.unwrap().0].container);
+        let mut classification = block::classify(
+            &self.source,
+            span,
+            complete,
+            self.fence.filter(|_| fence_scope.is_none()),
+            paragraph,
+        );
         let mut content = span;
         let mut table_text = matches!(classification, Line::Text);
-        if self.fence.is_none() {
-            // Preserve root-level rule/Setext precedence. The inner payload
-            // recognizes headings/tables; other container syntax stays literal.
+        if self.fence.is_none() || fence_scope.is_some() {
+            // Root fences remain opaque. Scoped fences first match their
+            // explicit path; a missing prefix or sibling seals the old block.
             let root_markers = matches!(
                 classification,
                 Line::Indented { .. } | Line::Text | Line::Blank
@@ -706,6 +714,7 @@ impl Document {
                     root_markers,
                     paragraph: previous_title.and_then(|(id, _)| self.blocks[id.0].container),
                     table_header: header.as_ref().map(|h| (h.container.unwrap(), h.columns)),
+                    fence: fence_scope,
                 },
                 &mut self.work,
                 update,
@@ -713,6 +722,10 @@ impl Document {
             self.sync_heading_scopes(new_start, closed_start, update);
             self.headings
                 .context(self.containers.inner(), span.start, &mut self.work);
+            if fence_scope.is_some() && fence_scope != self.containers.inner() {
+                self.fence = None;
+                self.close_current(update);
+            }
             if let Some(line) = line {
                 let same_scope = previous_title
                     .is_some_and(|(id, _)| self.blocks[id.0].container == self.containers.inner());
@@ -720,10 +733,15 @@ impl Document {
                 content = inner;
                 self.work.classified_bytes += inner.len() as u64;
                 let inner_classification =
-                    block::classify(&self.source, inner, complete, None, same_scope);
+                    block::classify(&self.source, inner, complete, self.fence, same_scope);
                 table_text = matches!(inner_classification, Line::Text);
                 classification = match inner_classification {
-                    heading @ (Line::Heading { .. } | Line::Setext(_)) => heading,
+                    leaf @ (Line::Heading { .. }
+                    | Line::Setext(_)
+                    | Line::FenceOpen { .. }
+                    | Line::FenceClose
+                    | Line::Code
+                    | Line::Indented { .. }) => leaf,
                     _ => Line::Container {
                         prefix: line.prefix,
                         kind: line.kind,
@@ -907,6 +925,7 @@ impl Document {
             }
             Line::Code => {
                 inline = false;
+                payload.start = content.start;
                 let id = self.current.unwrap();
                 self.blocks[id.0].source.end = span.end;
                 id
@@ -916,6 +935,7 @@ impl Document {
                 payload.start = prefix;
                 if let Some(id) = self.current
                     && matches!(self.blocks[id.0].kind, BlockKind::Code { .. })
+                    && self.blocks[id.0].container == self.containers.inner()
                 {
                     self.blocks[id.0].source.end = span.end;
                     id
