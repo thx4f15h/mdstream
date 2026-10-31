@@ -125,7 +125,7 @@ MVP 选择自绘 cell 网格和差分 ANSI 写出器，不把 ratatui 放进关�
 | --- | --- | --- | --- |
 | [x] P00 | 固化参考基线与差异清单 | 无 | 记录参考文件 SHA-256；建立 §0–§9 对照表；明确 TUI 与 `--once` 的差异：TUI 以 cell 网格等价为准，不做行尾 CRLF，交互帧用光标寻址；`--once` 才逐语义段字节精确；TUI 对标题/代码/表格等不折行块按正文内容区宽裁剪（无侧栏时等于终端宽），`--once` 保留参考字节及可能的终端自动折行；不复制 HTML 块崩溃。 |
 | [x] P01 | 新建独立 TUI crate | P00 | 新增 `crates/mdtui-tui`，使用独立 `Cargo.toml` + `mdtui3 = { path = "../.." }`；默认不改根 `Cargo.toml`/根 lock，只改 TUI crate 自身 manifest/lock；如确需 workspace member，先取得用户同意；`git diff -- src Cargo.toml` 为空；`cargo check --manifest-path crates/mdtui-tui/Cargo.toml` 通过。 |
-| P02 | CLI 参数与终端生命周期骨架 | P01 | 支持 `--once`、`--width`、`--height`、`--open-links`、`--no-links`、`--help`、文件参数（`--width/--height` 供 `--once`/测试固定几何，TUI 模式以终端尺寸为准）；`--no-links` 只关闭 OSC 8 输出，不关闭样式、内部锚点和应用内链接焦点；非 TTY 时 TUI 模式拒绝启动并提示；raw mode/备用屏/光标/panic 恢复有 PTY 测试；退出码覆盖成功、参数错、I/O 错。 |
+| [x] P02 | CLI 参数与终端生命周期骨架 | P01 | 支持 `--once`、`--width`、`--height`、`--open-links`、`--no-links`、`--help`、文件参数（`--width/--height` 供 `--once`/测试固定几何，TUI 模式以终端尺寸为准）；`--no-links` 只关闭 OSC 8 输出，不关闭样式、内部锚点和应用内链接焦点；非 TTY 时 TUI 模式拒绝启动并提示；raw mode/备用屏/光标/panic 恢复有 PTY 测试；退出码覆盖成功、参数错、I/O 错。 |
 | [x] P03 | 测试工装与固定环境 | P01 | 提供 vt100 cell 解析、insta 快照、假时钟、临时文件、PTY 封装；固定 `TERM=xterm-256color`、`COLORTERM=truecolor`、`LANG=C.UTF-8`、120×40；工装自身有 1 个通过/失败自检。 |
 | P04 | Screen/Cell 数据模型 | P03 | 定义 `Cell`（符号、样式角色、宽度、链接 ID、宽字符占位）、`Screen`（终端尺寸 + 正文内容区矩形）、行来源映射；单元测试覆盖 CJK、emoji、组合字符、宽字符占位、边界裁剪，以及超宽不折行块被截断后正文行宽不超过内容区宽、正文 cell 不落到侧栏列或越过终端右边界且行来源映射仍有效。 |
 | P05 | 主题与 SGR 编码器 | P03 | 固定参考 §1 的 RGB；按“粗体→斜体→下划线→删除线→前景→背景”发射；独立复位；单元/golden 覆盖 H1–H6、代码、链接、表格框线。 |
@@ -137,6 +137,8 @@ P00 证据（2026-10-31）：`docs/tui-render-baseline.md`，文档 SHA-256 `5f4
 P01 证据（2026-10-31）：新增独立 crate `crates/mdtui-tui`（`Cargo.toml`、`Cargo.lock`、`src/main.rs`）；`cargo check --manifest-path crates/mdtui-tui/Cargo.toml` 通过；`git diff -- src Cargo.toml Cargo.lock` 为空，未加入根 workspace；crate 内 `.gitignore` 忽略自身 `target/`。
 
 P03 证据（2026-10-31）：新增 `tests/support/{terminal,env,snapshot,clock,temp,pty}.rs`；固定 `TERM=xterm-256color`、`COLORTERM=truecolor`、`LANG=C.UTF-8`、`COLUMNS=120`、`LINES=40` 并对子进程 `env_clear` 后注入、移除 `NO_COLOR`；自检 `terminal_helper_reads_cells_styles_cursor_and_size`、`harness_failure_self_check_returns_mismatch`、`fixed_environment_is_isolated_from_the_test_process`；PTY 自检 `pty_self_check_launches_current_binary_and_resizes`、`pty_self_check_writes_reads_and_resizes`、`pty_self_check_terminates_running_child` 在 Unix 启动当前 crate 二进制与 `/bin/sh`；`cargo test --manifest-path crates/mdtui-tui/Cargo.toml` 10 passed，`cargo fmt --manifest-path crates/mdtui-tui/Cargo.toml -- --check` 与 `cargo clippy --manifest-path crates/mdtui-tui/Cargo.toml --all-targets -- -D warnings` 通过；快照 `tests/snapshots/vt100_screen.snap`。
+
+P02 证据（2026-10-31）：CLI 解析覆盖 `--once`、`--width/--height`（1..=1000，重复/缺值/越界错误）、`--open-links`/`--no-links` 互斥、`--help`、`--`、单文件/缺文件/多文件/未知参数；`LinkMode::NoOsc8` 仅建模关闭 OSC 8，帮助注明保留链接样式、内部锚点和应用内链接焦点；退出码测试固定 0/2/3/4（I/O 含不存在、不可读、非普通文件；非 TTY TUI 为 4）；`--once` 非 TTY 零输出、不宣称 reference ANSI；TUI 生命周期 raw→备用屏→隐藏光标、退出/panic 显示光标→离开备用屏→恢复 raw，PTY 测试 `pty_q_exits_cleanly_and_restores_terminal_after_resize`、`pty_ctrl_c_exits_cleanly_and_restores_terminal`、`pty_panic_restores_terminal_before_exit`，并覆盖 resize 120×40→80×24→160×50；`cargo test --manifest-path crates/mdtui-tui/Cargo.toml` 31 passed，`cargo fmt --manifest-path crates/mdtui-tui/Cargo.toml -- --check` 与 `cargo clippy --manifest-path crates/mdtui-tui/Cargo.toml --all-targets -- -D warnings` 通过。
 
 ### 阶段 P1：静态语义渲染（先不接视口/终端）
 

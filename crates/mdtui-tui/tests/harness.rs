@@ -132,8 +132,13 @@ fn fixed_environment_is_isolated_from_the_test_process() {
 #[cfg(unix)]
 #[test]
 fn pty_self_check_launches_current_binary_and_resizes() {
+    let workspace = TempWorkspace::new().expect("temporary workspace must be created");
+    let file = workspace
+        .write("p03-self-check.md", "# P03 self-check\n")
+        .expect("P03 fixture must be written");
     let mut command = support::pty::current_binary_command();
-    command.arg("--p03-self-check");
+    command.arg("--once");
+    command.arg(file);
     let mut session = support::pty::spawn(command, support::pty::PTY_120X40)
         .expect("current crate binary must start in a PTY");
 

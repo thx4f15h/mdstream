@@ -22,6 +22,13 @@ pub const PTY_80X24: PtySize = PtySize {
     pixel_height: 0,
 };
 
+pub const PTY_160X50: PtySize = PtySize {
+    rows: 50,
+    cols: 160,
+    pixel_width: 0,
+    pixel_height: 0,
+};
+
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 pub fn command(program: impl AsRef<OsStr>) -> CommandBuilder {
