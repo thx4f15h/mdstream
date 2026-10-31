@@ -1,0 +1,8 @@
+[package]
+name = "mdtui-tui"
+version = "0.1.0"
+edition = "2024"
+description = "Terminal Markdown reader for mdtui3"
+
+[dependencies]
+mdtui3 = { path = "../.." }
