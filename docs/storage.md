@@ -1,16 +1,16 @@
 # 存储、查询 scratch 与缓存回收测量
 
-本实验在核心性能矩阵之外，量化语义节点、查询栈和检查点生命周期。工作负载和测量由 `crates/mdtui3-core/tests/support/storage.rs` 共享给 `crates/mdtui3-core/examples/storage.rs` 与 `crates/mdtui3-core/tests/storage.rs`，无依赖和 unsafe。时间只作观测，验收基于容量、计数和独立模型。
+本实验在核心性能矩阵之外，量化语义节点、查询栈和检查点生命周期。工作负载和测量由 `crates/mdstream-core/tests/support/storage.rs` 共享给 `crates/mdstream-core/examples/storage.rs` 与 `crates/mdstream-core/tests/storage.rs`，无依赖和 unsafe。时间只作观测，验收基于容量、计数和独立模型。
 
 仓库现采用 workspace 布局；本文正文使用当前路径，已保存的 `*-environment.txt` 与基线 CSV 是测量时生成的原始快照，内部仍保留当时的 `src/`、`tests/`、`examples/` 路径。
 
 ## 复跑与原始记录
 
 ```bash
-nix develop -c bash scripts/measure-storage.sh /tmp/mdtui3-storage
+nix develop -c bash scripts/measure-storage.sh /tmp/mdstream-storage
 # 可选参数：基准字节参数、窗口查询次数、独立进程次数
-nix develop -c bash scripts/measure-storage.sh /tmp/mdtui3-storage-large 16384 128 3
-nix develop -c cargo run -p mdtui3-core --release --example storage -- 4096 64
+nix develop -c bash scripts/measure-storage.sh /tmp/mdstream-storage-large 16384 128 3
+nix develop -c cargo run -p mdstream-core --release --example storage -- 4096 64
 nix develop -c cargo nextest run --workspace --test storage
 # 子索引涉及字长，另在实际 i686 二进制中验收
 nix develop .#index32 -c cargo nextest run --workspace --target i686-unknown-linux-gnu --test storage
@@ -18,7 +18,7 @@ nix develop .#index32 -c cargo nextest run --workspace --target i686-unknown-lin
 
 脚本拒绝已有目录和非法参数，保存环境、Git HEAD/脏状态、源码 SHA-256、Cargo metadata 的权威 target 目录、每轮 CSV 和日志，并逐项核对各轮非时间字段相同。每进程运行 base、4 × base、16 × base 三规模，默认 4,096 / 16,384 / 65,536。初次压缩实验每规模 27 个阶段，共 81 个阶段、732 条指标（包括各阶段耗时）；新增查询复用对照后，查询复用版每规模 42 个阶段，共 126 个阶段、1,101 条指标；加入下方历史树压缩实验后，当前驱动每规模 54 个阶段，共 162 个阶段、1,521 条指标。CSV 是长表 `schema,case,scale,phase,metric,value`，schema 为 1；scale 在解析/视口场景是生成参数，在检查点场景是状态数，不等于所有场景的实际源码长度。
 
-[原始对照 CSV](storage-baseline.csv) 保存压缩前一轮与压缩后三轮，增加 `variant,run` 两列，共 2,928 条指标。[环境记录](storage-environment.txt) 保存后三轮执行时的工具链、主机及源码摘要。环境为 ark、AMD Ryzen 7 255、Linux 6.18.54、x86_64、Rust/Cargo 1.99.1，release 默认配置；后三轮开始于 2026-10-30 15:07:18 UTC，基于 `47bc3f3a2d69f70da1750986436ce04457db9f67` 加本单元工作树。前一轮使用相同测量代码及未压缩的该提交 `crates/mdtui3-core/src/checkpoints.rs`。前三类解析输入额外记录实际字节数及 FNV-1a 指纹。没有固定 CPU 频率、绑核或清空缓存。
+[原始对照 CSV](storage-baseline.csv) 保存压缩前一轮与压缩后三轮，增加 `variant,run` 两列，共 2,928 条指标。[环境记录](storage-environment.txt) 保存后三轮执行时的工具链、主机及源码摘要。环境为 ark、AMD Ryzen 7 255、Linux 6.18.54、x86_64、Rust/Cargo 1.99.1，release 默认配置；后三轮开始于 2026-10-30 15:07:18 UTC，基于 `47bc3f3a2d69f70da1750986436ce04457db9f67` 加本单元工作树。前一轮使用相同测量代码及未压缩的该提交 `crates/mdstream-core/src/checkpoints.rs`。前三类解析输入额外记录实际字节数及 FNV-1a 指纹。没有固定 CPU 频率、绑核或清空缓存。
 
 ## 口径与场景
 
@@ -102,7 +102,7 @@ nix develop .#index32 -c cargo nextest run --workspace --target i686-unknown-lin
 
 ### 重复测量与结果
 
-沿用本文开头的 `scripts/measure-storage.sh` 和 `crates/mdtui3-core/examples/storage.rs`，每个规模新增四种状态/位置各三阶段：填入全部状态并保留每第 16 个、分帧压缩、重填被移出的其余位置。状态数为 128 / 512 / 2,048，稀疏间隔 97、相邻间隔 1，每状态 256 字节，每帧 objects/queries 各 31。clear/drain 的原实验完整保留。压缩计时包含构造、推进、每帧显式丢弃返回状态、有效 token 核验及 finish；refill 包括 payload 与前驱核验，不是裸索引时间。
+沿用本文开头的 `scripts/measure-storage.sh` 和 `crates/mdstream-core/examples/storage.rs`，每个规模新增四种状态/位置各三阶段：填入全部状态并保留每第 16 个、分帧压缩、重填被移出的其余位置。状态数为 128 / 512 / 2,048，稀疏间隔 97、相邻间隔 1，每状态 256 字节，每帧 objects/queries 各 31。clear/drain 的原实验完整保留。压缩计时包含构造、推进、每帧显式丢弃返回状态、有效 token 核验及 finish；refill 包括 payload 与前驱核验，不是裸索引时间。
 
 [三轮原始 CSV](checkpoint-compaction-baseline.csv) 共 **4,563 条指标、486 个阶段**；各轮非时间字段一致，原查询复用基线的 **975 个非时间字段逐项未变**。[环境及源码 SHA-256](checkpoint-compaction-environment.txt) 记录基于 `7e27911e3c078c958c1553e54376974fba895b1c` 加本单元工作树，2026-10-30 15:37:52 UTC，ark / x86_64 / Rust 1.99.1。测量与回归运行有重叠，未固定频率或绑核，时间仅作原始观察，不宣称端到端提速。
 

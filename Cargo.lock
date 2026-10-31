@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "mdtui3-core"
+name = "mdstream-core"
 version = "0.1.0"

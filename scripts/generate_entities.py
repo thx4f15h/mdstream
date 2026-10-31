@@ -2,7 +2,7 @@
 """Generate the fixed semicolon-only entity table from a local WHATWG JSON file.
 
 Download https://html.spec.whatwg.org/entities.json separately, then run:
-python3 scripts/generate_entities.py /path/to/entities.json > crates/mdtui3-core/src/entity_names.rs
+python3 scripts/generate_entities.py /path/to/entities.json > crates/mdstream-core/src/entity_names.rs
 No downloads are performed during builds or tests.
 """
 

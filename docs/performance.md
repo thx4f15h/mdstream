@@ -1,6 +1,6 @@
 # 核心性能矩阵
 
-`crates/mdtui3-core/examples/scaling.rs` 与 `crates/mdtui3-core/tests/performance.rs` 共用固定工作负载 `crates/mdtui3-core/tests/support/performance.rs`。矩阵只测核心解析、索引和有预算消费，不实现终端 UI，不添加运行时依赖。CSV schema 2 替代旧 scaling 示例的输出格式。
+`crates/mdstream-core/examples/scaling.rs` 与 `crates/mdstream-core/tests/performance.rs` 共用固定工作负载 `crates/mdstream-core/tests/support/performance.rs`。矩阵只测核心解析、索引和有预算消费，不实现终端 UI，不添加运行时依赖。CSV schema 2 替代旧 scaling 示例的输出格式。
 
 仓库现采用 workspace 布局；本文正文使用当前路径，已保存的 `*-environment.txt` 与基线 CSV 是测量时生成的原始快照，内部仍保留当时的 `src/`、`tests/`、`examples/` 路径。
 
@@ -9,11 +9,11 @@
 从项目根目录使用项目锁定的 devShell：
 
 ```bash
-nix develop -c bash scripts/measure-performance.sh /tmp/mdtui3-matrix
+nix develop -c bash scripts/measure-performance.sh /tmp/mdstream-matrix
 # 可选参数：输出目录、基准字节数、每场景查询样本数、独立进程重复次数
-nix develop -c bash scripts/measure-performance.sh /tmp/mdtui3-matrix-large 262144 101 3
+nix develop -c bash scripts/measure-performance.sh /tmp/mdstream-matrix-large 262144 101 3
 # 只输出一轮 CSV；规模为 base、2 × base、4 × base
-nix develop -c cargo run -p mdtui3-core -r --example scaling -- 65536 31
+nix develop -c cargo run -p mdstream-core -r --example scaling -- 65536 31
 nix develop -c cargo nextest run --workspace --test performance
 ```
 

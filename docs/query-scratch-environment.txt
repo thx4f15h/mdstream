@@ -1,7 +1,7 @@
 Fri Oct 30 15:22:40 UTC 2026
 ark
 Linux ark 6.18.54 #1-NixOS SMP PREEMPT_DYNAMIC Fri Sep 25 14:35:54 UTC 2026 x86_64 GNU/Linux
-/home/ajen/gits/mdtui3
+/home/ajen/gits/mdstream
 4248b377f9b7767fc5d66f90b7b14aa7b4adff20
  M README.md
  M TODO.md

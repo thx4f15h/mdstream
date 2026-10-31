@@ -1,4 +1,4 @@
-# mdtui3 核心库
+# mdstream 核心库
 
 只追加的 Markdown 解析器，以及按视口读取语义、维护排版高度和恢复排版状态的数据结构。零运行时依赖，禁止 unsafe。这里交付的是核心库，不包含终端绘制、HTML 输出、字体塑形或自动换行实现。
 
@@ -10,12 +10,12 @@
 
 ## 工作区结构
 
-仓库是 Cargo workspace。当前只有核心 crate `crates/mdtui3-core`：package 名称为 `mdtui3-core`，库 crate 名称保持 `mdtui3`。终端渲染 crate 留到后续阶段加入；根目录保留跨 crate 的 README、TODO/DONE、docs、scripts 和 flake。
+仓库是 Cargo workspace。当前只有核心 crate `crates/mdstream-core`：package 名称为 `mdstream-core`，库 crate 名称保持 `mdstream`。终端渲染 crate 留到后续阶段加入；根目录保留跨 crate 的 README、TODO/DONE、docs、scripts 和 flake。
 
 ## 接入
 
 ```rust
-use mdtui3::{Document, HeightIndex, Style};
+use mdstream::{Document, HeightIndex, Style};
 
 let mut doc = Document::new();
 let mut heights = HeightIndex::new(1)?;
@@ -43,7 +43,7 @@ for tile in heights.viewport(100..124, 4, 32) {
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-可执行示例在 `crates/mdtui3-core/examples/stream.rs`。package 名称为 `mdtui3-core`，库 crate 名称仍为 `mdtui3`。
+可执行示例在 `crates/mdstream-core/examples/stream.rs`。package 名称为 `mdstream-core`，库 crate 名称仍为 `mdstream`。
 
 `append(&str)` 接收有效 UTF-8，可以在任意 Unicode 标量边界分块；传输层的任意字节分块可使用 `Utf8Document`：最多暂存 3 字节不完整尾部，非法序列及 EOF 截断采用 U+FFFD 替换；偏移按解码后的文档定义。`finish()` 表示真正的 EOF、完成尾部解析，重复调用无副作用，此后不能再追加。空追加不改变 revision。
 
@@ -105,7 +105,7 @@ for tile in heights.viewport(100..124, 4, 32) {
 片段边界**不是强制换行，也不保证是 grapheme、单词或 shaping 边界**。渲染器需要定义行归属约定，并携带 column、词尾、字素尾部等恢复状态。`CheckpointIndex<S>` 的 S 完全由渲染器决定，表示开始某个片段前的状态：
 
 ```rust
-use mdtui3::{CheckpointIndex, Document, HeightIndex, TileId};
+use mdstream::{CheckpointIndex, Document, HeightIndex, TileId};
 
 let mut doc = Document::new();
 let mut heights = HeightIndex::default();
@@ -133,7 +133,7 @@ if let Some((from, state)) = checkpoints.previous(target) {
 大量连续的隐藏源码也无需逐片段访问。以下跳过从一个完全隐藏片段开始的整个隐藏区间：
 
 ```rust
-# use mdtui3::{Document, HeightIndex, TileId};
+# use mdstream::{Document, HeightIndex, TileId};
 # let doc = Document::new();
 # let mut heights = HeightIndex::default();
 # let tile_id = TileId(0);
@@ -156,7 +156,7 @@ if let Some(span) = doc.tile(tile_id) {
 `ContainerId` 指向独立 arena，`ContainerKind` 区分 Quote、List 和 Item；列表节点保存 bullet/有序分隔符，条目保存 number 和可选 TaskMarker。`Document::container(id)` O(1) 返回当前 revision 的 `Container` 快照：父 ID、深度（根为 1）、完整物理行源码包络、Growing/Sealed 状态。每个叶块只增加 `Block.container` 指向最内层容器，叶块索引仍按源码排列；`BlockKind::Quote/ListItem` 保留本行标记信息，不再代表整个容器范围。ID 只在所属 Document 内有效，关闭后不复用。
 
 ```rust
-use mdtui3::{Budget, ContainerKind, Document, SyntaxState, WorkLimit};
+use mdstream::{Budget, ContainerKind, Document, SyntaxState, WorkLimit};
 let mut doc = Document::new();
 let update = doc.append("> - [x] first\n>   continued\n")?;
 assert_eq!(update.new_containers, 0..3); // quote -> list -> item
@@ -187,7 +187,7 @@ assert_eq!(doc.container(item).unwrap().state, SyntaxState::Sealed);
 
 通常的容器匹配工作累计 O(n + 开闭次数)，省略缩进空行另用下述 O(log(Q + 1)) 引用深度查询；容器/活动栈空间 O(n)。匹配一层必定消费正长度前缀；首次失配后，有界 lazy 判定成立则 O(1) 保留剩余活动路径，空白行按下述规则保留列表，其它情况批量弹栈。列表续行共享水平空白的末端字节/列缓存；部分 tab 探测和原分类回退各至多一次，扫描次数不随容器深度增加。整库仍累计 O(n log n)。`container_arena_stats` 统计节点、活动栈和引用深度索引的实际容量字节及 Vec 增长次数，不含标题索引/作用域、源码、分配器元数据或 Update。批量关闭和 EOF 仍可能一次处理整个活动栈；解析不承诺单次调用硬预算。有预算的查询不会枚举正文或子树。
 
-`cargo run -p mdtui3-core -r --example containers` 展示混合嵌套、续行、兄弟切换、未分类尾部及分帧祖先读取。`crates/mdtui3-core/tests/containers.rs` 验证独立范围模型、增量快照重建、1000 层引用、深列表单次空格扫描、百万字长续行、空行延迟关闭及分块一致性；现有分块/fuzz 快照也包含容器。
+`cargo run -p mdstream-core -r --example containers` 展示混合嵌套、续行、兄弟切换、未分类尾部及分帧祖先读取。`crates/mdstream-core/tests/containers.rs` 验证独立范围模型、增量快照重建、1000 层引用、深列表单次空格扫描、百万字长续行、空行延迟关闭及分块一致性；现有分块/fuzz 快照也包含容器。
 
 ## 容器 tab 列对齐
 
@@ -199,7 +199,7 @@ assert_eq!(doc.container(item).unwrap().state, SyntaxState::Sealed);
 - 完整前缀之后的独立 tab 不自动展开：缩进代码和脚注正文续行仍要求四个 ASCII 空格；仅下述新叶块子项允许前缀内部分 tab 的余量参与标题、围栏和代码缩进分类。定义和 Setext 的部分 tab 扩展仍待实现。正文里的 tab 保留原文。完整前缀后的既有块、表格分隔行探测、内联对象、tight/loose、折叠与源码映射均使用相同容器身份。
 
 ```rust
-use mdtui3::{BlockKind, Document};
+use mdstream::{BlockKind, Document};
 let mut doc = Document::new();
 doc.append("-\t```\n\t中🙂\n")?;
 let item = doc.blocks()[0].container;
@@ -214,7 +214,7 @@ assert_eq!(doc.container_count(), 3); // one list, two items
 
 仍按换行、EOF 或既有 1024 字节前缀上限提交；上限按字节计，不按展开列计。截断的空白/标记保持原有提交和失败规则，不因新字节到来回扫历史前缀。匹配器只增加常数大小的列号和空白末端摘要；相邻列表层复用同一空白串扫描，每个消费字节至多再访问一次。首次失配只做一次有界 lazy 判定，不扫描余下祖先；长物理行的后续追加不调用前缀匹配。累计解析 O(n log n)、空间 O(n) 和共享预算契约保持，无单次 append 的硬时延承诺。
 
-`crates/mdtui3-core/tests/container_tabs.rs` 覆盖 3072 组独立列宽/字节边界模型、嵌套与失败前缀、既有块/表格/脚注/数学规则、映射预算、稳定身份和合并通知；全局分块快照覆盖 UTF-8 全切点/逐前缀及分类边界。250 层混合缩进、千层/百万字增长的计数测试验证没有祖先或正文回扫。`cargo run -p mdtui3-core -r --example container_tabs` 演示 tab 前缀去除、有预算数学读取及折叠意愿保留。正文、数学续行及所选新叶块的部分 tab 见下文；叶块内部 tab 缩进和分类上限扩展继续保留 TODO。
+`crates/mdstream-core/tests/container_tabs.rs` 覆盖 3072 组独立列宽/字节边界模型、嵌套与失败前缀、既有块/表格/脚注/数学规则、映射预算、稳定身份和合并通知；全局分块快照覆盖 UTF-8 全切点/逐前缀及分类边界。250 层混合缩进、千层/百万字增长的计数测试验证没有祖先或正文回扫。`cargo run -p mdstream-core -r --example container_tabs` 演示 tab 前缀去除、有预算数学读取及折叠意愿保留。正文、数学续行及所选新叶块的部分 tab 见下文；叶块内部 tab 缩进和分类上限扩展继续保留 TODO。
 
 ### 围栏代码续行的部分 tab
 
@@ -225,7 +225,7 @@ assert_eq!(doc.container_count(), 3); // one list, two items
 `source()`、`runs()` 和块范围保留原字节；`display_runs[_in]` / `display_cursor` 把最末部分 tab 的一个源码字节映射到静态空格。`DisplayRun.source` 和 `replacement` 都是该 tab 的完整单字节区间，只有包含该字节的 tile/范围发出替代文本，其样式仍为 CODE。隐藏的前缀与关闭行不会变成显示空格。显示搜索和有界摘要复用这个映射：两个空格命中可指向同一个 tab，摘要截断在某个空格后仍保留完整 tab 映射。共享 Budget 在读取前收费，耗尽时不移动游标；一个替换最多输出三个字节，已有六字节、一 query、一 object 的基本预算足以推进。原始 `RenderRun` 排版消费者需要主动使用显示接口取得展开结果。
 
 ```rust
-use mdtui3::{Budget, DisplayStep, Document, Span, Style, WorkLimit};
+use mdstream::{Budget, DisplayStep, Document, Span, Style, WorkLimit};
 let mut doc = Document::new();
 doc.append("- ```\n\t中🙂\n\t```\n")?;
 doc.finish();
@@ -245,7 +245,7 @@ assert!(run.style.contains(Style::CODE));
 
 探测只保存当前字节、逻辑列和至多三列余量，复用空白末端缓存；每个保留的层消耗正列数，一个 tab 最多承担四列，不扫描无输入支撑的全部祖先。失败最多重试一次原有有界前缀；成功每个含余量的正文行只追加一条固定大小显示记录，无正文复制、无按列分配。已分类长行后续追加不再调用匹配器。累计 O(n log n)、空间 O(n) 保持，不承诺单次解析硬时延。
 
-`crates/mdtui3-core/tests/partial_tabs.rs` 和分块快照覆盖 400 组嵌套范围模型、UTF-8 全切点/逐前缀、关闭失败/路径回退、预算与搜索映射、百万字折叠和 4096 个历史替换；`crates/mdtui3-core/tests/container_tabs.rs` 的 3072 组独立列宽模型已包含部分 tab。`cargo run -p mdtui3-core -r --example partial_tabs` 演示小预算读取、源码映射和流式折叠意愿保持。
+`crates/mdstream-core/tests/partial_tabs.rs` 和分块快照覆盖 400 组嵌套范围模型、UTF-8 全切点/逐前缀、关闭失败/路径回退、预算与搜索映射、百万字折叠和 4096 个历史替换；`crates/mdstream-core/tests/container_tabs.rs` 的 3072 组独立列宽模型已包含部分 tab。`cargo run -p mdstream-core -r --example partial_tabs` 演示小预算读取、源码映射和流式折叠意愿保持。
 
 ### 一般正文续行的部分 tab
 
@@ -256,7 +256,7 @@ assert!(run.style.contains(Style::CODE));
 余下 1..3 列在行内状态机中作为空格消费：参与强调 flanking、软/硬换行确认、代码 span 空白规范化和链接/图片标签。标签匹配使用去前缀、包含虚拟空格的有界缓冲，原始标签范围和对象 ID 保持源码语义。已开启代码 span 晚闭合时，空格映射与代码规范化区间组合；如果需要裁掉末端一个空格，只减少一列，tab 的其他列仍显示。未闭合代码保持已有失败方言与已经确认的前缀映射，不回放正文。同一行中新开的数学对象位于前缀之后，沿用原映射；跨行数学前缀也支持部分 tab，读取语义见下节。
 
 ```rust
-use mdtui3::{Document, Span, Style};
+use mdstream::{Document, Span, Style};
 let mut doc = Document::new();
 doc.append("- ` a\n\t`\n")?;
 doc.finish();
@@ -275,7 +275,7 @@ assert_eq!(run.replacement, Some(Span::new(tab, tab + 1)));
 
 正文探测先检查实际前缀中是否含 tab，不含则不重复走活动栈；含 tab 的原子探测失败时最多再执行一次原匹配器。成功的 250 层两列 Item 路径每行访问 250 帧；完整四列 Item 的 tab 路径当前先探测再走原分类，每行访问两遍已提供的帧。缺失深层前缀时在失配处停止，不遍历余下祖先；百万字长行后续追加只消费新增正文。每行最多一个空格记录，闭合代码不重写旧记录；累计 O(n log n)/空间 O(n) 保持。`Work.inline_bytes` 包含每个部分 tab 至多三次虚拟空格访问，解析不承诺单次硬预算。
 
-`crates/mdtui3-core/tests/prose_tabs.rs`、显示索引内部测试及分块快照覆盖 400 组显式空格模型、UTF-8 全切点/逐前缀、作用域/失败/分类上限、千层/百万字、4096 个历史替换、旧任务失效和预算搜索/折叠。`cargo run -p mdtui3-core -r --example prose_tabs` 演示代码晚闭合、源码映射、预算读取与独立折叠意愿。
+`crates/mdstream-core/tests/prose_tabs.rs`、显示索引内部测试及分块快照覆盖 400 组显式空格模型、UTF-8 全切点/逐前缀、作用域/失败/分类上限、千层/百万字、4096 个历史替换、旧任务失效和预算搜索/折叠。`cargo run -p mdstream-core -r --example prose_tabs` 演示代码晚闭合、源码映射、预算读取与独立折叠意愿。
 
 ### 数学内容续行的部分 tab
 
@@ -286,7 +286,7 @@ assert_eq!(run.replacement, Some(Span::new(tab, tab + 1)));
 `math_content` / `math_block_content` 返回原文。`math_payload` / `math_block_payload` 逐片合并前缀间隙与已有显示 tab 记录，省略完整前缀、展开保留的部分 tab，其余 CRLF、反斜线、实体和正文 tab 原样返回。`MathChunk.source` 连续覆盖原内容，替代空格对应原 tab 的一个字节；同一 tab 不拆成多个源码片段。每步计实际源码字节及一 query/一 object，一个字节的正预算可原子输出最多三个空格，预算不足不推进也不收费。该接口按源码计费，调用方若另有限制输出字节需计入至多三倍的替换量；不解析 TeX 或应用代码/实体显示规范化。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 let mut doc = Document::new();
 doc.append("- $a\n\t中$\n  $$\n\t🙂\n\t$$\n")?;
 doc.finish();
@@ -309,7 +309,7 @@ assert_eq!(output, ["a\n  中", "  🙂\n"]);
 
 游标 O(1) 构造、固定十个机器字以内；首次付费读取以 O(log G + log T) 定位间隙和 tab，后续片段 O(1)。显示映射每行最多一条，数学读取直接借用，不维护第二份 tab 数组。数学候选只更新最后消费位置，省略前缀时追加间隙；晚闭合不改写旧映射或回扫正文。百万字同一物理行的后续追加不重扫前缀/祖先、不新增映射。数学块继续做 O(log n) 范围失效，逐字追加时注解树可按新端点线性增长；累计 O(n log n)/空间 O(n) 保持，不承诺单次解析硬预算。
 
-`crates/mdtui3-core/tests/math_tabs.rs`、内部存储及分块测试覆盖行内/块数学各 400 组嵌套列宽模型、UTF-8 全切点/逐前缀、定界失败与作用域、CRLF/EOF/分类上限、千层/百万字和 4096 条历史映射。预算读取、搜索/摘要的单字节映射、旧任务/测量拒绝、合并通知和折叠/预览/导航均有回归；折叠正文零字节读取。`cargo run -p mdtui3-core -r --example math_tabs` 演示共享预算读取和流式闭合后的独立折叠意愿。
+`crates/mdstream-core/tests/math_tabs.rs`、内部存储及分块测试覆盖行内/块数学各 400 组嵌套列宽模型、UTF-8 全切点/逐前缀、定界失败与作用域、CRLF/EOF/分类上限、千层/百万字和 4096 条历史映射。预算读取、搜索/摘要的单字节映射、旧任务/测量拒绝、合并通知和折叠/预览/导航均有回归；折叠正文零字节读取。`cargo run -p mdstream-core -r --example math_tabs` 演示共享预算读取和流式闭合后的独立折叠意愿。
 
 ### 容器所选新叶块的部分 tab
 
@@ -325,7 +325,7 @@ assert_eq!(output, ["a\n  中", "  🙂\n"]);
 所有 Block/Heading/代码 info/数学 content 仍指向原始 UTF-8 源码。标题标记和代码缩进消耗的 tab 整字节隐藏，不建立替代记录；围栏内容中的部分 tab 仍复用前述单字节到 1..3 个空格的映射。预算显示读取、搜索、摘要、数学内容读取与折叠导航复用原接口，旧 revision 任务和测量仍被拒绝。
 
 ```rust
-use mdtui3::{BlockId, BlockKind, Document, Span, Style};
+use mdstream::{BlockId, BlockKind, Document, Span, Style};
 let mut doc = Document::new();
 doc.append("- old\n\t# 中🙂\n\t  # raw\n\t```rs\n\tcode\n\t```\n")?;
 doc.finish();
@@ -342,7 +342,7 @@ assert_eq!(text, "old\n中🙂\n# raw\n  code\n");
 
 前缀探测只检查当前有界窗口，不含 tab 时不重走活动栈；这会为非正文行增加一次实际前缀字节扫描。含 tab 时至多一次原子路径探测和一次原分类回退，每个 tab 最多供四列，空白末端缓存避免按深度重复扫描。分类不分配展开字符串、不复制候选或回放旧正文；LF/EOF/含前缀的 1 KiB 提交时机不变。长行后续追加直接使用既有 StreamingLine，累计解析 O(n log n)、空间 O(n) 保持，无单次解析硬预算承诺。
 
-`crates/mdtui3-core/tests/leaf_tabs.rs` 与全局分块快照覆盖 576 组列阈值、400 组嵌套空格模型、UTF-8 全切点/逐前缀、CRLF/EOF、长失败候选、表格优先级和身份/失效。千层引用及 251 层列表的百万字长行再追加 1000 次，前缀/祖先/分类计数和容器容量保持不变；4096 个历史标题后仍只访问当前路径。共享预算显示、搜索、摘要及折叠/预览/导航通过，收起正文零字节读取。`cargo run -p mdtui3-core -r --example leaf_tabs` 演示新叶块源码范围和预算消费。
+`crates/mdstream-core/tests/leaf_tabs.rs` 与全局分块快照覆盖 576 组列阈值、400 组嵌套空格模型、UTF-8 全切点/逐前缀、CRLF/EOF、长失败候选、表格优先级和身份/失效。千层引用及 251 层列表的百万字长行再追加 1000 次，前缀/祖先/分类计数和容器容量保持不变；4096 个历史标题后仍只访问当前路径。共享预算显示、搜索、摘要及折叠/预览/导航通过，收起正文零字节读取。`cargo run -p mdstream-core -r --example leaf_tabs` 演示新叶块源码范围和预算消费。
 
 ## 列表 tight/loose
 
@@ -357,7 +357,7 @@ assert_eq!(text, "old\n中🙂\n# raw\n  code\n");
 - 完整匹配前缀的围栏代码内空白是代码内容，不是分隔；省略列表缩进的空行结束旧围栏并成为待确认分隔；缩进代码沿用空白行终止规则，随后新直接内容可确认 Loose。分类仍受 1024 字节窗口限制；没有在窗口内结束的全空白行按既有代码/正文分类提交，稍后的 LF 不重新判定。短尾部等 LF/EOF，长行扩展不重读旧内容。
 
 ```rust
-use mdtui3::{ContainerId, Document, ListTightness, SyntaxState};
+use mdstream::{ContainerId, Document, ListTightness, SyntaxState};
 let mut doc = Document::new();
 doc.append("- first\n  \n")?;
 let list = ContainerId(0);
@@ -374,7 +374,7 @@ assert_eq!(doc.container(list).unwrap().state, SyntaxState::Sealed);
 
 确认 Loose 时对列表已有源码包络只做一次 O(log n) 的 `dirty` / `ChangeKind::Structure` 和语法版本区间标记，保留原样式与链接；旧 TileKey、DependencyKey、测量及检查点按既有协议失效，屏外高度保留估计，不枚举旧条目、叶块或 tile。后续新正文仅按普通追加失效，Loose 列表不会反复全范围失效。Growing/Sealed 仍是独立对象状态，不能凭 TileKey 缓存容器最终性。折叠意愿与预算消费保持；本单元不增加段落间距或终端绘制。
 
-每个活动列表帧保存“已有直接内容/待定空行”两个布尔摘要，只检查当前直接条目或正在切换的兄弟。嵌套帧开闭成本按已有前缀/事件计费，不为短 lazy 行或长行追加遍历祖先。完整前缀的间距处理为 O(n)，每列表至多一次 O(log n) 区间失效；省略缩进空行另用下节的有序引用深度索引，全库仍为累计 O(n log n)、空间 O(n)。`crates/mdtui3-core/tests/list_tightness.rs` 验证 UTF-8 全切点/逐前缀、400 组生成输入、千层引用、250 层列表、4096 个历史条目及百万字增长；`cargo run -p mdtui3-core -r --example list_tightness` 演示晚确定通知及分帧元数据读取。
+每个活动列表帧保存“已有直接内容/待定空行”两个布尔摘要，只检查当前直接条目或正在切换的兄弟。嵌套帧开闭成本按已有前缀/事件计费，不为短 lazy 行或长行追加遍历祖先。完整前缀的间距处理为 O(n)，每列表至多一次 O(log n) 区间失效；省略缩进空行另用下节的有序引用深度索引，全库仍为累计 O(n log n)、空间 O(n)。`crates/mdstream-core/tests/list_tightness.rs` 验证 UTF-8 全切点/逐前缀、400 组生成输入、千层引用、250 层列表、4096 个历史条目及百万字增长；`cargo run -p mdstream-core -r --example list_tightness` 演示晚确定通知及分帧元数据读取。
 
 ## 列表跨无前缀空行
 
@@ -387,7 +387,7 @@ assert_eq!(doc.container(list).unwrap().state, SyntaxState::Sealed);
 未分类短尾部不确认、关闭或重建任何容器；LF、EOF 或原有分类窗口提交时才决议。若空行后直接 EOF、退出作用域或更换列表标记，仍 Tight 的列表保持 Tight，并封闭在最后已归属空行之后；不把已发布范围向前收缩。空行无需在未来回填容器 ID，旧叶块与已发布行内对象保持身份。没有在 1024 字节窗口内结束的全空白行按既有代码/正文规则提交，不在稍后的 LF 重试。
 
 ```rust
-use mdtui3::{ContainerId, Document, ListTightness, SyntaxState};
+use mdstream::{ContainerId, Document, ListTightness, SyntaxState};
 let mut doc = Document::new();
 doc.append("- first\n")?;
 let blank = doc.append("\n\n")?;
@@ -405,7 +405,7 @@ assert_eq!(doc.container(ContainerId(0)).unwrap().state, SyntaxState::Sealed);
 
 空行只匹配实际提供的前缀，以 O(log(Q + 1)) 查询有序活动 Quote 深度索引来定位必须关闭的后缀；Q 是活动引用数，不枚举保留的祖先。被关闭的节点各处理一次；深列表上的无缩进空行每行仅一次活动帧检查，待确认区间更新为 O(1)。索引随引用开闭维护，容量计入 `container_arena_stats`，比较次数计入 `container_steps`；额外空间 O(depth)，累计解析仍 O(n log n)。长行提交后的继续追加不再查询前缀或索引。折叠和章节使用共享末端，无空行逐祖先索引写入。
 
-`crates/mdtui3-core/tests/list_blanks.rs`、全局分块快照与折叠模型覆盖 400 组间距/身份/范围、240 轮流式高度、UTF-8 全切点/逐前缀、CRLF/EOF、分类窗口、深层退出、旧缓存与测量拒绝、合并通知和共享预算。250 层列表/4096 空行、近千层引用、4096 历史条目及百万字验收无历史扫描；折叠正文零字节读取。`cargo run -p mdtui3-core -r --example list_blanks` 演示内外层分别晚确定、身份保持和有预算祖先读取。
+`crates/mdstream-core/tests/list_blanks.rs`、全局分块快照与折叠模型覆盖 400 组间距/身份/范围、240 轮流式高度、UTF-8 全切点/逐前缀、CRLF/EOF、分类窗口、深层退出、旧缓存与测量拒绝、合并通知和共享预算。250 层列表/4096 空行、近千层引用、4096 历史条目及百万字验收无历史扫描；折叠正文零字节读取。`cargo run -p mdstream-core -r --example list_blanks` 演示内外层分别晚确定、身份保持和有预算祖先读取。
 
 ## 列表嵌套末尾空行
 
@@ -418,7 +418,7 @@ assert_eq!(doc.container(ContainerId(0)).unwrap().state, SyntaxState::Sealed);
 - 完整路径的围栏代码/数学内部空白是字面内容，不传递；关闭定界之后的普通空行可传递。脚注内部分段不传递，定义因下一行封口时可交出末尾空行。缩进代码空行、分类窗口及 tab 边界沿用既有规则；超过 1 KiB 窗口的空白不在晚来的 LF 重新分类。
 
 ```rust
-use mdtui3::{ContainerId, Document, ListTightness, SyntaxState};
+use mdstream::{ContainerId, Document, ListTightness, SyntaxState};
 let mut doc = Document::new();
 doc.append("- outer\n  - child\n    \n")?;
 assert_eq!(doc.container(ContainerId(0)).unwrap().list_tightness, Some(ListTightness::Tight));
@@ -433,7 +433,7 @@ assert!(doc.finish().loosened_lists.is_empty());
 
 解析器增加一个布尔尾部摘要；每次正文分类 O(1) 更新，长行后续追加无需处理。一次实际后缀关闭可传递分隔一次，关闭成本仍按实际关闭节点计入 `container_steps`，传递给保留 Item 计 1 个 `list_steps`；同型兄弟必须先关闭旧子树、再读取旧 Item 的分隔状态。没有逐行祖先写入、历史子块遍历或新增深度容器；既有每列表一次区间失效、通知、缓存与预算接口不变，累计 O(n log n)、空间 O(n)。64/128/250 层列表各 1000 条完整空行仅 1000 个间距步骤；恢复最外层兄弟均只需 4 个 `list_steps`，其余工作为实际关闭。千层引用、百万字追加和 4096 个历史条目验收同样无历史回扫。
 
-`crates/mdtui3-core/tests/list_tail_blanks.rs`、全局分块快照和折叠测试覆盖 400 组深度/恢复作用域与源码范围模型、240 轮折叠/预览/高度、UTF-8 全切点/逐前缀、CRLF/EOF、字面块与脚注、通知重建/合并、旧缓存/测量/检查点/任务失效以及共享预算。折叠百万字正文零读取。`cargo run -p mdtui3-core -r --example list_tail_blanks` 演示内层保持 Tight、外层迟确认、稳定范围及分帧祖先读取。实际段落间距、完整缩进/块确认规则与终端 UI 继续保留 TODO。
+`crates/mdstream-core/tests/list_tail_blanks.rs`、全局分块快照和折叠测试覆盖 400 组深度/恢复作用域与源码范围模型、240 轮折叠/预览/高度、UTF-8 全切点/逐前缀、CRLF/EOF、字面块与脚注、通知重建/合并、旧缓存/测量/检查点/任务失效以及共享预算。折叠百万字正文零读取。`cargo run -p mdstream-core -r --example list_tail_blanks` 演示内层保持 Tight、外层迟确认、稳定范围及分帧祖先读取。实际段落间距、完整缩进/块确认规则与终端 UI 继续保留 TODO。
 
 ## 容器内行内续行
 
@@ -448,7 +448,7 @@ assert!(doc.finish().loosened_lists.is_empty());
 - 链接/图片显示标签支持同作用域的跨物理行正文，源码包络和去前缀消费见[容器跨行链接与图片标签](#容器跨行链接与图片标签)。数学候选也可跨同一作用域正文续行，去前缀内容与源码映射见[容器跨行数学内容](#容器跨行数学内容)；失败候选保持字面/opaque 行为，不重新解释内部标记。单行链接目标/title、显式引用后缀、脚注、自动链接、实体及 EOF 确认沿用原有规则；更完整的块边界撤销仍待实现。
 
 ```rust
-use mdtui3::{Document, Span, Style};
+use mdstream::{Document, Span, Style};
 let mut doc = Document::new();
 doc.append("> - **one\n")?;
 let first = doc.blocks()[0].clone();
@@ -465,7 +465,7 @@ assert_eq!(visible, "one\ntwo\n");
 
 强调/代码续行只增加一个容器 ID 和代码末端区间；链接标签另使用下节的有界引用缓冲。同一序列复用原分隔符栈，每个 opener 仍只入栈/出栈一次，不保存逐行或逐祖先状态快照。块创建和作用域比较 O(1)，前缀匹配只消费本行前缀；样式闭合用 O(log n) 范围标记。百万字续行追加不增加分类或祖先操作，EOF 只丢弃尚存 opener；累计解析 O(n log n)、空间 O(n) 和零运行时依赖保持。解析与批量 EOF 是摊还保证，不承诺任意大 append 的硬预算。
 
-显示游标、摘要、缓存与折叠继续共用既有 Budget 和 revision 契约；隐藏前缀及 CRLF lookaround 计入读取预算，晚闭合使旧测量/检查点失效但保留折叠意愿。`cargo run -p mdtui3-core -r --example container_inline` 演示流式闭合、代码去前缀显示和分帧读取。`crates/mdtui3-core/tests/container_inline.rs` 及分块测试覆盖边界、失败候选、UTF-8 全切点/逐前缀、千层/百万字、250 层列表、4096 个未闭合 opener、400 组独立显示/样式模型和共享预算。
+显示游标、摘要、缓存与折叠继续共用既有 Budget 和 revision 契约；隐藏前缀及 CRLF lookaround 计入读取预算，晚闭合使旧测量/检查点失效但保留折叠意愿。`cargo run -p mdstream-core -r --example container_inline` 演示流式闭合、代码去前缀显示和分帧读取。`crates/mdstream-core/tests/container_inline.rs` 及分块测试覆盖边界、失败候选、UTF-8 全切点/逐前缀、千层/百万字、250 层列表、4096 个未闭合 opener、400 组独立显示/样式模型和共享预算。
 
 ## 容器跨行链接与图片标签
 
@@ -480,7 +480,7 @@ assert_eq!(visible, "one\ntwo\n");
 块/容器切换和空行沿用上节的序列终止规则；未闭合标签保留已解析的显示语义，不回放正文。失败目标/引用后缀仍可留下未解析到目标的 shortcut 对象，保持原方言。表头确认隔离单元格并丢弃旧标签；失败/EOF 恢复候选且只消费一次后缀。晚管道前关闭的 shortcut 及普通字符显式后缀可隔离对象和引用副作用，其余后缀或新行内语法取消探测（见表格章节）；多物理行 Setext 晚确认保留已发布语义并结束未闭合候选。更完整的块撤销规则仍待设计。
 
 ```rust
-use mdtui3::{Budget, DisplayStep, Document, LinkId, Style, WorkLimit};
+use mdstream::{Budget, DisplayStep, Document, LinkId, Style, WorkLimit};
 let mut doc = Document::new();
 doc.append("> ![中 &amp;\r\n> 🙂][]\n> [中 &amp; 🙂]: /image\n")?;
 doc.finish();
@@ -503,7 +503,7 @@ assert_eq!(text, "中 &\n🙂");
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-显示游标保留原共享预算、原子暂停和 revision 校验；隐藏前缀及 CRLF lookaround 也计费，六字节/一 query/一 object 可推进一个 UTF-8 基本步骤。闭合只做区间标记与失效，不回扫全部叶块；旧布局/检查点和读取任务失效，折叠意愿保留，隐藏百万字标签的折叠布局零正文读取。`cargo run -p mdtui3-core -r --example container_links` 演示稳定图片身份、晚定义及分帧读取；`crates/mdtui3-core/tests/container_links.rs`、分块快照和缓冲容量测试覆盖映射、搜索/折叠、深嵌套、百万字与两万旧引用。
+显示游标保留原共享预算、原子暂停和 revision 校验；隐藏前缀及 CRLF lookaround 也计费，六字节/一 query/一 object 可推进一个 UTF-8 基本步骤。闭合只做区间标记与失效，不回扫全部叶块；旧布局/检查点和读取任务失效，折叠意愿保留，隐藏百万字标签的折叠布局零正文读取。`cargo run -p mdstream-core -r --example container_links` 演示稳定图片身份、晚定义及分帧读取；`crates/mdstream-core/tests/container_links.rs`、分块快照和缓冲容量测试覆盖映射、搜索/折叠、深嵌套、百万字与两万旧引用。
 
 ## 容器 lazy continuation
 
@@ -516,7 +516,7 @@ assert_eq!(text, "中 &\n🙂");
 - **流式边界**：仍使用含前缀的 1024 字节分类窗口（UTF-8 最多额外 3 字节），短尾部等 LF/EOF 再判定；长行一旦分类不在后续追加或换行时重试。定义、分隔线和其它候选能否中断取决于原分类器的完整行条件。链接/图片标签可跨同作用域 lazy 正文；数学也可跨同作用域 lazy 正文，块边界与失败方言继续沿用[行内续行](#容器内行内续行)。
 
 ```rust
-use mdtui3::{Document, Span, Style};
+use mdstream::{Document, Span, Style};
 let mut doc = Document::new();
 doc.append("> - > **one\n")?;
 let first = doc.blocks()[0].clone();
@@ -531,7 +531,7 @@ assert_eq!(visible, "one\ntwo\nthree\nOutside\n");
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-每行只扫描实际提供的前缀和一个有界正文分类窗口；全部省略时只检查一次活动帧，不遍历余下深度。开放容器与章节沿用共享末端，普通 lazy 追加不产生祖先关闭/重开事件或折叠索引写入；叶块、范围失效、预算消费和 EOF 收尾沿用既有契约。`crates/mdtui3-core/tests/container_lazy.rs` 与分块测试覆盖千层引用、250 层列表、4096 个短续行、百万字追加、1200 行独立范围/通知模型、共享预算和折叠回归。`cargo run -p mdtui3-core -r --example container_lazy` 演示部分及全部省略前缀、晚闭合、折叠保持与分帧显示读取。此为有界项目方言；tight/loose 余项、部分 tab 的剩余方言及叶块缩进、分类上限扩展和更完整的块确认/撤销规则仍待实现。
+每行只扫描实际提供的前缀和一个有界正文分类窗口；全部省略时只检查一次活动帧，不遍历余下深度。开放容器与章节沿用共享末端，普通 lazy 追加不产生祖先关闭/重开事件或折叠索引写入；叶块、范围失效、预算消费和 EOF 收尾沿用既有契约。`crates/mdstream-core/tests/container_lazy.rs` 与分块测试覆盖千层引用、250 层列表、4096 个短续行、百万字追加、1200 行独立范围/通知模型、共享预算和折叠回归。`cargo run -p mdstream-core -r --example container_lazy` 演示部分及全部省略前缀、晚闭合、折叠保持与分帧显示读取。此为有界项目方言；tight/loose 余项、部分 tab 的剩余方言及叶块缩进、分类上限扩展和更完整的块确认/撤销规则仍待实现。
 
 ## 容器内标题与章节作用域
 
@@ -546,7 +546,7 @@ assert_eq!(visible, "one\ntwo\nthree\nOutside\n");
 解析只保留一份固定大小的首叶块 ID 与内容区间；续行更新末端，确认修改首尾块、插入一个标题并发布一次整段范围失效。`changed_blocks` 保守扩大到首叶块（包含未修改的中间块），无逐块事件；`new_headings` 驱动折叠默认初始化、旧章节边界回退和导航。确认成本为有界前缀分类、O(log n) 范围更新及未闭合行内状态的一次性收尾，不按标题字节或物理行数回扫。收尾仍可能清理很多 opener，遵守累计 O(n log n)/空间 O(n)，不承诺单次确认硬时延。名称搜索、slug 和实际标题读取均在显式共享 Budget 中进行。
 
 ```rust
-use mdtui3::{BlockId, Document, HeadingId, Span, Style};
+use mdstream::{BlockId, Document, HeadingId, Span, Style};
 let mut doc = Document::new();
 doc.append("> **first\n> last**\n")?;
 let first = doc.blocks()[0].source;
@@ -569,7 +569,7 @@ assert_eq!(text, "first\nlast");
 `current(offset)` 返回当前位置最内层可用章节；当前容器尚无本地标题时使用进入容器时捕获的外层章节，退出后恢复外层。源码行前缀尚未分类时沿用最近已分类上下文，容器章节末端仍停在 `Update.container_end`；换行、lookahead 或 EOF 确认边界后更新。容器范围不包含 EOF，finish 后 EOF 位置回到根章节。全局 `entries`、`at_level`、前后/严格级别导航、名称搜索和 slug 仍按源码顺序包含全部标题；slug 在所有容器间共同消歧。
 
 ```rust
-use mdtui3::{Document, HeadingId};
+use mdstream::{Document, HeadingId};
 let mut doc = Document::new();
 doc.append("# root\n> ## quote\n> - # item\n> ## peer\noutside\n")?;
 doc.finish();
@@ -586,7 +586,7 @@ assert_eq!(h.current(doc.source().find("outside").unwrap()), Some(HeadingId(0)))
 
 顶层与容器内章节均提供独立 `FoldCandidate`，候选枚举、默认设置、批量、预览及导航覆盖全部已识别标题。内层 h1 不会截断外层章节；折叠父链保留章节与容器的交替嵌套，区别于 `HeadingIndex::parent` 的同作用域标题关系。流式尾部与事件消费见[容器内章节折叠](#容器内章节折叠)。
 
-`cargo run -p mdtui3-core -r --example container_setext` 展示多行标题迟确认与跳过百万字折叠正文的预算布局；`crates/mdtui3-core/tests/container_setext.rs` 覆盖 400 组独立范围/显示模型、千层引用、250 层列表、4096 个连续叶块及历史标题。`cargo run -p mdtui3-core -r --example container_headings` 展示晚确认、作用域切换及小预算 slug。测试覆盖 UTF-8 全切点/逐前缀、1200 行固定种子线性范围模型、千层嵌套、百万字 Setext 无回扫、500 个同时开放的章节作用域、共享预算搜索/slug/折叠导航。
+`cargo run -p mdstream-core -r --example container_setext` 展示多行标题迟确认与跳过百万字折叠正文的预算布局；`crates/mdstream-core/tests/container_setext.rs` 覆盖 400 组独立范围/显示模型、千层引用、250 层列表、4096 个连续叶块及历史标题。`cargo run -p mdstream-core -r --example container_headings` 展示晚确认、作用域切换及小预算 slug。测试覆盖 UTF-8 全切点/逐前缀、1200 行固定种子线性范围模型、千层嵌套、百万字 Setext 无回扫、500 个同时开放的章节作用域、共享预算搜索/slug/折叠导航。
 
 ## 容器内代码块
 
@@ -600,7 +600,7 @@ assert_eq!(h.current(doc.source().find("outside").unwrap()), Some(HeadingId(0)))
 结构识别沿用含容器前缀的 `BLOCK_LOOKAHEAD = 1024` 字节窗口（UTF-8 最多再取三个字节）。opener 在窗口内确认后，过长 info 后续部分整行隐藏，不因晚来的反引号撤销；未识别的超长/失败 opener 走普通行内方言。closer 必须连同行末在窗口内完整出现，超长 closer 行按代码正文流式消费，即使尾部只是空白也不回看。未分类尾部的块状态保持 Growing，`finish` 按 EOF 分类短尾行或封闭已流式消费的长行。
 
 ```rust
-use mdtui3::{BlockId, BlockKind, Document, FoldId, FoldView, SyntaxState};
+use mdstream::{BlockId, BlockKind, Document, FoldId, FoldView, SyntaxState};
 let mut doc = Document::new();
 doc.append("> - ```rust\n>   **raw** &amp;\n")?;
 let id = FoldId::Code(BlockId(0));
@@ -621,7 +621,7 @@ assert!(!doc.fold_candidate(id).unwrap().open);
 
 围栏只增加一个常数大小的作用域检查，容器匹配每保留一层消费正长度前缀；列表缩进串只扫描一次。超长代码行的后续追加仅延长当前块和共享已解析末端，不做行内扫描、不更新祖先。闭合只访问当前行及实际关闭节点，不读取旧正文；累计解析 O(n log n)、空间 O(n) 不变。折叠仍至多刷新一个开放代码/数学/表格块，容器与内层章节共用尾部，不枚举历史代码块。解析及 `apply` 仍按输入/事件摊还，不承诺任意大输入的单帧时延。
 
-`crates/mdtui3-core/tests/container_code.rs`、`crates/mdtui3-core/tests/container_sections.rs` 和分块/fuzz 测试覆盖作用域/失败候选、UTF-8 全切点及中间快照、长行/CRLF/EOF、预算与组合；400 个代码块的生成范围模型、240 次流式区间/高度模型、千层容器/百万字正文、250 层列表和 4096 个历史代码块验证增量成本。折叠百万字代码的布局字节计费和正文回调均为零。`cargo run -p mdtui3-core -r --example container_code` 演示流式围栏、预算预览、兄弟关闭以及只展开目标路径。
+`crates/mdstream-core/tests/container_code.rs`、`crates/mdstream-core/tests/container_sections.rs` 和分块/fuzz 测试覆盖作用域/失败候选、UTF-8 全切点及中间快照、长行/CRLF/EOF、预算与组合；400 个代码块的生成范围模型、240 次流式区间/高度模型、千层容器/百万字正文、250 层列表和 4096 个历史代码块验证增量成本。折叠百万字代码的布局字节计费和正文回调均为零。`cargo run -p mdstream-core -r --example container_code` 演示流式围栏、预算预览、兄弟关闭以及只展开目标路径。
 
 ## 容器内定义
 
@@ -635,7 +635,7 @@ assert!(!doc.fold_candidate(id).unwrap().open);
 - 非法/超长标签、目标/title 失败、未完成候选沿用普通行内处理，可能创建未解析引用，但不创建有效定义。不回放长行已消费的前缀；无效的纯空白链接标签也保留容器前缀隐藏和独立叶块边界，不并入外层段落。多行目标/title、脚注正文 Markdown 排版和更完整的容器续行规则仍未实现。
 
 ```rust
-use mdtui3::{Budget, Document, FootnoteReferenceId, FootnoteTarget, LinkId, WorkLimit};
+use mdstream::{Budget, Document, FootnoteReferenceId, FootnoteTarget, LinkId, WorkLimit};
 let mut doc = Document::new();
 doc.append("[guide][ref] [^note]\n")?;
 assert_eq!(doc.link_destination(LinkId(0)), None);
@@ -652,14 +652,14 @@ assert_eq!(body.advance(&mut budget).unwrap().unwrap().text, "原始 **正文**"
 
 晚定义沿用 `LinkId -> SymbolId` 和 `FootnoteReferenceId -> FootnoteId` 间接寻址，只改当前符号及版本，发出 `references_changed` / `footnotes_changed` 和从 first_use 起的保守范围失效；不访问历史引用对象，不给旧链接逐个发 changed 事件。脚注增长/封口及新块使用原有 Update，支持批量合并；DependencyKey、旧布局 ticket 拒绝与独立折叠意愿保持不变。定义的语法隐藏独立于视图折叠，展开祖先也不使定义正文可见；脚注正文另用共享 Budget 的原文游标读取，实际脚注区排版仍待接入。
 
-实现复用现有全局符号表和流式行状态机，不复制祖先；多行脚注额外记录去前缀所需的有序间隙，见[脚注核心](#脚注核心)。有界标签寻址 O(log S)，长脚注追加只更新当前块/符号和共享解析末端；容器匹配按实际前缀/开闭节点计费。累计解析 O(n log n)、空间 O(n) 不变，不承诺大 append 或 EOF 批量闭合的单帧硬时延。`crates/mdtui3-core/tests/container_definitions.rs` 与分块测试覆盖两万处旧引用晚定义、千层容器百万字增长、250 层列表、4096 个历史符号、400 组首定义/物理范围模型、通知重建/合并和共享预算；隐藏百万字定义的布局正文回调和字节计费均为零。`cargo run -p mdtui3-core -r --example container_definitions` 演示全局晚定义、容器折叠及逐帧脚注读取。
+实现复用现有全局符号表和流式行状态机，不复制祖先；多行脚注额外记录去前缀所需的有序间隙，见[脚注核心](#脚注核心)。有界标签寻址 O(log S)，长脚注追加只更新当前块/符号和共享解析末端；容器匹配按实际前缀/开闭节点计费。累计解析 O(n log n)、空间 O(n) 不变，不承诺大 append 或 EOF 批量闭合的单帧硬时延。`crates/mdstream-core/tests/container_definitions.rs` 与分块测试覆盖两万处旧引用晚定义、千层容器百万字增长、250 层列表、4096 个历史符号、400 组首定义/物理范围模型、通知重建/合并和共享预算；隐藏百万字定义的布局正文回调和字节计费均为零。`cargo run -p mdstream-core -r --example container_definitions` 演示全局晚定义、容器折叠及逐帧脚注读取。
 
 ## 容器内表格
 
 显式 Quote/Item 的普通正文行可以成为表头；紧接的完整物理行只有在**同一最内层 ContainerId** 中，且列数与分隔单元格有效时才确认表格。识别先匹配已有引用前缀/条目续行，再验证分隔行：`> a|b` 后的 `> - | -` 是表格，分隔行优先于新开子列表；`- a|b` 后的 `- -|-` 已换到兄弟 Item，不能确认旧表头。顶层的分隔行优先级保持。
 
 ```rust
-use mdtui3::{BlockId, Document, FoldId, TableId};
+use mdstream::{BlockId, Document, FoldId, TableId};
 let mut doc = Document::new();
 doc.append("> - a|b\n")?;
 let item = doc.block(BlockId(0)).unwrap().container;
@@ -683,7 +683,7 @@ assert!(!doc.fold_candidate(FoldId::Table(TableId(0))).unwrap().open);
 
 同一时间仍只有一张开放表格，整表折叠、默认收起、临时展开、导航和 TablePreview 直接复用现有接口；折叠父节点为确切作用域的当前章节，若尚无本地标题则为该容器（根作用域无标题时无父节点）。摘要的源码总上限和共享 Budget **包含隐藏容器前缀**；千层前缀也不能免费越过。正文追加只消费新字节，不遍历祖先；长分隔行也只匹配一次有界容器前缀，后续按字节更新状态。空间不复制祖先链或创建空单元格矩阵，全库保持累计 O(n log n)、空间 O(n)。`container_bytes` 包含分隔行优先级检查，`table_candidate_bytes` 统计长分隔行探测字节。
 
-`cargo run -p mdtui3-core -r --example container_tables` 演示流式确认、兄弟边界、默认整表收起和小预算摘要。`crates/mdtui3-core/tests/container_tables.rs` 与折叠测试覆盖 UTF-8 全切点/逐前缀、独立范围模型、千层/百万字追加、超宽稀疏表、隐藏前缀预算和单占位跳过正文。实际表格排版及行范围折叠仍见 TODO。
+`cargo run -p mdstream-core -r --example container_tables` 演示流式确认、兄弟边界、默认整表收起和小预算摘要。`crates/mdstream-core/tests/container_tables.rs` 与折叠测试覆盖 UTF-8 全切点/逐前缀、独立范围模型、千层/百万字追加、超宽稀疏表、隐藏前缀预算和单占位跳过正文。实际表格排版及行范围折叠仍见 TODO。
 
 ## 表格、任务列表与图片
 
@@ -692,7 +692,7 @@ assert!(!doc.fold_candidate(FoldId::Table(TableId(0))).unwrap().open);
 `BlockKind::Table { id }` 指向 `Table`，`Update.new_tables` 给出新创建的 ID 范围：`columns` 保存默认/左/中/右对齐和列宽提示，`rows()[0]` 是表头，`row(i)` / `cell(i, j)` 可直接访问。`row_at(byte_offset)` 二分定位所在行，分隔行没有数据行编号。单元格保存裁剪首尾空白后的原文区间，内部语法用 `runs_in()` 或与可见片段相交后查询。每个单元格使用独立行内状态，强调不会跨越单元格。
 
 ```rust
-use mdtui3::{Alignment, Document, TableId};
+use mdstream::{Alignment, Document, TableId};
 let mut doc = Document::new();
 doc.append("| Name | Value |\n| :--- | ---: |\n| CPU | **42** |\n")?;
 let table = doc.table(TableId(0)).unwrap();
@@ -716,7 +716,7 @@ assert_eq!(doc.text(table.cell(1, 1).unwrap().source), Some("**42**"));
 若旧 opener 在首管道前以无法隔离的方式闭合，则一次切回普通流式行，当前行不再尝试表头；已确认的跨行样式和对象保持即时可见。同次追加中首管道后的后缀也只普通消费一次。记录实际闭合事件，不能仅比较当前栈长度：旧 opener 弹出后，新 opener 可能又把栈长恢复。确认时的删除/重建计入 `delimiter_steps`，每个 opener 最多在所属序列变为单元格时被处理一次；失败和普通续行不遍历历史栈。
 
 ```rust
-use mdtui3::{Document, LinkId, Style};
+use mdstream::{Document, LinkId, Style};
 let mut doc = Document::new();
 doc.append("> prior  \n")?;
 doc.append(&format!("> [cell](url) {}", "x".repeat(2048)))?;
@@ -725,7 +725,7 @@ assert!(doc.tables().is_empty());
 doc.append("|b\n> -|-\n")?;
 assert_eq!(doc.tables().len(), 1);
 assert_eq!(*doc.link_info(LinkId(0)).unwrap(), original);
-assert!(!doc.runs_in(mdtui3::Span::new(9, 10)).unwrap()
+assert!(!doc.runs_in(mdstream::Span::new(9, 10)).unwrap()
     .any(|run| run.style.contains(Style::HARD_BREAK)));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
@@ -733,7 +733,7 @@ assert!(!doc.runs_in(mdtui3::Span::new(9, 10)).unwrap()
 `table_header_bytes` 对每个候选正文摘要字节只计一次（也计无管道的合格序列和短普通正文的候选检查）；`inline_bytes` 对可复用的前缀不重复消费；继承代码/数学的成功路径还计一次当前行的独立单元格解析，失败和 EOF 则保持原候选状态、不重复消费前缀。确认时 `table_bytes` 计一次单元格边界扫描。无管道长行继续即时消费并发布本行局部语义；隔离的前序换行及可分离跨行强调只在候选失败、无法隔离的旧候选闭合而取消探测或无管道行结束时提交，不重写整行注解。候选摘要和边界为 O(1)，暂存强调端点为 O(实际闭合旧 opener 数)，每对仅提交或丢弃一次；已有 Inline 只移动、不克隆；分隔行对齐值 O(列数)，确认后才分配真实列/单元格，稀疏行不补空矩阵。输入 String、tile 和正式语义索引仍按需增长，全库累计 O(n log n)、空间 O(n)。**长表头确认与失败均不承诺单次 append 的硬时延或字节预算**；有预算显示、摘要和折叠读取继续使用既有接口，确认通过范围失效拒绝旧测量。
 
 ```rust
-use mdtui3::{Document, TableId};
+use mdstream::{Document, TableId};
 let mut doc = Document::new();
 doc.append("> |**name**|")?;
 doc.append(&"x".repeat(4096))?;
@@ -749,7 +749,7 @@ assert_eq!(doc.table(TableId(0)).unwrap().columns.len(), 2);
 **仍保留的边界**：已有段落或同一容器正文续行若旧强调以无法隔离的方式闭合，或旧代码/数学闭合后带有本子项不支持的行内语法字符，或旧链接及图片标签闭合后带含行内语法字符的显式后缀或新行内语法，且首管道晚于窗口，仍按普通正文处理。例如 `*prior\nend*…|b` 可能在管道出现前已闭合跨行强调；现有单调样式与稳定对象 ID 无法直接撤销。此范围仍在 TODO，不能通过延迟所有普通长行来绕过即时消费要求。短表头及早管道长表头继续支持前序段落。尚未移除其它块/容器分类上限，也不承诺单次解析硬预算。
 
 ```rust
-use mdtui3::{Document, LinkId, TableId};
+use mdstream::{Document, LinkId, TableId};
 let mut doc = Document::new();
 doc.append("> **name** [link](url) ")?;
 doc.append(&"x".repeat(4096))?;
@@ -764,12 +764,12 @@ assert_eq!(doc.links().len(), 2);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-`crates/mdtui3-core/examples/late_headers.rs` 演示首管道前百万字即时解析、已发布链接身份复用及共享 Budget 摘要；`crates/mdtui3-core/tests/late_headers.rs` 覆盖首单元格语义对照、成功/失败、未闭合跨行状态限制、千层/百万字、4096 对象与稀疏列、400 组范围模型及布局/折叠预算。
+`crates/mdstream-core/examples/late_headers.rs` 演示首管道前百万字即时解析、已发布链接身份复用及共享 Budget 摘要；`crates/mdstream-core/tests/late_headers.rs` 覆盖首单元格语义对照、成功/失败、未闭合跨行状态限制、千层/百万字、4096 对象与稀疏列、400 组范围模型及布局/折叠预算。
 
-`crates/mdtui3-core/examples/open_headers.rs` 演示保留旧强调 opener、百万字即时消费、成功丢弃与失败闭合，以及稳定对象和共享预算摘要。`crates/mdtui3-core/tests/open_headers.rs` 覆盖五种 delimiter、首管道前待定 run、闭合后栈重新增长、512 组局部配对模型、400 组表格范围模型、千层/百万字、4096 旧 opener/对象/列、缓存与合并通知；逐切点及中间快照在 `crates/mdtui3-core/tests/chunking.rs` 验证。
+`crates/mdstream-core/examples/open_headers.rs` 演示保留旧强调 opener、百万字即时消费、成功丢弃与失败闭合，以及稳定对象和共享预算摘要。`crates/mdstream-core/tests/open_headers.rs` 覆盖五种 delimiter、首管道前待定 run、闭合后栈重新增长、512 组局部配对模型、400 组表格范围模型、千层/百万字、4096 旧 opener/对象/列、缓存与合并通知；逐切点及中间快照在 `crates/mdstream-core/tests/chunking.rs` 验证。
 
 ```rust
-use mdtui3::{Document, LinkId, Span, Style};
+use mdstream::{Document, LinkId, Span, Style};
 let mut doc = Document::new();
 doc.append("> *prior\n")?;
 doc.append(&format!("> [cell](url) {}", "x".repeat(2048)))?;
@@ -788,10 +788,10 @@ assert!(!doc.runs_in(Span::new(3, 8)).unwrap()
 
 `end*next` 等可同时开启的 run，以及会弹出本行未闭合 opener 的跨行配对（如旧 `*old` 后接 `**local end* `），仍立即提交原效果并取消探测；不重试该行。代码/数学闭合按下文隔离或取消，旧标签闭合按后文隔离或取消。此子项通过隔离未发布的效果保持单调注解，没有新增通用撤销机制。
 
-每个暂存配对必定消费一个旧 opener，保存/提交/丢弃各至多一次，后两者计入 `delimiter_steps`；空间 O(被消费的旧 opener 数)，累计 O(n log n)。无配对的长尾只消费新增字节，不遍历暂存数组、历史正文或祖先；失败恢复只做区间注解，不回放字节。`crates/mdtui3-core/tests/closed_headers.rs` 对照全延迟早管道语义及独立 flanking/范围模型，验证失败、千层/百万字、4096 配对与历史对象、预算和失效；`crates/mdtui3-core/examples/closed_headers.rs` 演示成功丢弃与失败提交。
+每个暂存配对必定消费一个旧 opener，保存/提交/丢弃各至多一次，后两者计入 `delimiter_steps`；空间 O(被消费的旧 opener 数)，累计 O(n log n)。无配对的长尾只消费新增字节，不遍历暂存数组、历史正文或祖先；失败恢复只做区间注解，不回放字节。`crates/mdstream-core/tests/closed_headers.rs` 对照全延迟早管道语义及独立 flanking/范围模型，验证失败、千层/百万字、4096 配对与历史对象、预算和失效；`crates/mdstream-core/examples/closed_headers.rs` 演示成功丢弃与失败提交。
 
 ```rust
-use mdtui3::{Document, LinkId, Span, Style};
+use mdstream::{Document, LinkId, Span, Style};
 let mut doc = Document::new();
 doc.append("> *prior\n")?;
 doc.append(&format!("> end* **local** [cell](url) {}", "x".repeat(2048)))?;
@@ -815,7 +815,7 @@ assert!(doc.display_runs_in(cell).unwrap()
 代码路径的每个合格字节只做一次表头摘要和一次原代码状态消费；成功后在既有单元格扫描阶段再做一次当前行的行内消费。两次消费均如实计入 `inline_bytes`，全流满足 `inline_bytes <= source().len() + table_bytes`；额外消费仅属于互不重叠的已确认表头，不读前序代码正文、不重新分类、不在失败时重放，因此累计仍为 O(n log n)、空间 O(n)。候选只增加一个布尔标志，不复制正文或栈。这个子项保留单次确认的摊还契约，显示、摘要和折叠的共享预算不变。
 
 ```rust
-use mdtui3::{Document, LinkId};
+use mdstream::{Document, LinkId};
 let mut doc = Document::new();
 doc.append("> [prior](u) ` old\n")?;
 let prior = *doc.link_info(LinkId(0)).unwrap();
@@ -828,7 +828,7 @@ assert_eq!(*doc.link_info(LinkId(0)).unwrap(), prior);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-`crates/mdtui3-core/examples/code_headers.rs` 演示百万字代码候选的成功/失败、旧对象身份和共享预算摘要。`crates/mdtui3-core/tests/code_headers.rs` 验证全延迟表头与普通正文对照、363 组反引号组合、400 组范围模型、映射的逐标量/tile/预算读取、千层/百万字、4096 旧 opener/对象/列、缓存与合并通知；`crates/mdtui3-core/tests/chunking.rs` 覆盖全部 UTF-8 切点和逐前缀快照。首管道前已经闭合的可隔离代码子项见下节，其余跨行代码映射撤销仍保留 TODO。
+`crates/mdstream-core/examples/code_headers.rs` 演示百万字代码候选的成功/失败、旧对象身份和共享预算摘要。`crates/mdstream-core/tests/code_headers.rs` 验证全延迟表头与普通正文对照、363 组反引号组合、400 组范围模型、映射的逐标量/tile/预算读取、千层/百万字、4096 旧 opener/对象/列、缓存与合并通知；`crates/mdstream-core/tests/chunking.rs` 覆盖全部 UTF-8 切点和逐前缀快照。首管道前已经闭合的可隔离代码子项见下节，其余跨行代码映射撤销仍保留 TODO。
 
 **已闭合代码 span 的可隔离子项**：顶层或同一显式 Quote/Item 续行沿用上述晚管道入口。旧代码在首管道前由等长反引号串闭合时，只暂存原 opener、closer、最后内容区间和全空白标志。从闭合 run 后到首管道之间，允许普通文本、UTF-8、空白和不会启动行内语法的标点；遇到 `&`、`<`、反斜线、星号、下划线、波浪线、反引号、`$`、`!`、`[` 或 `]` 任一字节即取消，包含尚未成形或最终无效的语法候选。闭合 run 尚待后继字节判定且已到首管道时，继续按未闭合代码路径处理。早管道、短行、lazy/部分 tab 续行和已分类块保持各自既有规则。
 
@@ -837,7 +837,7 @@ assert_eq!(*doc.link_info(LinkId(0)).unwrap(), prior);
 确认表格时丢弃暂存闭合与旧 Inline，在已有单元格扫描中独立解析当前表头。闭合之前处于旧代码内的实体/链接/数学/脚注到这时才按单元格语义发布；旧对象身份和编号不变。等长反引号在独立单元格里可能成为 opener，因此不能直接复用原代码解析状态。此前隐藏的容器前缀、CR 及历史部分 tab 源码映射保持原归属；不改写前序代码正文。额外状态 O(1)，提交/丢弃计一个 `delimiter_steps`；成功额外消费仅限当前表头，失败无正文回放，继续满足 `inline_bytes <= source().len() + table_bytes`、累计 O(n log n)/空间 O(n)。确认仍无单次硬时延保证，显示/摘要/折叠消费保持共享预算。
 
 ```rust
-use mdtui3::{Document, LinkId, Span, Style};
+use mdstream::{Document, LinkId, Span, Style};
 let mut doc = Document::new();
 doc.append("> [prior](u) ` old\n")?;
 let prior = *doc.link_info(LinkId(0)).unwrap();
@@ -852,16 +852,16 @@ assert_eq!(*doc.link_info(LinkId(0)).unwrap(), prior);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-`crates/mdtui3-core/tests/closed_code_headers.rs` 覆盖独立早管道对照、闭合后语法取消、长分隔行及 400 组范围模型、源码映射/共享预算、缓存/通知与折叠；全切点/逐前缀快照在 `crates/mdtui3-core/tests/chunking.rs`。千层/百万字追加不遍历旧正文/祖先，4096 个历史对象、旧 opener 和当前行对象/列保持增量消费；内部测试确认一个摘要在 200 轮成功/失败后释放。`crates/mdtui3-core/examples/closed_code_headers.rs` 演示百万字确认/失败及有预算预览。闭合后带其它行内语法的表头、通用已发布映射撤销仍留 TODO。
+`crates/mdstream-core/tests/closed_code_headers.rs` 覆盖独立早管道对照、闭合后语法取消、长分隔行及 400 组范围模型、源码映射/共享预算、缓存/通知与折叠；全切点/逐前缀快照在 `crates/mdstream-core/tests/chunking.rs`。千层/百万字追加不遍历旧正文/祖先，4096 个历史对象、旧 opener 和当前行对象/列保持增量消费；内部测试确认一个摘要在 200 轮成功/失败后释放。`crates/mdstream-core/examples/closed_code_headers.rs` 演示百万字确认/失败及有预算预览。闭合后带其它行内语法的表头、通用已发布映射撤销仍留 TODO。
 
 **未闭合数学的探测**：顶层段落或同容器正文的 `$` / `$$` 候选可参与晚管道探测，可伴随旧强调栈和未闭合链接/图片标签。首管道前继续即时维护原美元串和转义状态；数学内容仍为原文，不提前发布单元格中的链接、数学或脚注。若旧数学在首管道前实际闭合，按下节暂存原定界端点；闭合后遇到其它行内语法起始字节则先发布稳定 MathId、原始内容包络和范围失效，再取消当前行探测。即使随后开启新数学也不恢复探测；已有对象不会被撤销或重编号。
 
 若确认表格，旧数学从未闭合，因而首单元格前缀没有已发布的行内效果。复用代码候选的固定大小探测标志，丢弃旧 Inline 及仍待定的美元串（不结算并发布跨行对象），再在已有 RowParser 扫描中独立消费当前表头。当前行对象只在此时发布一次，既有 MathId/LinkId/脚注编号保持。失败、无管道、EOF 或块中断继续原候选与未消费后缀；失败分隔行按原块规则处理，旧数学可随后正常闭合。候选额外状态 O(1)，无正文/栈复制；成功只额外消费互不重叠的当前表头，失败不重放，实际计数满足 `inline_bytes <= source().len() + table_bytes`，累计 O(n log n)、空间 O(n)。确认/回退仍不承诺单次硬预算。
 
-容器内数学现沿用同一隔离/取消规则，Quote/Item 中的跨行内容读取见[容器跨行数学内容](#容器跨行数学内容)。`crates/mdtui3-core/examples/math_headers.rs` 演示百万字成功/失败、稳定 MathId 与预算读取；`crates/mdtui3-core/tests/math_headers.rs` 覆盖 338 组定界/转义模型、400 组表格范围、待定美元串、4096 个旧 opener/对象/列、千层容器边界、缓存/合并通知及共享预算，UTF-8 全切点和逐前缀快照在 `crates/mdtui3-core/tests/chunking.rs` 验证。
+容器内数学现沿用同一隔离/取消规则，Quote/Item 中的跨行内容读取见[容器跨行数学内容](#容器跨行数学内容)。`crates/mdstream-core/examples/math_headers.rs` 演示百万字成功/失败、稳定 MathId 与预算读取；`crates/mdstream-core/tests/math_headers.rs` 覆盖 338 组定界/转义模型、400 组表格范围、待定美元串、4096 个旧 opener/对象/列、千层容器边界、缓存/合并通知及共享预算，UTF-8 全切点和逐前缀快照在 `crates/mdstream-core/tests/chunking.rs` 验证。
 
 ```rust
-use mdtui3::{Document, MathId};
+use mdstream::{Document, MathId};
 let mut doc = Document::new();
 doc.append("$prior$ $$ old\n")?;
 let prior = *doc.math(MathId(0)).unwrap();
@@ -883,7 +883,7 @@ assert_eq!(*doc.math(MathId(0)).unwrap(), prior);
 额外状态为 O(1) 的两个源码区间；提交/丢弃各计一次 `math_steps`，美元串扫描仍照常计费。原容器前缀间隙、部分 tab 映射直接复用，闭合不扫描或改写历史映射。成功只额外消费当前表头，失败不回放，保持 `inline_bytes <= source().len() + table_bytes`、累计 O(n log n)/空间 O(n)；解析仍不承诺单次硬预算，数学读取和表格预览继续共享 Budget。
 
 ```rust
-use mdtui3::{Document, MathId};
+use mdstream::{Document, MathId};
 let mut doc = Document::new();
 doc.append("> $prior$ $$ old\n")?;
 let original = *doc.math(MathId(0)).unwrap();
@@ -897,7 +897,7 @@ assert_eq!(doc.text(doc.math(MathId(1)).unwrap().content), Some("cell"));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-`crates/mdtui3-core/tests/closed_math_headers.rs` 覆盖独立单元格语义、400 组范围模型、语法后缀取消、失败/EOF/容器边界、共享预算映射与通知失效；UTF-8 全切点/逐前缀见 `crates/mdtui3-core/tests/chunking.rs`。千层/百万字和 4096 历史对象/旧 opener/列验证增量工作，内部测试验证一个端点对在 200 轮判定后释放。`crates/mdtui3-core/examples/closed_math_headers.rs` 演示成功丢弃/失败提交与预算预览。闭合后带其它行内语法、通用已发布对象/样式撤销仍留 TODO。
+`crates/mdstream-core/tests/closed_math_headers.rs` 覆盖独立单元格语义、400 组范围模型、语法后缀取消、失败/EOF/容器边界、共享预算映射与通知失效；UTF-8 全切点/逐前缀见 `crates/mdstream-core/tests/chunking.rs`。千层/百万字和 4096 历史对象/旧 opener/列验证增量工作，内部测试验证一个端点对在 200 轮判定后释放。`crates/mdstream-core/examples/closed_math_headers.rs` 演示成功丢弃/失败提交与预算预览。闭合后带其它行内语法、通用已发布对象/样式撤销仍留 TODO。
 
 **未闭合链接/图片标签的探测**：顶层段落或同容器正文继承 `[...` 或 `![...` 时记录旧左括号的源码位置，继续即时消费原标签及本行语义。沿用单括号候选方言：新 `[` 替换旧标签，`<` 丢弃标签并尝试自动链接；这些操作不发布旧标签对象。确认时只清除仍与记录位置相同的旧标签，保留当前行新标签、待定后缀、强调/代码/数学以及已经发布的 LinkId/MathId/脚注编号；首单元格前缀直接复用。旧图片的 `!` 保持原文，不能作用到新行标签或后续单元格。
 
@@ -906,7 +906,7 @@ assert_eq!(doc.text(doc.math(MathId(1)).unwrap().content), Some("cell"));
 失败、无管道、EOF 或块中断沿用原候选和未消费后缀，前序换行只提交一次；不回扫标签、不重新发布对象、不重建符号索引。标签来源仅一个固定大小偏移，普通路径每个字节消费一次；仅叠加继承代码/数学时沿用其已证明的一次当前表头重读。累计 O(n log n)、空间 O(n)，确认/回退不承诺单次硬预算。容器跨行标签现沿用同一隔离/取消规则，去前缀表示见[容器跨行链接与图片标签](#容器跨行链接与图片标签)；闭合 shortcut 的独立子项见下文；通用跨行语义撤销及多行目标/title 继续保留 TODO。
 
 ```rust
-use mdtui3::{Document, LinkId};
+use mdstream::{Document, LinkId};
 let mut doc = Document::new();
 doc.append("[prior](u) ![old\n")?;
 let prior = *doc.link_info(LinkId(0)).unwrap();
@@ -919,14 +919,14 @@ assert_eq!(*doc.link_info(LinkId(0)).unwrap(), prior);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-`crates/mdtui3-core/examples/link_headers.rs` 演示百万字成功/失败、稳定 LinkId 与共享预算摘要；`crates/mdtui3-core/tests/link_headers.rs` 覆盖 200 组替换/转义模型、400 组表格范围、代码/数学组合、千层容器边界、百万字、4096 个旧 opener/对象/列、缓存及合并通知。UTF-8 全切点和逐标量中间快照见 `crates/mdtui3-core/tests/chunking.rs`。
+`crates/mdstream-core/examples/link_headers.rs` 演示百万字成功/失败、稳定 LinkId 与共享预算摘要；`crates/mdstream-core/tests/link_headers.rs` 覆盖 200 组替换/转义模型、400 组表格范围、代码/数学组合、千层容器边界、百万字、4096 个旧 opener/对象/列、缓存及合并通知。UTF-8 全切点和逐标量中间快照见 `crates/mdstream-core/tests/chunking.rs`。
 
 **旧链接/图片 shortcut 可隔离闭合**：同一顶层段落或显式容器作用域继承的 `[...` / `![...` 在首管道前闭合时，先保存括号端点和图片起点，复用现有至多 `MAX_LABEL_BYTES + 1` 字节的去前缀标签缓冲。此时不分配 LinkId、不登记 SymbolId、不更新 `first_use`，也不发布跨行链接标记或隐藏括号；已经解析的标签内强调、代码、数学、实体等局部语义继续可见。成功确认表格时丢弃暂存 shortcut，并复用当前首单元格状态；失败、无管道到行末、EOF 或作用域退出时规范化有界标签并提交一次普通 shortcut，保留原始源码包络、去前缀显示及既有局部对象 ID。空白/超长标签仍不创建引用，但同样保留原方言的直接目标回退能力。
 
 本子项允许闭合后到首管道间的普通文本、空白及不启动语法的标点。紧接 `]` 的 `(` 或 `[` 可进入下文的普通字符后缀子项。其它后缀取消隔离并恢复原 `Tail`，直接目标、full/collapsed 引用和非法/未完成后缀继续使用原对象 ID；已取消且后缀尚未完成时保留 Provisional 状态。其它 `&`、`<`、反斜线、星号、下划线、波浪线、反引号、美元、`!`、`[`、`]` 起始字节也先提交并取消，该行不重试。括号与标签内已发布语义无需撤销；新行内序列、短表头、早管道、lazy 行、部分 tab 的当前表头分类及块边界规则保持原方言。与继承代码/数学组合时，它们的闭合后语法限制仍适用。
 
 ```rust
-use mdtui3::{Document, LinkId};
+use mdstream::{Document, LinkId};
 let mut doc = Document::new();
 doc.append("> [prior](u) ![old\n")?;
 let prior = *doc.link_info(LinkId(0)).unwrap();
@@ -942,7 +942,7 @@ assert_eq!(doc.link_destination(LinkId(1)), Some("v"));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-额外状态只有一个固定大小候选；标签缓冲在已有上限内，长尾不扫描/复制旧标签、局部样式或祖先。成功/失败各只处理该候选一次（计入 `delimiter_steps`），失败的规范化字节计入 `label_bytes`；引用仍按 BTreeMap 间接寻址，晚定义不遍历旧引用。当前行已消费前缀不重读，累计 O(n log n)、空间 O(n)，不承诺单次判定硬时延。`crates/mdtui3-core/tests/closed_link_headers.rs` 验证早管道语义、400 组范围模型、边界/预算/缓存和引用副作用；全切点与逐前缀快照见 `crates/mdtui3-core/tests/chunking.rs`。千层/百万字、两万旧引用和 4096 个历史对象/旧 opener/列验证计数；内部测试检查 200 轮判定不积累候选或标签存储。`crates/mdtui3-core/examples/closed_link_headers.rs` 演示成功丢弃、失败晚定义与预算预览。普通字符显式后缀见下文；其它行内语法及通用已发布对象/引用副作用撤销继续保留 TODO。
+额外状态只有一个固定大小候选；标签缓冲在已有上限内，长尾不扫描/复制旧标签、局部样式或祖先。成功/失败各只处理该候选一次（计入 `delimiter_steps`），失败的规范化字节计入 `label_bytes`；引用仍按 BTreeMap 间接寻址，晚定义不遍历旧引用。当前行已消费前缀不重读，累计 O(n log n)、空间 O(n)，不承诺单次判定硬时延。`crates/mdstream-core/tests/closed_link_headers.rs` 验证早管道语义、400 组范围模型、边界/预算/缓存和引用副作用；全切点与逐前缀快照见 `crates/mdstream-core/tests/chunking.rs`。千层/百万字、两万旧引用和 4096 个历史对象/旧 opener/列验证计数；内部测试检查 200 轮判定不积累候选或标签存储。`crates/mdstream-core/examples/closed_link_headers.rs` 演示成功丢弃、失败晚定义与预算预览。普通字符显式后缀见下文；其它行内语法及通用已发布对象/引用副作用撤销继续保留 TODO。
 
 **旧链接/图片的普通字符显式后缀**：在上述可隔离旧标签后，直接裸目标及可选 title、full `[key]` 和 collapsed `[]` 后缀也可参与晚管道识别。目标沿用已有单物理行、平衡括号与长度规则，例如 `(path?q=1#part '标题')`、`(a(b)c)`、`()`；full 引用沿用 999 字节上限和大小写/空白规范化。目标、title 和引用标签中只允许不启动独立单元格语法的字符；语法起始字节 `&`、`<`、反斜线、星号、下划线、波浪线、反引号、美元、`!` 和非定界方括号先取消探测。引用后缀内的 `^` 也取消；已完成引用后缀到首管道之间的 `(` 保守取消，以免形成另一种单元格链接。尖括号目标、转义目标和含这些字符的 title/引用仍正确作为普通正文解析，只是不作为本子项的晚管道表头。闭合后的其它新行内语法、lazy/部分 tab 当前表头和块优先级规则保持既有边界。
 
@@ -951,7 +951,7 @@ assert_eq!(doc.link_destination(LinkId(1)), Some("v"));
 失败、EOF、无管道行末、Setext 或作用域退出先提交原 shortcut，再应用已完成后缀，保持既有符号创建顺序和首引用副作用（直接目标仍可留下原 shortcut 符号）。full 引用独立登记目标标签；collapsed 复用已去前缀的原标签。非法/超限或不支持的后缀在拒绝字节前取消隔离，恢复原 parser 位置与同一 LinkId，后续完成只更新该对象。普通长尾继续即时消费；已解析的局部样式、代码/数学对象与早先链接保持身份。原始标签包络仍包含容器前缀/部分 tab，显示读取沿用已有映射。
 
 ```rust
-use mdtui3::{Document, LinkId, LinkKind};
+use mdstream::{Document, LinkId, LinkKind};
 let mut doc = Document::new();
 doc.append("> [prior](u) ![old\n")?;
 let prior = *doc.link_info(LinkId(0)).unwrap();
@@ -971,18 +971,18 @@ assert_eq!(doc.link_destination(LinkId(1)), Some("/late"));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-后缀每个字节只进入原 parser 一次；成功/失败至多规范化两个有上限的标签，计入 `label_bytes`，候选决议计入 `delimiter_steps`。额外状态固定大小，百万字普通长尾不增加标签容量、不扫描祖先或旧对象；累计 O(n log n)、空间 O(n)，不承诺单次判定硬预算。`crates/mdtui3-core/tests/link_suffix_headers.rs` 覆盖独立早管道对照、400 组范围模型、长度/失败边界、千层/百万字、两万旧引用、4096 对象/旧 opener/列、预算及失效；`crates/mdtui3-core/tests/chunking.rs` 验证 UTF-8 全切点和逐前缀快照，内部测试验证 200 轮决议释放状态。`crates/mdtui3-core/examples/link_suffix_headers.rs` 演示 full 引用的两种解释、稳定对象和预算预览。含行内语法字符的后缀、闭合后其它语法、多行目标/title、通用对象/符号撤销继续保留 TODO。
+后缀每个字节只进入原 parser 一次；成功/失败至多规范化两个有上限的标签，计入 `label_bytes`，候选决议计入 `delimiter_steps`。额外状态固定大小，百万字普通长尾不增加标签容量、不扫描祖先或旧对象；累计 O(n log n)、空间 O(n)，不承诺单次判定硬预算。`crates/mdstream-core/tests/link_suffix_headers.rs` 覆盖独立早管道对照、400 组范围模型、长度/失败边界、千层/百万字、两万旧引用、4096 对象/旧 opener/列、预算及失效；`crates/mdstream-core/tests/chunking.rs` 验证 UTF-8 全切点和逐前缀快照，内部测试验证 200 轮决议释放状态。`crates/mdstream-core/examples/link_suffix_headers.rs` 演示 full 引用的两种解释、稳定对象和预算预览。含行内语法字符的后缀、闭合后其它语法、多行目标/title、通用对象/符号撤销继续保留 TODO。
 
-`crates/mdtui3-core/examples/inherited_headers.rs` 演示前序硬换行隔离、百万字即时消费、失败恢复与成功摘要；`crates/mdtui3-core/tests/inherited_headers.rs` 对照全延迟表头语义，覆盖旧对象与块身份、软硬换行、失败/EOF/Setext、原候选不回归、千层/百万字、4096 对象/列、400 组范围模型和共享预算。
+`crates/mdstream-core/examples/inherited_headers.rs` 演示前序硬换行隔离、百万字即时消费、失败恢复与成功摘要；`crates/mdstream-core/tests/inherited_headers.rs` 对照全延迟表头语义，覆盖旧对象与块身份、软硬换行、失败/EOF/Setext、原候选不回归、千层/百万字、4096 对象/列、400 组范围模型和共享预算。
 
-`crates/mdtui3-core/examples/long_headers.rs` 演示百万字长表头的迟确认与共享 Budget 摘要。测试覆盖 117649 组摘要语法对照、全 UTF-8 切点/逐前缀、千层引用和 250 层列表、百万字成功/失败、4096 列稀疏表、400 组范围模型及布局/折叠组合。
+`crates/mdstream-core/examples/long_headers.rs` 演示百万字长表头的迟确认与共享 Budget 摘要。测试覆盖 117649 组摘要语法对照、全 UTF-8 切点/逐前缀、千层引用和 250 层列表、百万字成功/失败、4096 列稀疏表、400 组范围模型及布局/折叠组合。
 
 **长分隔行的流式规则**：仅紧邻有效候选表头时启用（包含上述长表头）。到达分类上限先只读匹配已有容器路径，再把分隔行前缀喂给状态机；没有完整路径、兄弟条目、新嵌套前缀或 lazy 行不进入探测。单元格的连字符、首尾冒号及 ASCII 空白可以任意长，首个管道也可以在窗口之后；保留一个单元格状态和至多表头列数个对齐值，不复制候选源码。短行保持原有优先级。长行在 LF 或 EOF 才检查最终列数并发布表格；CRLF 跨分块有效。探测期间表头和分隔行原文可见，分隔行尚无块/表对象，容器与章节的已解析末端保持在表头；确认后一次更新范围并隐藏整条分隔行。
 
 **失败与复杂度**：非法字节、空单元格、多余列或 EOF 列数不足只触发一次回退。块分类只重用原来最多 1 KiB 的前缀及不完整行规则，不把长尾重新当成完整 Setext、定义、容器标记或新表头；延迟的长尾交给普通流式路径一次，此后只消费新增字节。`table_candidate_bytes` 对每个探测字节最多计费一次；成功不重读长分隔行，失败的长尾只有一次普通消费。这里有界的是分类回退窗口和重试次数，**不是失败调用的硬字节/时延上限**：单次晚失败可能消费整个延迟尾部，累计仍 O(n log n)、空间 O(n)。无法隔离的旧强调/代码/数学闭合、旧链接/图片标签闭合后带含行内语法字符的显式后缀或新行内语法的晚管道表头，以及其它块分类上限继续留在 TODO。
 
 ```rust
-use mdtui3::{Document, TableId};
+use mdstream::{Document, TableId};
 let mut doc = Document::new();
 doc.append("> a|b\n> |")?;
 doc.append(&"-".repeat(4096))?;
@@ -993,7 +993,7 @@ assert!(doc.table(TableId(0)).unwrap().delimiter.len() > 4096);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-`crates/mdtui3-core/examples/long_delimiters.rs` 演示百万字分隔行以及共享 Budget 的表头/正文摘要；摘要按行索引直接跳过分隔行，旧布局、折叠与合并 Update 的失效语义保持。
+`crates/mdstream-core/examples/long_delimiters.rs` 演示百万字分隔行以及共享 Budget 的表头/正文摘要；摘要按行索引直接跳过分隔行，旧布局、折叠与合并 Update 的失效语义保持。
 
 `TableRow::complete` 区分完整行与正在增长的行。当前行的最后一个空单元格可能在确认尾部竖线后被移除；先前完整行保持稳定。`source_width_hint` 是已完成单元格的最大原文字节数，单调增长，**不是终端字符宽度**。渲染器需要结合窗口预算、字体/Unicode 宽度、padding 和内容换行决定最终列宽；列宽提示不要求读取旧单元格。提示变大时，`Update.tables_changed` 通知具体表格，同时 `dirty` 覆盖该表范围，旧高度/检查点按现有接口惰性失效。
 
@@ -1008,7 +1008,7 @@ assert!(doc.table(TableId(0)).unwrap().delimiter.len() > 4096);
 `Style::SOFT_BREAK` / `Style::HARD_BREAK` 标记继续同一行内序列的 LF，包括同一容器的显式正文续行。两个以上行尾空格或一个未转义的反斜线产生硬换行，普通换行为软换行；CRLF 跨 append 也有效。为避免把块末换行误判为行内换行，直到后续同序列内容到达才确认，并通过 `dirty` 使旧片段失效；序列末和代码内部不加这两种标记。继续行前的尾部空格及硬换行反斜线隐藏，源码仍可寻址。
 
 ```rust
-use mdtui3::{Document, LinkId, Span, Style};
+use mdstream::{Document, LinkId, Span, Style};
 let mut doc = Document::new();
 doc.append("[guide](<docs/my guide.md> 'Guide')  \nnext\n")?;
 doc.finish();
@@ -1027,7 +1027,7 @@ assert!(doc.runs_in(Span::new(0, doc.source().len())).unwrap()
 开放标题中的可能尾缀暂时按原始内容可见，相关行内结尾也可能尚未定型；`Heading.content` 在 LF/EOF 前包含该尾部，持续前导空白则随到达隐藏。确认后保留原始源码、BlockId/HeadingId 和既有行内对象，使用正常 Update 失效范围通知消费者；旧 revision 的读取、搜索和 slug 任务必须重建。CRLF 可以跨追加，物理 LF 仍可见；沿用库的 LF/CRLF 行方言，孤立 CR 仍属正文。首行块分类的有界前缀及其它容器规则没有扩展。
 
 ```rust
-use mdtui3::{Document, Style};
+use mdstream::{Document, Style};
 let mut doc = Document::new();
 doc.append("# **title**")?;
 doc.append(&" ".repeat(2048))?;
@@ -1043,7 +1043,7 @@ assert_eq!(text, "title");
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-`crates/mdtui3-core/tests/atx_whitespace.rs` 提供 1600 组独立原始区间模型、长前导/尾部空白与井号、千层/百万字及 4096 历史标题验收，并覆盖源码映射、共享预算、搜索/slug 和缓存失效。完整分块快照见 `crates/mdtui3-core/tests/chunking.rs`；官方 18 例的独立评分见文末标准样例说明。
+`crates/mdstream-core/tests/atx_whitespace.rs` 提供 1600 组独立原始区间模型、长前导/尾部空白与井号、千层/百万字及 4096 历史标题验收，并覆盖源码映射、共享预算、搜索/slug 和缓存失效。完整分块快照见 `crates/mdstream-core/tests/chunking.rs`；官方 18 例的独立评分见文末标准样例说明。
 
 ## Setext 首尾空白
 
@@ -1052,7 +1052,7 @@ assert_eq!(text, "title");
 普通正文仍按既有规则流式发布；下划线在 LF/EOF 完整确认时才应用 Setext 裁剪。失败或过长下划线保留原文，空行/块/容器边界重置候选；不改变普通段落的空白规则。原文非空白端点与待定 CR 直接在既有行内扫描中维护（计入 `Work.inline_bytes`），只增加 O(1) 状态。确认只读端点、写至多两个隐藏区间，并使用原有整标题结构失效；不回扫正文、内部叶块、历史对象或祖先，保持原有摊还复杂度。末行换行语义尚未提交，裁剪不会撤销内部已确认软/硬换行。
 
 ```rust
-use mdtui3::{Document, Style};
+use mdstream::{Document, Style};
 let mut doc = Document::new();
 doc.append(">   Foo *bar\r\n> baz*\t\r\n")?;
 assert!(doc.headings().entries().is_empty());
@@ -1069,14 +1069,14 @@ assert_eq!(text, "Foo bar\nbaz");
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-`crates/mdtui3-core/tests/setext_whitespace.rs` 和 `crates/mdtui3-core/tests/chunking.rs` 覆盖 1200 组独立原始区间模型、UTF-8 全切点/逐前缀、百万字正文/尾部空白及千层容器、4096 历史对象与物理叶块、表头失败/成功边界、源码映射/共享预算、搜索/slug、合并通知及旧测量/任务拒绝。Setext 下划线的分类窗口、完整缩进/空行与部分 tab 规则仍受既有方言限制；官方章节评分见文末。
+`crates/mdstream-core/tests/setext_whitespace.rs` 和 `crates/mdstream-core/tests/chunking.rs` 覆盖 1200 组独立原始区间模型、UTF-8 全切点/逐前缀、百万字正文/尾部空白及千层容器、4096 历史对象与物理叶块、表头失败/成功边界、源码映射/共享预算、搜索/slug、合并通知及旧测量/任务拒绝。Setext 下划线的分类窗口、完整缩进/空行与部分 tab 规则仍受既有方言限制；官方章节评分见文末。
 
 ## 标题索引与导航
 
 `doc.headings()` 提供文档顺序的 `HeadingIndex`。每个 `Heading` 包含稳定 ID 对应的块、容器作用域、级别、整个标题的源码区间和不含标题标记的内容区间。标题文字不复制；超长 Setext 标题也只保存区间。`at_level(level)` 直接返回该级别的 ID 列表；`next(offset, max_level)` / `previous(...)` 查找严格位于指定源码位置之后/之前、级别不超过上限的标题。`Update.new_headings` 给出新加入的 ID 范围。长 ATX 标题的区间会随追加更新；全局索引包含上述方言支持的容器内标题，结构关系遵循确切容器作用域。
 
 ```rust
-use mdtui3::{Document, HeadingId, HeightIndex, NavAction, Navigator};
+use mdstream::{Document, HeadingId, HeightIndex, NavAction, Navigator};
 let mut doc = Document::new();
 doc.append("# One\n## Two\n### Three\n")?;
 let mut heights = HeightIndex::default();
@@ -1101,7 +1101,7 @@ nav.navigate(&doc, &heights, NavAction::End, 24);
 `HeadingSearch::new(&doc, query, max_level)` 只搜索标题索引中各标题 `content` 的非 `HIDDEN` 显示文本，复用实体解码、代码 span 规范化和源码映射。`max_level` 与标题导航一致：选择级别不超过上限的标题，大于 6 按 6 处理，0 不选择标题。空查询返回 `InvalidRange`。匹配区分大小写，保留重叠命中，不做额外空白处理、Unicode 归一化或模糊匹配；标题之间独立匹配，不串接名称，包含已识别的容器内标题，不读取正文或代码块。
 
 ```rust
-use mdtui3::{Budget, Completion, Document, HeadingId, HeadingSearch, WorkLimit};
+use mdstream::{Budget, Completion, Document, HeadingId, HeadingSearch, WorkLimit};
 let mut doc = Document::new();
 doc.append("# a**b**&amp;c\nbody-only\n## ` ab&c `\n### ab&c\n")?;
 doc.finish();
@@ -1130,7 +1130,7 @@ assert_eq!(doc.text(matches[0].source), Some("a**b**&amp;c"));
 
 查询预处理一次 O(m)，任务存储 O(m + TILE_BYTES)，m 为查询字节数；切换标题只重置位置，不重建查询表、清空映射环或复制标题。设 H 为全部标题数、h 为选中标题数、s 为其内容源码字节数、n 为文档总字节数，单 revision 最坏搜索成本为 O(m + (h + 1) log(H + 1) + s log(n + 1))，输出存储由调用方逐批管理。百万字 Setext 的确认和任务构造不读取标题，扫描在显式预算调用中推进；被过滤标题和正文的长度不增加读取字节。完整显示名称可用已有 `display_cursor(heading.content)` 限量读取，不先生成所有名称。文内 slug 和 `#fragment` 解析见下节。
 
-`cargo run -p mdtui3-core -r --example heading_search` 演示级别过滤、逐帧搜索、复用输出缓冲区及跳到折叠内命中。`crates/mdtui3-core/tests/heading_search.rs` 覆盖重复/空标题、跨 run/tile 和长查询、各预算维度、身份/过期、流式前缀/切点、固定种子朴素模型、百万字正文/Setext 和级别过滤跳过测试。
+`cargo run -p mdstream-core -r --example heading_search` 演示级别过滤、逐帧搜索、复用输出缓冲区及跳到折叠内命中。`crates/mdstream-core/tests/heading_search.rs` 覆盖重复/空标题、跨 run/tile 和长查询、各预算维度、身份/过期、流式前缀/切点、固定种子朴素模型、百万字正文/Setext 和级别过滤跳过测试。
 
 ## 文内 slug 与 fragment
 
@@ -1139,7 +1139,7 @@ assert_eq!(doc.text(matches[0].source), Some("a**b**&amp;c"));
 slug 方言明确采用以下规则，不宣称兼容某个平台的完整 slug 算法：Unicode 字母/数字用 Rust `char::is_alphanumeric` 选择并用 `to_lowercase` 小写化；保留 `_`、`-`；每个 Unicode 空白标量变成一个 `-`；删除其余字符。不额外裁剪或合并空白，不做 Unicode 归一化、音译或 emoji 保留；小写映射产生的组合字符保留。输入先经过既有显示语义，因此隐藏标记/链接目标不参与，实体和代码 span 使用显示值。空结果用 `section`。按源码顺序分配全局唯一名称，依次尝试 base、base-1、base-2 等，跳过已经占用的名称。例如 `A`、`A-1`、`A`、`A-1` 分别得到 `a`、`a-1`、`a-2`、`a-1-1`；空标题也参与同一消歧规则。
 
 ```rust
-use mdtui3::{Budget, Completion, Document, FragmentStep, HeadingAnchors, HeadingId, WorkLimit};
+use mdstream::{Budget, Completion, Document, FragmentStep, HeadingAnchors, HeadingId, WorkLimit};
 let mut doc = Document::new();
 doc.append("# Guide\n## 中文\n## 中文\n")?;
 doc.finish();
@@ -1180,7 +1180,7 @@ loop {
 
 索引以字节 trie 保存名字，每个节点至多 256 条有序边，避免长字符串比较和哈希碰撞；重复 base 的后缀计数单调推进，后缀候选从 base 节点开始，不重复遍历长前缀。设 S 为标题内容源码总字节、H 为标题数，单 revision 构建为 O((S + 1) log(n + 1) + H log(H + 1))，空间 O(S + H)。失败的数字候选已属于旧标题，且由唯一的 base 产生，因此总失败探测 O(H)；连续数字的 trie 前缀共享，后缀总节点 O(H)。`AnchorSlug` 只保存借用的 base 和整数后缀；显式 `Display`/`to_string()` 由调用方承担 O(slug 长度) 的格式化成本。借用结果 O(1)，长度 m 的 fragment 查询总计 O(m)、任务空间 O(1)。String/Vec/树节点的分配成本按摊还计，不承诺 allocator 的硬时延。
 
-`cargo run -p mdtui3-core -r --example anchors` 演示小预算索引、碰撞、晚到中文目标、百分号 fragment 和折叠导航。测试覆盖所有 UTF-8 单切点、长 ATX 逐前缀、显示语义、Unicode、错误身份/过期与各预算维度，包含固定种子模型、百万字 Setext/长 fragment 和 4 万标题消歧的工作量与存储检查。链接点击和目录 UI 继续留待接入阶段。
+`cargo run -p mdstream-core -r --example anchors` 演示小预算索引、碰撞、晚到中文目标、百分号 fragment 和折叠导航。测试覆盖所有 UTF-8 单切点、长 ATX 逐前缀、显示语义、Unicode、错误身份/过期与各预算维度，包含固定种子模型、百万字 Setext/长 fragment 和 4 万标题消歧的工作量与存储检查。链接点击和目录 UI 继续留待接入阶段。
 
 ## 共享预算与增量缓存
 
@@ -1188,7 +1188,7 @@ loop {
 
 `viewport_budgeted` / `resume_viewport` 复用输出 Vec，返回 `Covered`、`EndOfDocument` 或 `BudgetExhausted`。继续位置保存稳定 tile 锚点，并验证视图、文档 revision 和失效版本；高度校准后重新计算累计位置。`LayoutPass` 保留半个 tile 的字节/对象位置，下一帧不会重新扫描已完成前缀。`LayoutPass::from_checkpoint` 限制恢复源码距离，每个恢复步骤也计入预算。无附近上下文时，从局部起点排版并标记为 `Local`；未知前缀的绝对行号仍是估计。
 
-一个不可暂停的外部回调不会因为传入 Budget 就自动获得时间上界。`LayoutSink` 每次收到的文本和对象有界；昂贵的图片解码、字体排版或用户析构需另外拆成可暂停任务。`crates/mdtui3-core/examples/budget.rs` 展示 UTF-8 字节输入、Update 合并以及跨帧推进；其中按 Unicode 标量计列，仅验证消费协议，不是终端宽度或字素排版实现。
+一个不可暂停的外部回调不会因为传入 Budget 就自动获得时间上界。`LayoutSink` 每次收到的文本和对象有界；昂贵的图片解码、字体排版或用户析构需另外拆成可暂停任务。`crates/mdstream-core/examples/budget.rs` 展示 UTF-8 字节输入、Update 合并以及跨帧推进；其中按 Unicode 标量计列，仅验证消费协议，不是终端宽度或字素排版实现。
 
 `HeightState` 区分 `Measured`、`Local`、`Estimated`、`Expired`。`expire` 用区间操作保留旧的非零高度，并将旧零高度替换为正估计，恢复可检索性；`invalidate` 保留原来统一重置估计的低层语义。默认 `apply` 从最早可能改变尺寸的位置过期后续布局，不扫描屏外内容。渲染器确认引用目标、样式或表格宽度提示不影响尺寸时，可用 `LayoutPolicy` 保留对应测量；更换策略需重置布局。
 
@@ -1201,7 +1201,7 @@ loop {
 `drain_before` 保留树节点和 arena 以便回填。需要归还历史树容量时，显式调用 `CheckpointIndex::into_compaction`，将缓存所有权移入 `CheckpointCompaction<S>`。任务先以 DFS 跳过失效子树，将有效叶状态移入新树，再逐节点退役旧 arena；失效 payload 追加到调用方的 `out`，由调用方选择析构时机，不要求 `S: Clone`。有效检查点的 token、版本、文档身份和已消费 revision 保持，失效 token 不会复活；完成后旧有效测量 ticket 仍按原有依赖规则验证。
 
 ```rust
-use mdtui3::{Budget, CheckpointIndex, Completion, TileId, WorkLimit};
+use mdstream::{Budget, CheckpointIndex, Completion, TileId, WorkLimit};
 let mut cache = CheckpointIndex::new();
 for i in 0..128 { cache.insert(TileId(i * 97), vec![i as u8; 256]).unwrap(); }
 let token = cache.token(TileId(0)).unwrap();
@@ -1232,7 +1232,7 @@ cache.insert(TileId(1), vec![1; 256]).unwrap();
 暂停期间 `len/is_empty/get/previous/token/validates` 查询两个树的并集，前驱仍为 O(log T)；没有可写的缓存别名。`finish` 未完成时返回原任务，可以继续分帧推进。持有任务即保留进度；直接丢弃任务等同于丢弃整个缓存，会运行剩余 payload 的析构。以下写入被所有权规则拒绝：
 
 ```compile_fail
-use mdtui3::{CheckpointIndex, TileId};
+use mdstream::{CheckpointIndex, TileId};
 let mut cache = CheckpointIndex::<usize>::new();
 let task = cache.into_compaction();
 cache.insert(TileId(0), 1).unwrap(); // cache 已由 task 接管
@@ -1257,7 +1257,7 @@ Update 携带文档身份及 `base_revision -> revision`。空追加、重复 EO
 `runs` / `runs_in` 保留逐字对应源码的文本；需要实体解码和代码 span 空白规范化时使用 `display_runs` / `display_runs_in`。两种读取都返回隐藏标记，显示或复制可见文本时过滤 `Style::HIDDEN`。普通文字直接借用原文，实体只存至多 8 个 UTF-8 字节的替代值；代码 span 保存端点和流式空白摘要，不复制或在闭合时回扫正文。
 
 ```rust
-use mdtui3::{Document, Span, Style};
+use mdstream::{Document, Span, Style};
 let mut doc = Document::new();
 doc.append("中 &amp; ` a\r\nb ` &#x1f642;")?;
 doc.finish();
@@ -1273,9 +1273,9 @@ assert_eq!(display, "中 & a b 🙂");
 
 实体跨查询/tile 边界时只在包含 `&` 的片段输出替代文字，其余片段输出空串并保留完整映射。因此相邻查询拼接不会重复；若查询从实体中间开始，不会补发之前的文字，宿主可通过 replacement 找到实体入口。代码 CRLF 的空格归 LF，CR 片段输出空串，两者映射到同一原始 CRLF；裁掉的首尾空白也以空文本保留映射。实体解码结果不会重新参与 Markdown 解析。
 
-需要共享整帧预算时，创建 `display_cursor(请求区间)`，反复调用 `DisplayCursor::next(&doc, &mut budget)`，处理 `Run`、`BudgetExhausted` 和 `Complete`。游标在耗尽后保存源码位置；文档 revision 改变后返回 `StaleContinuation`，需按源码锚点重建。每步预先消费一次 query、一个 object 和至多 `TILE_BYTES + 2` 源码字节的检查窗口，包含最多两个相邻 CRLF 字节；返回片段较短时仍保守计入整个检查窗口。预算为 1 query、1 object、6 bytes 即可容纳任意一个 UTF-8 标量并保证前进，替代输出最多 8 字节。调用方的排版回调成本仍需另外约束。可运行流程见 `crates/mdtui3-core/examples/display.rs`；现有 `LayoutSink::text(RenderRun)` 仍接收源码文本。
+需要共享整帧预算时，创建 `display_cursor(请求区间)`，反复调用 `DisplayCursor::next(&doc, &mut budget)`，处理 `Run`、`BudgetExhausted` 和 `Complete`。游标在耗尽后保存源码位置；文档 revision 改变后返回 `StaleContinuation`，需按源码锚点重建。每步预先消费一次 query、一个 object 和至多 `TILE_BYTES + 2` 源码字节的检查窗口，包含最多两个相邻 CRLF 字节；返回片段较短时仍保守计入整个检查窗口。预算为 1 query、1 object、6 bytes 即可容纳任意一个 UTF-8 标量并保证前进，替代输出最多 8 字节。调用方的排版回调成本仍需另外约束。可运行流程见 `crates/mdstream-core/examples/display.rs`；现有 `LayoutSink::text(RenderRun)` 仍接收源码文本。
 
-命名引用支持固定的 2125 个 WHATWG 分号结尾名称（最长 31 字节），表在 `crates/mdtui3-core/src/entity_names.rs`，附来源和输入 SHA-256；更新时用 `scripts/generate_entities.py` 读取另行下载的 [WHATWG 数据](https://html.spec.whatwg.org/entities.json)，构建和测试不联网。数字引用及代码 span 规范化依据 [CommonMark 0.31.2 字符引用](https://spec.commonmark.org/0.31.2/#entity-and-numeric-character-references)和[代码 span](https://spec.commonmark.org/0.31.2/#code-spans)：十进制 1..7 位、十六进制 1..6 位，必需分号；零值、代理码点及越界值替换为 U+FFFD。代码换行变为空格，首尾均为空格且并非全空格时各去掉一个；其它空白和内部连续空格保留。
+命名引用支持固定的 2125 个 WHATWG 分号结尾名称（最长 31 字节），表在 `crates/mdstream-core/src/entity_names.rs`，附来源和输入 SHA-256；更新时用 `scripts/generate_entities.py` 读取另行下载的 [WHATWG 数据](https://html.spec.whatwg.org/entities.json)，构建和测试不联网。数字引用及代码 span 规范化依据 [CommonMark 0.31.2 字符引用](https://spec.commonmark.org/0.31.2/#entity-and-numeric-character-references)和[代码 span](https://spec.commonmark.org/0.31.2/#code-spans)：十进制 1..7 位、十六进制 1..6 位，必需分号；零值、代理码点及越界值替换为 U+FFFD。代码换行变为空格，首尾均为空格且并非全空格时各去掉一个；其它空白和内部连续空格保留。
 
 实体失败、超长或未完成时保留原文，只按正常语法处理拒绝候选的当前字节；不会回扫候选。反斜线转义、代码块/span、自动链接地址、链接目标/title、引用标签匹配及 fence info 不做实体解码。未闭合代码 span 沿用已有的无回退方言。晚确认通过 Text 变化和区间 revision 使旧显示缓存及布局过期，即使宿主关闭了样式影响尺寸的策略。
 
@@ -1284,7 +1284,7 @@ assert_eq!(display, "中 & a b 🙂");
 高频窗口可使用 `QueryScratch::default()` 配合 `runs_in_with_scratch` / `display_runs_in_with_scratch`；按 tile 读取分别用 `runs_with_scratch` / `display_runs_with_scratch`。返回的 `RunsWithScratch` / `DisplayRunsWithScratch` 独占借用 scratch，耗尽后仍须 drop 才能再次借用；正常退出、提前停止及 panic unwind 都会归还容量。返回文本只借用文档，可在释放迭代器后继续使用。原有不带 scratch 的接口仍可用。
 
 ```rust
-use mdtui3::{Document, QueryScratch, Span};
+use mdstream::{Document, QueryScratch, Span};
 let mut doc = Document::new();
 doc.append("a **b** &amp;")?;
 doc.finish();
@@ -1311,7 +1311,7 @@ scratch 无文档引用或可恢复语义，只保留 Vec 容量；每次从当�
 `DisplaySearch::new(&doc, query)` 创建绑定当前文档身份及 revision 的搜索任务。搜索对象是按源码顺序串接的非 `HIDDEN` 显示片段：实体已解码、闭合代码 span 空白已规范化，隐藏标记和链接目标不参与匹配。采用区分大小写的字面匹配，支持重叠命中和跨 run/tile 匹配；空查询返回 `InvalidRange`。不增加块/表格分隔符，不把普通软换行变为空格，不做 Unicode 归一化，也不包含终端绘制的边框、占位或将来的折叠状态。
 
 ```rust
-use mdtui3::{Budget, Completion, DisplaySearch, Document, Span, WorkLimit};
+use mdstream::{Budget, Completion, DisplaySearch, Document, Span, WorkLimit};
 let mut doc = Document::new();
 doc.append("a**b**&amp;c")?;
 doc.finish();
@@ -1337,14 +1337,14 @@ assert_eq!(matches[0].source, Span::new(0, doc.source().len()));
 
 源码追加可能改变旧位置的显示语义。任何 revision 变化（包括首次 `finish`）都使任务及已返回的命中失效；`advance` 在消费预算和修改结果前返回 `StaleContinuation`，错误文档返回 `WrongDocument`。调用方须丢弃旧命中并按需新建任务，库不会自动回扫全文；空追加和重复 `finish` 不使任务失效。即使文档尚未结束，也可以完整搜索当前 revision。频繁重建任务的累计重搜成本由调用方调度，不能套用 `SourceSearch` 的跨追加增量保证。
 
-查询预处理时间及任务存储为 O(m)，m 为查询字节数；另有固定大小的片段缓冲，源码映射使用长度为 m 的环形缓冲。单 revision 的 KMP 比较总量 O(d)，d 为显示字节数；每次显示读取另有 O(log(n + 1) + 检查窗口) 的成本，窗口不超过 `TILE_BYTES + 2`，最坏累计搜索 O(n log(n + 1) + m)。输出空间由调用方管理，可逐批消费，不在任务中保存全文或全部命中。示例见 `crates/mdtui3-core/examples/search.rs`。
+查询预处理时间及任务存储为 O(m)，m 为查询字节数；另有固定大小的片段缓冲，源码映射使用长度为 m 的环形缓冲。单 revision 的 KMP 比较总量 O(d)，d 为显示字节数；每次显示读取另有 O(log(n + 1) + 检查窗口) 的成本，窗口不超过 `TILE_BYTES + 2`，最坏累计搜索 O(n log(n + 1) + m)。输出空间由调用方管理，可逐批消费，不在任务中保存全文或全部命中。示例见 `crates/mdstream-core/examples/search.rs`。
 
 ## 基础折叠
 
 `FoldView` 为每个视图保存独立的收起意愿、高度和检查点。当前支持顶层及容器内标题章节、围栏和缩进代码块、表格及显式 Quote/List/Item 容器：章节保留标题，正文及子章节变为一个占位；代码块、表格和容器整体变为占位，表格保留表头源码作为摘要。空章节不生成占位。父节点展开后恢复原来的子节点状态，源码、解析对象和 `Style::HIDDEN` 不变。
 
 ```rust
-use mdtui3::{Document, FoldView, FoldId, HeadingId, Budget, WorkLimit};
+use mdstream::{Document, FoldView, FoldId, HeadingId, Budget, WorkLimit};
 
 let mut doc = Document::new();
 doc.append("# Guide\n## Details\nbody\n")?;
@@ -1368,7 +1368,7 @@ view.heights().viewport_budgeted(0..24, 0, &mut budget, &mut tiles);
 
 `Document::fold_candidate` 按稳定 `FoldId` 查询整段范围、隐藏正文、父节点、摘要源码及开放状态；`fold_candidate_at` 查询当前位置的最内层候选。`fold_candidates(span)` 二分定位范围，归并枚举开头块与范围相交的候选以及起点在范围内的容器；同起点先按 ContainerId 发出外到内容器，再发出叶块。其 `advance` 与视口共享 Budget，每检查一个块（包括非候选）或一个容器消耗一次 query 和 object，耗尽可续，完成返回 `Covered`。游标绑定文档和 revision；范围之前开始的祖先通过 `parent` 查询。摘要用 `summary_text` 限定 UTF-8 字节数并计费，不统计正文行数、任务数或复制长标题。`hidden_at` 按预算返回 `FoldLookup::{Visible, Hidden, BudgetExhausted}`，隐藏结果是最外层遮蔽者，适合占位命中和源码定位。
 
-`LayoutPass::folded` / `advance_folded` 接收 `FoldLayoutSink`，复用已有有预算排版循环。每个可见占位只调用一次 `placeholder`，传入稳定 ID、隐藏源码、摘要区间及归属 tile；接入方将占位作为块边界绘制并在 `end_tile` 中计入其高度、重置必要的换行状态。回调只获得元数据，若要读取摘要，应另用共享 Budget。占位高度全部归属隐藏起点所在 tile；同一 tile 可有多个占位、标题和后继正文。隐藏内部的文字、图片和子占位不会交给回调。该接口仍使用 `RenderRun`，显示实体解码、终端宽度及真实软换行由接入方处理。完整示例见 `crates/mdtui3-core/examples/folding.rs`。
+`LayoutPass::folded` / `advance_folded` 接收 `FoldLayoutSink`，复用已有有预算排版循环。每个可见占位只调用一次 `placeholder`，传入稳定 ID、隐藏源码、摘要区间及归属 tile；接入方将占位作为块边界绘制并在 `end_tile` 中计入其高度、重置必要的换行状态。回调只获得元数据，若要读取摘要，应另用共享 Budget。占位高度全部归属隐藏起点所在 tile；同一 tile 可有多个占位、标题和后继正文。隐藏内部的文字、图片和子占位不会交给回调。该接口仍使用 `RenderRun`，显示实体解码、终端宽度及真实软换行由接入方处理。完整示例见 `crates/mdstream-core/examples/folding.rs`。
 
 高度树独立保存基础高度/有效性与区间遮蔽计数。`height`、`prefix_rows`、`locate` 和视口查询返回折叠后的高度，`base_height` 返回遮蔽前的储存值；完整隐藏的内部 tile 无须逐个清零或恢复。每个占位及末端边界 tile 保持可检索，再按预算精确测量。单节点操作为 O(log H + log C + log F + log T)，顶层标题祖先最多六级，H/C/F/T 分别是标题、容器、已收起节点和 tile 数。父子交替收放、失效、基础高度变化、树增长及 O(1) resize 保留嵌套遮蔽。重复操作不保存历史快照，新增视图状态 O(F + C + H)，容器与内层章节稀疏索引保留已访问位置，分别受 O(C) / O(H) 上界约束；高度树仍为 O(T)。
 
@@ -1383,7 +1383,7 @@ view.heights().viewport_budgeted(0..24, 0, &mut budget, &mut tiles);
 `FoldId::Table(TableId)` 把整张已识别表格（表头、分隔行、正文）替换为一个占位，`summary` 指向第 0 行的原始源码。宿主可以用 `summary_text` 读取有界原文前缀，或用 `DisplayExcerpt` 读取显示摘要；两者都需要自己的共享预算。列分隔符、对齐、边框和实际表头布局仍由渲染器处理，摘要接口不会自动拼接单元格或测量全表。仅含表头和分隔行的表也产生一个占位。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 
 let mut doc = Document::new();
 let mut view = FoldView::new(&doc, 1)?;
@@ -1406,14 +1406,14 @@ assert_eq!(candidate.summary_text(&doc, 32, &mut budget), Some("| Name | Value |
 
 表格的折叠父节点是确切作用域的当前章节；该作用域还没有标题时挂在所属容器下，根作用域没有标题时无父节点。父节点收放保留表格自身意愿。默认设置、批量命令、临时展开、源码锚点与书签复用现有契约，导航到隐藏单元格时逐帧展开必要的顶层/内层章节、容器和表格。`Update.new_tables` 处理表头晚确认，包括已有段落块转成表格的情况；显式展开后追加行不会再次套用默认值。开放表格的待分类行前缀暂属表格，下一块确认时收回，EOF 封闭范围。最多六个顶层章节和一个代码/数学/表格块仍单独刷新；任意多个开放内层章节与容器共用尾部，见下文。
 
-候选查询、切换及更新均不枚举行/列/单元格；排版直接跳过隐藏正文，占位高度只归属表格起点 tile。`crates/mdtui3-core/examples/folding.rs` 演示百万字单元格收起后追加新行、读取表头前缀及有预算排版。前几行有界摘要读取及连续行范围折叠见下文；表格绘制仍是后续工作。
+候选查询、切换及更新均不枚举行/列/单元格；排版直接跳过隐藏正文，占位高度只归属表格起点 tile。`crates/mdstream-core/examples/folding.rs` 演示百万字单元格收起后追加新行、读取表头前缀及有预算排版。前几行有界摘要读取及连续行范围折叠见下文；表格绘制仍是后续工作。
 
 ### 容器折叠
 
 `FoldId::Container(ContainerId)` 支持整个 Quote、List 和 Item，包括单行、空内容、任务条目及嵌套容器。隐藏范围覆盖完整物理行及前缀，替换成一个占位；`summary` 借用整个范围，调用方通过 `summary_text` / `DisplayExcerpt` 限量读取，不复制正文或统计条目数。原始 `Container::source` 保持已分类范围；开放折叠候选暂包含未分类尾部，兄弟/外层行确认或 finish 后收回到精确边界。稳定身份和子折叠意愿在增长、关闭和 resize 后保留。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 
 let mut doc = Document::new();
 doc.append("> - first\n>   continuation\n")?;
@@ -1437,7 +1437,7 @@ assert!(matches!(view.hidden_at(&doc, 4, &mut budget)?, FoldLookup::Hidden(c) if
 
 视图以 ContainerId 的前序索引维护已折叠范围的最大终点，开放节点用开放终点标记，关闭时由 `Update.closed_containers` 写入固定终点。可见性查询先二分起点，再查询最外层遮蔽者，O(log C)，无需逐层读取祖先。全部开放容器位于同一条活动路径，完整 tile 的遮蔽并集只需一个共享范围；追加只更新这个并集，关闭的折叠容器转成固定遮蔽。未开启深度默认策略时，容器部分的 apply 成本为 O((E + 1)(log H + log C + log F + log T))，E 为实际关闭事件数，不随仍开放的深度增长；这仍是按输入/事件消费的更新接口，没有任意大 Update 的单帧时延承诺。单次索引写入/查询有对数节点访问量，Vec 扩容沿用摊还保证。
 
-`container_index_visits` 计索引读写的节点访问量，`container_index_nodes` 计保留节点数；反复切换不新增历史快照，节点数不超过完整二叉索引的 O(C) 上界。`crates/mdtui3-core/tests/container_folding.rs` 验证千层开放链、百万字正文、4096 个关闭兄弟、同起点父子、有预算深层导航、UTF-8 全切点/逐前缀和独立区间/高度模型。`cargo run -p mdtui3-core -r --example container_folding` 展示流式追加、父预览、子意愿及按帧恢复单元格源码锚点。类型/任务策略见下方；实际摘要/容器排版和终端 UI 继续独立推进。
+`container_index_visits` 计索引读写的节点访问量，`container_index_nodes` 计保留节点数；反复切换不新增历史快照，节点数不超过完整二叉索引的 O(C) 上界。`crates/mdstream-core/tests/container_folding.rs` 验证千层开放链、百万字正文、4096 个关闭兄弟、同起点父子、有预算深层导航、UTF-8 全切点/逐前缀和独立区间/高度模型。`cargo run -p mdstream-core -r --example container_folding` 展示流式追加、父预览、子意愿及按帧恢复单元格源码锚点。类型/任务策略见下方；实际摘要/容器排版和终端 UI 继续独立推进。
 
 ### 容器内章节折叠
 
@@ -1446,7 +1446,7 @@ assert!(matches!(view.hidden_at(&doc, 4, &mut budget)?, FoldLookup::Hidden(c) if
 折叠父链按包含关系组合章节与容器：章节先找同作用域父标题，否则挂在所属容器；子容器先找其结构父作用域的当前标题，否则挂在结构父容器。表格同理。原始 `Container::parent` 和 `HeadingIndex::parent` 不变。`fold_candidate_at` 返回包含当前位置的最内层候选，标题仍可作为导航目标；Reveal 只展开遮住目标的祖先，不改变目标章节自身正文意愿。All/Subtree/Siblings/AtLevel/Focus、预览、源码锚点和默认 `heading_levels` 直接覆盖内层章节，默认只初始化新 ID。
 
 ```rust
-use mdtui3::{Document, FoldView, FoldId, HeadingId, ContainerId, TableId};
+use mdstream::{Document, FoldView, FoldId, HeadingId, ContainerId, TableId};
 let mut doc = Document::new();
 doc.append("> # Guide\n> - ## Item\n>   a|b\n>   -|-\n>   x|y\n")?;
 let mut view = FoldView::new(&doc, 1)?;
@@ -1468,14 +1468,14 @@ assert!(!doc.fold_candidate(item).unwrap().open);
 
 设 N 为新标题数、E 为关闭容器数，范围维护为 O((N + E + 1)(log H + log C + log F + log T))，默认初始化另按新对象计费。关闭大量节点仍按实际事件消费，无任意大更新的单帧时延承诺；解析累计复杂度及查询/排版共享 Budget 不变。新增索引空间 O(H)，反复切换不积累历史节点。`section_index_visits` / `section_index_nodes` 分别报告节点访问数和保留节点数；`range_visits` 包含事件触发的刷新。
 
-`crates/mdtui3-core/tests/container_sections.rs` 用独立区间、父链和高度模型验证嵌套边界、同起点、同 tile、流式逐前缀/UTF-8 全切点、合并更新、批量、预览与表格组合。500 个开放章节和百万字正文下逐字追加没有章节索引写入；150 层交替章节/容器的导航每帧展开一个节点；4096 个关闭章节验证对数查询和节点复用。`cargo run -p mdtui3-core -r --example container_sections` 演示共享尾部、预览保留子章节及精确源码恢复。实际摘要/容器排版、终端 UI 及未实现容器方言仍保留 TODO。
+`crates/mdstream-core/tests/container_sections.rs` 用独立区间、父链和高度模型验证嵌套边界、同起点、同 tile、流式逐前缀/UTF-8 全切点、合并更新、批量、预览与表格组合。500 个开放章节和百万字正文下逐字追加没有章节索引写入；150 层交替章节/容器的导航每帧展开一个节点；4096 个关闭章节验证对数查询和节点复用。`cargo run -p mdstream-core -r --example container_sections` 演示共享尾部、预览保留子章节及精确源码恢复。实际摘要/容器排版、终端 UI 及未实现容器方言仍保留 TODO。
 
 ## 折叠导航与源码锚点
 
 `FoldNavigation::new` 从当前 `Navigator` 快照创建任务，接受全部 `NavAction`。目录选择用 `Heading(id)`，搜索命中或已解析链接用 `Source(offset)`；普通滚动后的起点由 `Navigator::reconcile_source` 提供。创建任务只检查身份及参数，实际索引查询在 `advance` 中计入共享 Budget。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 let mut doc = Document::new();
 doc.append("# Guide\n## Details\nbody\n")?;
 let mut view = FoldView::new(&doc, 1)?;
@@ -1510,7 +1510,7 @@ assert!(view.is_collapsed(FoldId::Heading(HeadingId(1))));
 
 任务绑定文档身份/revision、视图身份及折叠版本，文档追加/首次 finish、外部折叠操作和 reset 后拒绝旧任务；错误返回前不消费预算或修改视图。自身展开更新其版本，期间的正常高度测量不使任务失效；最终定位使用最新高度。完成后重复调用返回原结果且不重复展开，返回行仍是当时的估计。任务不改写原 Navigator；调用方只应用当前有效任务的结果，新的用户导航应丢弃旧任务。用 `Navigator::apply_target` 应用结果，它在 source 为 None 的普通滚动后清除旧的精确源码目标。远处定位、同 tile 多标题和折叠占位仍由局部 `LayoutPass` 在共享 Budget 下细化，随后再 reconcile；此接口不排整篇前缀，也不承诺精确绝对行号。
 
-`FoldAnchor::new(&doc, source)` 保存文档身份和精确源码位置，`resolve(&doc, &view, viewport_rows, &mut budget)` 返回当前投影。隐藏时 `hidden_by` 标明最外层折叠，`target.source` 指向其占位起点；可见时返回原位置。保留同一个 FoldAnchor，在收起/展开、append、Setext 晚确认或 resize 后重新 resolve 并应用目标即可恢复；不要用占位位置覆盖保存的原锚点。每次 resolve 消费 1 query、1 object，预算不足返回 None，不改变折叠。锚点允许 EOF，追加后原字节偏移保持不变；不绑定 revision，错误文档或未同步的 FoldView 会被拒绝。它保存源码而非精确屏幕行/列，选区仍使用原源码范围。示例 `crates/mdtui3-core/examples/folding.rs` 演示占位投影和分帧恢复到 120 万字节正文内的目标。
+`FoldAnchor::new(&doc, source)` 保存文档身份和精确源码位置，`resolve(&doc, &view, viewport_rows, &mut budget)` 返回当前投影。隐藏时 `hidden_by` 标明最外层折叠，`target.source` 指向其占位起点；可见时返回原位置。保留同一个 FoldAnchor，在收起/展开、append、Setext 晚确认或 resize 后重新 resolve 并应用目标即可恢复；不要用占位位置覆盖保存的原锚点。每次 resolve 消费 1 query、1 object，预算不足返回 None，不改变折叠。锚点允许 EOF，追加后原字节偏移保持不变；不绑定 revision，错误文档或未同步的 FoldView 会被拒绝。它保存源码而非精确屏幕行/列，选区仍使用原源码范围。示例 `crates/mdstream-core/examples/folding.rs` 演示占位投影和分帧恢复到 120 万字节正文内的目标。
 
 ## 批量折叠与新节点默认设置
 
@@ -1519,7 +1519,7 @@ assert!(view.is_collapsed(FoldId::Heading(HeadingId(1))));
 `Siblings { target, collapsed }` 展开/收起与目标具有相同 `FoldCandidate::parent` 的其他候选，保留目标、祖先和各节点后代的原有意愿。兄弟可以是不同级别的标题、代码块、数学块或表格；没有父节点的候选互为根层兄弟，包括首个标题之前的代码块、数学块和表格。目标已被祖先隐藏时仍可操作，但不会自动展开祖先；没有兄弟时完成且无变化。该命令只修改已有节点，不改变新节点默认值。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 
 let mut doc = Document::new();
 let mut view = FoldView::new(&doc, 1)?;
@@ -1554,14 +1554,14 @@ assert!(!view.is_collapsed(FoldId::Heading(HeadingId(1))));
 
 `view.apply` 通过 `Update.new_headings` / `new_blocks` / `new_tables` / `new_containers` 初始化新候选，Setext 和表格晚确认使用新 HeadingId/TableId，即使其块早已存在；重复应用不会重置意愿。`default_visits` 计量检查的新增标题/块/表格/容器元数据，`range_visits` 计量最多七个已有开放顶层章节/代码/表格、一次共享容器/内层章节尾部检查、事件触发的内层章节刷新（含一个可能增长的旧标题），以及实际关闭的已折叠容器。初始化成本计入新增对象事件，不宣称任意大 Update 的消费具有整帧硬预算；默认初始化在没有新候选时不回访历史节点或读取旧正文。合并 Update 在 apply 时统一使用当前默认设置；需要在流中切换默认值时，先应用切换前的更新。
 
-可运行示例：`cargo run -p mdtui3-core -r --example fold_batch`。
+可运行示例：`cargo run -p mdstream-core -r --example fold_batch`。
 
 ### 容器深度默认策略
 
 `FoldDefaults::container_depth: Option<usize>` 是包含式阈值：新容器的 `Container::depth >= threshold` 时初始化为收起。`None` 关闭策略，`Some(0)` 与 `Some(1)` 都包括全部根容器，`Some(usize::MAX)` 也无需加减运算。深度按结构父链计数：根为 1，Quote、List、Item 各占一层；例如 `> - text` 的 Quote/List/Item 深度依次为 1/2/3，不按视觉缩进或列表标记个数计算。标题与表格不增加容器深度；该深度阈值自身不区分任务状态，与下节 `containers` 按任一命中组合。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 
 let mut doc = Document::new();
 let mut view = FoldView::new(&doc, 1)?;
@@ -1581,7 +1581,7 @@ assert!(view.is_collapsed(FoldId::Container(ContainerId(2))));
 
 策略只消费 `Update.new_containers`，包括同一合并更新内已打开又关闭的容器，以及物理行晚确认的节点。初始化与祖先是否收起或正在预览无关，每个节点保留自己的意愿；预览父节点期间新出现的深层子节点仍按阈值初始化。显式单节点、导航及批量操作修改已有选择；预览期间的显式操作更新预览结束时恢复的选择。更改/关闭默认策略、普通追加、关闭、finish、重复 apply 和 resize 都不会重新初始化已有 ID。`set_defaults` 不影响当前布局，变化会使旧视图任务失效，相同值无操作；合并更新统一使用 apply 当时的策略。
 
-启用策略时每个新容器检查一次已存深度，计入 `default_visits`，无论是否达到阈值；禁用时不访问这些元数据。设 N 为新增容器数，K 为达到阈值的个数，初始化额外成本为 O(N + K(log H + log C + log F + log T))，只增加 O(1) 策略字段，折叠状态沿用 O(F + C + H) 空间（含内层章节索引）。没有新容器的普通追加不检查历史节点或开放祖先，仍只更新一次共享尾部。apply 按新增对象/开闭事件消费，不承诺任意大更新的单帧时延；查询、批量操作、预览和排版继续共用 Budget。测试覆盖千层/百万字逐字追加、4096 个历史兄弟、UTF-8 全切点/逐前缀及 240 次流式策略/显式操作的区间与高度模型。`cargo run -p mdtui3-core -r --example container_defaults` 演示预览中的新子节点、显式展开优先及批量展开后新条目的默认收起。
+启用策略时每个新容器检查一次已存深度，计入 `default_visits`，无论是否达到阈值；禁用时不访问这些元数据。设 N 为新增容器数，K 为达到阈值的个数，初始化额外成本为 O(N + K(log H + log C + log F + log T))，只增加 O(1) 策略字段，折叠状态沿用 O(F + C + H) 空间（含内层章节索引）。没有新容器的普通追加不检查历史节点或开放祖先，仍只更新一次共享尾部。apply 按新增对象/开闭事件消费，不承诺任意大更新的单帧时延；查询、批量操作、预览和排版继续共用 Budget。测试覆盖千层/百万字逐字追加、4096 个历史兄弟、UTF-8 全切点/逐前缀及 240 次流式策略/显式操作的区间与高度模型。`cargo run -p mdstream-core -r --example container_defaults` 演示预览中的新子节点、显式展开优先及批量展开后新条目的默认收起。
 
 ### 容器类型与任务完成状态策略
 
@@ -1592,7 +1592,7 @@ assert!(view.is_collapsed(FoldId::Container(ContainerId(2))));
 `view.task_checked(&doc, id)` 查询该视图中的有效状态，非任务容器返回 `None`，无效 ID 返回 `InvalidRange`。`set_task_checked(&doc, id, bool)` 仅接受任务 Item；只保存与源码不同的覆盖，设回源码值立即移除。它不修改 Document、任务标记及样式、其它视图、折叠意愿或预览；渲染任务控件时由宿主读取有效状态，通用源码/显示读取仍表示原文。修改返回 marker 的 `FoldChange` 区间和新视图版本，并惰性失效该 tile 起的测量/检查点、旧批量/导航/排版任务；相同值为无操作。覆盖跨追加、finish、reset 保留。状态改变后要重新折叠，显式运行下面的批量命令。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 let mut doc = Document::new();
 let mut view = FoldView::new(&doc, 1)?;
 let completed = ContainerFoldFilter {
@@ -1626,14 +1626,14 @@ assert!(doc.source().contains("[ ] review"));
 
 默认规则只在 `new_containers` 中检查一次类型、深度、任务标记（计 `default_visits`），启用多个字段也不重复遍历；新增 N 个容器、命中 K 个时成本沿用 O(N + K(log H + log C + log F + log T))。普通正文追加不重查历史任务或祖先；不新增解析状态、不改变零运行时依赖及累计复杂度契约。默认 apply 仍按新增事件摊还，任意大更新的单帧硬预算不在该接口承诺内。
 
-`crates/mdtui3-core/tests/container_folding.rs` 与存储测试覆盖 32 种类型/任务筛选 × 4 种深度策略、UTF-8 全切点/逐前缀、CRLF/失败 marker/EOF、320 轮流式区间/高度模型、千层/百万字及 4096 历史条目；共享预算、独立视图、旧任务/测量拒绝、预览/导航和非容器折叠均有回归。`cargo run -p mdtui3-core -r --example container_policies` 演示视图内完成任务、分帧筛选与预览/导航恢复。任务控件、列表完成率聚合和终端 UI 未由此接口实现。
+`crates/mdstream-core/tests/container_folding.rs` 与存储测试覆盖 32 种类型/任务筛选 × 4 种深度策略、UTF-8 全切点/逐前缀、CRLF/失败 marker/EOF、320 轮流式区间/高度模型、千层/百万字及 4096 历史条目；共享预算、独立视图、旧任务/测量拒绝、预览/导航和非容器折叠均有回归。`cargo run -p mdstream-core -r --example container_policies` 演示视图内完成任务、分帧筛选与预览/导航恢复。任务控件、列表完成率聚合和终端 UI 未由此接口实现。
 
 ## 手工及宿主源码范围折叠
 
 `SourceFoldRegistration` 将一个宿主选区或语义对象的固定 `Span` 注册到 `FoldView`。成功后返回 `FoldId::Source(SourceFoldId)`，初始展开；ID 只属于该视图，进程内不复用。宿主可自行保存业务键与 ID 的对应关系，库不修改 Markdown 源码、结构父链或 `Style::HIDDEN`。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 let mut doc = Document::new();
 doc.append("# Root\nkeep secret tail\n\n")?;
 let mut view = FoldView::new(&doc, 1)?;
@@ -1675,14 +1675,14 @@ assert_eq!(anchor.resolve(&doc, &view, 10, &mut budget)?.unwrap().target.source,
 
 R 个非空不相交注册使用 O(R) 空间（不超过源码字节数），删除后不保留 ID 或范围历史；索引查询 O(log R)，单点切换/移除 O(log R + log F + log T)。注册额外按两端路径深度 D 付费，每步固定次数结构索引操作，游标 O(1)；手工注册的深度成本独立于输入解析契约。普通追加不刷新任何历史手工范围，仅当一个收起范围恰好结束于旧 EOF 时，校正一次可能继续增长的 tile；可与代码/数学/表格行既有边界处理共存。解析器没有新增逐字或祖先工作。布局、导航、摘要和批量仍共用帧预算。
 
-`cargo run -p mdtui3-core -r --example source_folding` 演示百万字选区、后续追加、预算布局及源码锚点恢复。`crates/mdtui3-core/tests/source_folding.rs` 覆盖 2400 组全量结构区间对照、1000 轮随机可见性/高度模型、240 次流式模型、千层注册暂停、4096 历史范围、百万字正文、UTF-8 分块/逐前缀、表格行双向交叉拒绝、批量/预览/导航和旧任务/测量拒绝。自动增长手工范围、手工嵌套、交叉拆分/优先级、重载后的业务身份持久化与终端选区 UI 仍待设计。
+`cargo run -p mdstream-core -r --example source_folding` 演示百万字选区、后续追加、预算布局及源码锚点恢复。`crates/mdstream-core/tests/source_folding.rs` 覆盖 2400 组全量结构区间对照、1000 轮随机可见性/高度模型、240 次流式模型、千层注册暂停、4096 历史范围、百万字正文、UTF-8 分块/逐前缀、表格行双向交叉拒绝、批量/预览/导航和旧任务/测量拒绝。自动增长手工范围、手工嵌套、交叉拆分/优先级、重载后的业务身份持久化与终端选区 UI 仍待设计。
 
 ## 长段落源码前缀预览折叠
 
 `SourceFoldRegistration::paragraph(document, view, block, preview_bytes)` 为已定型的顶层 `BlockKind::Paragraph` 注册前缀预览。它复用 `SourceFoldId`、预算注册和独立视图：`FoldCandidate::source` 是整个段落，`summary` 是保留的源码前缀，`hidden` 是余文。注册初始展开；成功后显式收起。`paragraph_fold_block` 查询注册绑定的稳定 `BlockId`，手工/已删除/其它视图 ID 返回 `None`。源码位置和窗口查询包含整个段落，实际隐藏查询只命中余文。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 let mut doc = Document::new();
 doc.append("visible prefix and a long remainder\n\n")?;
 let mut view = FoldView::new(&doc, 1)?;
@@ -1718,14 +1718,14 @@ assert_eq!(view.fold_candidate(&doc, id)?, Some(candidate));
 
 创建仅做索引及固定次数 UTF-8/CRLF 端点探测；注册逐步检查至多两条顶层章节链，游标 O(1)，不读取前缀/余文。R 个注册占 O(R)，查询和切换沿用 O(log R + log F + log T)；不修改解析器，不为后续追加枚举旧段落。布局只读取有界前缀和后续可见窗口，完整隐藏内部按范围跳过，段尾上下文恢复不依赖余文长度。
 
-`cargo run -p mdtui3-core -r --example paragraph_folding` 演示百万字余文、12 列示例换行与追加后的独立段落。`crates/mdtui3-core/tests/paragraph_folding.rs` 覆盖 640 组列宽/边界布局模型、1000 轮随机与 240 次流式可见性/高度模型、UTF-8 全切点/逐前缀、行内映射、百万字恢复、4096 个历史注册以及旧任务/测量拒绝。开放顶层段落增长、容器跨叶块身份及自动长度策略见下方；按逻辑/显示行数选择预览、媒体详情及完整终端排版仍待实现。
+`cargo run -p mdstream-core -r --example paragraph_folding` 演示百万字余文、12 列示例换行与追加后的独立段落。`crates/mdstream-core/tests/paragraph_folding.rs` 覆盖 640 组列宽/边界布局模型、1000 轮随机与 240 次流式可见性/高度模型、UTF-8 全切点/逐前缀、行内映射、百万字恢复、4096 个历史注册以及旧任务/测量拒绝。开放顶层段落增长、容器跨叶块身份及自动长度策略见下方；按逻辑/显示行数选择预览、媒体详情及完整终端排版仍待实现。
 
 ### 开放顶层段落的前缀折叠
 
 `SourceFoldRegistration::open_paragraph(document, view, block, preview_bytes)` 显式注册当前尚未封口的顶层段落。它使用同样的稳定 `SourceFoldId`/`BlockId`、UTF-8/CRLF 前缀、两端路径共享预算、初始展开和整段不相交预留；上限须小于当前块已分类源码长度。短行尚未分类时没有可注册的段落，宿主可以等待换行或达到现有 `BLOCK_LOOKAHEAD` 窗口后重试；无需为了折叠调用 `finish()`。容器物理叶块、已封口段落和其它块类型不接受，已封口段落沿用 `paragraph`。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 let mut doc = Document::new();
 doc.append("visible prefix and body\n")?;
 let mut view = FoldView::new(&doc, 1)?;
@@ -1762,7 +1762,7 @@ assert!(!view.is_collapsed(id));
 `SourceFoldRegistration::container_paragraph(document, view, first, preview_bytes)` 接受已识别容器内的开放或已闭合逻辑段落；`first` 必须是首物理叶块的 `BlockId`。同一确切容器作用域内的显式/lazy 续行共用该身份，后续叶块、空容器标记、标题、代码、定义和表格不接受。叶块的 `Sealed` 只表示物理行结束，不能用它判断逻辑段尾；不合并叶块，不修改原有行内对象、样式或源码映射。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 let mut doc = Document::new();
 doc.append("> first line\n> second line\n").unwrap();
 let mut view = FoldView::new(&doc, 1).unwrap();
@@ -1784,7 +1784,7 @@ assert_eq!(candidate.source.end, doc.source().find(">\n").unwrap());
 
 解析器只在真实逻辑段落闭合时写一个 `first -> end` 有序索引，`Work::paragraph_closures` 记录写入次数；P 个闭合段落占 O(P)，每次封口 O(log P)，不枚举物理叶块。活动首尾复用 `container_title/current`，普通增长不写此索引。注册构造 O(log P + log R)；随后两端祖先路径逐项共享 Budget，任务 O(1) 空间。每个视图仍仅有一个活动段落槽：普通增长 O(log R + log F + log T)，闭合时额外一次 O(log P) 查询；不扫描历史注册、正文或祖先。保留累计 O(n log n)、空间 O(n) 和摊还成本契约。
 
-`cargo run -p mdtui3-core -r --example container_paragraph_folding` 演示引用中的列表条目、跨物理叶块注册、百万字追加及兄弟条目恢复。15 项专项测试覆盖 288 组独立布局、240 轮/960 次切换的可见性与高度模型、UTF-8 全切点/逐前缀、CRLF/EOF、部分 tab/lazy 续行、长表头及长分隔行成功/失败、千层引用与 250 层列表两端路径、4096 历史段落/物理叶块、预算暂停、检查点恢复及旧任务/测量拒绝。有预算候选发现及自动长度策略见下方；显示行数与完整对象截断、媒体详情、完整容器语法及终端排版继续保留 TODO。
+`cargo run -p mdstream-core -r --example container_paragraph_folding` 演示引用中的列表条目、跨物理叶块注册、百万字追加及兄弟条目恢复。15 项专项测试覆盖 288 组独立布局、240 轮/960 次切换的可见性与高度模型、UTF-8 全切点/逐前缀、CRLF/EOF、部分 tab/lazy 续行、长表头及长分隔行成功/失败、千层引用与 250 层列表两端路径、4096 历史段落/物理叶块、预算暂停、检查点恢复及旧任务/测量拒绝。有预算候选发现及自动长度策略见下方；显示行数与完整对象截断、媒体详情、完整容器语法及终端排版继续保留 TODO。
 
 ## 长段落有预算候选发现
 
@@ -1793,7 +1793,7 @@ assert_eq!(candidate.source.end, doc.source().find(">\n").unwrap());
 `ParagraphFoldCandidate` 包含稳定首叶块 `block`、确切 `container`、整段 `source`、`classified_end` 与 `open`。`min_bytes` 是**整段已分类源码字节数的包含式下限**，包括语法、容器前缀、CRLF 等，不是窗口交集或显示长度；0 接受所有非空合格段落。开放段落的 `source` 暂定到当前 EOF，但待分类尾部不计入长度筛选，预览上限仍必须严格小于 `classified_end - source.start`。未形成首叶块的待分类输入、标题、代码、表格、空行、其它非段落叶块及未达到固定注册边界的闭合段落不返回。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 let mut doc = Document::new();
 doc.append("> first line\n> second line\n")?;
 let mut task = ParagraphFoldCandidates::new(&doc, Span::new(16, 17), 20)?;
@@ -1825,7 +1825,7 @@ assert_eq!(registration.advance(&doc, &mut view, &mut budget)?.completion,
 
 每步只做固定次数 O(log B + log P) 索引查询（B 为物理块，P 为闭合容器段落），复用块的有序源码范围、已有 `first -> end` 索引和唯一活动段落端点；不新增解析索引、不遍历祖先或历史段落。任务 O(1) 空间。窗口内非段落叶块逐项计费，因此整窗完成成本取决于实际访问项；单帧不会无预算全量枚举。千层/百万字、4096 物理叶块及 4096 历史段落中的单段窗口均只需一个步骤，250 层列表的发现不提前支付其 1000 次注册祖先检查。
 
-`crates/mdtui3-core/tests/paragraph_discovery.rs` 的 14 项验收覆盖 400 个独立段落包络、1600 组随机窗口/长度筛选、UTF-8 全切点/逐前缀、CRLF/EOF/部分 tab/lazy、迟确认成功/失败、预算原子暂停、视图变更/独立注册、通知合并与旧任务/测量拒绝、240 轮流式范围/可见性模型及百万字后 1000 次逐字追加。`cargo run -p mdtui3-core -r --example paragraph_discovery` 演示从百万字段中发现首叶块、共享预算注册及新 revision 的局部重查。
+`crates/mdstream-core/tests/paragraph_discovery.rs` 的 14 项验收覆盖 400 个独立段落包络、1600 组随机窗口/长度筛选、UTF-8 全切点/逐前缀、CRLF/EOF/部分 tab/lazy、迟确认成功/失败、预算原子暂停、视图变更/独立注册、通知合并与旧任务/测量拒绝、240 轮流式范围/可见性模型及百万字后 1000 次逐字追加。`cargo run -p mdstream-core -r --example paragraph_discovery` 演示从百万字段中发现首叶块、共享预算注册及新 revision 的局部重查。
 
 ## 长段落自动注册与长度默认策略
 
@@ -1834,7 +1834,7 @@ assert_eq!(registration.advance(&doc, &mut view, &mut budget)?.completion,
 `ParagraphAutoFold::new(document, view, window)` 自动发现窗口内的顶层及容器逻辑段落，按两端祖先路径验证并原子注册、初始化为收起。`for_update(document, view, update)` 在 `view.apply` 后，根据首个 `changed_blocks` 与追加起点构造到 EOF 的窗口；新段落、旧段落跨阈值、无追加字节的 finish、合并通知和迟确认均被覆盖。不根据全文样式/引用失效区间扩展窗口，不逐帧枚举历史。启用/修改默认值自身不执行扫描，`apply` 只维护已有注册；宿主用共享预算驱动任务。需要对已有文档初始化时，显式提供相应窗口。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 let mut doc = Document::new();
 let mut view = FoldView::new(&doc, 1)?;
 view.set_defaults(FoldDefaults {
@@ -1873,14 +1873,14 @@ assert!(!view.is_collapsed(candidate.id));
 
 append/finish、默认值、排除、其它折叠操作和 reset 使旧任务失效，归属/版本检查先于预算及修改。若旧任务未处理完，应保存 `remaining_range()`，与新 `for_update(...).remaining_range()` 取包络后，用 `new` 在新 revision 重建；已有注册直接跳过。仅消费最新更新窗口会遗漏此前积压工作，库不持有隐式后台队列。完成任务的空续调免费；`None` 策略为零步，也不会展开或移除历史注册。新的收起区间沿用测量票据、检查点和布局任务失效规则。
 
-16 项专项验收覆盖 400 段/400 随机窗口长度模型、240 轮/960 次切换的流式区间与高度模型、72 组手工/自动及大小预算布局对照、UTF-8 全切点/逐前缀、CRLF/EOF、部分 tab/lazy、跨阈值、晚表头收缩与 Setext/整表移除、多视图/排除/预览/批量、未完成窗口合并和通知重放。千层引用首次注册总计 2006 个步骤，250 层列表为 1006；4096 物理叶块只发现一次，4096 历史注册后百万字段落逐字追加 1000 次，每次仅一个发现步骤与一次活动范围刷新，无正文或祖先回扫。`cargo run -p mdtui3-core -r --example paragraph_auto_folding` 演示 8 帧自动注册、零正文读取和显式展开保留。按逻辑/显示行数选择前缀、完整字素/对象截断、媒体详情及终端 UI 继续保留 TODO。
+16 项专项验收覆盖 400 段/400 随机窗口长度模型、240 轮/960 次切换的流式区间与高度模型、72 组手工/自动及大小预算布局对照、UTF-8 全切点/逐前缀、CRLF/EOF、部分 tab/lazy、跨阈值、晚表头收缩与 Setext/整表移除、多视图/排除/预览/批量、未完成窗口合并和通知重放。千层引用首次注册总计 2006 个步骤，250 层列表为 1006；4096 物理叶块只发现一次，4096 历史注册后百万字段落逐字追加 1000 次，每次仅一个发现步骤与一次活动范围刷新，无正文或祖先回扫。`cargo run -p mdstream-core -r --example paragraph_auto_folding` 演示 8 帧自动注册、零正文读取和显式展开保留。按逻辑/显示行数选择前缀、完整字素/对象截断、媒体详情及终端 UI 继续保留 TODO。
 
 ## 表格连续行范围折叠
 
 `FoldView::insert_table_rows(document, table, start..end)` 注册一个视图内的固定正文行范围，返回 `FoldId::TableRows(TableRowRange { table, start, end })`，初始展开。行号沿用 `Table::row`：第 0 行是表头；仅接受 `1 <= start < end <= rows.len()`，end 不含。表头、分隔行和范围外正文保留；范围内完整物理行（含容器前缀）合并成一个占位。摘要指向首个选中行，读取仍受 `summary_text` 或 `DisplayExcerpt` 的字节/帧预算限制。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 let mut doc = Document::new();
 doc.append("| h |\n| - |\n| first |\n| hidden |\n")?;
 let mut view = FoldView::new(&doc, 1)?;
@@ -1905,14 +1905,14 @@ assert!(view.is_collapsed(rows)); // later is outside the fixed row interval
 
 设 R 为已注册行范围数：有序起点索引通过相邻项验证重叠、前驱查询查找点覆盖，注册 O(log R)、单点折叠与移除 O(log R + log F + log T)，不枚举覆盖行、列、字节或 tile。非空且不相交保证注册存储 O(正文行数)，反复切换不保留历史。追加最多刷新一个未完成行范围或一次旧 EOF 边界；叠加原有至多六个根章节与一张整表/代码块，保持既定增量复杂度。布局、导航、摘要和批量使用共享 Budget；直接注册、移除和单点切换是有限次数索引操作，和已有 `set_collapsed` 一样不自行驱动排版。占位高度归属范围起点 tile，完整隐藏内部使用区间遮蔽，边界及新可见内容按帧预算消费。
 
-`cargo run -p mdtui3-core -r --example table_row_folding` 演示百万字末行、固定行范围、整表状态恢复及后续行可见性。真实表格边框、列宽、软换行、占位绘制，以及自动随新行延长的尾部策略仍由后续工作推进。
+`cargo run -p mdstream-core -r --example table_row_folding` 演示百万字末行、固定行范围、整表状态恢复及后续行可见性。真实表格边框、列宽、软换行、占位绘制，以及自动随新行延长的尾部策略仍由后续工作推进。
 
 ## 表格前几行有界预览
 
 `TablePreview` 为整表折叠提供独立的摘要读取任务：`rows` 包含表头（第 0 行），跳过分隔行，最多读取前 N 个已索引行；`source_bytes` 与 `display_bytes` 是所有行共用的总上限，不逐行重置。源码上限包含行内隐藏标记，UTF-8 不截断标量；超长首个单元格也不能绕过上限。返回值保留行号、样式、链接和绝对源码映射，不合成列分隔、隐式空单元格、边框或省略号。`RowsEnd` 表示读完当前已索引行，`RowLimit` 表示仍有行未选入；字节上限返回 `SourceLimit` / `DisplayLimit`，不向后扫描确认余文可见。沿用 `DisplayExcerpt` 的停止语义：多个字节上限同时触及时，读取窗口可能影响报告哪个原因，但不影响输出前缀。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 let mut doc = Document::new();
 doc.append("| name |\n| - |\n| **世界** |\n| later |\n")?;
 let mut view = FoldView::new(&doc, 1)?;
@@ -1939,14 +1939,14 @@ assert!(view.is_collapsed(FoldId::Table(TableId(0))));
 
 构造和存储 O(1)；每个选中行的初始化消费共享 Budget 的 1 query / 1 object，读取显示片段沿用 `DisplayExcerpt` 的计费，6 bytes、1 query、1 object 每帧可持续推进（行初始化可能独占一帧）。不枚举列、单元格或未选入行，R 个访问行、S 个检查源码字节的成本为 O(R + (S + 1) log(n + 1))。返回文本借用文档，输出存储由调用方管理。
 
-任务和输出绑定文档身份与 revision；追加或首次 finish 后返回 `StaleContinuation`，调用方按需重建，不自动重读历史行。未分类的 pending 尾部不属于已索引行；已索引但未完成的行按当前源码范围读取，可由 `TableRow::complete` 判断。错误文档/过期任务在扣费前拒绝，完成可免费重复读取。`cargo run -p mdtui3-core -r --example table_preview` 演示收起百万字表格、追加新行后按小预算读取前两行。
+任务和输出绑定文档身份与 revision；追加或首次 finish 后返回 `StaleContinuation`，调用方按需重建，不自动重读历史行。未分类的 pending 尾部不属于已索引行；已索引但未完成的行按当前源码范围读取，可由 `TableRow::complete` 判断。错误文档/过期任务在扣费前拒绝，完成可免费重复读取。`cargo run -p mdstream-core -r --example table_preview` 演示收起百万字表格、追加新行后按小预算读取前两行。
 
 ## 临时折叠预览
 
 `FoldView::set_preview(&doc, Some(id), &mut budget)` 暂时展开一个已支持的章节、代码块、表格或容器；传入 `None` 结束预览，切换 ID 则先恢复旧节点。每个视图同时只有一个预览。祖先和后代的折叠意愿保持不变，因此被父章节隐藏的节点不会因预览而自动露出；展开父章节的预览仍保留子节点占位。这里提供暂时展开整节点的视图状态，实际只排版当前窗口；按逻辑行/字节截断的摘要读取见下文。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 let mut doc = Document::new();
 doc.append("# Guide\nintro\n## Details\nbody\n")?;
 let mut view = FoldView::new(&doc, 1)?;
@@ -1969,7 +1969,7 @@ for target in [Some(root), None] {
 
 开始、切换及结束各原子消费 1 query、1 object，支付最多两个节点的固定次数索引操作；O(log H + log C + log F + log T)，只额外保存一个 ID 和布尔意愿，O(1) 空间。不读取正文、不枚举覆盖的 tile、不保存历史快照。相同目标为无操作且不扣预算；预算不足返回 `BudgetExhausted`，保留当前预览和所有状态，可在后续帧重试。错误文档、未同步视图和非法候选在扣费及修改前被拒绝。预览变化返回旧/新隐藏范围的包络和最新版本，并使受影响的高度、检查点、测量和继续任务失效；即使节点原已展开或范围为空也增加版本。实际绘制继续使用共享 Budget 的剩余额度，或留待后续帧。
 
-`cargo run -p mdtui3-core -r --example folding` 演示父章节预览、子折叠保留及结束恢复。`crates/mdtui3-core/tests/fold_preview.rs` 和折叠排版模型覆盖预算原子性、显式意愿、流式范围、独立视图和旧任务拒绝；百万字节点的切换不读正文，进入预览后的排版仍受窗口及字节预算限制。
+`cargo run -p mdstream-core -r --example folding` 演示父章节预览、子折叠保留及结束恢复。`crates/mdstream-core/tests/fold_preview.rs` 和折叠排版模型覆盖预算原子性、显式意愿、流式范围、独立视图和旧任务拒绝；百万字节点的切换不读正文，进入预览后的排版仍受窗口及字节预算限制。
 
 ## 跳转历史与书签
 
@@ -1978,7 +1978,7 @@ for target in [Some(root), None] {
 `NavigationHistory` 保存当前条目和线性的前进/后退分支。普通滚动用 `replace_current` 更新当前返回位置；新跳转成功后才 `push` 目标并截断前进分支。完全相同的书签是无操作，保留前进分支；相同源码、不同偏移或目标元数据则是不同条目。`navigation` 在历史边界返回 `None`，否则创建可暂停的 `HistoryNavigation`；完成后自动移动历史游标，宿主将返回的 `ScrollTarget` 应用到 Navigator。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 let mut doc = Document::new();
 doc.append("# Guide\n## Details\nbody\n# Next\ntail\n")?;
 let mut view = FoldView::new(&doc, 1)?;
@@ -2011,7 +2011,7 @@ loop {
 
 返回的 `top` 是估计位置。实际布局按预算定位到 `source_row` 后，用 `bookmark.viewport_top(source_row, viewport_rows)` 计算视口顶端，再调用 `Navigator::reconcile_source`，传入保存的源码目标。该计算在视口缩小时限制偏移，并对文档开头饱和减法；文档末尾的顶端限制由 Navigator 完成。历史完成表示已获得源码目标和估计位置，实际终端行定位仍由排版接入完成。
 
-捕获书签只做 O(log B + log H) 的索引查询，每个书签/任务占 O(1) 空间。历史共 O(J) 空间，J 为保留条目数；Vec 容量保留历史峰值，追加摊还 O(1)，扩容可能复制现有条目，不承诺追加历史的硬时延。`cargo run -p mdtui3-core -r --example history` 演示返回折叠代码、追加与 resize 后恢复、前进和历史边界。`crates/mdtui3-core/tests/history.rs` 包含固定种子 2000 次操作模型、同 tile 重复标题、普通滚动、分支截断、身份/过期/取消、流式语义变化和百万字隐藏路径验证。
+捕获书签只做 O(log B + log H) 的索引查询，每个书签/任务占 O(1) 空间。历史共 O(J) 空间，J 为保留条目数；Vec 容量保留历史峰值，追加摊还 O(1)，扩容可能复制现有条目，不承诺追加历史的硬时延。`cargo run -p mdstream-core -r --example history` 演示返回折叠代码、追加与 resize 后恢复、前进和历史边界。`crates/mdstream-core/tests/history.rs` 包含固定种子 2000 次操作模型、同 tile 重复标题、普通滚动、分支截断、身份/过期/取消、流式语义变化和百万字隐藏路径验证。
 
 ## 定界数学核心
 
@@ -2028,7 +2028,7 @@ loop {
 `math_content(id)` 创建 O(1) 原始内容游标，每次 advance 最多读取 `TILE_BYTES` 个 UTF-8 字节，计实际返回字节和 1 query / 1 object。下一标量放不下时原子暂停，4 bytes 足以推进任意标量；与其它消费者共用 Budget。没有复制完整公式，也不执行 TeX 校验、布局或字体塑形。两个游标均借用文档，Rust 借用保证消费期间不能追加；释放后可用稳定 ID 建新游标。通用 `LayoutPass` 仍将数学作为带 MATH 样式的文字回退，实际数学对象布局由后续消费方在预算下接入；收起的章节/容器继续跳过其数学正文。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 let mut doc = Document::new();
 doc.append("value $中🙂 + x_1$ and $$y^2$$\n")?;
 doc.finish();
@@ -2046,7 +2046,7 @@ assert_eq!(content.advance(&mut budget), Err(Completion::BudgetExhausted));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-解析只增加一个 O(1) 候选；每个美元串只决议一次（`Work::math_steps`），所有正文只走既有单遍 `inline_bytes` 消费。闭合做常数次 O(log n) 区间标记，不查正文；额外对象存储 O(M)，跨行去前缀索引另计 O(G)（见下节），全库保持累计 O(n log n)、空间 O(n)。Vec 扩容及批量解析仍是摊还保证，不承诺单次 append 的硬时延。`crates/mdtui3-core/tests/math.rs` 和现有分块/fuzz 快照验证方言、预算、失败输入、百万字晚闭合及索引模型；`cargo run -p mdtui3-core -r --example math` 演示流式确认与逐帧原始内容读取。
+解析只增加一个 O(1) 候选；每个美元串只决议一次（`Work::math_steps`），所有正文只走既有单遍 `inline_bytes` 消费。闭合做常数次 O(log n) 区间标记，不查正文；额外对象存储 O(M)，跨行去前缀索引另计 O(G)（见下节），全库保持累计 O(n log n)、空间 O(n)。Vec 扩容及批量解析仍是摊还保证，不承诺单次 append 的硬时延。`crates/mdstream-core/tests/math.rs` 和现有分块/fuzz 快照验证方言、预算、失败输入、百万字晚闭合及索引模型；`cargo run -p mdstream-core -r --example math` 演示流式确认与逐帧原始内容读取。
 
 独立数学块见[独立数学块](#独立数学块)；后续仍保留 `\(...\)` / `\[...\]` 等额外定界方言、TeX 解析/排版和实际对象回调接入；脚注的独立核心接口见[脚注核心](#脚注核心)。
 
@@ -2061,7 +2061,7 @@ assert_eq!(content.advance(&mut budget), Err(Completion::BudgetExhausted));
 `math_block_content(BlockId)` / `math_block_payload(BlockId)` 均 O(1) 构造 `MathContent`，后者去除匹配的容器前缀并展开保留的部分 tab。逐步返回的 `MathChunk.source` 连续覆盖 content，正文借用原文、省略的前缀返回空 text，部分 tab 单字节返回 1..3 个静态空格；其它空白、CRLF、反斜线和实体拼写不变。每次最多 `TILE_BYTES` 个 UTF-8 源码字节，计实际字节与 1 query/1 object，前缀也收费；预算不足原子暂停。首次有效读取付费后 O(log G + log T) 定位间隙和部分 tab，之后 O(1)，不分配或复制整段公式。通过 `block_at` 定位数学块，或在窗口内用有预算 `fold_candidates` 枚举结构；消费期间文档借用阻止追加。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 let mut doc = Document::new();
 let first = doc.append("> $$\r\n").unwrap();
 assert_eq!(first.new_blocks, 0..1);
@@ -2084,7 +2084,7 @@ assert!(doc.maths().is_empty());
 
 通用显示/布局以 MATH 样式字面回退，隐藏定界行/容器前缀和 CRLF 的 CR；实际 TeX 排版及对象回调仍留后续。正文增长和封存以一次块范围失效拒绝旧缓存/测量，不遍历旧 tile。`FoldId::Math(BlockId)` 隐藏整块，以所在局部章节或容器为父；`FoldDefaults::math` 仅初始化新节点，显式意愿、独立视图、批量、预览和源码导航遵循现有规则。折叠范围暂含未分类尾部，作用域退出后收回；当前 EOF 关闭的块在后续追加时刷新末 tile 的覆盖，避免隐藏同 tile 的新文字。默认占位符不读取正文，内容预览可显式使用上述预算游标。
 
-实现复用围栏路径和叶块索引，不增加数学块 arena；每块固定大小元数据，每个省略前缀一个有序间隙。分类只读有界窗口，正文不走行内解析，同物理行百万字增长不增加间隙或祖先更新；闭合/增长的范围标记是 O(log n)，历史块不参与追加刷新。累计解析 O(n log n)、空间 O(n)，不承诺单次 append/finish 的硬时延。`crates/mdtui3-core/tests/math_blocks.rs` 及分块快照覆盖 400 组源码/内容模型、240 次流式高度模型、千层引用、250 层列表、百万字、4096 历史块、预算与折叠；`cargo run -p mdtui3-core -r --example math_blocks` 演示去前缀内容与导航分帧消费。
+实现复用围栏路径和叶块索引，不增加数学块 arena；每块固定大小元数据，每个省略前缀一个有序间隙。分类只读有界窗口，正文不走行内解析，同物理行百万字增长不增加间隙或祖先更新；闭合/增长的范围标记是 O(log n)，历史块不参与追加刷新。累计解析 O(n log n)、空间 O(n)，不承诺单次 append/finish 的硬时延。`crates/mdstream-core/tests/math_blocks.rs` 及分块快照覆盖 400 组源码/内容模型、240 次流式高度模型、千层引用、250 层列表、百万字、4096 历史块、预算与折叠；`cargo run -p mdstream-core -r --example math_blocks` 演示去前缀内容与导航分帧消费。
 
 ## 容器跨行数学内容
 
@@ -2095,7 +2095,7 @@ assert!(doc.maths().is_empty());
 两种读取都受共享 Budget 约束：每步最多消费 `TILE_BYTES` 源码字节，计 1 query / 1 object 和实际消费的源码字节数，空文本前缀也计费；四字节预算足以推进任意标量，预算不足时位置和预算均不变。完成后读取免费。构造 O(1)，第一次成功推进用已计费的 query 二分定位前缀间隙及部分 tab，后续逐片 O(1)；游标借用文档、状态固定大小，无正文副本。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 let mut doc = Document::new();
 doc.append("> - $$中 + \\alpha\r\n")?;
 assert!(doc.maths().is_empty());
@@ -2122,7 +2122,7 @@ assert_eq!(output, "中 + \\alpha\r\n🙂");
 
 实现仅在活动数学候选中保存上次消费末端；下次跨物理行的不连续 feed 到来时追加一个有序源码间隙，不检查正文或遍历祖先。总间隙数 G 不超过省略前缀的行数；失败或被表头丢弃的候选可留下无对象引用的间隙，但不会与后续对象重叠。记录总成本 O(G)，空间 O(G)，百万字同物理行增长不增加此索引；闭合仍只做常数次范围标记、不回扫历史行或间隙。全库累计 O(n log n)、空间 O(n)，单次解析及存储扩容仍为摊还契约。查询构造不读取/复制完整公式，也不分配新输出。
 
-物理叶块和已确认 MathId/区间保持稳定，Update 报告新对象并使受影响的缓存、测量、检查点与旧搜索任务失效，折叠意愿保留。`crates/mdtui3-core/tests/container_math.rs`、分块快照和内部存储测试覆盖 400 组源码映射模型、UTF-8 全切点/逐前缀、千层引用、250 层列表、百万字、4096 条 lazy 续行及历史对象/失败候选。收起容器的布局不读取数学正文；`cargo run -p mdtui3-core -r --example container_math` 演示分帧映射读取。独立数学块见[独立数学块](#独立数学块)；TeX 排版、更多定界方言、已发布跨行语义撤销和终端 UI 继续保留后续。
+物理叶块和已确认 MathId/区间保持稳定，Update 报告新对象并使受影响的缓存、测量、检查点与旧搜索任务失效，折叠意愿保留。`crates/mdstream-core/tests/container_math.rs`、分块快照和内部存储测试覆盖 400 组源码映射模型、UTF-8 全切点/逐前缀、千层引用、250 层列表、百万字、4096 条 lazy 续行及历史对象/失败候选。收起容器的布局不读取数学正文；`cargo run -p mdstream-core -r --example container_math` 演示分帧映射读取。独立数学块见[独立数学块](#独立数学块)；TeX 排版、更多定界方言、已发布跨行语义撤销和终端 UI 继续保留后续。
 
 ## 脚注核心
 
@@ -2145,7 +2145,7 @@ assert_eq!(output, "中 + \\alpha\r\n🙂");
 `footnote_payload(id)` 返回同类型的去前缀游标，省略已匹配的容器前缀和续行四格，保留原始 LF/CRLF、实体拼写、反斜线及其它空白。每个 `FootnoteChunk.source` 是连续消费的原始区间；`text` 借用该区间或在省略前缀时为空。前缀片段仍计实际源码 bytes、1 query、1 object，不能免费跳过任意多层。构造 O(1)，首个成功 advance 付费后 O(log G) 定位全局有序间隙索引，其后每步 O(1)，没有正文复制或祖先遍历。原文和去前缀接口均仅读取已确认范围，不自动排版段落。
 
 ```rust
-use mdtui3::{Budget, Document, FootnoteId, SyntaxState, WorkLimit};
+use mdstream::{Budget, Document, FootnoteId, SyntaxState, WorkLimit};
 let mut doc = Document::new();
 doc.append("> - [^n]: first\r\n>       中🙂\r\n>   \r\n>       last\r\n")?;
 assert_eq!(doc.footnote(FootnoteId(0)).unwrap().definition.unwrap().state, SyntaxState::Growing);
@@ -2159,11 +2159,11 @@ loop {
     text.push_str(chunk.text);
 }
 assert_eq!(text, "first\r\n中🙂\r\n\r\nlast");
-# Ok::<(), mdtui3::Finished>(())
+# Ok::<(), mdstream::Finished>(())
 ```
 
 ```rust
-use mdtui3::{Budget, Document, FootnoteReferenceId, FootnoteTarget, WorkLimit};
+use mdstream::{Budget, Document, FootnoteReferenceId, FootnoteTarget, WorkLimit};
 let mut doc = Document::new();
 doc.append("See [^note] twice [^note].\n").unwrap();
 let mut budget = Budget::new(WorkLimit::unlimited());
@@ -2178,7 +2178,7 @@ let mut body = doc.footnote_content(second.symbol).unwrap();
 assert_eq!(body.advance(&mut budget).unwrap().unwrap().text, "原始 **正文**");
 ```
 
-解析器只保留一个 O(1) 行内候选及当前定义的末尾空行标记；有界 label 使用 BTreeMap 确定性 O(log S) 符号寻址，编号/定义/增长均只更新当前符号。每个成功定义的带前缀续行至多记录一个间隙，重复定义不留间隙，额外存储 O(S + R + G)；全库维持累计 O(n log n)、空间 O(n)，Vec 扩容仍为摊还保证。`Work.footnote_steps` 统计符号操作与定义增长/封口，`footnote_label_bytes` 统计实际 intern 的有界标签，正文与失败候选检查计入已有 input/classified/inline 字节计数。两万次旧引用后首行定义只做两次符号步骤，后续每次增长或封口各一次；千层容器中百万字续行后的逐字追加不回扫正文、祖先或历史引用。读取/存储、400 组范围模型、240 次流式折叠高度模型、UTF-8 分块、预算及缓存验收见 `crates/mdtui3-core/tests/footnote_blocks.rs`、`crates/mdtui3-core/tests/footnotes.rs`、`crates/mdtui3-core/tests/chunking.rs`；`cargo run -p mdtui3-core -r --example footnote_blocks` 演示多段映射读取与折叠保持，原 `footnotes` 示例继续演示晚定义。解析不承诺任意大 append/finish 的单次硬时延。
+解析器只保留一个 O(1) 行内候选及当前定义的末尾空行标记；有界 label 使用 BTreeMap 确定性 O(log S) 符号寻址，编号/定义/增长均只更新当前符号。每个成功定义的带前缀续行至多记录一个间隙，重复定义不留间隙，额外存储 O(S + R + G)；全库维持累计 O(n log n)、空间 O(n)，Vec 扩容仍为摊还保证。`Work.footnote_steps` 统计符号操作与定义增长/封口，`footnote_label_bytes` 统计实际 intern 的有界标签，正文与失败候选检查计入已有 input/classified/inline 字节计数。两万次旧引用后首行定义只做两次符号步骤，后续每次增长或封口各一次；千层容器中百万字续行后的逐字追加不回扫正文、祖先或历史引用。读取/存储、400 组范围模型、240 次流式折叠高度模型、UTF-8 分块、预算及缓存验收见 `crates/mdstream-core/tests/footnote_blocks.rs`、`crates/mdstream-core/tests/footnotes.rs`、`crates/mdstream-core/tests/chunking.rs`；`cargo run -p mdstream-core -r --example footnote_blocks` 演示多段映射读取与折叠保持，原 `footnotes` 示例继续演示晚定义。解析不承诺任意大 append/finish 的单次硬时延。
 
 通用显示与 LayoutPass 仍原样显示 `[^label]` 标记，并隐藏顶层及容器内定义；脚注编号上标、文末脚注区、定义正文 Markdown 排版、双向跳转/返回及对象回调仍待接入，读取核心不自动展开或排版脚注区。
 
@@ -2214,7 +2214,7 @@ assert_eq!(body.advance(&mut budget).unwrap().unwrap().text, "原始 **正文**"
 `DisplayExcerpt` 从指定源码范围读取非隐藏显示文本前缀，可用于代码块、章节正文及标题摘要。`ExcerptLimits` 同时限制源码前缀字节、输出 UTF-8 字节和 LF 分隔的逻辑行数；最后一行的 LF 包含在输出内，不添加省略号，空输入不产生空行。源码上限包含隐藏语法，防止巨型围栏 info 或隐藏目标拖延摘要；输出上限防止超长首行绕过行数限制。UTF-8 截断保留完整标量，行内实体/代码空白使用现有显示语义，样式、链接及完整替代源码映射保留。
 
 ```rust
-use mdtui3::*;
+use mdstream::*;
 let mut doc = Document::new();
 doc.append("```rs\nfirst\nsecond\nthird\n```\n")?;
 doc.finish();
@@ -2244,11 +2244,11 @@ assert_eq!(text, "first\nsecond\n");
 
 `Complete` 区分范围结束、源码上限、输出上限和行数上限；达到上限时不会向后寻找可见内容，因此不承诺余文一定非空。替代文本仍映射完整语法区间，该映射可以超过读取前缀；`source_position` 表示已检查 run 的末尾，可能超出最后输出的字符，不能拿它拼接被截断的余文。任务和输出绑定 revision，追加或首次 finish 后须显式丢弃并重建；空追加、重复 finish 不失效，错误文档及旧任务在扣费前被拒绝。
 
-读取不改变折叠意愿或高度，也不应用视图中的子折叠。宿主显式选取 `FoldCandidate.hidden` 预览正文、选取标题 `content` 读取名称；开放范围是当前 revision 的快照。逻辑行不等于终端软换行后的屏幕行，摘要占位绘制仍需由排版方限制实际显示行数、测量并归属高度。`cargo run -p mdtui3-core -r --example excerpt` 展示百万字折叠代码的两行摘要；终端宽度、占位高度及 UI 接入继续见 TODO。
+读取不改变折叠意愿或高度，也不应用视图中的子折叠。宿主显式选取 `FoldCandidate.hidden` 预览正文、选取标题 `content` 读取名称；开放范围是当前 revision 的快照。逻辑行不等于终端软换行后的屏幕行，摘要占位绘制仍需由排版方限制实际显示行数、测量并归属高度。`cargo run -p mdstream-core -r --example excerpt` 展示百万字折叠代码的两行摘要；终端宽度、占位高度及 UI 接入继续见 TODO。
 
 ## 源码入口
 
-下表路径相对 `crates/mdtui3-core/`。
+下表路径相对 `crates/mdstream-core/`。
 
 | 文件 | 职责 |
 | --- | --- |
@@ -2290,46 +2290,46 @@ nix develop -c cargo clippy --workspace --all-targets -- -D warnings
 nix develop -c cargo nextest run --workspace --release --no-fail-fast
 nix develop -c cargo test --doc --workspace
 nix develop -c cargo fmt --all -- --check
-nix develop -c cargo run -p mdtui3-core -r --example stream
-nix develop -c cargo run -p mdtui3-core -r --example structure
-nix develop -c cargo run -p mdtui3-core -r --example containers
-nix develop -c cargo run -p mdtui3-core -r --example container_headings
-nix develop -c cargo run -p mdtui3-core -r --example container_setext
-nix develop -c cargo run -p mdtui3-core -r --example partial_tabs
-nix develop -c cargo run -p mdtui3-core -r --example prose_tabs
-nix develop -c cargo run -p mdtui3-core -r --example math_tabs
-nix develop -c cargo run -p mdtui3-core -r --example leaf_tabs
-nix develop -c cargo run -p mdtui3-core -r --example container_sections
-nix develop -c cargo run -p mdtui3-core -r --example container_tables
-nix develop -c cargo run -p mdtui3-core -r --example scaling
-nix develop -c cargo run -p mdtui3-core -r --example budget
-nix develop -c cargo run -p mdtui3-core -r --example display
-nix develop -c cargo run -p mdtui3-core -r --example excerpt
-nix develop -c cargo run -p mdtui3-core -r --example table_preview
-nix develop -c cargo run -p mdtui3-core -r --example table_row_folding
-nix develop -c cargo run -p mdtui3-core -r --example source_folding
-nix develop -c cargo run -p mdtui3-core -r --example paragraph_folding
-nix develop -c cargo run -p mdtui3-core -r --example container_paragraph_folding
-nix develop -c cargo run -p mdtui3-core -r --example paragraph_discovery
-nix develop -c cargo run -p mdtui3-core -r --example search
-nix develop -c cargo run -p mdtui3-core -r --example heading_search
-nix develop -c cargo run -p mdtui3-core -r --example anchors
-nix develop -c cargo run -p mdtui3-core -r --example folding
-nix develop -c cargo run -p mdtui3-core -r --example fold_batch
-nix develop -c cargo run -p mdtui3-core -r --example history
+nix develop -c cargo run -p mdstream-core -r --example stream
+nix develop -c cargo run -p mdstream-core -r --example structure
+nix develop -c cargo run -p mdstream-core -r --example containers
+nix develop -c cargo run -p mdstream-core -r --example container_headings
+nix develop -c cargo run -p mdstream-core -r --example container_setext
+nix develop -c cargo run -p mdstream-core -r --example partial_tabs
+nix develop -c cargo run -p mdstream-core -r --example prose_tabs
+nix develop -c cargo run -p mdstream-core -r --example math_tabs
+nix develop -c cargo run -p mdstream-core -r --example leaf_tabs
+nix develop -c cargo run -p mdstream-core -r --example container_sections
+nix develop -c cargo run -p mdstream-core -r --example container_tables
+nix develop -c cargo run -p mdstream-core -r --example scaling
+nix develop -c cargo run -p mdstream-core -r --example budget
+nix develop -c cargo run -p mdstream-core -r --example display
+nix develop -c cargo run -p mdstream-core -r --example excerpt
+nix develop -c cargo run -p mdstream-core -r --example table_preview
+nix develop -c cargo run -p mdstream-core -r --example table_row_folding
+nix develop -c cargo run -p mdstream-core -r --example source_folding
+nix develop -c cargo run -p mdstream-core -r --example paragraph_folding
+nix develop -c cargo run -p mdstream-core -r --example container_paragraph_folding
+nix develop -c cargo run -p mdstream-core -r --example paragraph_discovery
+nix develop -c cargo run -p mdstream-core -r --example search
+nix develop -c cargo run -p mdstream-core -r --example heading_search
+nix develop -c cargo run -p mdstream-core -r --example anchors
+nix develop -c cargo run -p mdstream-core -r --example folding
+nix develop -c cargo run -p mdstream-core -r --example fold_batch
+nix develop -c cargo run -p mdstream-core -r --example history
 ```
 
 测试包含任意单切点和随机 UTF-8 分块、与朴素数组/有序映射对照的区间/高度/检查点随机测试、深层 opener、百万字 Setext 转换、百万字隐藏区间、十亿片段的稀疏高度索引、逐字符超长段落、延迟定义成本和 resize 节点复用。没有把 wall-clock 阈值当作正确性条件。`scaling` 示例已扩展为 17 场景核心性能矩阵，记录实际操作/容量、吞吐及有预算消费帧的 p50/p95/p99；复跑脚本、测量边界和三轮原始 CSV 见 [性能矩阵](docs/performance.md)。
 
 行内分块测试会特意跨过 `BLOCK_LOOKAHEAD`，避免短样例被整行缓冲后才解析。另有中间前缀一致性、TileKey 未变则语义不变、标题/链接索引与线性查询对照、目标/title 长度边界及百万字尾空格确认成本测试。自比较验证分块一致性，预期语义样例和朴素数据结构模型提供另外的判定依据，不能将这些测试视为完整规范合规率。
 
-`crates/mdtui3-core/tests/display_search.rs` 使用完整显示文本上的朴素搜索及独立语义样例作对照，覆盖实体部分命中、CRLF 映射、跨隐藏标记/tile、长查询和重叠匹配、真实流式逐前缀/逐切点、固定种子生成输入、极小共享预算、旧 revision 拒绝及失败回退计数。百万字隐藏区间验证有限预算不会触发整篇读取。
+`crates/mdstream-core/tests/display_search.rs` 使用完整显示文本上的朴素搜索及独立语义样例作对照，覆盖实体部分命中、CRLF 映射、跨隐藏标记/tile、长查询和重叠匹配、真实流式逐前缀/逐切点、固定种子生成输入、极小共享预算、旧 revision 拒绝及失败回退计数。百万字隐藏区间验证有限预算不会触发整篇读取。
 
 本 checkout 已安装 Rust skill 提供的本地 pre-commit：运行 `cargo fmt --all` 后只重新 stage 原本暂存的 Rust 文件。格式化可能改变提交中的行号；其它未暂存文件可能被格式化，但不会自动暂存。钩子不随 Git 分发，紧急情况下可用 `git commit --no-verify` 跳过。
 
 ## 可复现语法生成与失败缩减
 
-`crates/mdtui3-core/tests/syntax_fuzz.rs` 的 v1 语料固定四个持久化种子（0、1、`0x12345678`、`0xdeadbeefcafebabe`），每种 36 例，共 144 例；源码、精确分块位置及种子一起用 FNV-1a 指纹锁定。生成器使用显式 u64 wrapping 运算和转换前取模，不依赖系统随机数或时间。十二类块产生式组合递归行内语法、引用/列表前缀、晚定义、失败/未闭合候选、中文/emoji、LF/CRLF，以及分类窗口附近的长行。逐字符、随机和语法标记边界三种分块计划共检查 **19,536 个开放前缀**，再检查 EOF 和重复 finish；实际语料到达标题、表格、容器、链接、数学、脚注和代码对象，防止生成器退化为普通文本。
+`crates/mdstream-core/tests/syntax_fuzz.rs` 的 v1 语料固定四个持久化种子（0、1、`0x12345678`、`0xdeadbeefcafebabe`），每种 36 例，共 144 例；源码、精确分块位置及种子一起用 FNV-1a 指纹锁定。生成器使用显式 u64 wrapping 运算和转换前取模，不依赖系统随机数或时间。十二类块产生式组合递归行内语法、引用/列表前缀、晚定义、失败/未闭合候选、中文/emoji、LF/CRLF，以及分类窗口附近的长行。逐字符、随机和语法标记边界三种分块计划共检查 **19,536 个开放前缀**，再检查 EOF 和重复 finish；实际语料到达标题、表格、容器、链接、数学、脚注和代码对象，防止生成器退化为普通文本。
 
 每个分块前缀都和同一前缀的一次 append 对照，复用既有 `chunking` 完整快照：块/容器/标题/表格、稳定对象 ID 与符号、数学/脚注内容、样式和显示映射。不比较文档身份或 append 修订次数。同时独立检查 UTF-8 区间、块/tile/run/display 源码覆盖、容器父顺序/深度/范围、对象引用和单元格/内容映射顺序，以及 pending 上限、finish 幂等与 EOF 后 append 拒绝。这验证增量一致性和数据不变量，不产生 CommonMark/GFM 的标准期望；官方样例评分保持独立。
 
@@ -2337,13 +2337,13 @@ nix develop -c cargo run -p mdtui3-core -r --example history
 
 ```bash
 nix develop -c cargo nextest run --workspace --test syntax_fuzz --no-fail-fast --success-output immediate
-nix develop -c cargo run -p mdtui3-core -r --example syntax_fuzz -- --seed 305419896 --cases 256
+nix develop -c cargo run -p mdstream-core -r --example syntax_fuzz -- --seed 305419896 --cases 256
 # 注入演示预期返回 1，生成原始文件及同路径的 .min 文件：
-nix develop -c cargo run -p mdtui3-core -r --example syntax_fuzz -- --inject split-crlf --output /tmp/fuzz.case
-nix develop -c cargo run -p mdtui3-core -r --example syntax_fuzz -- --replay /tmp/fuzz.case.min --output /tmp/fuzz-replay.case
+nix develop -c cargo run -p mdstream-core -r --example syntax_fuzz -- --inject split-crlf --output /tmp/fuzz.case
+nix develop -c cargo run -p mdstream-core -r --example syntax_fuzz -- --replay /tmp/fuzz.case.min --output /tmp/fuzz-replay.case
 ```
 
-case 文件首行为 `mdtui3-syntax-fuzz-v1`，后续固定字段为 `seed`、`case`、`fault`、`cuts`，空行之后是原始 UTF-8 输入，保留 CRLF、NUL、空追加和无换行 EOF。cuts 为非递减绝对字节端点，最后隐式追加剩余后缀；重放直接使用文件内容，不重新调用生成器，越界或非 UTF-8 边界会拒绝。nextest 失败也输出完整原始/缩减 case；CLI 在开始缩减前写入原始文件。修改生成算法需明确更新版本和语料指纹，不能以改种子或跳过失败样本掩盖缺陷。
+case 文件首行为 `mdstream-syntax-fuzz-v1`，后续固定字段为 `seed`、`case`、`fault`、`cuts`，空行之后是原始 UTF-8 输入，保留 CRLF、NUL、空追加和无换行 EOF。cuts 为非递减绝对字节端点，最后隐式追加剩余后缀；重放直接使用文件内容，不重新调用生成器，越界或非 UTF-8 边界会拒绝。nextest 失败也输出完整原始/缩减 case；CLI 在开始缩减前写入原始文件。修改生成算法需明确更新版本和语料指纹，不能以改种子或跳过失败样本掩盖缺陷。
 
 缩减先按固定顺序由粗到细删除 Unicode 字符区间，再合并分块，反复执行到固定点；删除时同步映射切点，始终保持合法 UTF-8。只接受保持同一阶段/属性签名的失败，panic unwind 也会被记录；不以耗时或随机次数停止。结果对单字符删除和单切点移除不可再减，不保证全局最短或最简单语法。此测试工具会反复解析/复制全文，适用于有界语料；不承担解析核心的预算或复杂度保证，也不处理进程 abort、OOM 或挂死的恢复。
 
@@ -2370,7 +2370,7 @@ nix develop .#index32 -c bash scripts/check-index32.sh
 | 源码、ID 与 arena | 源码游标受 String 长度限制，对象 ID 使用 Vec 下标；Vec 节点容量乘非零节点大小不超过其分配上限。无效公开 ID/跨度通过查询入口拒绝；`Span::len` 本身要求 `start <= end`，不替调用者校验任意手工跨度。修复 `ticket` 在拒绝最大 ID 前急切计算 `+1` 的 debug 溢出。 |
 | 有界语法整数 | 有序列表号最多九位，累加为 `u32`；容器列计数只遍历有界分类前缀，部分 tab 余列最多 3 后再转 `u8`；标题等级限定 1–6。源码长度计入 `u64` 工作计数在当前 32/64 位目标上不缩窄。 |
 
-`crates/mdtui3-core/src/index_boundaries.rs` 的 11 项测试使用稀疏线性区间、写入日志和 BTreeMap 作为独立模型。64 位运行同时覆盖 32 位边界与本机 `isize::MAX`；i686 运行直接执行真实 32 位 `usize` 路径。四类树的修改和折叠候选查询按字长限制访问数，标注遍历按写入数×字长限制访问数；高度节点分配仅允许两条边界路径，避免用巨型数组模拟高位索引。既有标准样例、固定种子 fuzz 和百万字/深嵌套测试也在两种字长执行。
+`crates/mdstream-core/src/index_boundaries.rs` 的 11 项测试使用稀疏线性区间、写入日志和 BTreeMap 作为独立模型。64 位运行同时覆盖 32 位边界与本机 `isize::MAX`；i686 运行直接执行真实 32 位 `usize` 路径。四类树的修改和折叠候选查询按字长限制访问数，标注遍历按写入数×字长限制访问数；高度节点分配仅允许两条边界路径，避免用巨型数组模拟高位索引。既有标准样例、固定种子 fuzz 和百万字/深嵌套测试也在两种字长执行。
 
 这些是索引算术与回归验收，不保证能实际分配接近 2 GiB 的文档、密集 arena 或进程地址空间。尚未实测内存耗尽/分配失败恢复、耗尽进程级身份、`u64` revision/序列/计数器绕回，以及其它 32 位 ABI/无 64 位原子的平台。源码存储仍为 String，公开 API 未新增可恢复的分配错误；稀疏索引上限不代表可加载文档大小。更广的性能矩阵和终端 UI 继续保留 TODO。
 
@@ -2380,11 +2380,11 @@ nix develop .#index32 -c bash scripts/check-index32.sh
 
 2026-10-30 在 ark 上的 release 样本：524,286 字节密集标记产生 854,391 个语义节点；子索引改用 `Option<NonZeroUsize>` 后，节点大小由 88 降至 72 字节，对应 arena 容量由 92,274,688 降至 75,497,472 字节（约 18.2%）。写入访问数 8,010,100、固定视口查询访问数 13,022 均未改变，分配次数同为 20。缩小了节点常数，没有增加全树压缩过程。峰值 arena 容量等于当前容量，因为该 arena 不缩容；这不是整个进程峰值内存。语义/修订存储拆分尚未实施；查询 scratch 复用已交付，见上方接口。后续 [存储与回收实验](docs/storage.md) 提供三规模可复跑容量/分配测量、查询栈 `Runs::scratch_stats()`、检查点 clear/drain/refill 对照及优化决策；已将检查点子索引同样压缩，Vec 状态节点在本机由 88 降至 72 字节。回收只释放移出后由调用方丢弃的外部 payload，保留树 arena；不声称总堆统计或硬内存上限。
 
-标准样例固定为 [CommonMark 0.31.2 autolinks](https://spec.commonmark.org/0.31.2/#autolinks)，离线夹具保存在 `crates/mdtui3-core/tests/fixtures/commonmark_autolinks.rs`，保留上游 CC BY-SA 4.0 归属信息。19 个样例中，18 个在源码文本/目标语义上符合；606 为刻意差异：失败候选内部的反斜线不重新解析。URI percent encoding 属输出层，因此对照时归一化目标编码。其它已评分子集见下文，其余 CommonMark/GFM 范围未评分；现有容器展平、强调/代码回退和语法长度限制仍按上文方言约定，不以自比较分块测试充当完整规范合规率。
+标准样例固定为 [CommonMark 0.31.2 autolinks](https://spec.commonmark.org/0.31.2/#autolinks)，离线夹具保存在 `crates/mdstream-core/tests/fixtures/commonmark_autolinks.rs`，保留上游 CC BY-SA 4.0 归属信息。19 个样例中，18 个在源码文本/目标语义上符合；606 为刻意差异：失败候选内部的反斜线不重新解析。URI percent encoding 属输出层，因此对照时归一化目标编码。其它已评分子集见下文，其余 CommonMark/GFM 范围未评分；现有容器展平、强调/代码回退和语法长度限制仍按上文方言约定，不以自比较分块测试充当完整规范合规率。
 
-显示语义另固定了 24 个 CommonMark 0.31.2 文本样例（25–30、35–37、39–40、328–340），离线夹具 `crates/mdtui3-core/tests/fixtures/commonmark_display.rs` 同样保留归属信息，只对照移除 HTML 标签后的文字。HTML、属性解码、列表结构及完整代码回退未计入这组评分；不将局部样例通过表述为整个章节合规。`crates/mdtui3-core/tests/display.rs` 另外验证源码映射、跨 tile/逐标量查询、逐前缀/逐切点一致性、百万字代码晚闭合、错误候选线性计数、预算推进和旧游标拒绝。
+显示语义另固定了 24 个 CommonMark 0.31.2 文本样例（25–30、35–37、39–40、328–340），离线夹具 `crates/mdstream-core/tests/fixtures/commonmark_display.rs` 同样保留归属信息，只对照移除 HTML 标签后的文字。HTML、属性解码、列表结构及完整代码回退未计入这组评分；不将局部样例通过表述为整个章节合规。`crates/mdstream-core/tests/display.rs` 另外验证源码映射、跨 tile/逐标量查询、逐前缀/逐切点一致性、百万字代码晚闭合、错误候选线性计数、预算推进和旧游标拒绝。
 
-[CommonMark 0.31.2 ATX headings](https://spec.commonmark.org/0.31.2/#atx-headings) 的完整章节（62–79，共 18 例）另由 `crates/mdtui3-core/tests/commonmark_atx.rs` 独立评分。`crates/mdtui3-core/tests/fixtures/commonmark_atx.rs` 保存官方 Markdown 与 HTML 原值，附 John MacFarlane / CC BY-SA 4.0 归属、版本、规范行号及完整 `spec.json` 的 SHA-256。生成器只读取另行下载的本地文件，先校验摘要与完整章节成员；构建和测试不联网，也不调用本库生成预期。
+[CommonMark 0.31.2 ATX headings](https://spec.commonmark.org/0.31.2/#atx-headings) 的完整章节（62–79，共 18 例）另由 `crates/mdstream-core/tests/commonmark_atx.rs` 独立评分。`crates/mdstream-core/tests/fixtures/commonmark_atx.rs` 保存官方 Markdown 与 HTML 原值，附 John MacFarlane / CC BY-SA 4.0 归属、版本、规范行号及完整 `spec.json` 的 SHA-256。生成器只读取另行下载的本地文件，先校验摘要与完整章节成员；构建和测试不联网，也不调用本库生成预期。
 
 | 分类 | 样例 | 当前判定 |
 | --- | --- | --- |
@@ -2406,7 +2406,7 @@ nix develop -c cargo nextest run --workspace --test commonmark_atx --no-fail-fas
 python3 scripts/generate_commonmark_atx.py /path/to/spec.json --check
 ```
 
-[CommonMark 0.31.2 Setext headings](https://spec.commonmark.org/0.31.2/#setext-headings) 的完整章节（80–106，共 27 例）由 `crates/mdtui3-core/tests/commonmark_setext.rs` 独立评分。`crates/mdtui3-core/tests/fixtures/commonmark_setext.rs` 同样逐字固定官方 Markdown/HTML、规范行号、作者、CC BY-SA 4.0 许可及完整来源 SHA-256；`scripts/generate_commonmark_setext.py` 从本地固定来源生成并复核，不使用本库输出作为标准期望。
+[CommonMark 0.31.2 Setext headings](https://spec.commonmark.org/0.31.2/#setext-headings) 的完整章节（80–106，共 27 例）由 `crates/mdstream-core/tests/commonmark_setext.rs` 独立评分。`crates/mdstream-core/tests/fixtures/commonmark_setext.rs` 同样逐字固定官方 Markdown/HTML、规范行号、作者、CC BY-SA 4.0 许可及完整来源 SHA-256；`scripts/generate_commonmark_setext.py` 从本地固定来源生成并复核，不使用本库输出作为标准期望。
 
 | 分类 | 样例 | 当前判定 |
 | --- | --- | --- |
@@ -2425,7 +2425,7 @@ nix develop -c cargo nextest run --workspace --test commonmark_setext --no-fail-
 python3 scripts/generate_commonmark_setext.py /path/to/spec.json --check
 ```
 
-[GFM 0.29-gfm（2019-04-06）Tables (extension)](https://github.github.com/gfm/#tables-extension-) 的完整章节（198–205，共 8 例）由 `crates/mdtui3-core/tests/gfm_tables.rs` 独立评分。`crates/mdtui3-core/tests/fixtures/gfm_tables.rs` 固定官方 Markdown/HTML 原值、HTML 源码行号和样例锚点、GitHub / John MacFarlane 归属及 CC BY-SA 4.0 许可。官方站点不提供 `spec.json`，生成器 `scripts/generate_gfm_tables.py` 读取另行下载的完整规范 HTML，以 SHA-256 `b153d814fdfc8624bb6da7449162c1cd707a637f7d1c1b636eb44b9cf63fa220` 固定来源，并校验完整章节成员；仅解码网页用于展示代码块的实体和空格 span，不改变样例内容。生成、复核、构建与测试不联网，不使用库输出生成期望。
+[GFM 0.29-gfm（2019-04-06）Tables (extension)](https://github.github.com/gfm/#tables-extension-) 的完整章节（198–205，共 8 例）由 `crates/mdstream-core/tests/gfm_tables.rs` 独立评分。`crates/mdstream-core/tests/fixtures/gfm_tables.rs` 固定官方 Markdown/HTML 原值、HTML 源码行号和样例锚点、GitHub / John MacFarlane 归属及 CC BY-SA 4.0 许可。官方站点不提供 `spec.json`，生成器 `scripts/generate_gfm_tables.py` 读取另行下载的完整规范 HTML，以 SHA-256 `b153d814fdfc8624bb6da7449162c1cd707a637f7d1c1b636eb44b9cf63fa220` 固定来源，并校验完整章节成员；仅解码网页用于展示代码块的实体和空格 span，不改变样例内容。生成、复核、构建与测试不联网，不使用库输出生成期望。
 
 | 分类 | 样例 | 当前判定 |
 | --- | --- | --- |
@@ -2444,7 +2444,7 @@ nix develop -c cargo nextest run --workspace --test gfm_tables --no-fail-fast --
 python3 scripts/generate_gfm_tables.py /path/to/gfm.html --check
 ```
 
-[GFM 0.29-gfm（2019-04-06）Task list items (extension)](https://github.github.com/gfm/#task-list-items-extension-) 的完整章节（279–280，共 2 例）由 `crates/mdtui3-core/tests/gfm_tasks.rs` 独立评分。`crates/mdtui3-core/tests/fixtures/gfm_tasks.rs` 逐字固定官方 Markdown/HTML、HTML 源码行号及锚点、GitHub / John MacFarlane 归属和 CC BY-SA 4.0 许可。`scripts/generate_gfm_tasks.py` 从本地规范 HTML 离线生成或复核，使用与表格章节相同的完整来源 SHA-256，检查章节成员并拒绝改动后的来源；只解码代码块展示标记，不调用本库产生期望。
+[GFM 0.29-gfm（2019-04-06）Task list items (extension)](https://github.github.com/gfm/#task-list-items-extension-) 的完整章节（279–280，共 2 例）由 `crates/mdstream-core/tests/gfm_tasks.rs` 独立评分。`crates/mdstream-core/tests/fixtures/gfm_tasks.rs` 逐字固定官方 Markdown/HTML、HTML 源码行号及锚点、GitHub / John MacFarlane 归属和 CC BY-SA 4.0 许可。`scripts/generate_gfm_tasks.py` 从本地规范 HTML 离线生成或复核，使用与表格章节相同的完整来源 SHA-256，检查章节成员并拒绝改动后的来源；只解码代码块展示标记，不调用本库产生期望。
 
 | 分类 | 样例 | 当前判定 |
 | --- | --- | --- |

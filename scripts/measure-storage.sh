@@ -27,12 +27,12 @@ mkdir -- "$storage_output"
     rustc -Vv
     cargo -V
     printf 'base_bytes=%s queries=%s repetitions=%s\n' "$storage_base" "$storage_queries" "$storage_repetitions"
-    sha256sum flake.lock crates/mdtui3-core/src/annotations.rs crates/mdtui3-core/src/checkpoints.rs crates/mdtui3-core/src/display.rs crates/mdtui3-core/src/lib.rs crates/mdtui3-core/examples/storage.rs crates/mdtui3-core/tests/support/storage.rs crates/mdtui3-core/tests/checkpoint_compaction.rs scripts/measure-storage.sh
+    sha256sum flake.lock crates/mdstream-core/src/annotations.rs crates/mdstream-core/src/checkpoints.rs crates/mdstream-core/src/display.rs crates/mdstream-core/src/lib.rs crates/mdstream-core/examples/storage.rs crates/mdstream-core/tests/support/storage.rs crates/mdstream-core/tests/checkpoint_compaction.rs scripts/measure-storage.sh
     if command -v lscpu >/dev/null; then lscpu; fi
 } > "$storage_output/environment.txt"
 cargo metadata --no-deps --format-version 1 > "$storage_output/cargo-metadata.json"
 for ((storage_run=1; storage_run<=storage_repetitions; storage_run++)); do
-    cargo run --locked --release -p mdtui3-core --example storage -- "$storage_base" "$storage_queries" \
+    cargo run --locked --release -p mdstream-core --example storage -- "$storage_base" "$storage_queries" \
         > "$storage_output/run-$storage_run.csv" 2> "$storage_output/run-$storage_run.log"
 done
 python3 - "$storage_output" "$storage_repetitions" <<'PY'

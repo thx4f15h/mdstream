@@ -2,9 +2,9 @@
 """Extract the complete ATX section from the pinned, locally downloaded spec.
 
 Download https://spec.commonmark.org/0.31.2/spec.json separately, then run:
-python3 scripts/generate_commonmark_atx.py /path/to/spec.json > crates/mdtui3-core/tests/fixtures/commonmark_atx.rs
+python3 scripts/generate_commonmark_atx.py /path/to/spec.json > crates/mdstream-core/tests/fixtures/commonmark_atx.rs
 Use --check to verify the checked-in fixture without writing it. No network or
-mdtui3 parser is used here; upstream Markdown and HTML are copied unchanged.
+mdstream parser is used here; upstream Markdown and HTML are copied unchanged.
 """
 
 import argparse
@@ -50,7 +50,7 @@ def main():
     args = parser.parse_args()
     generated = generate(args.spec)
     if args.check:
-        fixture = Path(__file__).resolve().parents[1] / "crates/mdtui3-core/tests/fixtures/commonmark_atx.rs"
+        fixture = Path(__file__).resolve().parents[1] / "crates/mdstream-core/tests/fixtures/commonmark_atx.rs"
         if fixture.read_text() != generated:
             parser.error("checked-in ATX fixture differs from the pinned upstream data")
         print("CommonMark 0.31.2 ATX fixture: 18 verbatim examples verified")

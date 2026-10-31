@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run from the repo root inside its devShell. Each output directory is new.
-# nix develop -c bash scripts/measure-performance.sh /tmp/mdtui3-matrix
+# nix develop -c bash scripts/measure-performance.sh /tmp/mdstream-matrix
 set -euo pipefail
 : "${IN_NIX_SHELL:?Enter the project devShell first}"
 if (( $# < 1 || $# > 4 )); then
@@ -27,13 +27,13 @@ mkdir -- "$matrix_output"
     rustc -Vv
     cargo -V
     printf 'base_bytes=%s samples=%s repetitions=%s\n' "$matrix_base" "$matrix_samples" "$matrix_repetitions"
-    sha256sum flake.lock crates/mdtui3-core/examples/scaling.rs crates/mdtui3-core/tests/support/performance.rs scripts/measure-performance.sh
+    sha256sum flake.lock crates/mdstream-core/examples/scaling.rs crates/mdstream-core/tests/support/performance.rs scripts/measure-performance.sh
     if command -v lscpu >/dev/null; then
         lscpu
     fi
 } > "$matrix_output/environment.txt"
 cargo metadata --no-deps --format-version 1 > "$matrix_output/cargo-metadata.json"
 for ((matrix_run=1; matrix_run<=matrix_repetitions; matrix_run++)); do
-    cargo run --locked --release -p mdtui3-core --example scaling -- "$matrix_base" "$matrix_samples" \
+    cargo run --locked --release -p mdstream-core --example scaling -- "$matrix_base" "$matrix_samples" \
         > "$matrix_output/run-$matrix_run.csv" 2> "$matrix_output/run-$matrix_run.log"
 done

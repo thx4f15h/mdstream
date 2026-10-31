@@ -1,0 +1,12 @@
+[package]
+name = "mdstream-core"
+version.workspace = true
+edition.workspace = true
+description = "Append-only Markdown parsing and lazy viewport indexing with bounded work"
+
+[lib]
+name = "mdstream"
+
+[[example]]
+name = "stream"
+path = "examples/stream.rs"

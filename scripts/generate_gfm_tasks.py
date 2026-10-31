@@ -2,9 +2,9 @@
 """Extract the complete Task list items section from the pinned official GFM HTML.
 
 Download https://github.github.com/gfm/ separately, then run:
-python3 scripts/generate_gfm_tasks.py /path/to/gfm.html > crates/mdtui3-core/tests/fixtures/gfm_tasks.rs
+python3 scripts/generate_gfm_tasks.py /path/to/gfm.html > crates/mdstream-core/tests/fixtures/gfm_tasks.rs
 Use --check to verify the checked-in fixture without writing it. No network or
-mdtui3 parser is used here. Only HTML presentation markup is decoded; Markdown
+mdstream parser is used here. Only HTML presentation markup is decoded; Markdown
 and expected HTML code-block contents retain every upstream character.
 """
 
@@ -95,7 +95,7 @@ def main():
     args = parser.parse_args()
     generated = generate(args.spec)
     if args.check:
-        fixture = Path(__file__).resolve().parents[1] / "crates/mdtui3-core/tests/fixtures/gfm_tasks.rs"
+        fixture = Path(__file__).resolve().parents[1] / "crates/mdstream-core/tests/fixtures/gfm_tasks.rs"
         if fixture.read_text() != generated:
             parser.error("checked-in Task list items fixture differs from the pinned upstream data")
         print("GFM 0.29-gfm Task list items fixture: 2 verbatim examples verified")

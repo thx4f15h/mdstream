@@ -67,18 +67,18 @@
 
 | 已交付 | 接口与证据 |
 | --- | --- |
-| P0 预算、推进性、完成状态 | `Budget` / `WorkLimit`、`viewport_budgeted` / `resume_viewport`、`LayoutPass` / `LayoutSink`；`crates/mdtui3-core/tests/frame.rs` 与 `crates/mdtui3-core/examples/budget.rs` 覆盖整条消费链 |
+| P0 预算、推进性、完成状态 | `Budget` / `WorkLimit`、`viewport_budgeted` / `resume_viewport`、`LayoutPass` / `LayoutSink`；`crates/mdstream-core/tests/frame.rs` 与 `crates/mdstream-core/examples/budget.rs` 覆盖整条消费链 |
 | 限距恢复、对象安全跳过 | `previous_within` / `recovery`、`LayoutPass::from_checkpoint`、`next_drawable`；恢复也消耗同一 Budget，远处无上下文时标记局部近似 |
-| 增量消费协议 | Update 的文档身份、`base_revision`、`merge`、`append_into` / `finish_into`、`apply_layout_update_with_policy`；`crates/mdtui3-core/tests/updates.rs` |
+| 增量消费协议 | Update 的文档身份、`base_revision`、`merge`、`append_into` / `finish_into`、`apply_layout_update_with_policy`；`crates/mdstream-core/tests/updates.rs` |
 | 变化原因与对象状态 | `ChangeKind`、`SyntaxState`、块/标题/链接变更范围、表格行变更范围。对象范围允许包含最后一个未变化的旧对象；引用解析仍使用符号通知 |
-| 高度及缓存依赖 | `HeightState`、`expire` 保留非零估计并恢复旧零值可检索性、`LayoutPolicy`、`DependencyKey`、`ticket_from` / `measure_from`、`insert_for_layout`；`crates/mdtui3-core/tests/estimates.rs` / `crates/mdtui3-core/tests/cache_search.rs` |
+| 高度及缓存依赖 | `HeightState`、`expire` 保留非零估计并恢复旧零值可检索性、`LayoutPolicy`、`DependencyKey`、`ticket_from` / `measure_from`、`insert_for_layout`；`crates/mdstream-core/tests/estimates.rs` / `crates/mdstream-core/tests/cache_search.rs` |
 | 有界快照与回收 | `Document::snapshot` 只复制有上限的源码，非整份 AST；`drain_before` 按预算移出状态并将析构时机交给调用者 |
 | 内存实测与局部压缩 | 三类树 arena 容量和实际增长分配次数；语义树子节点用 NonZeroUsize 压缩，见 README 实测记录。未将 allocator 元数据、String 或用户状态的外部分配冒充树 arena 数据 |
-| UTF-8 字节输入 | `Utf8Document`，最多保留 3 字节不完整尾部；非法序列与 EOF 截断替换为 U+FFFD，偏移基于解码结果；`crates/mdtui3-core/tests/utf8.rs` |
-| 章节关系与结构导航 | 当前章节、父/子、前后兄弟、严格同级、章节范围；`crates/mdtui3-core/tests/sections.rs` |
-| 源码交互基础 | `SourceSearch` 可分帧增量字面匹配，`Selection` 保留源码区间，`TaskState` 为独立视图状态；`crates/mdtui3-core/tests/cache_search.rs`。该轮尚未包含显示文本搜索，见后续交付 |
-| 尖括号自动链接 | URI/email 有界候选；失败/未完成候选不回扫；`crates/mdtui3-core/tests/autolinks.rs`。不包含 GFM 裸 URL 扩展 |
-| 固定版本样例 | CommonMark 0.31.2 的 19 个 autolink 样例：18 个一致、1 个明确差异；`crates/mdtui3-core/tests/compatibility.rs`，不宣称整体合规率 |
+| UTF-8 字节输入 | `Utf8Document`，最多保留 3 字节不完整尾部；非法序列与 EOF 截断替换为 U+FFFD，偏移基于解码结果；`crates/mdstream-core/tests/utf8.rs` |
+| 章节关系与结构导航 | 当前章节、父/子、前后兄弟、严格同级、章节范围；`crates/mdstream-core/tests/sections.rs` |
+| 源码交互基础 | `SourceSearch` 可分帧增量字面匹配，`Selection` 保留源码区间，`TaskState` 为独立视图状态；`crates/mdstream-core/tests/cache_search.rs`。该轮尚未包含显示文本搜索，见后续交付 |
+| 尖括号自动链接 | URI/email 有界候选；失败/未完成候选不回扫；`crates/mdstream-core/tests/autolinks.rs`。不包含 GFM 裸 URL 扩展 |
+| 固定版本样例 | CommonMark 0.31.2 的 19 个 autolink 样例：18 个一致、1 个明确差异；`crates/mdstream-core/tests/compatibility.rs`，不宣称整体合规率 |
 
 该轮结束时仍未完成显示语义映射、基本及完整容器、折叠区间遮蔽与联动、slug、数学/脚注，以及强调/代码回退和语法上限放宽。显示语义映射的后续交付见下一节；其余复杂扩展继续按 TODO 验证模型和算法。终端排版、表格绘制、按键与目录 UI 不属于该轮交付范围。
 
@@ -90,9 +90,9 @@
 - [x] **有预算的增量消费**：`DisplayCursor` 绑定文档身份与 revision，耗尽返回进度，继续读取使用同一 Budget。每步计入 query、object 和有界源码检查窗口（含 CRLF 相邻字节）；源码锚点前进，追加后旧游标被拒绝。现有 `LayoutPass` 的回调仍接收 `RenderRun`，终端排版后续接入显示接口。
 - [x] **晚确认失效**：实体闭合、代码 span 确认会更新范围 revision 和 Text 变化；即使关闭样式影响尺寸的策略，也拒绝旧布局测量。
 
-验证：`crates/mdtui3-core/tests/display.rs` 覆盖 UTF-8、变长及双标量实体、普通文字借用、失败/超长候选、转义及字面上下文、跨 tile/逐标量查询、真实流式逐切点/逐前缀一致性、6 字节预算推进、文档/版本校验、百万字代码晚闭合和局部查询计数。已有分块及确定种子 fuzz 快照加入显示映射。另固定 CommonMark 0.31.2 的 24 个显示文本样例，不对 HTML、属性解码、列表结构或完整代码回退作合规承诺。
+验证：`crates/mdstream-core/tests/display.rs` 覆盖 UTF-8、变长及双标量实体、普通文字借用、失败/超长候选、转义及字面上下文、跨 tile/逐标量查询、真实流式逐切点/逐前缀一致性、6 字节预算推进、文档/版本校验、百万字代码晚闭合和局部查询计数。已有分块及确定种子 fuzz 快照加入显示映射。另固定 CommonMark 0.31.2 的 24 个显示文本样例，不对 HTML、属性解码、列表结构或完整代码回退作合规承诺。
 
-项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 100 项、8 项文档测试通过；`cargo run -p mdtui3-core -r --example display` 演示分帧读取与解码输出。保留零运行时依赖和 `forbid(unsafe_code)`；实体表带来源及输入 SHA-256，生成脚本读取本地数据，构建与测试不联网。
+项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 100 项、8 项文档测试通过；`cargo run -p mdstream-core -r --example display` 演示分帧读取与解码输出。保留零运行时依赖和 `forbid(unsafe_code)`；实体表带来源及输入 SHA-256，生成脚本读取本地数据，构建与测试不联网。
 
 ## 2026-10-30 显示文本搜索交付
 
@@ -101,9 +101,9 @@
 - [x] **有预算的恢复与复杂度**：读取、匹配比较、KMP 失败回退及命中输出共用 Budget。6 bytes、1 query、1 object 的小步能持续前进；未处理片段保留在固定大小缓冲中，源码映射使用查询长度的环形缓冲。查询预处理和任务存储 O(m)，单 revision 匹配比较总量 O(d)，含显示查询的累计时间 O(n log(n + 1) + m)，不拼接全文显示文本或在回退时复制长前缀。
 - [x] **流式变更边界**：任务绑定文档身份与 revision，追加及首次 EOF 后拒绝旧任务，调用方须丢弃旧命中并按需重建；库不自动重搜。空追加和重复 EOF 保持任务有效，完成后重复调用不产生重复结果。跨 revision 维护显示命中和折叠/高亮 UI 接入仍属后续工作。
 
-验证：新增 `crates/mdtui3-core/tests/display_search.rs` 的 10 项测试，使用独立语义预期及完整显示文本上的朴素搜索对照，覆盖源码映射、长查询、重叠匹配、真实流式逐前缀/逐切点、固定种子生成输入、共享预算耗尽/恢复、缓存片段及完成状态下的身份和 revision 拒绝、对抗失败回退计数、百万字隐藏区间的有限读取。
+验证：新增 `crates/mdstream-core/tests/display_search.rs` 的 10 项测试，使用独立语义预期及完整显示文本上的朴素搜索对照，覆盖源码映射、长查询、重叠匹配、真实流式逐前缀/逐切点、固定种子生成输入、共享预算耗尽/恢复、缓存片段及完成状态下的身份和 revision 拒绝、对抗失败回退计数、百万字隐藏区间的有限读取。
 
-项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 110 项、9 项文档测试和格式检查通过。`cargo run -p mdtui3-core -r --example search` 在 13 个有预算步骤内找到格式标记/实体文本和代码中的两处 `ab&c`，输出各自显示及源码范围。保留零运行时依赖和 `forbid(unsafe_code)`。
+项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 110 项、9 项文档测试和格式检查通过。`cargo run -p mdstream-core -r --example search` 在 13 个有预算步骤内找到格式标记/实体文本和代码中的两处 `ab&c`，输出各自显示及源码范围。保留零运行时依赖和 `forbid(unsafe_code)`。
 
 ## 2026-10-30 基础折叠交付
 
@@ -116,9 +116,9 @@
 - [x] **流式范围与失效**：每次 Update 只检查最多六个开放章节和一个代码块，固定数组保存待更新 ID，原位更新记录，不重新分配全部状态。新增 tile 继承遮蔽；代码未分类前缀暂归开放块，闭合/新块确认可收回，Setext 晚确认可缩短旧章节。单节点切换惰性过期后续高度/检查点，旧测量、继续任务、错误文档和不连续更新受校验；重复应用保留新测量。
 - [x] **有限恢复**：`folded_from_checkpoint` 只使用本视图有效且距离有界的起点，恢复步骤共用 Budget；远处直接开始保持局部近似。接入时还修复了 `insert_for_layout` 首次写入超出已有检查点树容量的位置会形成反向失效区间的问题。
 
-验证：`crates/mdtui3-core/tests/folding.rs` 的 11 项回归使用独立源码区间并集模型和明确的文本预期，覆盖父子切换、两个视图、空章节/空代码、同 tile 边界、UTF-8、逐字符前缀、批处理、晚 Setext、流式代码、隐藏图片、摘要/查询预算、异步旧结果及有限恢复；高度树另有 2 项数组/稀疏模型测试。项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 123 项、10 项文档测试、格式检查及 `git diff --check` 通过。
+验证：`crates/mdstream-core/tests/folding.rs` 的 11 项回归使用独立源码区间并集模型和明确的文本预期，覆盖父子切换、两个视图、空章节/空代码、同 tile 边界、UTF-8、逐字符前缀、批处理、晚 Setext、流式代码、隐藏图片、摘要/查询预算、异步旧结果及有限恢复；高度树另有 2 项数组/稀疏模型测试。项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 123 项、10 项文档测试、格式检查及 `git diff --check` 通过。
 
-`cargo run -p mdtui3-core -r --example folding` 在 120 万字节正文上演示父节点收起、展开后保留子折叠，分别用 2 / 3 个有预算步骤输出 4 / 6 行。该示例统计源文本换行与占位，不是终端列宽或完整显示语义排版。
+`cargo run -p mdstream-core -r --example folding` 在 120 万字节正文上演示父节点收起、展开后保留子折叠，分别用 2 / 3 个有预算步骤输出 4 / 6 行。该示例统计源文本换行与占位，不是终端列宽或完整显示语义排版。
 
 下一阶段继续导航联动、锚点恢复、默认策略与可预算批量操作；容器、表格/预览和手工范围仍按各自前提推进。本轮不将这些总体规划项一并勾选为完成。
 
@@ -131,9 +131,9 @@
 - [x] **暂停、变化与失效**：每步消费共享 Budget 的 1 query、1 object，无正文读取。返回完成状态及本次展开的源码包络/版本；取消不撤销已经展开的节点。文档/revision、视图身份/版本均校验，外部折叠、append/finish 和 resize 拒绝旧任务，自身展开及正常高度测量允许继续。完成结果通过 O(1) 的 `Navigator::apply_target` 应用，普通滚动清除旧的精确源码目标。
 - [x] **源码锚点恢复**：`FoldAnchor` 保存文档身份与源码位置，按预算投影到最外层折叠占位；父子依次展开后恢复原源码。跨 append、Setext 晚确认和 resize 重新查询，不复制折叠树、正文或历史布局。允许 EOF，追加保持原偏移，非法 UTF-8 边界与错误文档被拒绝；屏幕行/列仍由接入方局部校准。
 
-验证：新增 `crates/mdtui3-core/tests/fold_navigation.rs` 的 12 项回归，覆盖确定种子的朴素可见标题模型、同 tile 多标题、跳级/重复标题和级别筛选、必要路径展开、结构动作边界、预算耗尽及区间合并、测量期间继续定位、错误/过期任务、滚动后起点更新、流式范围与锚点恢复。5 万个隐藏标题的前后跳转各用 4 个预算步骤；六级章节和代码块中的百万字目标用 10 步打开 7 个遮蔽节点，源码字节预算为 0，解析计数不变。
+验证：新增 `crates/mdstream-core/tests/fold_navigation.rs` 的 12 项回归，覆盖确定种子的朴素可见标题模型、同 tile 多标题、跳级/重复标题和级别筛选、必要路径展开、结构动作边界、预算耗尽及区间合并、测量期间继续定位、错误/过期任务、滚动后起点更新、流式范围与锚点恢复。5 万个隐藏标题的前后跳转各用 4 个预算步骤；六级章节和代码块中的百万字目标用 10 步打开 7 个遮蔽节点，源码字节预算为 0，解析计数不变。
 
-项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 135 项、11 项文档测试、格式检查及 `git diff --check` 通过。`cargo run -p mdtui3-core -r --example folding` 保留原有折叠排版演示，并用 4 个步骤恢复到 120 万字节章节内保存的源码位置。保持零运行时依赖和 `forbid(unsafe_code)`。
+项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 135 项、11 项文档测试、格式检查及 `git diff --check` 通过。`cargo run -p mdstream-core -r --example folding` 保留原有折叠排版演示，并用 4 个步骤恢复到 120 万字节章节内保存的源码位置。保持零运行时依赖和 `forbid(unsafe_code)`。
 
 下一步实现可按预算推进的按级别、递归、全部及聚焦操作，并定义默认策略和显式状态的组合。实际终端排版、目录/高亮/复制 UI、slug、历史/书签和更多折叠对象仍按 TODO 单独推进。
 
@@ -146,9 +146,9 @@
 - [x] **身份、失效及排版组合**：任务绑定文档/revision、视图身份/版本；外部折叠、默认设置变化、append/finish 和 reset 拒绝旧任务。错误返回前不消费预算、不修改视图。自身修改复用单节点高度遮蔽及检查点失效；旧测量被拒绝，正常测量不中断任务，中间状态可以进入有预算排版。
 - [x] **新节点默认设置**：`FoldDefaults` 按六级标题和代码类型设置初始折叠，默认全部展开。O(1) `set_defaults` 只影响后续首次识别的候选，已有意愿与显式操作保留；批量命令不修改默认值。更新仅扫描新增标题/块元数据，Setext 晚确认通过新 HeadingId 初始化，新增隐藏区域在 apply 返回前完成遮蔽。重复 Update、逐字符代码续行和 resize 不覆盖显式展开；`default_visits` 记录初始化检查量。
 
-验证：新增 `crates/mdtui3-core/tests/fold_batch.rs` 的 10 项回归及 `crates/mdtui3-core/tests/folding.rs` 的 1 项排版组合回归。确定种子的父链/可见区间模型对照 100 轮混合命令；覆盖预算原子扣费、非候选计费、取消、错误/过期任务、跨级和同 tile 边界、变化区间合并、独立视图、流式默认设置、逐字符/合并 Update、Setext、finish、resize 和中间状态绘制。百万字子树访问 2 个块、源码字节预算为 0；2 万标题在极小预算下可恢复完成；已有 1 万标题和百万字 Setext 的新确认只增加 1 次默认检查，不访问旧正文。持续追加隐藏正文的排版回调只读取少量可见源码。
+验证：新增 `crates/mdstream-core/tests/fold_batch.rs` 的 10 项回归及 `crates/mdstream-core/tests/folding.rs` 的 1 项排版组合回归。确定种子的父链/可见区间模型对照 100 轮混合命令；覆盖预算原子扣费、非候选计费、取消、错误/过期任务、跨级和同 tile 边界、变化区间合并、独立视图、流式默认设置、逐字符/合并 Update、Setext、finish、resize 和中间状态绘制。百万字子树访问 2 个块、源码字节预算为 0；2 万标题在极小预算下可恢复完成；已有 1 万标题和百万字 Setext 的新确认只增加 1 次默认检查，不访问旧正文。持续追加隐藏正文的排版回调只读取少量可见源码。
 
-项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 146 项、12 项文档测试、格式检查及 `git diff --check` 通过。新增 `cargo run -p mdtui3-core -r --example fold_batch`：每帧 8 query / 8 object，201 块的全部展开用 26 帧完成，3 块子树操作用 1 帧完成；追加后的新标题按默认收起，已展开的旧标题保持展开。
+项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 146 项、12 项文档测试、格式检查及 `git diff --check` 通过。新增 `cargo run -p mdstream-core -r --example fold_batch`：每帧 8 query / 8 object，201 块的全部展开用 26 帧完成，3 块子树操作用 1 帧完成；追加后的新标题按默认收起，已展开的旧标题保持展开。
 
 默认值是新节点的初始状态，不是对历史节点持续强制的规则；合并 Update 在 apply 时使用当前默认值。大批新增对象的初始化成本按输入事件计费，不承诺任意大 apply 的硬时延。兄弟操作、临时预览、历史/书签、容器深度策略和目录等 UI 继续按 TODO 推进。
 
@@ -159,7 +159,7 @@
 
 验证：新增 5 项回归，扩展固定种子的 100 轮混合操作模型和非法目标检查。覆盖跨级/代码混合、隐藏目标、同 tile 边界、根层/空章节/无兄弟、后代状态保留、重复无操作、极小预算、范围外排除、正常测量与 Setext 晚确认。父范围用例只访问 2004 个块，排除外部 2000 个普通块；百万字后代用例只访问 3 个块，源码字节预算为 0；2 万根标题分帧展开其他 19999 个，保留目标收起状态。
 
-项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 151 项、12 项文档测试、格式检查及 `git diff --check` 通过。更新 `cargo run -p mdtui3-core -r --example fold_batch`：兄弟操作以每帧 8 query / 8 object，26 帧访问 203 个块并收起 100 个兄弟。README 和 TODO 已同步；临时预览、历史/书签、容器深度及 UI 工作继续单独推进。
+项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 151 项、12 项文档测试、格式检查及 `git diff --check` 通过。更新 `cargo run -p mdstream-core -r --example fold_batch`：兄弟操作以每帧 8 query / 8 object，26 帧访问 203 个块并收起 100 个兄弟。README 和 TODO 已同步；临时预览、历史/书签、容器深度及 UI 工作继续单独推进。
 
 ## 2026-10-30 临时折叠预览交付
 
@@ -167,9 +167,9 @@
 - [x] **预算和存储边界**：开始、切换及结束各原子消费 1 query、1 object，支付最多两个节点的固定次数索引操作，O(log H + log F + log T)；仅额外保存一个 ID 和布尔意愿，O(1) 空间，不复制折叠树、不读取正文或遍历隐藏 tile。预算不足保留全部旧状态，后续帧可重试；相同目标无操作。错误文档、未同步视图及非法候选在扣费/修改前拒绝。
 - [x] **流式更新和排版组合**：预览跨 append、finish、默认设置变化及 resize 保留，恢复使用当前候选范围，支持开放代码和 Setext 晚确认。预览变化返回旧/新范围包络及版本，沿用高度、检查点、测量与继续任务失效；新导航按实际遮蔽路径工作，绘制使用剩余共享预算或后续帧。
 
-验证：新增 `crates/mdtui3-core/tests/fold_preview.rs` 的 6 项回归及 `crates/mdtui3-core/tests/folding.rs` 的 1 项窗口排版回归；扩展 160 轮固定种子区间模型、逐字符前缀模型和空代码零高度用例。覆盖同 tile 边界、嵌套/切换、空章节、独立视图、显式/批量意愿、导航、预算原子性、错误和旧任务、默认值、重复 Update、Setext、开放代码、finish 和 resize。百万字节点连续预览/追加/恢复 20 轮，单次状态切换不消费源码字节且高度树修改访问少于 1500；新增可见内容只按 64 字节预算消费，恢复后排版仍跳过百万字正文。
+验证：新增 `crates/mdstream-core/tests/fold_preview.rs` 的 6 项回归及 `crates/mdstream-core/tests/folding.rs` 的 1 项窗口排版回归；扩展 160 轮固定种子区间模型、逐字符前缀模型和空代码零高度用例。覆盖同 tile 边界、嵌套/切换、空章节、独立视图、显式/批量意愿、导航、预算原子性、错误和旧任务、默认值、重复 Update、Setext、开放代码、finish 和 resize。百万字节点连续预览/追加/恢复 20 轮，单次状态切换不消费源码字节且高度树修改访问少于 1500；新增可见内容只按 64 字节预算消费，恢复后排版仍跳过百万字正文。
 
-项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 158 项、13 项文档测试、格式检查及 `git diff --check` 通过。`cargo run -p mdtui3-core -r --example folding` 已加入父章节临时预览和恢复：保留子占位的预览绘制用 3 帧，恢复后绘制用 2 帧。README 与 TODO 已同步；有界行数摘要预览、历史/书签、容器深度策略及 UI 接入仍按各自规划推进。
+项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 158 项、13 项文档测试、格式检查及 `git diff --check` 通过。`cargo run -p mdstream-core -r --example folding` 已加入父章节临时预览和恢复：保留子占位的预览绘制用 3 帧，恢复后绘制用 2 帧。README 与 TODO 已同步；有界行数摘要预览、历史/书签、容器深度策略及 UI 接入仍按各自规划推进。
 
 ## 2026-10-30 跳转历史与书签交付
 
@@ -177,9 +177,9 @@
 - [x] **线性历史与分支**：`NavigationHistory::replace_current` 刷新普通滚动后的真实位置；`push` 记录成功的新跳转并截断前进分支，完全相同的条目为无操作。前进/后退边界明确返回无任务，完成时才移动历史游标；取消和预算耗尽不提前提交，已展开的折叠保留。相同源码但不同视口偏移/对象元数据仍可分别保存。
 - [x] **预算、身份与失效**：历史任务每步消费 1 query / 1 object，最终定位与 O(1) 游标提交共用一步；不读取正文、不枚举内部 tile、不复制历史或折叠树。完成可重复读取；另一任务完成、条目变更及文档/视图变化使旧任务失效，错误历史返回 `WrongHistory`。高度测量不阻塞任务，最后按最新高度定位。每个书签/任务 O(1) 空间；历史 O(J) 条目，Vec 保留峰值容量，追加摊还 O(1)，不承诺扩容硬时延。
 
-验证：新增 `crates/mdtui3-core/tests/history.rs` 的 8 项回归，包含固定种子 2000 步线性模型、同 tile 重复/跨级标题、普通滚动返回及视口缩小、历史分支、预算各维原子性、取消、竞争任务、错误文档/视图/历史、过期与未同步更新、空文档/EOF、UTF-8 非法边界、Setext 晚确认、finish 和跨视图恢复。百万字代码内目标在六级标题和代码折叠下用 10 个步骤、7 次路径展开恢复，字节/tile 消费为 0，高度树修改访问少于 15000，保留无关章节折叠；高度回填发生在中途时最终定位使用最新前缀高度。
+验证：新增 `crates/mdstream-core/tests/history.rs` 的 8 项回归，包含固定种子 2000 步线性模型、同 tile 重复/跨级标题、普通滚动返回及视口缩小、历史分支、预算各维原子性、取消、竞争任务、错误文档/视图/历史、过期与未同步更新、空文档/EOF、UTF-8 非法边界、Setext 晚确认、finish 和跨视图恢复。百万字代码内目标在六级标题和代码折叠下用 10 个步骤、7 次路径展开恢复，字节/tile 消费为 0，高度树修改访问少于 15000，保留无关章节折叠；高度回填发生在中途时最终定位使用最新前缀高度。
 
-项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 166 项、14 项文档测试、格式检查及 `git diff --check` 通过。新增 `cargo run -p mdtui3-core -r --example history`：返回隐藏代码用 6 帧、前进用 3 帧，历史边界返回无任务。README 与 TODO 已同步；实际终端行定位、目录/书签 UI、跨重载持久化、有界行数摘要预览及容器工作继续单独推进。
+项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 166 项、14 项文档测试、格式检查及 `git diff --check` 通过。新增 `cargo run -p mdstream-core -r --example history`：返回隐藏代码用 6 帧、前进用 3 帧，历史边界返回无任务。README 与 TODO 已同步；实际终端行定位、目录/书签 UI、跨重载持久化、有界行数摘要预览及容器工作继续单独推进。
 
 ## 2026-10-30 标题显示名称检索交付
 
@@ -187,9 +187,9 @@
 - [x] **有预算候选及匹配**：最多六个级别索引通过二分查询跳过被过滤标题，每次候选查找消费 1 query / 1 object；读取、比较/失败回退及输出共用 `DisplaySearch` 的预算契约。6 bytes、1 query、1 object 可持续推进，调用方复用结果 Vec。查询仅预处理一次 O(m)，切换标题 O(1) 重置匹配位置而不清空映射环、复制标题或重新分配查询表；任务存储 O(m + TILE_BYTES)。百万字标题由显式预算调用扫描，Setext 确认和任务构造不生成完整名称。
 - [x] **流式失效与折叠导航接入**：任务及已返回命中绑定文档身份和 revision，追加/首次 finish 后必须显式重建，错误文档或过期任务在预算/结果变更前拒绝。空追加和重复 finish 不失效，完成任务重复调用不输出。搜索包含折叠内标题并保留视图状态；命中 ID/源码可交给现有 `FoldNavigation::Reveal`，只展开必要路径。
 
-验证：新增 `crates/mdtui3-core/tests/heading_search.rs` 的 9 项回归，覆盖显示实体部分命中、隐藏标记/目标、重复/空标题、长查询与重叠、标题边界重置、UTF-8、小预算各维度、待输出命中、错误文档/过期/完成、长 ATX 逐前缀、Setext 晚确认、逐切点，以及固定种子 60 份文档共 480 次朴素模型对照。百万字正文与一万个被过滤标题不增加读取字节或已计费步骤；一万个全部不匹配级别的标题只用一次候选查询。百万字 Setext 的小预算首帧最多读取 30 字节，2001 字节失败查询的累计字节计费低于内容长度的四倍加常数。折叠内命中恢复精确源码目标，并保留目标正文和无关章节的收起状态。
+验证：新增 `crates/mdstream-core/tests/heading_search.rs` 的 9 项回归，覆盖显示实体部分命中、隐藏标记/目标、重复/空标题、长查询与重叠、标题边界重置、UTF-8、小预算各维度、待输出命中、错误文档/过期/完成、长 ATX 逐前缀、Setext 晚确认、逐切点，以及固定种子 60 份文档共 480 次朴素模型对照。百万字正文与一万个被过滤标题不增加读取字节或已计费步骤；一万个全部不匹配级别的标题只用一次候选查询。百万字 Setext 的小预算首帧最多读取 30 字节，2001 字节失败查询的累计字节计费低于内容长度的四倍加常数。折叠内命中恢复精确源码目标，并保留目标正文和无关章节的收起状态。
 
-项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 175 项、15 项文档测试、格式检查及 `git diff --check` 通过。新增 `cargo run -p mdtui3-core -r --example heading_search`：10 帧完成两个标题的显示名称命中，随后展开必要路径并定位首个命中。README、TODO 已同步；目录 UI、slug/fragment、跨 revision 命中维护及其余核心待办继续单独推进。
+项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 175 项、15 项文档测试、格式检查及 `git diff --check` 通过。新增 `cargo run -p mdstream-core -r --example heading_search`：10 帧完成两个标题的显示名称命中，随后展开必要路径并定位首个命中。README、TODO 已同步；目录 UI、slug/fragment、跨 revision 命中维护及其余核心待办继续单独推进。
 
 ## 2026-10-30 有界显示摘要交付
 
@@ -197,9 +197,9 @@
 - [x] **共享预算和复杂度**：构造不扫描正文，任务 O(1) 空间且不复制完整摘要；每次读取沿用 `DisplayCursor` 的 query/object/byte 计费，隐藏 run 和重复前瞻也计费，每个检查窗口至多 `TILE_BYTES + 2` 字节。每帧 6 bytes、1 query、1 object 可推进，截断扫描仅限已付费的有界 run 或至多 8 字节的替代文本。累计成本 O((S + 1) log(n + 1))，S 为消费的源码前缀；调用方管理输出存储。
 - [x] **流式与折叠边界**：任务和输出绑定文档 revision，追加/首次 finish 后明确失效，调用方显式重建；错误文档、过期任务及非法范围在消费前拒绝。可用 `FoldCandidate.hidden` 读取代码/章节正文，用标题 content 读取名称；不改变折叠意愿、高度或测量状态，也不应用子折叠。开放范围是当前 revision 快照，逻辑行与终端软换行后的屏幕行分开定义。
 
-验证：新增 `crates/mdtui3-core/tests/excerpt.rs` 的 8 项回归，覆盖围栏/缩进代码、UTF-8、实体部分输出及映射、样式/链接、CRLF、隐藏语法、空范围、零/精确上限、各预算维度、错误文档/过期/完成状态、空追加/重复 finish、Setext 晚确认及流式范围。全部 UTF-8 单切点、跨 tile 和大小预算组合对照完整显示文本的独立前缀模型。千字与百万字首行、超长围栏 info 及失败链接候选在 64 字节源码上限下均计费少于 1500 字节；折叠预览读取保持视图版本、高度和高度树访问计数不变。
+验证：新增 `crates/mdstream-core/tests/excerpt.rs` 的 8 项回归，覆盖围栏/缩进代码、UTF-8、实体部分输出及映射、样式/链接、CRLF、隐藏语法、空范围、零/精确上限、各预算维度、错误文档/过期/完成状态、空追加/重复 finish、Setext 晚确认及流式范围。全部 UTF-8 单切点、跨 tile 和大小预算组合对照完整显示文本的独立前缀模型。千字与百万字首行、超长围栏 info 及失败链接候选在 64 字节源码上限下均计费少于 1500 字节；折叠预览读取保持视图版本、高度和高度树访问计数不变。
 
-项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 183 项、16 项文档测试、格式检查及 `git diff --check` 通过。新增 `cargo run -p mdtui3-core -r --example excerpt`：百万字折叠代码的两行摘要用 3 帧、计费 71 字节。README、TODO 已同步；摘要实际显示行上限、占位绘制/高度归属、容器及其余核心待办继续单独推进。
+项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 183 项、16 项文档测试、格式检查及 `git diff --check` 通过。新增 `cargo run -p mdstream-core -r --example excerpt`：百万字折叠代码的两行摘要用 3 帧、计费 71 字节。README、TODO 已同步；摘要实际显示行上限、占位绘制/高度归属、容器及其余核心待办继续单独推进。
 
 ## 2026-10-30 整表折叠交付
 
@@ -209,7 +209,7 @@
 
 验证：新增 8 项回归，覆盖仅表头的表格、同 tile 多占位及高度归属、UTF-8 摘要边界、隐藏图片、晚确认、显式展开、更新重放/合并、逐字符前缀及全部 UTF-8 单切点、未分类尾部回收、临时展开期间追加/闭合/resize、无效 ID、批量兄弟/聚焦及精确书签恢复。既有固定种子模型加入表格，与标题/代码混合切换、预览和 resize 后的源码区间并集逐次对照。百万字单元格收起后，排版只处理至多两个 tile、少于 10 字节文字和一个占位；追加只更新一个开放范围。1 万张历史表格后的默认初始化只访问新 TableId，范围更新每次至多访问一个开放表格。
 
-项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 191 项、17 项文档测试、格式检查及 `git diff --check` 通过。`cargo run -p mdtui3-core -r --example folding` 增加百万字表格示例：收起后追加新行、读取有界表头，2 帧完成占位及后继正文的消费。README、TODO 已同步；表格行预览/范围折叠、实际表头/摘要绘制与其余核心待办继续单独推进。
+项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 191 项、17 项文档测试、格式检查及 `git diff --check` 通过。`cargo run -p mdstream-core -r --example folding` 增加百万字表格示例：收起后追加新行、读取有界表头，2 帧完成占位及后继正文的消费。README、TODO 已同步；表格行预览/范围折叠、实际表头/摘要绘制与其余核心待办继续单独推进。
 
 ## 2026-10-30 表格前几行有界预览交付
 
@@ -217,9 +217,9 @@
 - [x] **预算与复杂度**：构造/存储 O(1)，每行初始化消费 1 query / 1 object，显示读取与外部调用方共用 Budget，逐帧 6 bytes、1 query、1 object 可前进。R 个访问行、S 个检查源码字节的成本为 O(R + (S + 1) log(n + 1))；不枚举列、单元格或未选入行，超长首个单元格受总字节上限约束。
 - [x] **整表折叠及流式组合**：任务独立于 FoldView，保持整表遮蔽、单占位、高度、版本及祖先/子节点意愿；不是局部展开前 N 行。已索引未完成行读取当前范围，未分类尾部排除；任务和输出绑定 revision，追加/首次 finish 后必须显式重建，错误文档/过期任务在扣费前拒绝。实际行可见性、摘要占位布局和连续行范围折叠继续保留在 TODO。
 
-验证：新增 `crates/mdtui3-core/tests/table_preview.rs` 5 项回归，覆盖所有 UTF-8 单切点、稀疏/多余列、行内实体/强调/代码、6/256 字节帧的独立完整显示模型对照、1200 组源码/显示上限组合、零/精确上限、仅表头、预算原子性、错误身份/非法 ID、完成重放、空追加/重复 finish、流式开放行及未分类尾部。百万字单元格加一万行未读取尾部，在 64 字节源码上限下累计计费少于 1500 字节，父章节和整表均收起时折叠版本/高度/高度树访问不变。
+验证：新增 `crates/mdstream-core/tests/table_preview.rs` 5 项回归，覆盖所有 UTF-8 单切点、稀疏/多余列、行内实体/强调/代码、6/256 字节帧的独立完整显示模型对照、1200 组源码/显示上限组合、零/精确上限、仅表头、预算原子性、错误身份/非法 ID、完成重放、空追加/重复 finish、流式开放行及未分类尾部。百万字单元格加一万行未读取尾部，在 64 字节源码上限下累计计费少于 1500 字节，父章节和整表均收起时折叠版本/高度/高度树访问不变。
 
-项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 196 项、18 项文档测试、格式检查及 `git diff --check` 通过。新增 `cargo run -p mdtui3-core -r --example table_preview`：百万字表格收起后追加一行，9 帧、计费 151 字节读取前两行，结束为 RowLimit，整表保持收起。README 与 TODO 已同步。
+项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 196 项、18 项文档测试、格式检查及 `git diff --check` 通过。新增 `cargo run -p mdstream-core -r --example table_preview`：百万字表格收起后追加一行，9 帧、计费 151 字节读取前两行，结束为 RowLimit，整表保持收起。README 与 TODO 已同步。
 
 ## 2026-10-30 文内 slug 与 fragment 交付
 
@@ -229,7 +229,7 @@
 
 验证：新增 8 项集成回归和 1 项内部复杂度回归。覆盖显示实体/强调/代码/链接、Unicode 小写扩展与组合字符、空标题和天然数字后缀冲突、原始/混合/百分号编码、严格 UTF-8 和非法尾部、逐预算维度与重复完成、错误身份/过期、全部 UTF-8 单切点、长 ATX 逐前缀、Setext 和晚到引用；固定种子 60 份文档共 2400 个标题与朴素全字符串模型对照并百分号回查。百万字 Setext 的确认及构造不扫描标题，小预算首帧计费不超过 64 字节；两个相同百万字标题总计费小于输入长度五倍，百万字 fragment 每个输入字节只解码一次。4 万标题（先占用两万个数字名称，再加入两万个重复 base）验证单调候选计数和线性 trie 节点上界。百万字正文不增加索引读取预算，折叠内目标恢复到精确源码且保留无关折叠。
 
-项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 205 项、19 项文档测试、格式检查和 `git diff --check` 全部通过。新增 `cargo run -p mdtui3-core -r --example anchors`：流式索引 4 帧/78 计费字节返回 Unresolved；晚到目标及 finish 后显式重建 6 帧/115 字节，解析重复 slug 和百分号中文目标，恢复源码 37 并保留无关折叠。验收日志：`/tmp/mdtui3-anchors-validation.log`。README 与 TODO 已同步；跨 revision 维护、平台特定 slug 兼容和目录/链接点击 UI 未包含在本次核心接口中。
+项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 205 项、19 项文档测试、格式检查和 `git diff --check` 全部通过。新增 `cargo run -p mdstream-core -r --example anchors`：流式索引 4 帧/78 计费字节返回 Unresolved；晚到目标及 finish 后显式重建 6 帧/115 字节，解析重复 slug 和百分号中文目标，恢复源码 37 并保留无关折叠。验收日志：`/tmp/mdstream-anchors-validation.log`。README 与 TODO 已同步；跨 revision 维护、平台特定 slug 兼容和目录/链接点击 UI 未包含在本次核心接口中。
 
 ## 2026-10-30 显式列表与引用容器交付
 
@@ -237,9 +237,9 @@
 - [x] **显式方言与流式开闭**：混合 `>` 和有序/无序列表，条目按正文前缀宽度匹配 ASCII 空格续行；缺失前缀、兄弟切换、空行和 EOF 有确定关闭语义。沿用 1024 字节分类前缀（至多加 3 字节完成 UTF-8），未分类尾部排除，截断候选及前缀后标记不重解析。开放容器共用已解析末端；Update 提供新 ID 范围、实际关闭 ID 及共享末端，支持 merge 和缓冲区复用，空追加/重复 finish 无开闭。
 - [x] **预算与复杂度**：范围、父关系、深度按 ID O(1) 查询；借用文档的 `ContainerAncestors` 每步计 1 query / 1 object，耗尽不移动，游标空间 O(1)。活动栈每次保留一层都消费显式前缀或正长度缩进，共享空格扫描结果；每个容器只开闭一次。新增容器解析累计 O(n + 开闭次数)、空间 O(n)，全库继续 O(n log n)；长行追加只改共享末端，不扫描/更新所有祖先。公开前缀/开闭操作计数及 arena/活动栈容量；EOF 和批量关闭仍按实际事件计费，不承诺解析硬时延。
 
-验证：新增 `crates/mdtui3-core/tests/containers.rs` 的 11 项回归，覆盖混合父关系/精确范围/叶块归属、同列表不同条目、不同 bullet/分隔符、数字宽度、空任务、显式/缺失续行、缩进空行、顶层表格及围栏优先级、未实现内层块保持正文、流式尾部/EOF、事件重建所有中间快照、merge/身份/重放、共享预算原子性和恢复。固定种子 2000 行引用深度变化对照独立范围模型；现有单切点、随机 UTF-8、逐前缀与 fuzz 快照新增容器。1000 层引用下 1 万次逐字追加及百万字长行追加不增加容器前缀/祖先步骤，arena/活动栈容量小于 200 KB；EOF 恰好关闭 1000 个节点。64/128/256 层列表的 100 行续行检查次数恰为层数 × 行数，空格检查按输入线性计；退出后 2 万空行不产生重复关闭或祖先步骤。分类前缀截断、9/10 位数字、tab 分隔及 CRLF/UTF-8 的每个观察前缀一致。
+验证：新增 `crates/mdstream-core/tests/containers.rs` 的 11 项回归，覆盖混合父关系/精确范围/叶块归属、同列表不同条目、不同 bullet/分隔符、数字宽度、空任务、显式/缺失续行、缩进空行、顶层表格及围栏优先级、未实现内层块保持正文、流式尾部/EOF、事件重建所有中间快照、merge/身份/重放、共享预算原子性和恢复。固定种子 2000 行引用深度变化对照独立范围模型；现有单切点、随机 UTF-8、逐前缀与 fuzz 快照新增容器。1000 层引用下 1 万次逐字追加及百万字长行追加不增加容器前缀/祖先步骤，arena/活动栈容量小于 200 KB；EOF 恰好关闭 1000 个节点。64/128/256 层列表的 100 行续行检查次数恰为层数 × 行数，空格检查按输入线性计；退出后 2 万空行不产生重复关闭或祖先步骤。分类前缀截断、9/10 位数字、tab 分隔及 CRLF/UTF-8 的每个观察前缀一致。
 
-项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 216 项、20 项文档测试、格式检查及 `git diff --check` 通过。新增 `cargo run -p mdtui3-core -r --example containers`：5 个容器，展示未分类尾部、续行和兄弟关闭，2 帧读取 4 层祖先；60 字节输入计 78 容器前缀检查、18 容器步骤。验收日志：`/tmp/mdtui3-containers-validation.log`。README、TODO 已同步。
+项目 devShell 下 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 216 项、20 项文档测试、格式检查及 `git diff --check` 通过。新增 `cargo run -p mdstream-core -r --example containers`：5 个容器，展示未分类尾部、续行和兄弟关闭，2 帧读取 4 层祖先；60 字节输入计 78 容器前缀检查、18 容器步骤。验收日志：`/tmp/mdstream-containers-validation.log`。README、TODO 已同步。
 
 本次仅完成独立可用的显式结构核心。lazy continuation、tight/loose、tab stop 缩进、容器内标题/表格/定义/代码块、跨物理行行内语义、前缀上限扩展及容器折叠/章节作用域继续保留 TODO；不声明完整 CommonMark/GFM 容器兼容性，终端 UI 未包含在本单元。
 
@@ -250,9 +250,9 @@
 - [x] 范围随共享已解析末端增长，未分类尾部沿用旧上下文，关闭后末端固定；作用域开闭各 O(1)，标题追加摊还 O(1)，查询 O(log n)，空间 O(H + C + R)。`heading_steps` 对作用域开闭、上下文检查及标题插入计数；关闭和新标题事件驱动派生范围，不枚举历史标题通知。
 - [x] 名称搜索、slug/fragment、全局/结构导航沿用预算接口；顶层折叠使用根作用域索引，内层 h1 不会截断外层章节。容器内标题暂不提供独立折叠候选，显式预览/批量目标在扣费前拒绝，保留最多六个开放顶层折叠章节的上界。
 
-验收：项目 devShell 中 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 226 项、`cargo test --doc --workspace` 21 项、`cargo fmt --all -- --check`、`git diff --check` 全通过。`cargo run -p mdtui3-core -r --example container_headings` 输出 4 个标题及精确作用域/范围，slug 以 55 帧小预算构建。日志：`/tmp/mdtui3-container-headings-validation.log`。
+验收：项目 devShell 中 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 226 项、`cargo test --doc --workspace` 21 项、`cargo fmt --all -- --check`、`git diff --check` 全通过。`cargo run -p mdstream-core -r --example container_headings` 输出 4 个标题及精确作用域/范围，slug 以 55 帧小预算构建。日志：`/tmp/mdstream-container-headings-validation.log`。
 
-`crates/mdtui3-core/tests/container_headings.rs` 的 10 项验收包含混合嵌套/任务/CRLF、单行 Setext 优先级与边界、全部 UTF-8 单切点和逐标量中间快照、1200 行固定种子线性章节/导航模型、千层容器中的百万字追加和 Setext 无回扫、500 个同时开放的章节作用域以及 1 KiB 截断候选。百万字追加的 `heading_steps`/`container_steps` 不增长；Setext 确认只有 2 个 heading steps、行内扫描增量为 0；批量关闭 1000 层只处理 1001 个 heading steps。深层搜索/slug 共用每帧 6 bytes、1 query、1 object，折叠导航不读标题或正文。
+`crates/mdstream-core/tests/container_headings.rs` 的 10 项验收包含混合嵌套/任务/CRLF、单行 Setext 优先级与边界、全部 UTF-8 单切点和逐标量中间快照、1200 行固定种子线性章节/导航模型、千层容器中的百万字追加和 Setext 无回扫、500 个同时开放的章节作用域以及 1 KiB 截断候选。百万字追加的 `heading_steps`/`container_steps` 不增长；Setext 确认只有 2 个 heading steps、行内扫描增量为 0；批量关闭 1000 层只处理 1001 个 heading steps。深层搜索/slug 共用每帧 6 bytes、1 query、1 object，折叠导航不读标题或正文。
 
 后续仍保留多物理行 Setext、其它容器内块、跨行行内语义、lazy continuation、tight/loose、tab 缩进/分类窗口扩展，以及容器与内层章节折叠、深度策略和终端 UI；本交付不宣称完整 CommonMark/GFM 容器支持。
 
@@ -262,9 +262,9 @@
 - [x] **身份、索引与增量**：复用 TableId、BlockId 与 Block.container，确认表头不更换已有块 ID；表/行/分隔行保存完整物理行范围，单元格排除前缀，row_at 覆盖行前缀但不覆盖分隔行。列宽提示、new_tables、rows_changed、未完成行与 EOF 沿用既有协议。前缀只在物理行分类时检查；长行追加不遍历祖先、不回扫旧行；稀疏表不分配空矩阵，保持累计 O(n log n)、空间 O(n)。
 - [x] **折叠与预算消费**：整表候选的父节点为当前顶层作用域章节，跳过尚无折叠候选的内层标题；默认收起、pending 尾部回收、父章节意愿、临时展开、resize、源码导航和单占位排版直接复用既有契约。只有一个开放表格，更新不增加开放范围遍历上限。TablePreview 总源码上限及共享 Budget 包含隐藏容器前缀，不读取未选中的行或扫描祖先。
 
-验证：新增 12 项回归（`crates/mdtui3-core/tests/container_tables.rs` 10 项、`crates/mdtui3-core/tests/folding.rs` 2 项），覆盖混合嵌套/任务/CRLF、分隔行优先级与兄弟边界、失败/EOF/Setext 回退、顶层段落进入容器时的块隔离、稳定 ID 和通知、全部 UTF-8 单切点/逐标量中间快照、分类窗口边界，以及固定种子 400 张表的独立物理范围/行/单元格/深度模型。1000 层引用下百万字追加不增加分类、容器前缀/步骤或标题作用域步骤；400 列加 2 万稀疏行仅分配 20,400 个单元格，追加只扫描新行。900 层前缀在 900 字节摘要总上限下不输出正文；共享预算预留 1 字节给其它消费者后仍可逐帧读取，保持折叠版本/高度不变。百万字容器表格收起后只生成一个占位，正文回调读 0 字节，追加只刷新一个开放折叠范围。
+验证：新增 12 项回归（`crates/mdstream-core/tests/container_tables.rs` 10 项、`crates/mdstream-core/tests/folding.rs` 2 项），覆盖混合嵌套/任务/CRLF、分隔行优先级与兄弟边界、失败/EOF/Setext 回退、顶层段落进入容器时的块隔离、稳定 ID 和通知、全部 UTF-8 单切点/逐标量中间快照、分类窗口边界，以及固定种子 400 张表的独立物理范围/行/单元格/深度模型。1000 层引用下百万字追加不增加分类、容器前缀/步骤或标题作用域步骤；400 列加 2 万稀疏行仅分配 20,400 个单元格，追加只扫描新行。900 层前缀在 900 字节摘要总上限下不输出正文；共享预算预留 1 字节给其它消费者后仍可逐帧读取，保持折叠版本/高度不变。百万字容器表格收起后只生成一个占位，正文回调读 0 字节，追加只刷新一个开放折叠范围。
 
-项目 devShell 下 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 238 项、`cargo test --doc --workspace` 22 项、`cargo fmt --all -- --check`、`git diff --check` 全通过。新增 `cargo run -p mdtui3-core -r --example container_tables`：演示稳定容器身份、流式创建/行通知、兄弟边界与默认整表收起；14 帧、66 计费字节读取两行摘要。验收日志：`/tmp/mdtui3-container-tables-validation.log`。README、TODO 已同步。
+项目 devShell 下 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 238 项、`cargo test --doc --workspace` 22 项、`cargo fmt --all -- --check`、`git diff --check` 全通过。新增 `cargo run -p mdstream-core -r --example container_tables`：演示稳定容器身份、流式创建/行通知、兄弟边界与默认整表收起；14 帧、66 计费字节读取两行摘要。验收日志：`/tmp/mdstream-container-tables-validation.log`。README、TODO 已同步。
 
 本单元完成容器内表格识别和索引核心，不代表完整容器规则或 GFM 兼容。容器内定义/代码块、多行 Setext、跨行行内语义、lazy continuation、tight/loose、tab 缩进/前缀上限扩展，以及容器/内层章节折叠、实际表格排版和行范围折叠仍保留 TODO；未实施终端 UI。
 
@@ -284,7 +284,7 @@
 
 新增 12 项验收：UTF-8 全切点、逐前缀和合并更新；同 tile/同起点父子与章节/表格组合；空内容/EOF/任务元数据；预览跨增长、关闭和 finish；200 层导航逐帧计费；千层开放链下百万字正文、1000 次逐字追加只做 1000 次共享尾部检查且无容器索引写入；有限布局预算内一个占位、正文回调/计费字节为 0；4096 个关闭兄弟的查询计数与反复切换节点上界；固定种子 2000 次操作及 240 次混合流式更新对照独立区间/高度模型。既有批量测试同步计入新容器候选的访问和状态变化，原来的非候选叶块仍逐步计费。
 
-项目 devShell 下 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 250 项、`cargo test --doc --workspace` 23 项、`cargo fmt --all -- --check` 与 `git diff --check` 全通过。`cargo run -p mdtui3-core -r --example container_folding` 展示追加只访问共享容器尾部及开放表格共 2 个范围，父预览保留子意愿，6 个预算帧恢复 quote/item/table 下的源码位置 42。验收日志：`/tmp/mdtui3-container-folds-validation.log`。README、TODO 已同步。
+项目 devShell 下 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 250 项、`cargo test --doc --workspace` 23 项、`cargo fmt --all -- --check` 与 `git diff --check` 全通过。`cargo run -p mdstream-core -r --example container_folding` 展示追加只访问共享容器尾部及开放表格共 2 个范围，父预览保留子意愿，6 个预算帧恢复 quote/item/table 下的源码位置 42。验收日志：`/tmp/mdstream-container-folds-validation.log`。README、TODO 已同步。
 
 本单元交付显式容器折叠核心，保留内层章节独立折叠、容器深度/类型/任务默认策略、实际摘要和容器布局、终端 UI，以及原有未实现容器语法。开放折叠暂纳入未分类尾部、确认边界后回退，原 Container 结构范围仍只包含已分类输入；不声称整个容器/折叠规划完成。
 
@@ -296,7 +296,7 @@
 
 新增 8 项测试，覆盖 None/0/1/中间阈值/usize::MAX、明确的 Quote/List/Item 深度、独立视图、已有与显式意愿、父子恢复、全部 UTF-8 切点与逐前缀、逐次/合并更新、All/Subtree/Siblings/Focus 与表格/预览组合、策略修改的旧任务拒绝及相同值无操作。千层容器/百万字正文下初始化检查恰好 1000 个节点，随后 1000 次逐字追加默认检查和容器索引写入均不增长，仅增加 1000 次共享尾部检查；有限布局预算产生一个占位，正文计费/回调字节为 0。4096 个历史兄弟后新增一节点只检查一次。固定种子 240 次流式策略切换、显式收放、批量展开、预览和 resize 对照独立区间/可见性/高度模型。
 
-项目 devShell 下 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 258 项、`cargo test --doc --workspace` 24 项、`cargo fmt --all -- --check` 与 `git diff --check` 全通过。新增 `cargo run -p mdtui3-core -r --example container_defaults` 演示预览中的新子节点、显式展开优先及批量展开后新条目仍默认收起：8 个预算帧展开已有节点，共初始化 5 个容器。原 `container_folding` 示例仍以 6 帧恢复源码位置 42。验收日志：`/tmp/mdtui3-container-defaults-validation.log`。README、TODO 已同步。
+项目 devShell 下 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 258 项、`cargo test --doc --workspace` 24 项、`cargo fmt --all -- --check` 与 `git diff --check` 全通过。新增 `cargo run -p mdstream-core -r --example container_defaults` 演示预览中的新子节点、显式展开优先及批量展开后新条目仍默认收起：8 个预算帧展开已有节点，共初始化 5 个容器。原 `container_folding` 示例仍以 6 帧恢复源码位置 42。验收日志：`/tmp/mdstream-container-defaults-validation.log`。README、TODO 已同步。
 
 本单元完成容器深度默认策略；按类型/任务完成状态筛选、内层章节独立折叠、实际摘要/容器排版与终端 UI，以及原有未实现容器语法继续保留 TODO。
 
@@ -306,11 +306,11 @@
 
 内层章节复用容器稀疏最大终点树实现（模块改为 `fold_ranges`），按 HeadingId 单独索引。开放章节与容器共享一次完整 tile 尾部遮蔽，不随逐字追加更新所有开放叶子。新标题通过同作用域六级索引定位可能结束的旧章节；容器关闭只检查六个级别的末尾标题，已封闭/未收起的节点跳过。长 ATX 只移动一个隐藏起点；Setext 晚确认、待分类行边界回退、合并 Update 与 finish 固化精确范围。N 个新标题、E 个关闭容器的范围维护为 O((N + E + 1)(log H + log C + log F + log T))，默认初始化另按新对象计费；查询不扫描祖先，新增索引空间 O(H)，反复切换不存历史快照。`section_index_visits` / `section_index_nodes` 提供访问和存储证据。保持零运行时依赖、禁止 unsafe，apply 仍按实际事件消费，不承诺任意大 Update 的单帧时延。
 
-新增 `crates/mdtui3-core/tests/container_sections.rs` 12 项验收，覆盖明确父链/最内层候选、保留标题和空章节、同 tile/同起点、父子意愿、独立视图、Setext 晚确认、流式待分类尾部、UTF-8 全切点和逐标量中间快照、合并更新/重复 finish、全部批量动作、默认/显式状态及预览/表格组合、预算原子性和旧任务/测量拒绝。240 次流式追加、切换、预览和 resize 对照独立线性区间/父链/高度模型；既有“不支持内层折叠”的回归同步升级为新行为验收。
+新增 `crates/mdstream-core/tests/container_sections.rs` 12 项验收，覆盖明确父链/最内层候选、保留标题和空章节、同 tile/同起点、父子意愿、独立视图、Setext 晚确认、流式待分类尾部、UTF-8 全切点和逐标量中间快照、合并更新/重复 finish、全部批量动作、默认/显式状态及预览/表格组合、预算原子性和旧任务/测量拒绝。240 次流式追加、切换、预览和 resize 对照独立线性区间/父链/高度模型；既有“不支持内层折叠”的回归同步升级为新行为验收。
 
 复杂度证据：500 个开放章节下百万字正文后的 1000 次逐字追加只增加 1000 次共享尾部检查，章节索引访问、解析标题/容器步骤均不增长；有限预算布局只输出一个占位、读取少于 16 字节标题，百万字正文不进入回调。一次关闭 500 层恰好增加 501 次范围访问。150 层交替章节/容器导航以每帧 1 query/1 object 打开 300 个必要节点，正文计费字节为 0；一个内层章节下的一万个标题在前后各 4 步中整段跳过，保留本章节标题。4096 个关闭章节的查询少于 40 个索引节点访问，反复切换不增加节点数。百万字 Setext 确认不增加行内扫描，索引访问少于 40 次。
 
-项目 devShell 中 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 270 项、`cargo test --doc --workspace` 25 项、`cargo fmt --all -- --check` 与 `git diff --check` 全通过。新增 `cargo run -p mdtui3-core -r --example container_sections`：追加访问共享章节尾部与表格共 2 个范围，6 帧恢复源码位置 56，兄弟章节仍收起；既有 `container_folding` 示例仍以 6 帧恢复源码位置 42。日志：`/tmp/mdtui3-container-sections-validation.log`。README 与 TODO 已同步。
+项目 devShell 中 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 270 项、`cargo test --doc --workspace` 25 项、`cargo fmt --all -- --check` 与 `git diff --check` 全通过。新增 `cargo run -p mdstream-core -r --example container_sections`：追加访问共享章节尾部与表格共 2 个范围，6 帧恢复源码位置 56，兄弟章节仍收起；既有 `container_folding` 示例仍以 6 帧恢复源码位置 42。日志：`/tmp/mdstream-container-sections-validation.log`。README 与 TODO 已同步。
 
 本单元完成容器内章节独立折叠核心。容器定义/代码块、多物理行 Setext、复杂续行与其它未实现方言、类型/任务默认策略、实际摘要/容器排版、表格行范围折叠和终端 UI 继续保留 TODO，不声明整个容器或折叠规划完成。
 
@@ -324,11 +324,11 @@
 
 解析增加一个常数大小候选，每个美元串只决议一次（`Work::math_steps`），内容沿用 `inline_bytes` 单遍扫描；闭合只做常数次 O(log n) 区间标记。新增对象空间 O(M)，全库保持累计 O(n log n)、空间 O(n)，零运行时依赖且禁止 unsafe；单次 append/Vec 扩容仍是摊还契约。
 
-新增 `crates/mdtui3-core/tests/math.rs` 11 项验收：精确/不同/超长串、空白与货币规则、奇偶反斜线、opaque 内容、代码/链接/实体/外层样式组合、CRLF/普通换行/Setext/标题/容器/单元格边界、失败及 EOF、延迟闭合与稳定身份、合并/复用更新、禁用样式尺寸策略时的旧测量拒绝、共享预算与 UTF-8 原子恢复、无效区间、4096 个对象的独立窗口相交模型。既有全 UTF-8 切点、逐前缀与固定种子 fuzz 快照加入数学元数据和语法。
+新增 `crates/mdstream-core/tests/math.rs` 11 项验收：精确/不同/超长串、空白与货币规则、奇偶反斜线、opaque 内容、代码/链接/实体/外层样式组合、CRLF/普通换行/Setext/标题/容器/单元格边界、失败及 EOF、延迟闭合与稳定身份、合并/复用更新、禁用样式尺寸策略时的旧测量拒绝、共享预算与 UTF-8 原子恢复、无效区间、4096 个对象的独立窗口相交模型。既有全 UTF-8 切点、逐前缀与固定种子 fuzz 快照加入数学元数据和语法。
 
 复杂度证据：百万字开放数学后的 1000 次逐字追加只增加 1000 个 inline bytes，分类计数与美元串决议次数不增长；追加 `$$ ` 闭合只消费 3 字节、决议 1 次，区间树访问少于 1000 次。1024/4096/16384 规模的密集失配美元串、长美元串和转义候选逐字追加后 EOF 不扫描旧正文，annotation 节点少于 32。百万字公式仅用 16 bytes 的共享预算读取首片段；收起所在章节后布局只读少于 16 字节标题、生成一个占位，公式正文未进入回调。
 
-项目 devShell 下 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 281 项、`cargo test --doc --workspace` 26 项、`cargo fmt --all -- --check` 及 `git diff --check` 全通过。`cargo run -p mdtui3-core -r --example math` 展示流式确认、共享对象预算和 5 帧 / 16 字节读取原始公式；未闭合尾部不新增对象。验收日志：`/tmp/mdtui3-math-validation.log`。README 与 TODO 已同步。
+项目 devShell 下 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 281 项、`cargo test --doc --workspace` 26 项、`cargo fmt --all -- --check` 及 `git diff --check` 全通过。`cargo run -p mdstream-core -r --example math` 展示流式确认、共享对象预算和 5 帧 / 16 字节读取原始公式；未闭合尾部不新增对象。验收日志：`/tmp/mdstream-math-validation.log`。README 与 TODO 已同步。
 
 本单元交付定界数学区间和预算消费核心；独立数学块、其他定界方言、TeX 解析/排版、实际数学对象回调、脚注及终端 UI 继续保留待办，不宣称完整数学 Markdown 扩展兼容。
 
@@ -343,7 +343,7 @@
 - `footnote_references_in` 在首次扣费后 O(log R) 定位窗口，后续逐对象 O(1)；`resolve_footnote` O(1) 间接解析，区分 Unresolved/Missing/Defined。`footnote_content` 按共享 Budget 和 TILE_BYTES 上限读取原始 UTF-8 字节，原子暂停并保持继续位置；不复制完整正文。
 - 新增 11 项脚注验收，既有分块/fuzz 快照纳入脚注：覆盖 Unicode 标签、失败/未闭合、定义顺序和重复、原文回退、上下文/容器/表格、逐前缀增长及 CRLF、通知重建/合并、预算推进、缓存与布局失效。4096 个符号/引用窗口对照朴素区间模型；两万次旧引用后的晚定义仅 3 次符号步骤 / 1 个标签字节、无旧引用遍历；百万字定义后的 1000 次逐字追加仅 1000 次增长步骤，无正文、标签或分类回扫；失败候选计数线性。
 
-验收在项目 devShell 内通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo nextest run --workspace --no-fail-fast`（292 项）、`cargo nextest run --workspace --release --no-fail-fast`（292 项）、`cargo test --doc --workspace`（27 项）、`cargo fmt --all -- --check`、`git diff --check`。`cargo run -p mdtui3-core -r --example footnotes` 验证晚定义保留编号，6 帧读取 40 字节正文。日志：`/tmp/mdtui3-footnotes-validation.log`。
+验收在项目 devShell 内通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo nextest run --workspace --no-fail-fast`（292 项）、`cargo nextest run --workspace --release --no-fail-fast`（292 项）、`cargo test --doc --workspace`（27 项）、`cargo fmt --all -- --check`、`git diff --check`。`cargo run -p mdstream-core -r --example footnotes` 验证晚定义保留编号，6 帧读取 40 字节正文。日志：`/tmp/mdstream-footnotes-validation.log`。
 
 保留零运行时依赖、`forbid(unsafe_code)`、累计解析 O(n log n) 与空间 O(n)。多行/多段及容器内定义、正文 Markdown 排版、编号上标和文末脚注区、双向跳转/返回与实际对象回调仍见 TODO；通用显示暂时保留 `[^label]` 原文标记，隐藏顶层定义。
 
@@ -354,8 +354,8 @@
 - [x] **视图组合与预算消费**：行范围直接父节点是整表；章节/容器/整表收起隐藏子占位，展开恢复局部选择。支持 set/toggle、All/Subtree/Siblings/Focus 批量、临时展开、源码导航和锚点、独立视图、resize 与旧测量/任务拒绝。批量逐个访问已注册范围，1 query / 1 object 原子推进；布局和摘要复用共享 Budget，完整隐藏内部使用高度区间遮蔽，占位归属起点 tile。独立 TablePreview 不改变范围状态。
 - [x] **流式与 EOF**：允许选入已索引但未完成末行，其源码终点随该行增长；换行/finish 固定，未分类尾部及新行不自动加入。完整行结束于当前 EOF 时记录唯一边界候选，下一次更新校正同一个可增长 tile 的覆盖；否则旧 EOF 内新增的可见行会被误遮蔽。单次追加只更新一个活动行范围或一次 EOF 边界，不扫描所有历史区间；合并更新、重复更新/finish、预览恢复均使用当前范围。
 - [x] **复杂度**：BTreeMap 按稳定物理行起点保存不相交注册，前驱查找点覆盖、相邻项验证重叠；注册 O(log R)，切换/移除 O(log R + log F + log T)，不遍历行/列/源码/覆盖 tile。注册空间 O(正文行数)，重复切换不积累历史；六个根章节 + 整表 + 当前末行最多 8 个逐次刷新范围，容器/内层章节继续共享末端。百万字后 1000 次逐字追加仅消费 1000 table bytes / 1000 次行范围刷新；4096 个历史范围后的普通追加零历史范围刷新。
-- [x] **验收**：新增 `crates/mdtui3-core/tests/table_row_folding.rs` 13 项测试，覆盖 UTF-8 全切点/中间快照、CRLF、空/越界/重叠输入、邻接占位、同 tile 边界、首行摘要预算、隐藏图片、全部批量命令、导航/预览/旧任务、合并与 EOF；1200 次随机切换/预览/reset 对照独立可见区间与高度模型，240 次嵌套作用域流式增长/跨表验收，4096 个范围查找/切换及 1000 次大范围注册移除验收。独立 EOF 用例覆盖 12 种行长与 ASCII/中/🙂 后继，确认仅一次边界校正且新行可见。
-- [x] **项目 devShell**：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 305 项、`cargo test --doc --workspace` 28 项、`cargo fmt --all -- --check` 和 `git diff --check` 通过。`cargo run -p mdtui3-core -r --example table_row_folding` 用 6 帧/38 个计费字节跳过百万字隐藏行，保留表头、前行及后续追加行。完整验收日志：`/tmp/mdtui3-table-row-folding-validation.log`。
+- [x] **验收**：新增 `crates/mdstream-core/tests/table_row_folding.rs` 13 项测试，覆盖 UTF-8 全切点/中间快照、CRLF、空/越界/重叠输入、邻接占位、同 tile 边界、首行摘要预算、隐藏图片、全部批量命令、导航/预览/旧任务、合并与 EOF；1200 次随机切换/预览/reset 对照独立可见区间与高度模型，240 次嵌套作用域流式增长/跨表验收，4096 个范围查找/切换及 1000 次大范围注册移除验收。独立 EOF 用例覆盖 12 种行长与 ASCII/中/🙂 后继，确认仅一次边界校正且新行可见。
+- [x] **项目 devShell**：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 305 项、`cargo test --doc --workspace` 28 项、`cargo fmt --all -- --check` 和 `git diff --check` 通过。`cargo run -p mdstream-core -r --example table_row_folding` 用 6 帧/38 个计费字节跳过百万字隐藏行，保留表头、前行及后续追加行。完整验收日志：`/tmp/mdstream-table-row-folding-validation.log`。
 
 本轮交付固定、不相交正文行范围核心；没有改变 Markdown 源码、解析方言或零运行时依赖/禁止 unsafe 契约。真实表格与占位绘制、自动增长尾部策略、重叠/嵌套行区间及手工任意源码范围仍单独设计，终端 UI 不在本轮范围。
 
@@ -368,11 +368,11 @@
 
 生产实现仅增加容器围栏的作用域/前缀决议和同作用域缩进合并检查，无新增依赖、公共对象或独立索引。长行追加只增长当前块与共享尾部，无行内扫描或祖先更新；显式前缀按新增字节匹配，关闭按实际事件消费。全库累计解析 O(n log n)、空间 O(n)、禁止 unsafe 和预算契约保持。
 
-新增 15 项测试（`crates/mdtui3-core/tests/container_code.rs` 10 项、`crates/mdtui3-core/tests/container_sections.rs` 4 项、`crates/mdtui3-core/tests/chunking.rs` 1 项），并扩充现有 UTF-8 全切点/逐前缀/fuzz 样本及旧方言回归。覆盖嵌套/兄弟/作用域退出、字面内容、闭合失败、分类窗口、长行/CRLF/EOF、稳定身份及更新、合并更新、默认/预览/导航/表格组合、预算暂停、源码截断与过期任务/测量。400 个生成代码块与独立物理范围/显示模型一致，240 次流式收放/预览/resize 与独立线性区间/父链/高度模型一致。
+新增 15 项测试（`crates/mdstream-core/tests/container_code.rs` 10 项、`crates/mdstream-core/tests/container_sections.rs` 4 项、`crates/mdstream-core/tests/chunking.rs` 1 项），并扩充现有 UTF-8 全切点/逐前缀/fuzz 样本及旧方言回归。覆盖嵌套/兄弟/作用域退出、字面内容、闭合失败、分类窗口、长行/CRLF/EOF、稳定身份及更新、合并更新、默认/预览/导航/表格组合、预算暂停、源码截断与过期任务/测量。400 个生成代码块与独立物理范围/显示模型一致，240 次流式收放/预览/resize 与独立线性区间/父链/高度模型一致。
 
 复杂度验收：1000 层引用内，围栏与缩进代码各追加 1000 次 × 1000 字节，输入只增长百万字，分类/行内/容器/标题计数及容器/章节索引访问均不增长；离开容器只关闭 1000 个节点，不读取旧正文。250 层列表的两个续行恰好匹配 500 个活动帧，缩进串扫描线性且正文不创建子节点。4096 个已关闭代码块之后追加只检查一个新块，无历史刷新。折叠百万字代码在有限 query/object/tile 预算内生成一个占位，正文回调及计费字节均为零。
 
-项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 320 项、`cargo test --doc --workspace` 29 项、`cargo fmt --all -- --check` 与 `git diff --check`。`cargo run -p mdtui3-core -r --example container_code` 用 7 帧/45 个计费字节读取首行代码摘要，再用 6 帧恢复源码位置 30，缩进代码兄弟保持折叠。日志：`/tmp/mdtui3-container-code-validation.log`、`/tmp/mdtui3-container-code-release.log`。TODO 与 README 已同步。
+项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 320 项、`cargo test --doc --workspace` 29 项、`cargo fmt --all -- --check` 与 `git diff --check`。`cargo run -p mdstream-core -r --example container_code` 用 7 帧/45 个计费字节读取首行代码摘要，再用 6 帧恢复源码位置 30，缩进代码兄弟保持折叠。日志：`/tmp/mdstream-container-code-validation.log`、`/tmp/mdstream-container-code-release.log`。TODO 与 README 已同步。
 
 本单元交付容器内围栏/缩进代码核心；容器内定义、多物理行 Setext、lazy continuation、tight/loose、完整 CommonMark 缩进/空行/tab 规则、实际代码排版与终端 UI 继续保留待办。
 
@@ -383,11 +383,11 @@
 - [x] **流式、失败与边界**：链接定义连同行末须位于含前缀的分类窗口内；脚注 marker 在窗口内确认后正文可无限增长，LF/EOF 封闭，CRLF 只修正尾端。定义中断同作用域正文/表格、不作为 Setext 候选、不吸收下一物理行。非法/超长/未完成候选沿用行内失败规则，无效纯空白链接标签保留容器前缀隐藏和独立叶块，避免合并进外层段落。
 - [x] **复用预算与视图协议**：现有 Update 新块/变化范围、符号通知及 merge 可重建全部中间状态；DependencyKey 和布局 ticket 处理晚定义，容器/章节折叠意愿保持。窗口引用查询、间接解析和 UTF-8 原文游标共用 Budget，原子暂停后可继续。语法隐藏的百万字定义布局跳过正文，字节计费及正文/对象回调均为零。
 
-验证：新增 14 项验收（`crates/mdtui3-core/tests/container_definitions.rs` 13 项及 `crates/mdtui3-core/tests/chunking.rs` 1 项），并扩充既有 UTF-8 全切点、确定种子逐前缀/随机分块快照与脚注回归。400 组生成输入对照独立首定义、源码物理范围和容器深度模型；通知重建和逐次/合并折叠消费一致。覆盖大小写/Unicode 标签、首定义与重复、代码/标题/表格优先级、分类窗口、失败标签、流式正文、CRLF/EOF、预算及缓存。
+验证：新增 14 项验收（`crates/mdstream-core/tests/container_definitions.rs` 13 项及 `crates/mdstream-core/tests/chunking.rs` 1 项），并扩充既有 UTF-8 全切点、确定种子逐前缀/随机分块快照与脚注回归。400 组生成输入对照独立首定义、源码物理范围和容器深度模型；通知重建和逐次/合并折叠消费一致。覆盖大小写/Unicode 标签、首定义与重复、代码/标题/表格优先级、分类窗口、失败标签、流式正文、CRLF/EOF、预算及缓存。
 
 复杂度：两万处链接和两万处脚注引用之后，容器内晚定义不改变旧引用数组，链接只 intern 1 字节标签、脚注仅 3 次符号步骤，不增加 inline bytes。千层容器中的百万字脚注追加 1000 次单字，只增加 1000 input bytes 和 1000 次当前脚注操作，无分类/正文/标签回扫、祖先操作或容器/章节索引写入；百万字失败链接候选后追加同样只消费新字节。250 层列表的续行空格单次扫描，4096 对历史链接/脚注符号不增加重复定义刷新；复用现有数据结构，累计 O(n log n)、空间 O(n)、零运行时依赖及 `forbid(unsafe_code)` 保持。
 
-项目 devShell 下 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 334 项、`cargo test --doc --workspace` 30 项、`cargo fmt --all -- --check` 及 `git diff --check` 全部通过。`cargo run -p mdtui3-core -r --example container_definitions` 演示全局晚定义、稳定编号和容器折叠，脚注正文 6 帧 / 32 字节读取完成。验收日志：`/tmp/mdtui3-container-definitions-validation.log`、`/tmp/mdtui3-container-definitions-release.log`。
+项目 devShell 下 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 334 项、`cargo test --doc --workspace` 30 项、`cargo fmt --all -- --check` 及 `git diff --check` 全部通过。`cargo run -p mdstream-core -r --example container_definitions` 演示全局晚定义、稳定编号和容器折叠，脚注正文 6 帧 / 32 字节读取完成。验收日志：`/tmp/mdstream-container-definitions-validation.log`、`/tmp/mdstream-container-definitions-release.log`。
 
 保留边界：仍采用显式容器与既有 1 KiB 分类前缀；链接多行目标/title、脚注多行/多段及正文 Markdown 排版、脚注区/上标/双向跳转、完整容器续行规则和终端 UI 继续待办。本轮没有新增局部符号作用域或改变现有方言长度上限。
 
@@ -399,11 +399,11 @@
 
 代码 span 增加最后一个实际正文 byte/CRLF 区间；all-spaces 忽略前缀，闭合仅检查端点，正确去除规范化后的首尾一个空白并保留源码包络映射。显示查询、摘要、DependencyKey、旧测量拒绝及检查点失效复用既有范围协议；Budget 包含隐藏前缀和 CRLF lookaround，耗尽可原子暂停并继续。跨行闭合不改变容器/章节折叠意愿，逐次及合并 Update 均可消费。
 
-新增 15 项测试（`crates/mdtui3-core/tests/container_inline.rs` 14 项、`crates/mdtui3-core/tests/chunking.rs` 1 项），并扩展 UTF-8 全切点/逐前缀及固定种子分块样本。覆盖混合引用/列表/任务、容器切换和块边界、失败/确认表头、非法定义回退、Setext 晚提升、CRLF/末端换行、代码空白与逐标量源码映射、单行对象、EOF、长行分类上限、增量失效和共享预算。400 组生成作用域输入对照独立可见文本/样式模型；原定义及表格回退测试更新为明确的续行预期，原有解析、显示、折叠、脚注和数学回归全部通过。
+新增 15 项测试（`crates/mdstream-core/tests/container_inline.rs` 14 项、`crates/mdstream-core/tests/chunking.rs` 1 项），并扩展 UTF-8 全切点/逐前缀及固定种子分块样本。覆盖混合引用/列表/任务、容器切换和块边界、失败/确认表头、非法定义回退、Setext 晚提升、CRLF/末端换行、代码空白与逐标量源码映射、单行对象、EOF、长行分类上限、增量失效和共享预算。400 组生成作用域输入对照独立可见文本/样式模型；原定义及表格回退测试更新为明确的续行预期，原有解析、显示、折叠、脚注和数学回归全部通过。
 
 复杂度证据：千层引用的百万字未闭合强调/代码各追加 1000 次单字，仅增加 1000 inline bytes，分类和祖先计数不增长；下一显式行闭合只增加 6 inline bytes、至多 3 次分隔符步骤和少于 1500 次区间树访问。250 层列表续行恰好匹配 250 个活动帧（每帧拥有一个 List/Item 对），空格串计数线性；4096 个未闭合 opener 后追加一个正文字符不访问旧栈或祖先，EOF 仅弹出这 4096 个候选且不读取旧正文。新增持久状态为一个容器 ID 和一个代码末端区间，全库仍为累计解析 O(n log n)、空间 O(n)、零运行时依赖及 `forbid(unsafe_code)`；解析/EOF 维持摊还契约。
 
-项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 349 项、`cargo test --doc --workspace` 31 项、`cargo fmt --all -- --check` 与 `git diff --check`。`cargo run -p mdtui3-core -r --example container_inline` 用 19 帧 / 437 个计费字节读取跨行显示文本，保留六个物理叶块与条目折叠状态。日志：`/tmp/mdtui3-container-inline-validation.log`、`/tmp/mdtui3-container-inline-release.log`。
+项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 349 项、`cargo test --doc --workspace` 31 项、`cargo fmt --all -- --check` 与 `git diff --check`。`cargo run -p mdstream-core -r --example container_inline` 用 19 帧 / 437 个计费字节读取跨行显示文本，保留六个物理叶块与条目折叠状态。日志：`/tmp/mdstream-container-inline-validation.log`、`/tmp/mdstream-container-inline-release.log`。
 
 本单元交付显式正文的跨行行内衔接核心；跨行链接/图片标签及数学内容映射、多物理行 Setext、需要撤销已确认样式的更完整规则、lazy continuation、tight/loose、tab/分类上限扩展和终端 UI 继续保留 TODO，不声明完整容器或 CommonMark 兼容。
 
@@ -413,13 +413,13 @@
 
 方言与边界见 [README](README.md#容器-lazy-continuation)：空白、有效标题/围栏/定义/分隔线及新容器标记中断，任意合法编号和空列表标记沿用项目方言；只有已有非空正文具备 lazy 资格。未决表头可退为正文，但 lazy 行不确认/延续表格，也不新建表头；缺省前缀的 `===` 为正文，后续显式 Setext 仍只提升最近物理叶块。非法定义标签及失败候选留作行内正文；纯空白分类前缀不保留路径，长行沿用 1 KiB 分类窗口并在后续追加中不重试。
 
-新增 15 项验收（`crates/mdtui3-core/tests/container_lazy.rs` 14 项、`crates/mdtui3-core/tests/chunking.rs` 1 项），并补充既有 UTF-8 全切点、逐前缀及确定种子随机分块样本。覆盖混合嵌套/任务、部分前缀、兄弟与块中断、非正文资格、空白/缩进、失败候选、表格/Setext、CRLF/EOF、旧测量失效、稳定叶块、显示预算和折叠状态；1200 行生成输入对照独立容器范围/开闭模型，并通过 Update 重建全部中间快照及合并事件。旧测试中明确要求退出的输入改用空白、标题或定义中断，保留原关闭、索引和折叠断言；普通省略前缀输入按新语义验证。
+新增 15 项验收（`crates/mdstream-core/tests/container_lazy.rs` 14 项、`crates/mdstream-core/tests/chunking.rs` 1 项），并补充既有 UTF-8 全切点、逐前缀及确定种子随机分块样本。覆盖混合嵌套/任务、部分前缀、兄弟与块中断、非正文资格、空白/缩进、失败候选、表格/Setext、CRLF/EOF、旧测量失效、稳定叶块、显示预算和折叠状态；1200 行生成输入对照独立容器范围/开闭模型，并通过 Update 重建全部中间快照及合并事件。旧测试中明确要求退出的输入改用空白、标题或定义中断，保留原关闭、索引和折叠断言；普通省略前缀输入按新语义验证。
 
 复杂度：千层引用之后 4096 行无前缀短文本恰好增加 4096 次活动帧检查；百万字 lazy 正文再逐字追加 1000 次，只增加 1000 inline bytes，无分类/前缀/祖先回扫。250 层列表的部分缩进仅检查实际匹配层和一次失配，空格扫描线性。500 个开放章节之后 1000 行 lazy 追加仅更新 1000 次共享折叠末端，容器和章节索引零写入；折叠百万字正文的 LayoutPass 计费 0 字节、无正文回调。没有新增持久状态或运行时依赖，累计解析 O(n log n)、空间 O(n)、`forbid(unsafe_code)` 及摊还 EOF 契约保持。
 
-项目 devShell 验收：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 364 项、`cargo test --doc --workspace` 32 项、`cargo fmt --all -- --check` 与 `git diff --check` 通过。新示例 `cargo run -p mdtui3-core -r --example container_lazy` 用 11 帧 / 250 个计费字节读取混合续行，保持 4 个容器及折叠意愿；另外 8 个既有容器相关示例通过。日志：`/tmp/mdtui3-lazy-final-validation.log`。
+项目 devShell 验收：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 364 项、`cargo test --doc --workspace` 32 项、`cargo fmt --all -- --check` 与 `git diff --check` 通过。新示例 `cargo run -p mdstream-core -r --example container_lazy` 用 11 帧 / 250 个计费字节读取混合续行，保持 4 个容器及折叠意愿；另外 8 个既有容器相关示例通过。日志：`/tmp/mdstream-lazy-final-validation.log`。
 
-附加巡检发现 `crates/mdtui3-core/examples/container_tables.rs:30` 仍把表格折叠父节点断言为顶层标题，实际已是条目容器；在改动前提交 `a976459` 的独立源码副本中复现相同失败（`/tmp/mdtui3-lazy-baseline-example.log`）。此为既有示例断言问题，本单元未修改它；表格相关核心测试全部通过。
+附加巡检发现 `crates/mdstream-core/examples/container_tables.rs:30` 仍把表格折叠父节点断言为顶层标题，实际已是条目容器；在改动前提交 `a976459` 的独立源码副本中复现相同失败（`/tmp/mdstream-lazy-baseline-example.log`）。此为既有示例断言问题，本单元未修改它；表格相关核心测试全部通过。
 
 本单元完成有界 lazy continuation 核心；tight/loose、完整 tab 缩进、分类上限、多物理行 Setext、跨行链接/图片/数学内容表示及更完整块确认/撤销规则保留 TODO，终端 UI 仍留待后续。
 
@@ -429,11 +429,11 @@
 
 `Update.loosened_lists` 每个列表只报告一次转换，可与新建/关闭事件及共享末端重建全部快照；合并只移动增量，append_into/finish_into 保留 Vec 容量，空追加与重复 EOF 无事件。确认时只改列表节点，并对源码包络做一次 O(log n) 结构/语法版本失效；历史叶块、条目、样式及链接无需回访或改写。旧 TileKey/DependencyKey、测量及检查点正常失效，屏外保留估计高度，折叠意愿不变；查询复用每层 1 query / 1 object 的祖先预算，不实现实际间距排版。
 
-新增 `crates/mdtui3-core/tests/list_tightness.rs` 的 15 项验收，并扩充全局 UTF-8 全切点/逐前缀样本。覆盖 bullet/有序/任务/引用列表、空条目、前导/末尾/连续空行、嵌套直接子节点、标记变化、代码/标题/表格/定义及失败候选、CRLF、EOF/长空白分类上限、通知重建/合并/容量复用、缓存/旧测量失效、隐藏布局预算与分块一致性。400 组固定种子混合嵌套模板对照独立 spacing 预期，并以随机分块及一次追加对照全快照。
+新增 `crates/mdstream-core/tests/list_tightness.rs` 的 15 项验收，并扩充全局 UTF-8 全切点/逐前缀样本。覆盖 bullet/有序/任务/引用列表、空条目、前导/末尾/连续空行、嵌套直接子节点、标记变化、代码/标题/表格/定义及失败候选、CRLF、EOF/长空白分类上限、通知重建/合并/容量复用、缓存/旧测量失效、隐藏布局预算与分块一致性。400 组固定种子混合嵌套模板对照独立 spacing 预期，并以随机分块及一次追加对照全快照。
 
 复杂度证据：64/128/250 层列表各处理 1000 条显式空行，`list_steps` 均只增 1000，后续正文确认只增 2 步且仅最内层列表 Loose；千层引用中的列表经过 4096 条无前缀 lazy 行只增 4096 次帧检查/直接内容检查。1 与 4096 个旧条目后的晚确认同为 3 次 list_steps、3 次 container_steps，区间树访问少于 1000；历史叶块保持原值。百万字正文后 1000 次逐字追加只增 1000 inline bytes，分类/前缀/spacing 计数均不增长；已 Loose 列表不重复全范围失效。折叠百万字列表后晚确认，LayoutPass 不触发正文回调且计费 0 字节。新增持久状态为列表属性及每个活动列表帧的两个布尔摘要，不扫描祖先或子树；累计 O(n log n)、空间 O(n)、零运行时依赖与禁止 unsafe 保持。
 
-项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 379 项、`cargo test --doc --workspace` 33 项、`cargo fmt --all -- --check` 和 `git diff --check`。`cargo run -p mdtui3-core -r --example list_tightness` 验证两个列表的晚确定通知，6 帧读取 5 个容器并完成路径查询。日志：`/tmp/mdtui3-list-tightness-validation.log`。
+项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 379 项、`cargo test --doc --workspace` 33 项、`cargo fmt --all -- --check` 和 `git diff --check`。`cargo run -p mdstream-core -r --example list_tightness` 验证两个列表的晚确定通知，6 帧读取 5 个容器并完成路径查询。日志：`/tmp/mdstream-list-tightness-validation.log`。
 
 本单元交付有独立价值的显式方言 tight/loose 元数据与失效核心；跨无前缀空行保持列表身份、嵌套末尾空行传播、更完整缩进/块边界、实际段落间距和终端 UI 保留 TODO，不声明整个容器语义已完成。
 
@@ -446,11 +446,11 @@
 
 失败只重新分类原有有界前缀，沿用不完整行规则；延迟长尾普通消费一次后进入既有流式路径，不再尝试表头、Setext、定义或容器重分类。**有界的是分类回退窗口与重试次数，单次晚失败仍可能消费长尾，不是硬时延/字节预算保证。** 每个探测字节至多检查一次、普通正文至多解析一次，附加识别存储 O(表头列数)，全库累计 O(n log n)、空间 O(n)、零运行时依赖及禁止 unsafe 保持。
 
-新增 15 项验收：`crates/mdtui3-core/tests/long_delimiters.rs` 13 项、`crates/mdtui3-core/tests/chunking.rs` 1 项、识别器语法对照 1 项。原有长表头拒绝测试保留，原长分隔行拒绝断言改为接受。验证覆盖首尾管道/四种对齐、CRLF/EOF、列数不足/溢出/空单元格/晚 Unicode 失败、显式混合嵌套/任务/兄弟/lazy/代码边界、原段落与缩进代码回退、稳定范围、旧测量和缓存键、Update 合并、章节父关系与折叠、预算原子暂停及摘要跳过长分隔行。117649 种六字节候选 × 3 种列数（352947 组）对照原有独立 split/trim 语法；UTF-8 全切点与逐前缀快照一致；400 组有效/无效输入对照独立表/分隔/正文行范围模型。
+新增 15 项验收：`crates/mdstream-core/tests/long_delimiters.rs` 13 项、`crates/mdstream-core/tests/chunking.rs` 1 项、识别器语法对照 1 项。原有长表头拒绝测试保留，原长分隔行拒绝断言改为接受。验证覆盖首尾管道/四种对齐、CRLF/EOF、列数不足/溢出/空单元格/晚 Unicode 失败、显式混合嵌套/任务/兄弟/lazy/代码边界、原段落与缩进代码回退、稳定范围、旧测量和缓存键、Update 合并、章节父关系与折叠、预算原子暂停及摘要跳过长分隔行。117649 种六字节候选 × 3 种列数（352947 组）对照原有独立 split/trim 语法；UTF-8 全切点与逐前缀快照一致；400 组有效/无效输入对照独立表/分隔/正文行范围模型。
 
 复杂度验收：千层引用的百万字成功/失败探测，每次追加只增长新增字节的探测计数，分类、行内、祖先及标题计数不变；确认只读有界表头，晚失败分类输入至多 2 × 1024 字节，后续 1000 次逐字追加不再探测或分类旧尾部。250 层列表匹配线性并保持 500 个容器身份；400 列分隔行及失败后 20000 个多余单元格不积累候选矩阵。共享 Budget 的摘要按行索引跳过百万字分隔行，不按分隔行长度计费。
 
-项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 394 项、`cargo test --doc --workspace` 34 项、`cargo fmt --all -- --check` 和 `git diff --check`。`cargo run -p mdtui3-core -r --example long_delimiters` 检查 1000008 个分隔行字节，13 帧/72 个计费字节读取表头与正文摘要（跨帧读取窗口可重叠）。日志：`/tmp/mdtui3-long-delimiters-validation.log`、`/tmp/mdtui3-long-delimiters-release.log`。
+项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 394 项、`cargo test --doc --workspace` 34 项、`cargo fmt --all -- --check` 和 `git diff --check`。`cargo run -p mdstream-core -r --example long_delimiters` 检查 1000008 个分隔行字节，13 帧/72 个计费字节读取表头与正文摘要（跨帧读取窗口可重叠）。日志：`/tmp/mdstream-long-delimiters-validation.log`、`/tmp/mdstream-long-delimiters-release.log`。
 
 本单元未移除表头长度上限；长表头成功后的单元格语义提交、失败后的前序行内状态恢复，以及其它 Setext/fence/容器分类上限继续保留 TODO。未实现终端 UI，也不声明整个语法上限方向已完成。
 
@@ -462,11 +462,11 @@
 
 `Work.table_header_bytes` 统计摘要检查，候选每个字节至多一次；另一次语义消费只发生在确认或回退时，已解析历史正文不重放。候选附加状态 O(1)，分隔行对齐数组 O(表头列数)，确认后才创建正式列/单元格；稀疏行不补空矩阵，原始 String、tile 和正式语义索引保持总空间 O(n)，累计解析 O(n log n)。早管道长表头已分类，`pending()` 为空，原文可按 tile 预览；长分隔行探测继续保留有界 pending 前缀。长表头确认/失败可能单次消费全部延迟内容，未承诺解析调用硬时延或字节预算。
 
-新增 15 项验收：`crates/mdtui3-core/tests/long_headers.rs` 13 项、`crates/mdtui3-core/tests/chunking.rs` 1 项、摘要语法模型 1 项。117649 组独立 split/trim 对照验证列数、转义奇偶、首尾管道和空白；UTF-8 全切点/逐标量中间快照覆盖成功、失败、EOF、CRLF、窗口处转义及原有段落状态。表格/容器组合覆盖任务/有序列表、兄弟/嵌套/lazy 拒绝、代码优先、单元格隔离、对象仅发布一次、长分隔行回退、稳定 BlockId 与源码范围、旧测量/缓存失效、合并 Update、章节父关系及父子折叠意愿。
+新增 15 项验收：`crates/mdstream-core/tests/long_headers.rs` 13 项、`crates/mdstream-core/tests/chunking.rs` 1 项、摘要语法模型 1 项。117649 组独立 split/trim 对照验证列数、转义奇偶、首尾管道和空白；UTF-8 全切点/逐标量中间快照覆盖成功、失败、EOF、CRLF、窗口处转义及原有段落状态。表格/容器组合覆盖任务/有序列表、兄弟/嵌套/lazy 拒绝、代码优先、单元格隔离、对象仅发布一次、长分隔行回退、稳定 BlockId 与源码范围、旧测量/缓存失效、合并 Update、章节父关系及父子折叠意愿。
 
 复杂度与内存验收：千层引用下百万字候选只增加新字节摘要计数，分类、行内、容器/标题步骤、容器及注解 arena 容量不变；成功/失败后不重复消费。250 层列表保持 500 个容器身份；1000 个连续失败候选的摘要量等于一次行内消费量。4096 列加 4000 个稀疏正文行只分配 8096 个真实单元格；400 组成功/失败输入对照独立表/行/单元格范围模型。共享 Budget 摘要在 64 字节源码上限停止，零预算不推进；百万字表头折叠后追加新行，实际布局仅回调一个占位、正文及计费字节均为 0。
 
-项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 409 项、`cargo test --doc --workspace` 35 项、`cargo fmt --all -- --check` 和 `git diff --check`。`cargo run -p mdtui3-core -r --example long_headers` 摘要扫描 1000012 字节、显示摘要 15 帧/100 个计费字节；原 `long_delimiters` 示例仍为 13 帧/72 个计费字节。完整日志：`/tmp/mdtui3-long-headers-validation.log`。
+项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 409 项、`cargo test --doc --workspace` 35 项、`cargo fmt --all -- --check` 和 `git diff --check`。`cargo run -p mdstream-core -r --example long_headers` 摘要扫描 1000012 字节、显示摘要 15 帧/100 个计费字节；原 `long_delimiters` 示例仍为 13 帧/72 个计费字节。完整日志：`/tmp/mdstream-long-headers-validation.log`。
 
 README、TODO 已同步；只勾选已交付的早管道长表头子项。晚管道表头的语义撤销/延迟策略、其它分类长度限制和终端 UI 继续保留待办。
 
@@ -478,11 +478,11 @@ README、TODO 已同步；只勾选已交付的早管道长表头子项。晚管
 
 每个候选字节只做一次摘要、每个行内字节只消费一次；成功时额外有一次单元格边界扫描，分别计入 `table_header_bytes`、`inline_bytes`、`table_bytes`。没有回放历史正文、复制源码、克隆 Inline 或提前建立候选单元格数组；候选额外状态 O(1)，原有 Inline/对象及正式表格索引维持总空间 O(n)、累计解析 O(n log n)。链接、数学、脚注的已发布 ID 和首次引用编号保持。长候选确认仍可能扫描整个旧前缀，失败可能消费整个延迟后缀，不声明单次调用硬预算。
 
-新增 14 项验收：`crates/mdtui3-core/tests/late_headers.rs` 13 项、`crates/mdtui3-core/tests/chunking.rs` 1 项。另扩充既有 117649 组摘要语法模型，以独立反斜线奇偶检查对照首管道位置，逐字节与整段摘要一致。全 UTF-8 切点/逐标量快照覆盖成功、失败、EOF、CRLF、转义边界、继承状态及长分隔行晚失败；首单元格语义对照既有全延迟早管道路径，覆盖样式、实体、代码、链接/图片、数学、脚注和单元格边界。对象在管道前已可查询，确认不重复发布；覆盖任务/有序列表、兄弟/嵌套/lazy/代码边界、稳定 BlockId、缓存与旧测量拒绝、合并 Update 和章节/容器折叠。
+新增 14 项验收：`crates/mdstream-core/tests/late_headers.rs` 13 项、`crates/mdstream-core/tests/chunking.rs` 1 项。另扩充既有 117649 组摘要语法模型，以独立反斜线奇偶检查对照首管道位置，逐字节与整段摘要一致。全 UTF-8 切点/逐标量快照覆盖成功、失败、EOF、CRLF、转义边界、继承状态及长分隔行晚失败；首单元格语义对照既有全延迟早管道路径，覆盖样式、实体、代码、链接/图片、数学、脚注和单元格边界。对象在管道前已可查询，确认不重复发布；覆盖任务/有序列表、兄弟/嵌套/lazy/代码边界、稳定 BlockId、缓存与旧测量拒绝、合并 Update 和章节/容器折叠。
 
 复杂度与预算验收：千层引用下首管道前百万字逐批追加仅增加新字节摘要和行内计数，管道后百万字只增加摘要；分类、容器/标题步骤及容器/注解 arena 容量不变。确认或失败不重复行内消费前缀。250 层列表保持 500 个容器身份；4096 个已发布链接/数学/脚注在确认时没有额外符号步骤，4096 列加 4096 稀疏行仅有 8192 个真实单元格；400 组成功/失败输入符合独立区间模型。共享 Budget 摘要零预算不推进、源码上限 64 字节；百万字表头折叠后追加正文，布局仅回调一个占位，正文及计费字节均为 0。
 
-项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 423 项、`cargo test --doc --workspace` 36 项、`cargo fmt --all -- --check` 和 `git diff --check`。`cargo run -p mdtui3-core -r --example late_headers` 保持首链接身份，摘要扫描 1000049 字节、16 帧/110 个计费字节；原 `long_headers`、`long_delimiters` 示例分别保持 15 帧/100 字节、13 帧/72 字节。完整日志：`/tmp/mdtui3-late-headers-validation.log`。
+项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 423 项、`cargo test --doc --workspace` 36 项、`cargo fmt --all -- --check` 和 `git diff --check`。`cargo run -p mdstream-core -r --example late_headers` 保持首链接身份，摘要扫描 1000049 字节、16 帧/110 个计费字节；原 `long_headers`、`long_delimiters` 示例分别保持 15 帧/100 字节、13 帧/72 字节。完整日志：`/tmp/mdstream-late-headers-validation.log`。
 
 README、TODO 只将本子项记为已交付。已有段落或同一容器续行中的晚管道仍保留待办：例如 `*prior\nend*…|b` 在首管道出现前已发布跨行强调，现有单调样式和稳定对象协议不能直接撤销；不得用延迟全部普通长行来规避即时消费约束。其它分类长度上限、完整容器规则及终端 UI 不属于本次实现。
 
@@ -494,11 +494,11 @@ README、TODO 只将本子项记为已交付。已有段落或同一容器续行
 
 顶层即时续行先延伸原段落范围，并保存原端点；确认时恢复端点、新建表格块，失败/无管道保持普通段落。容器物理叶块保留稳定 BlockId。换行恢复、块归属变化和表格确认复用原有范围失效与 Update，拒绝相关旧缓存和测量；不回访旧块/引用/祖先。候选只增加固定大小换行描述和可选段落端点，不复制正文、不克隆 Inline、不建立候选单元格数组。每个正文摘要字节一次、每个行内字节最多一次，表格确认额外扫描一次单元格边界；维持累计 O(n log n)、空间 O(n)，不承诺单次确认/回退的硬预算。
 
-新增 14 项测试：`crates/mdtui3-core/tests/inherited_headers.rs` 13 项与 `crates/mdtui3-core/tests/chunking.rs` 1 项。全延迟早管道路径对照当前行和前序行的样式、显示文本及对象；涵盖软/硬换行、CRLF、EOF、Setext、作用域变化、失败分隔行、即时普通正文、对象身份、根段落范围恢复、合并 Update、旧测量与折叠。UTF-8 全切点和逐前缀快照一致。既有 `long_delimiters` 的前序普通段落拒绝断言改为接受，并保留未闭合强调拒绝与其它分类限制；原跨行样式、代码、链接和数学的行为继续单独回归。
+新增 14 项测试：`crates/mdstream-core/tests/inherited_headers.rs` 13 项与 `crates/mdstream-core/tests/chunking.rs` 1 项。全延迟早管道路径对照当前行和前序行的样式、显示文本及对象；涵盖软/硬换行、CRLF、EOF、Setext、作用域变化、失败分隔行、即时普通正文、对象身份、根段落范围恢复、合并 Update、旧测量与折叠。UTF-8 全切点和逐前缀快照一致。既有 `long_delimiters` 的前序普通段落拒绝断言改为接受，并保留未闭合强调拒绝与其它分类限制；原跨行样式、代码、链接和数学的行为继续单独回归。
 
 复杂度与资源验收：千层引用下，首管道前百万字追加只消费新字节并更新摘要，首管道后百万字只更新摘要；分类、容器/标题步骤及注解/容器 arena 容量不增长。1000 条普通长续行保持单个根段落；4096 个旧 opener 后的 100 条长续行不增加 delimiter 步骤，EOF 只清理一次。250 层列表、4096 个链接/数学/脚注与 4096 列不重复符号工作；400 组成功/失败输入对照独立范围模型。前序百万字尾空白回退用一次范围隐藏，新增树访问少于 1000、节点少于 200，并使远处旧 tile 测量失效。共享预算摘要零预算不推进，容器与表格折叠后的布局只有一个占位回调，正文及计费字节均为 0。
 
-项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 437 项、`cargo test --doc --workspace` 37 项、`cargo fmt --all -- --check` 和 `git diff --check`。`cargo run -p mdtui3-core -r --example inherited_headers` 验证百万字失败回退与成功预览，后者 16 帧/110 个计费字节；既有 `late_headers`、`long_headers`、`long_delimiters`、`container_inline`、`container_lazy` 示例均通过。完整日志：`/tmp/mdtui3-inherited-validation.log`。
+项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 437 项、`cargo test --doc --workspace` 37 项、`cargo fmt --all -- --check` 和 `git diff --check`。`cargo run -p mdstream-core -r --example inherited_headers` 验证百万字失败回退与成功预览，后者 16 帧/110 个计费字节；既有 `late_headers`、`long_headers`、`long_delimiters`、`container_inline`、`container_lazy` 示例均通过。完整日志：`/tmp/mdstream-inherited-validation.log`。
 
 README、TODO 已同步，只将“只继承换行”的子项记为已交付。继承未闭合跨行候选的晚管道表头、其它分类上限、完整容器语义和终端 UI 仍保留待办，不声称整个继承状态方向完成。
 
@@ -510,11 +510,11 @@ README、TODO 已同步，只将“只继承换行”的子项记为已交付。
 
 每个行内字节最多消费一次，每个合格摘要字节一次；表格确认仍有一次单元格边界扫描。成功删除/重建 opener 计入 `delimiter_steps`，每个 opener 仅在所属序列成为单元格时处理一次；失败及无管道续行不遍历历史栈。只增加固定大小栈边界/闭合事件字段，不克隆栈、不复制源码，维持累计 O(n log n)、空间 O(n)。确认和回退不承诺单次硬预算；显示、预览、折叠继续共用已有 Budget、Update 和范围失效协议。
 
-新增 12 项测试：`crates/mdtui3-core/tests/open_headers.rs` 11 项与 `crates/mdtui3-core/tests/chunking.rs` 1 项。五种 delimiter 和局部代码/数学/链接状态对照既有全延迟早管道路径；失败/EOF 对照普通正文。512 组局部配对/交叉/转义输入对照独立路径，400 组成功/失败/取消探测输入对照表格范围模型。UTF-8 全切点及逐标量中间快照涵盖 CRLF、待定 run、栈重新增长、无管道、长分隔行失败与容器作用域失配。另覆盖即时对象、稳定 ID/增量范围、原块范围、旧测量拒绝、合并 Update、容器/表格折叠与共享预算。既有长分隔行测试将旧强调未闭合的拒绝断言改为接受，并保留继承代码拒绝；原跨行强调闭合和 opaque 候选回归继续通过。
+新增 12 项测试：`crates/mdstream-core/tests/open_headers.rs` 11 项与 `crates/mdstream-core/tests/chunking.rs` 1 项。五种 delimiter 和局部代码/数学/链接状态对照既有全延迟早管道路径；失败/EOF 对照普通正文。512 组局部配对/交叉/转义输入对照独立路径，400 组成功/失败/取消探测输入对照表格范围模型。UTF-8 全切点及逐标量中间快照涵盖 CRLF、待定 run、栈重新增长、无管道、长分隔行失败与容器作用域失配。另覆盖即时对象、稳定 ID/增量范围、原块范围、旧测量拒绝、合并 Update、容器/表格折叠与共享预算。既有长分隔行测试将旧强调未闭合的拒绝断言改为接受，并保留继承代码拒绝；原跨行强调闭合和 opaque 候选回归继续通过。
 
 复杂度与资源验收：千层引用下百万字增长只增加新字节摘要/行内计数，分类、delimiter、容器/标题步骤及注解/容器 arena 容量不变；确认/失败不重读首单元格语义。4096 个旧 opener 经 200 轮长候选失败/无管道续行，delimiter 计数不增加，最终确认只清理一次 4096 项。250 层列表、4096 个链接/数学/脚注及 4096 列保持确切作用域，确认没有额外符号工作。预算摘要零预算不推进，8 字节逐帧读取能够完成。
 
-项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 449 项、`cargo test --doc --workspace` 38 项、`cargo fmt --all -- --check` 和 `git diff --check`。`cargo run -p mdtui3-core -r --example open_headers` 演示百万字失败恢复和成功表头，摘要 16 帧/110 个计费字节；既有 `inherited_headers`、`late_headers`、`long_headers`、`long_delimiters`、`container_inline`、`container_lazy` 示例均通过。完整日志：`/tmp/mdtui3-open-headers-validation.log`。README、TODO 已同步，零运行时依赖与 `forbid(unsafe_code)` 保持；其余继承候选和跨行语义撤销、其它分类上限、完整容器语义与终端 UI 继续保留待办。
+项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 449 项、`cargo test --doc --workspace` 38 项、`cargo fmt --all -- --check` 和 `git diff --check`。`cargo run -p mdstream-core -r --example open_headers` 演示百万字失败恢复和成功表头，摘要 16 帧/110 个计费字节；既有 `inherited_headers`、`late_headers`、`long_headers`、`long_delimiters`、`container_inline`、`container_lazy` 示例均通过。完整日志：`/tmp/mdstream-open-headers-validation.log`。README、TODO 已同步，零运行时依赖与 `forbid(unsafe_code)` 保持；其余继承候选和跨行语义撤销、其它分类上限、完整容器语义与终端 UI 继续保留待办。
 
 ## 2026-10-30 旧代码尚未闭合的晚管道长表头核心交付
 
@@ -524,11 +524,11 @@ README、TODO 已同步，只将“只继承换行”的子项记为已交付。
 
 复杂度证明：每个候选摘要字节一次、原代码状态消费一次；成功时在已有单元格扫描阶段额外消费当前候选行。成功表头互不重叠，因此这部分总量受 `table_bytes` 约束，`inline_bytes <= source().len() + table_bytes`，两个阶段的实际字节均如实计数。失败不重放，普通增长不回扫，确认不读前序代码正文、不重试分类。只增加一个布尔标志，不复制正文或克隆栈；累计解析仍 O(n log n)、核心空间 O(n)，单次确认/回退仍无硬时延保证。有预算显示、摘要与折叠接口保持原契约。
 
-新增 13 项测试：`crates/mdtui3-core/tests/code_headers.rs` 12 项与 `crates/mdtui3-core/tests/chunking.rs` 1 项。对照全延迟早管道模型与普通正文模型，覆盖 363 组反引号组合、400 组表格范围、UTF-8 全切点/逐前缀、CRLF/EOF/Setext/长分隔行失败、首管道前待定 run、闭合后重新开启、稳定对象/叶块身份、显示映射的逐标量/tile/预算读取、合并 Update、旧测量拒绝和折叠。既有 `long_delimiters` 将本次支持的拒绝断言改为接受，并保留已经闭合的跨行代码及其它分类上限断言。
+新增 13 项测试：`crates/mdstream-core/tests/code_headers.rs` 12 项与 `crates/mdstream-core/tests/chunking.rs` 1 项。对照全延迟早管道模型与普通正文模型，覆盖 363 组反引号组合、400 组表格范围、UTF-8 全切点/逐前缀、CRLF/EOF/Setext/长分隔行失败、首管道前待定 run、闭合后重新开启、稳定对象/叶块身份、显示映射的逐标量/tile/预算读取、合并 Update、旧测量拒绝和折叠。既有 `long_delimiters` 将本次支持的拒绝断言改为接受，并保留已经闭合的跨行代码及其它分类上限断言。
 
 资源与复杂度验收：千层引用中保留百万字前序代码，再分 1000 次追加百万字候选，仅增加新字节的摘要/行内计数；分类、delimiter、容器/标题计数与注解/容器 arena 容量不变。成功只重新消费当前候选行；失败只消费 10 个剩余字节。4096 个旧强调 opener 经 200 轮失败/无管道续行不增加 delimiter 步骤，最终代码映射与普通模型一致；250 层列表、4096 个旧 opener、4096 组链接/数学/脚注及 4096 列在确认时各处理一次。零预算摘要不推进，8 字节分帧读取可完成。
 
-项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 462 项、`cargo test --doc --workspace` 39 项、`cargo fmt --all -- --check` 和 `git diff --check`。新示例 `cargo run -p mdtui3-core -r --example code_headers` 验证百万字失败恢复与成功表头，预算摘要 15 帧/101 个计费字节；既有 `open_headers`、`inherited_headers`、`late_headers`、`long_headers`、`long_delimiters`、`container_inline`、`container_lazy` 示例均通过。日志：`/tmp/mdtui3-code-headers-validation.log`、`/tmp/mdtui3-code-headers-release.log`。README、TODO 已同步，零运行时依赖与 `forbid(unsafe_code)` 保持。
+项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 462 项、`cargo test --doc --workspace` 39 项、`cargo fmt --all -- --check` 和 `git diff --check`。新示例 `cargo run -p mdstream-core -r --example code_headers` 验证百万字失败恢复与成功表头，预算摘要 15 帧/101 个计费字节；既有 `open_headers`、`inherited_headers`、`late_headers`、`long_headers`、`long_delimiters`、`container_inline`、`container_lazy` 示例均通过。日志：`/tmp/mdstream-code-headers-validation.log`、`/tmp/mdstream-code-headers-release.log`。README、TODO 已同步，零运行时依赖与 `forbid(unsafe_code)` 保持。
 
 ## 2026-10-30 旧数学尚未闭合的晚管道长表头核心交付
 
@@ -538,11 +538,11 @@ README、TODO 已同步，只将“只继承换行”的子项记为已交付。
 
 每个合格正文摘要字节一次，失败时每个行内字节一次；成功仅额外解析当前表头，其源码范围互不重叠，全部计入 `inline_bytes`，实际满足 `inline_bytes <= source().len() + table_bytes`。不读前序数学正文，候选额外状态 O(1)，总空间 O(n)、累计解析 O(n log n)；确认、回退和 EOF 保持摊还契约，不承诺单次硬时延。共享预算对象/内容游标、显示摘要及折叠沿用既有接口。
 
-新增 13 项验收：`crates/mdtui3-core/tests/math_headers.rs` 12 项与 `crates/mdtui3-core/tests/chunking.rs` 1 项。先在基线复现未闭合数学拒绝表头，再验证实现通过；基线日志 `/tmp/mdtui3-math-headers-baseline.log`。确认语义对照全延迟早管道路径，失败对照无管道普通正文；338 组美元串/转义输入对照独立闭合模型，400 组成功/失败/取消探测输入对照表格范围模型。UTF-8 全切点及逐标量快照覆盖 CRLF、待定美元串、已闭合后重开、失败长分隔行、EOF、Setext 和容器边界。另覆盖原段落范围恢复、增量对象范围、稳定 MathId/LinkId/脚注编号、旧测量拒绝、合并 Update 与表格折叠。
+新增 13 项验收：`crates/mdstream-core/tests/math_headers.rs` 12 项与 `crates/mdstream-core/tests/chunking.rs` 1 项。先在基线复现未闭合数学拒绝表头，再验证实现通过；基线日志 `/tmp/mdstream-math-headers-baseline.log`。确认语义对照全延迟早管道路径，失败对照无管道普通正文；338 组美元串/转义输入对照独立闭合模型，400 组成功/失败/取消探测输入对照表格范围模型。UTF-8 全切点及逐标量快照覆盖 CRLF、待定美元串、已闭合后重开、失败长分隔行、EOF、Setext 和容器边界。另覆盖原段落范围恢复、增量对象范围、稳定 MathId/LinkId/脚注编号、旧测量拒绝、合并 Update 与表格折叠。
 
 复杂度与资源验收：前序百万字数学正文后的当前表头再增长百万字，只增加新增字节的行内/摘要计数；分类、数学/delimiter、容器/标题步骤及注解/容器 arena 容量不变。成功只额外消费当前表头，失败不重读；4096 个旧 opener 经 200 轮失败/无管道长行不增加数学或 delimiter 步骤，最终仅清理一次。4096 个延迟链接/数学/脚注和 4096 列仅在确认时发布，数学窗口与 UTF-8 内容读取共用预算且零预算不推进；摘要每帧最多 8 字节。千层引用和 250 层列表验证原数学物理行边界及稳定容器内表格语义。
 
-项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 475 项、`cargo test --doc --workspace` 40 项、`cargo fmt --all -- --check` 与 `git diff --check`。`cargo run -p mdtui3-core -r --example math_headers` 验证百万字成功/失败与稳定 MathId，预览 19 帧/127 个计费字节；既有 `code_headers`、`math`、`container_inline` 示例通过。完整日志：`/tmp/mdtui3-math-headers-validation.log`。
+项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 475 项、`cargo test --doc --workspace` 40 项、`cargo fmt --all -- --check` 与 `git diff --check`。`cargo run -p mdstream-core -r --example math_headers` 验证百万字成功/失败与稳定 MathId，预览 19 帧/127 个计费字节；既有 `code_headers`、`math`、`container_inline` 示例通过。完整日志：`/tmp/mdstream-math-headers-validation.log`。
 
 README、TODO 已同步，只标记本独立子项；继承链接等其它候选、已发布跨行语义撤销、容器数学跨行表示、其余分类上限和终端 UI 继续保留待办。零运行时依赖与禁止 unsafe 的约束保持。
 
@@ -554,11 +554,11 @@ README、TODO 已同步，只标记本独立子项；继承链接等其它候选
 
 旧强调/代码/数学的闭合事件继续取消探测；继承代码/数学仍 opaque 的成功路径沿用一次当前表头独立解析，其余标签路径直接复用已消费前缀。失败只消费延迟后缀并一次提交前序换行；不复制正文、克隆栈、回扫标签或撤销对象。新增状态 O(1)，普通标签路径实测 `inline_bytes <= source().len()`；叠加 opaque 候选时沿用 `inline_bytes <= source().len() + table_bytes`。累计 O(n log n)、空间 O(n)，单次确认/失败仍是摊还契约，不承诺硬时延。
 
-新增 13 项验收：`crates/mdtui3-core/tests/link_headers.rs` 12 项与 `crates/mdtui3-core/tests/chunking.rs` 1 项。基线先复现未闭合标签阻止表头确认（`/tmp/mdtui3-link-headers-baseline.log`）。确认对照早管道独立单元格路径，失败对照无管道普通正文；200 组标签替换/转义组合对照独立闭合模型，400 组成功/取消/长分隔行失败对照源码范围模型。UTF-8 全切点及逐标量中间快照覆盖 CRLF、硬换行、旧标签闭合后重开、当前行标签、代码/数学组合、长分隔行失败、Setext、EOF 和容器边界。原数学测试中“旧标签阻止隔离”的边界更新为本次支持的组合验收。
+新增 13 项验收：`crates/mdstream-core/tests/link_headers.rs` 12 项与 `crates/mdstream-core/tests/chunking.rs` 1 项。基线先复现未闭合标签阻止表头确认（`/tmp/mdstream-link-headers-baseline.log`）。确认对照早管道独立单元格路径，失败对照无管道普通正文；200 组标签替换/转义组合对照独立闭合模型，400 组成功/取消/长分隔行失败对照源码范围模型。UTF-8 全切点及逐标量中间快照覆盖 CRLF、硬换行、旧标签闭合后重开、当前行标签、代码/数学组合、长分隔行失败、Setext、EOF 和容器边界。原数学测试中“旧标签阻止隔离”的边界更新为本次支持的组合验收。
 
 复杂度与资源验收：百万字旧图片标签后的当前行再分批增长百万字，仅增加新增字节的行内/表头摘要计数；分类、标签规范化、delimiter、容器/标题步骤和注解/容器 arena 容量均不变。确认及失败都不重读这段前缀。4096 个旧 opener 经 200 轮失败/无管道续行不增加栈或标签规范化步骤，最终只清理一次；4096 个即时链接/数学/脚注及 4096 列在确认时不重复发布，旧对象身份不变。千层引用与 250 层列表保持标签物理行边界及表格作用域；共享预算摘要零预算不推进、每帧最多 8 字节。旧测量拒绝、TileKey 失效、合并 Update 和两个独立折叠视图一致性通过。
 
-项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 488 项、`cargo test --doc --workspace` 41 项、`cargo fmt --all -- --check` 与 `git diff --check`。`cargo run -p mdtui3-core -r --example link_headers` 验证百万字成功/失败及稳定 LinkId，预算预览 16 帧/107 个计费字节；既有 `math_headers`、`code_headers`、`container_inline` 示例通过。完整日志：`/tmp/mdtui3-link-headers-validation.log`。
+项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 488 项、`cargo test --doc --workspace` 41 项、`cargo fmt --all -- --check` 与 `git diff --check`。`cargo run -p mdstream-core -r --example link_headers` 验证百万字成功/失败及稳定 LinkId，预算预览 16 帧/107 个计费字节；既有 `math_headers`、`code_headers`、`container_inline` 示例通过。完整日志：`/tmp/mdstream-link-headers-validation.log`。
 
 README、TODO 已同步，只将本独立子项标记完成；已闭合跨行语义撤销、容器跨行标签表示、多行目标/title、其余分类上限和终端 UI 保留待办。零运行时依赖与禁止 unsafe 的约束保持。
 
@@ -568,13 +568,13 @@ README、TODO 已同步，只将本独立子项标记完成；已闭合跨行语
 
 实现依据：行内解析器已经只消费匹配容器后的正文，前缀已由注解隐藏。为引用匹配复用一个最多 1000 字节的原始正文缓冲（999 字节上限及一个潜在闭括号），超过上限后停止存储；关闭时只规范化有界正文，collapsed 后缀直接复用 SymbolId。直接链接/图片的显示标签不受此上限影响。候选被替换/终止不回放，作用域和块边界沿用现有序列规则；表头确认隔离旧标签，失败续接，旧标签在首管道前已闭合则取消探测。源码范围及物理叶块身份保持，暂定引用补全目标只更新同一对象，晚定义仍不遍历旧引用。
 
-新增 15 项验收：`crates/mdtui3-core/tests/container_links.rs` 13 项、全切点/逐前缀快照 1 项、有界缓冲容量测试 1 项；扩充既有全切点和固定种子逐前缀样本。400 组输入对照无前缀解析和独立源码偏移模型；覆盖 Unicode/CRLF、实体/代码、转义/替换候选、边界/EOF/Setext、长表头确认/失败、引用长度上限、延迟定义及稳定对象通知。两个原“容器标签限单行”回归更新为跨行对象及闭合后取消表头探测，数学与脚注物理行边界继续验证。
+新增 15 项验收：`crates/mdstream-core/tests/container_links.rs` 13 项、全切点/逐前缀快照 1 项、有界缓冲容量测试 1 项；扩充既有全切点和固定种子逐前缀样本。400 组输入对照无前缀解析和独立源码偏移模型；覆盖 Unicode/CRLF、实体/代码、转义/替换候选、边界/EOF/Setext、长表头确认/失败、引用长度上限、延迟定义及稳定对象通知。两个原“容器标签限单行”回归更新为跨行对象及闭合后取消表头探测，数学与脚注物理行边界继续验证。
 
 复杂度与资源验收：千层引用、250 层列表中百万字标签后的 1000 次逐字追加只增加 1000 个 inline bytes，不增加分类/标签规范化/祖先步骤或注解 arena 分配；闭合只消费新增 9 字节并做范围标记，少于 2000 次树访问。候选缓冲在百万字增长时容量不变，后续短标签复用容量。千层引用中 4096 条 lazy 短续行每行一次失配、无祖先扫描；两万条跨行引用的晚定义只规范化 3 字节、少于 1000 次树访问，不生成新链接。累计 O(n log n)、空间 O(n)，零运行时依赖且禁止 unsafe。
 
 共享预算验收覆盖逐标量/逐 tile/每步六字节显示映射、零预算原子暂停、显示搜索跨前缀命中及原始源码搜索；晚闭合拒绝旧游标/缓存/测量、清理相应检查点并保留折叠意愿，合并 Update 与重建一致。百万字图片标签收起时布局零正文/对象回调、零字节计费；分帧导航只展开目标路径，不读正文。
 
-项目 devShell 验收：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 503 项、`cargo test --doc --workspace` 42 项、`cargo fmt --all -- --check` 与 `git diff --check` 通过。`cargo run -p mdtui3-core -r --example container_links` 验证晚定义、稳定图片及容器折叠，标签读取 4 帧/61 计费字节；既有 `container_inline`、`link_headers`、`container_lazy` 示例通过。验收日志：`/tmp/mdtui3-container-links-validation.log`。
+项目 devShell 验收：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 503 项、`cargo test --doc --workspace` 42 项、`cargo fmt --all -- --check` 与 `git diff --check` 通过。`cargo run -p mdstream-core -r --example container_links` 验证晚定义、稳定图片及容器折叠，标签读取 4 帧/61 计费字节；既有 `container_inline`、`link_headers`、`container_lazy` 示例通过。验收日志：`/tmp/mdstream-container-links-validation.log`。
 
 README、TODO 已同步，仅将容器跨行标签子项标记完成；数学内容表示、多行目标/title/full 引用后缀、更完整边界撤销、其它容器规则及终端 UI 继续保留后续。
 
@@ -586,13 +586,13 @@ README、TODO 已同步，仅将容器跨行标签子项标记完成；数学内
 
 模型与复杂度：候选仅增加上次 feed 的末端；跨物理行的不连续 feed 追加一条有序前缀间隙，同物理行的 ATX 尾标记不入索引。每个间隙记录一次，总记录成本 O(G)、存储 O(G)；失败/被表头丢弃的候选允许留下无引用记录，但不与后续对象重叠。正文仍单遍消费，确认只做常数次 O(log n) 范围标记，不扫描旧行、祖先或间隙列表。游标 O(1) 构造，第一次成功推进扣费后通过 O(log G) 二分定位，随后逐片 O(1)。全库累计解析 O(n log n)、空间 O(n)，零运行时依赖且禁止 unsafe；单次 append、闭合和存储扩容继续为摊还保证。
 
-新增 14 项验收：`crates/mdtui3-core/tests/container_math.rs` 11 项、`crates/mdtui3-core/tests/chunking.rs` 全切点/逐前缀 1 项、内部间隙存储测试 2 项；既有分块及固定种子快照纳入预算读取的 payload 映射。基线先复现容器 LF 丢弃数学候选，日志 `/tmp/mdtui3-container-math-baseline.log`。400 组输入对照无前缀数学解析与独立源码偏移模型，覆盖 CRLF/Unicode、精确/失配/转义美元串、代码/链接组合、边界/失败/EOF、Setext、表头确认/取消/长分隔行失败、稳定对象与物理叶块。三个旧“数学限单物理行”断言更新为新对象与闭合取消表头探测的验收。
+新增 14 项验收：`crates/mdstream-core/tests/container_math.rs` 11 项、`crates/mdstream-core/tests/chunking.rs` 全切点/逐前缀 1 项、内部间隙存储测试 2 项；既有分块及固定种子快照纳入预算读取的 payload 映射。基线先复现容器 LF 丢弃数学候选，日志 `/tmp/mdstream-container-math-baseline.log`。400 组输入对照无前缀数学解析与独立源码偏移模型，覆盖 CRLF/Unicode、精确/失配/转义美元串、代码/链接组合、边界/失败/EOF、Setext、表头确认/取消/长分隔行失败、稳定对象与物理叶块。三个旧“数学限单物理行”断言更新为新对象与闭合取消表头探测的验收。
 
 资源验收：千层引用和 250 层列表中，百万字正文后 1000 次逐字追加仅增加 1000 个 inline bytes，分类、math steps、容器步骤和注解 arena 分配不变；闭合仅消费新增 7 字节，树访问少于 2000 次，前缀匹配至多 1000 步。间隙索引在百万字同物理行增长和 100 条 lazy 行中容量/条目数不变，显式续行才新增记录。千层引用下 4096 条 lazy 续行每行一次失配；4096 个历史对象后新对象只消费 11 字节和 2 次定界步骤，4096 个失败候选不增加后续读取步数。
 
 预算与消费验收：每步至多 TILE_BYTES 源码字节、1 query/1 object，隐藏前缀也按实际源码长度计费；四字节可推进任意标量，预算不足时位置与预算不变，完成后免费。测试覆盖元数据/内容共享预算、空前缀片段、原始 CRLF/转义保留、旧缓存/测量/检查点/搜索拒绝及合并 Update 重建。晚闭合保留折叠意愿，收起百万字数学正文的布局零正文回调、零字节计费。
 
-项目 devShell 验收：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 517 项、`cargo test --doc --workspace` 43 项、`cargo fmt --all -- --check` 和 `git diff --check` 通过。`cargo run -p mdtui3-core -r --example container_math` 验证流式对象、稳定叶块、容器折叠与逐帧映射，读取 4 帧/30 源码字节；既有 `math`、`math_headers`、`container_inline`、`container_links` 示例通过。完整日志：`/tmp/mdtui3-container-math-validation.log`。
+项目 devShell 验收：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 517 项、`cargo test --doc --workspace` 43 项、`cargo fmt --all -- --check` 和 `git diff --check` 通过。`cargo run -p mdstream-core -r --example container_math` 验证流式对象、稳定叶块、容器折叠与逐帧映射，读取 4 帧/30 源码字节；既有 `math`、`math_headers`、`container_inline`、`container_links` 示例通过。完整日志：`/tmp/mdstream-container-math-validation.log`。
 
 README、TODO 已同步，仅将容器跨行数学内容子项标记完成；数学块、额外定界方言、TeX 排版与实际对象回调、更完整块语义撤销、其余容器规则及终端 UI 继续保留待办。
 
@@ -606,7 +606,7 @@ README、TODO 已同步，仅将容器跨行数学内容子项标记完成；数
 
 验收：新增 13 项测试（12 项专用测试及全局分块快照），覆盖 UTF-8 全切点/逐前缀、CRLF/EOF、任务/兄弟/嵌套/块边界、长表头确认及失败/取消、长分隔行回退、对象/叶块稳定身份、预算暂停、缓存/测量/任务及合并更新。400 组前缀自由显示与独立章节/折叠范围模型通过；千层引用、250 层列表的百万字续行只消费新增字节，确认 inline_bytes 不增长；4096 个连续 lazy 叶块中间块保持原值，4096 个历史标题后的确认仅新增 2 个 heading_steps、1 次默认初始化和至多 8 次折叠范围检查。
 
-项目 devShell 的 check、clippy（-D warnings）、debug/release nextest 各 530 项、44 项文档测试、fmt 和 diff 检查通过。新增 `container_setext` 示例用 16 帧读取完整两行标题的 32 源码字节，跳过 120 万字节折叠正文；另有 container_headings、container_sections、container_inline、container_lazy、container_math 五个回归示例通过。日志：`/tmp/mdtui3-setext-validation.log`（check/clippy、两种 nextest 通过；首次新增文档示例的 Option 写法错误已修正）、`/tmp/mdtui3-setext-doc-examples-validation.log`（修正后 44 项文档测试及六个示例、fmt/diff 均通过）。
+项目 devShell 的 check、clippy（-D warnings）、debug/release nextest 各 530 项、44 项文档测试、fmt 和 diff 检查通过。新增 `container_setext` 示例用 16 帧读取完整两行标题的 32 源码字节，跳过 120 万字节折叠正文；另有 container_headings、container_sections、container_inline、container_lazy、container_math 五个回归示例通过。日志：`/tmp/mdstream-setext-validation.log`（check/clippy、两种 nextest 通过；首次新增文档示例的 Option 写法错误已修正）、`/tmp/mdstream-setext-doc-examples-validation.log`（修正后 44 项文档测试及六个示例、fmt/diff 均通过）。
 
 此项交付既有容器方言中的多行 Setext；下划线含前缀的 1 KiB 分类上限、更完整块语义撤销、tight/loose 余项、tab 缩进及终端排版继续保留 TODO。
 
@@ -618,7 +618,7 @@ README、TODO 已同步，仅将容器跨行数学内容子项标记完成；数
 - 复杂度：新增 N 个容器、匹配 K 个的默认成本沿用 O(N + K(log H + log C + log F + log T))；普通正文追加只刷新共享尾部。批量任务 O(1) 状态、总访问 C 个容器，每步固定次数元数据/索引操作，含 O(log U) 有效状态查询及既有折叠索引操作。U 个覆盖占 O(U)，单点覆盖 O(log U + log T)，无全祖先/子块/tile 扫描。默认 apply 仍是事件摊还契约，不增加任意大 Update 的单帧硬预算承诺。零运行时依赖、禁止 unsafe 保持。
 - 新增 12 项验收：32 种筛选 × 4 种深度组合对照；UTF-8 全切点/逐前缀、CRLF/无效及未完成 marker/EOF/合并更新；旧节点及显式展开优先、两视图隔离、状态/预览/导航组合、非容器和行范围保留、预算原子暂停与共享、身份/版本拒绝、旧测量及检查点失效。320 轮流式默认切换/覆盖/批量/预览/reset 与独立区间/高度模型一致。
 - 千层容器与百万字正文后的 1000 次逐字追加无默认重查、无容器索引写入或祖先解析增长；筛选 1002 个不匹配容器按预算推进，隐藏正文布局计费 0 bytes。4096 个历史任务后新条目只初始化一次；4096 个覆盖恢复原状态后存储清空，单节点再切换 1000 次不累积历史或高度索引节点。
-- 项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo nextest run` 与 `cargo nextest run --workspace --release` 各 **542** 项、`cargo test --doc --workspace` **45** 项、`cargo fmt --all -- --check`。`cargo run -p mdtui3-core -r --example container_policies` 输出 **3 帧 / 3 容器 / 0 源码字节**，导航 **4 帧**；既有 `container_defaults` 和 `fold_batch` 示例通过。日志：`/tmp/mdtui3-container-policy-validation.log`。
+- 项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo nextest run` 与 `cargo nextest run --workspace --release` 各 **542** 项、`cargo test --doc --workspace` **45** 项、`cargo fmt --all -- --check`。`cargo run -p mdstream-core -r --example container_policies` 输出 **3 帧 / 3 容器 / 0 源码字节**，导航 **4 帧**；既有 `container_defaults` 和 `fold_batch` 示例通过。日志：`/tmp/mdstream-container-policy-validation.log`。
 
 本单元交付默认策略、视图内状态及有预算筛选核心；任务控件绘制、任务聚合统计、实际摘要/容器排版、手工交叉范围和终端 UI 继续留待各自阶段，不将总体折叠规划标记完成。
 
@@ -633,7 +633,7 @@ README、TODO 已同步，仅将容器跨行数学内容子项标记完成；数
 
 复杂度与资源验收：千层引用中百万字同物理行增长不增加分类/行内消费/容器/章节步骤，容器与章节折叠索引无额外访问；关闭少于 2000 次注解树访问。250 层列表续行按输入前缀线性匹配。4096 个封闭历史块后追加只处理新块和当前边界，不遍历旧折叠；百万字后 1000 次逐字追加不增加数学间隙记录或块 arena 容量，行内对象与独立块共享有序间隙索引。收起百万字数学块的布局零正文回调、零字节计费。累计解析 O(n log n)、空间 O(n)，零运行时依赖且禁止 unsafe，不承诺单次 append/finish 的硬时延。
 
-项目 devShell 验收：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run` 各 556 项、`cargo test --doc --workspace` 46 项、`cargo fmt --all -- --check` 和 `git diff --check` 通过。`cargo run -p mdtui3-core -r --example math_blocks` 读取 5 帧/34 源码字节、导航 4 帧；既有 `math`、`container_math`、`container_code` 示例通过。完整日志：`/tmp/mdtui3-math-block-validation.log`；流式高度模型捕获并修复当前 EOF 末 tile 遮蔽，失败证据 `/tmp/mdtui3-math-block-model.log`。
+项目 devShell 验收：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run` 各 556 项、`cargo test --doc --workspace` 46 项、`cargo fmt --all -- --check` 和 `git diff --check` 通过。`cargo run -p mdstream-core -r --example math_blocks` 读取 5 帧/34 源码字节、导航 4 帧；既有 `math`、`container_math`、`container_code` 示例通过。完整日志：`/tmp/mdstream-math-block-validation.log`；流式高度模型捕获并修复当前 EOF 末 tile 遮蔽，失败证据 `/tmp/mdstream-math-block-model.log`。
 
 README、TODO 已同步，只标记独立数学块核心完成；额外数学定界方言、TeX 解析/排版与实际对象回调、分类上限扩展、其余容器/脚注语义和终端 UI 继续保留待办。
 
@@ -643,11 +643,11 @@ README、TODO 已同步，只标记独立数学块核心完成；额外数学定
 
 `FootnoteDefinition.content` 是排除最后一个 LF/CRLF 的原始源码包络，保留内部换行、缩进和容器前缀。新增 `Document::footnote_payload`，与原文 `footnote_content` 共用 `FootnoteContent` / `FootnoteChunk`；去掉容器前缀和续行四格，保留实体、反斜线和其它空白。每个片段提供完整源码映射，省略前缀时返回空 text，仍扣实际源码 bytes、1 query、1 object。构造 O(1)，首次成功读取 O(log G) 定位有序间隙，其后每步 O(1)，最大 TILE_BYTES，预算不足不推进或扣费，四字节可前进任意 UTF-8 标量。
 
-新增 17 项验收：`crates/mdtui3-core/tests/footnote_blocks.rs` 15 项、全量分块快照 1 项和内部存储 1 项。覆盖起始缩进/续行、空正文、多段/末尾空行、CRLF/裸 CR/EOF、未完成输入、非法与超长候选、确切容器路径、字面标记、代码/数学/表格优先级、首定义/重复定义、稳定对象和块身份、增量通知重建/合并、旧缓存/测量/搜索拒绝、共享预算和折叠意愿；分块快照新增去前缀映射及短样本，UTF-8 全切点和逐前缀均一致。原有单行测试仅更新因 LF 后不再封口而改变的状态、事件和计数，原有列表间距回归保留。
+新增 17 项验收：`crates/mdstream-core/tests/footnote_blocks.rs` 15 项、全量分块快照 1 项和内部存储 1 项。覆盖起始缩进/续行、空正文、多段/末尾空行、CRLF/裸 CR/EOF、未完成输入、非法与超长候选、确切容器路径、字面标记、代码/数学/表格优先级、首定义/重复定义、稳定对象和块身份、增量通知重建/合并、旧缓存/测量/搜索拒绝、共享预算和折叠意愿；分块快照新增去前缀映射及短样本，UTF-8 全切点和逐前缀均一致。原有单行测试仅更新因 LF 后不再封口而改变的状态、事件和计数，原有列表间距回归保留。
 
 复杂度与资源验收：千层引用中百万字续行后的 1000 次追加，分类/行内/容器/章节步骤及折叠索引访问不增加，每次只做一次当前脚注增长；间隙、符号和块 arena 容量不增长。两万旧引用的晚定义首行仅两次符号步骤，三条续行各一次；4096 条续行只检查实际路径，4096 历史定义后追加只处理当前旧封口和新定义。250 层列表前缀线性匹配，400 组独立物理行范围/内容模型及 240 次流式区间/高度模型通过。收起百万字多段定义的布局零正文回调、零字节计费。成功定义每个带前缀续行至多一个间隙，重复定义不保存间隙；累计解析 O(n log n)、空间 O(n)、零运行时依赖和禁止 unsafe 保持，不承诺任意 append/finish 的单次硬时延。
 
-项目 devShell 验收：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run` 各 573 项、`cargo test --doc --workspace` 47 项、`cargo fmt --all -- --check` 和 `git diff --check` 通过。`cargo run -p mdtui3-core -r --example footnote_blocks` 以 6 帧/61 源码字节完成读取并保持折叠；既有 `footnotes`、`container_definitions`、`list_tightness` 示例通过。完整日志：`/tmp/mdtui3-footnote-block-validation.log`，失败基线：`/tmp/mdtui3-footnote-block-baseline.log`；模型与相关回归日志：`/tmp/mdtui3-footnote-block-model.log`、`/tmp/mdtui3-footnote-block-chunking.log`。
+项目 devShell 验收：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run` 各 573 项、`cargo test --doc --workspace` 47 项、`cargo fmt --all -- --check` 和 `git diff --check` 通过。`cargo run -p mdstream-core -r --example footnote_blocks` 以 6 帧/61 源码字节完成读取并保持折叠；既有 `footnotes`、`container_definitions`、`list_tightness` 示例通过。完整日志：`/tmp/mdstream-footnote-block-validation.log`，失败基线：`/tmp/mdstream-footnote-block-baseline.log`；模型与相关回归日志：`/tmp/mdstream-footnote-block-model.log`、`/tmp/mdstream-footnote-block-chunking.log`。
 
 README、TODO 已同步；固定四空格/显式路径方言已完成，分类前缀上限、lazy/tab 等更完整续行规则、定义正文 Markdown 解析/排版、编号上标、脚注区、双向跳转/返回和实际对象回调继续保留待办，终端 UI 留待后续阶段。
 
@@ -661,7 +661,7 @@ README、TODO 已同步；固定四空格/显式路径方言已完成，分类�
 
 新增 13 项验收（12 项专用测试和 1 项全局分块快照），并补充既有短样本全切点：3072 组独立列宽/真实字节边界与围栏范围模型；UTF-8 全切点/逐前缀、CRLF/EOF、截断标记/分类上限、部分 tab 原子回退、嵌套及任务/兄弟宽度、标题/多行 Setext/代码/定义/脚注/数学/表格回归；长分隔行成功/失败、源映射收费与预算暂停、旧任务/测量失效和通知重建。250 层列表每轮完整续行只检查 250 帧，部分前缀 lazy 续行只检查 2 帧；1000 层引用及 250 层列表的百万字长行后再逐字追加 1000 次，分类/前缀/容器/章节工作和容器 arena 容量均不增长，inline_bytes 恰好增加 1000。
 
-项目 devShell 验收：cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release nextest 各 586 项、48 项文档测试、fmt 和 diff 检查通过。container_tabs、containers、container_code、footnote_blocks 四个示例通过。日志：`/tmp/mdtui3-container-tabs-validation.log`（check/clippy、release、doc、示例及格式），`/tmp/mdtui3-container-tabs-debug.log`（全量 debug）；初始失败基线：`/tmp/mdtui3-container-tabs-baseline.log`。
+项目 devShell 验收：cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release nextest 各 586 项、48 项文档测试、fmt 和 diff 检查通过。container_tabs、containers、container_code、footnote_blocks 四个示例通过。日志：`/tmp/mdstream-container-tabs-validation.log`（check/clippy、release、doc、示例及格式），`/tmp/mdstream-container-tabs-debug.log`（全量 debug）；初始失败基线：`/tmp/mdstream-container-tabs-baseline.log`。
 
 按账本允许的独立子项交付完整 tab 边界规则。README/TODO 已同步；部分 tab 的虚拟空格表示、叶块 tab 缩进、分类上限扩展及其它容器规则继续保留未完成条目，不宣称完整 CommonMark 缩进或终端排版已完成。
 
@@ -689,7 +689,7 @@ README、TODO 已同步；固定四空格/显式路径方言已完成，分类�
 
 新增 13 项验收（11 项专用测试、1 项显示存储测试、1 项全局分块测试），并扩充短样本全切点：400 组随机嵌套列宽与显式空格行内模型、UTF-8 全切点/逐前缀、CRLF/EOF/分类窗口、原子回退、新块/数学边界、Setext 迟确认、代码裁一列/全空白/未闭合、稳定对象及合并通知、旧测量/游标/搜索拒绝、预算原子暂停和搜索/摘要映射。千层引用、250 层列表、4096 历史映射及百万字输入通过；折叠百万字正文零字节读取。
 
-验收：项目 devShell 的 cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release cargo nextest run --workspace --no-fail-fast 各 613 项、cargo test --doc --workspace 50 项、格式与 diff 检查通过。prose_tabs 新示例 20 帧/112 计费字节，代码晚闭合后保留映射和条目折叠；既有 partial_tabs、container_tabs、container_inline 示例通过。日志：`/tmp/mdtui3-prose-tabs-validation.log`；初始 3 项失败基线：`/tmp/mdtui3-prose-tabs-baseline.log`。
+验收：项目 devShell 的 cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release cargo nextest run --workspace --no-fail-fast 各 613 项、cargo test --doc --workspace 50 项、格式与 diff 检查通过。prose_tabs 新示例 20 帧/112 计费字节，代码晚闭合后保留映射和条目折叠；既有 partial_tabs、container_tabs、container_inline 示例通过。日志：`/tmp/mdstream-prose-tabs-validation.log`；初始 3 项失败基线：`/tmp/mdstream-prose-tabs-baseline.log`。
 
 README/TODO 已同步完成范围。数学内容、新叶块/表头分类、空白/过量缩进/不完整路径的部分 tab、叶块缩进、分类上限及其它容器语义继续保留 TODO；终端 UI 与实际排版仍为后续阶段。
 
@@ -704,7 +704,7 @@ math_content / math_block_content 保持原文；math_payload / math_block_paylo
 
 新增 14 项验收（12 项专用测试、1 项内部存储测试、1 项全局分块测试）：行内/块数学各 400 组独立列宽与源码模型、UTF-8 全切点/逐前缀、CRLF/EOF、转义/定界长度、空白/失败路径/分类窗口、Setext/表头隔离、原文与替代文本的预算读取、稳定对象/合并通知、旧测量/读取/搜索拒绝，以及搜索/摘要/折叠/预览/导航。千层引用、251 层列表及百万字输入通过；收起数学块或容器时正文零字节读取。既有排除样本随本单元方言更新，仍保留未匹配完整路径的回退检查。
 
-验收：项目 devShell 的 cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release cargo nextest run --workspace --no-fail-fast 各 627 项、cargo test --doc --workspace 51 项、cargo fmt --all -- --check 与 git diff --check 全部通过。math_tabs 新示例以 6 帧/33 源码字节完成共享预算读取，流式关闭后保持折叠意愿；既有 container_math、math_blocks、prose_tabs 示例通过。验收日志：`/tmp/mdtui3-math-tabs-validation.log`；初始两项失败基线：`/tmp/mdtui3-math-tabs-baseline.log`。
+验收：项目 devShell 的 cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release cargo nextest run --workspace --no-fail-fast 各 627 项、cargo test --doc --workspace 51 项、cargo fmt --all -- --check 与 git diff --check 全部通过。math_tabs 新示例以 6 帧/33 源码字节完成共享预算读取，流式关闭后保持折叠意愿；既有 container_math、math_blocks、prose_tabs 示例通过。验收日志：`/tmp/mdstream-math-tabs-validation.log`；初始两项失败基线：`/tmp/mdstream-math-tabs-baseline.log`。
 
 README/TODO 已同步；新叶块/表头的部分 tab 分类、一般正文空白/过量缩进/不完整路径、叶块 tab 缩进、分类上限及其余容器规则继续保留 TODO。TeX 排版、额外定界方言及终端 UI 仍属后续阶段。
 
@@ -719,9 +719,9 @@ README/TODO 已同步；新叶块/表头的部分 tab 分类、一般正文空�
 
 新增 15 项验收（14 项专用测试与 1 项全局分块快照）：576 组列阈值/真实空格对照、400 组随机嵌套空格模型、UTF-8 全切点/逐前缀、CRLF/EOF、边界内外截断标记、长失败候选、百万字分隔行外观代码、失败路径与范围身份。覆盖标题首个多字节字符/行内对象、代码合并、数学闭合、表格中断、旧测量/任务拒绝和通知重建；预算显示、逐标量/tile、搜索/摘要映射及折叠/预览/导航均通过。千层引用和 251 层列表的百万字标题/代码/数学再逐字追加 1000 次，前缀/祖先/分类/章节计数和容器容量不变；250 层共享 tab 每行只访问 250 帧，4096 个历史标题后只访问当前一层。收起新叶块正文零字节读取。
 
-项目 devShell 验收：cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release cargo nextest run --workspace --no-fail-fast 各 642 项、cargo test --doc --workspace 52 项、cargo fmt --all -- --check 及 git diff --check 通过。leaf_tabs 新示例 14 帧/215 计费字节，保持标题和代码/数学的确切作用域与流式折叠意愿；math_tabs、prose_tabs、container_headings、table_preview 示例通过。核心验收及示例日志：`/tmp/mdtui3-leaf-tabs-validation.log`、`/tmp/mdtui3-leaf-tabs-final-doc.log`；初始三项失败基线：`/tmp/mdtui3-leaf-tabs-baseline.log`。
+项目 devShell 验收：cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release cargo nextest run --workspace --no-fail-fast 各 642 项、cargo test --doc --workspace 52 项、cargo fmt --all -- --check 及 git diff --check 通过。leaf_tabs 新示例 14 帧/215 计费字节，保持标题和代码/数学的确切作用域与流式折叠意愿；math_tabs、prose_tabs、container_headings、table_preview 示例通过。核心验收及示例日志：`/tmp/mdstream-leaf-tabs-validation.log`、`/tmp/mdstream-leaf-tabs-final-doc.log`；初始三项失败基线：`/tmp/mdstream-leaf-tabs-baseline.log`。
 
-额外检查发现既有 container_tables 示例在第 30 行仍断言表格直接以顶层 Heading 为折叠父级，实际父级已是 Item 容器。在修改前 d47813f 的独立源码副本中复现同一失败，见 `/tmp/mdtui3-leaf-tabs-existing-example-baseline.log`；该示例的失败位于核心检查全部通过之后，未将其记为通过，也未扩展本单元去修改这个既有断言。
+额外检查发现既有 container_tables 示例在第 30 行仍断言表格直接以顶层 Heading 为折叠父级，实际父级已是 Item 容器。在修改前 d47813f 的独立源码副本中复现同一失败，见 `/tmp/mdstream-leaf-tabs-existing-example-baseline.log`；该示例的失败位于核心检查全部通过之后，未将其记为通过，也未扩展本单元去修改这个既有断言。
 
 README/TODO 已同步完成范围。剩余新叶块类型与表头、普通新段落、新容器首行、空白/不完整路径、叶块内部 tab、分类上限及其它容器语义继续保留 TODO；未声称全部部分 tab 方言或终端 UI 已完成。
 
@@ -736,7 +736,7 @@ README/TODO 已同步完成范围。剩余新叶块类型与表头、普通新�
 
 新增 14 项验收：12 项专用测试、1 项全局分块快照和 1 项折叠高度模型。覆盖 400 组独立间距/身份/范围模型、240 轮流式折叠/预览/高度与可见性模型、UTF-8 全切点/逐前缀、CRLF/EOF、空条目/任务/编号/不同 marker、深引用一次退出、20,000 空行既有复杂度回归、长空白分类与部分 tab、块边界、通知重建/合并、旧缓存/测量/检查点拒绝。保留列表的百万字折叠正文零读取，祖先查询和布局共享预算。旧断言按本单元的新空行语义更新；需要隔离独立列表的模型和缓冲复用测试改用显式作用域退出，仍保留原验收目标。
 
-项目 devShell 验收：cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release cargo nextest run --workspace --no-fail-fast 各 656 项、cargo test --doc --workspace 53 项、cargo fmt --all -- --check 及 git diff --check 通过。list_blanks 新示例用 3 帧/0 正文字节读取祖先，验证内外层分别晚确定、EOF 封口及折叠意愿保持；既有 list_tightness、containers、container_folding 示例通过。完整验收日志：`/tmp/mdtui3-list-blanks-validation.log`；初始三项失败基线：`/tmp/mdtui3-list-blanks-baseline.log`。
+项目 devShell 验收：cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release cargo nextest run --workspace --no-fail-fast 各 656 项、cargo test --doc --workspace 53 项、cargo fmt --all -- --check 及 git diff --check 通过。list_blanks 新示例用 3 帧/0 正文字节读取祖先，验证内外层分别晚确定、EOF 封口及折叠意愿保持；既有 list_tightness、containers、container_folding 示例通过。完整验收日志：`/tmp/mdstream-list-blanks-validation.log`；初始三项失败基线：`/tmp/mdstream-list-blanks-baseline.log`。
 
 README/TODO 已同步。完整缩进内层尾部空行向祖先传播、实际段落间距、其它容器/tab 规则、分类上限及终端 UI 继续保留后续；未声明完整 CommonMark tight/loose 兼容。
 
@@ -751,7 +751,7 @@ README/TODO 已同步。完整缩进内层尾部空行向祖先传播、实际�
 
 复杂度证据：64/128/250 层列表各 1000 条完整空行仅 1000 次 list_steps；恢复最外层兄弟均为 4 次 list_steps，container_steps 恰为 2 × depth + 1，对应实际路径检查/关闭/新建。千层引用尾部关闭同样只需 4 次间距步骤；空行期间无折叠容器索引更新或容量增长。百万字长行后 1000 次逐字追加不增加分类前缀/祖先/间距工作；1 或 4096 个历史条目后，嵌套尾部确认均为 4 次 list_steps、5 次 container_steps，旧块/链接不改写。折叠百万字正文零读取，祖先游标与布局共享预算并可原子暂停。
 
-项目 devShell 验收全部通过：cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release cargo nextest run --workspace --no-fail-fast 各 669 项、cargo test --doc --workspace 54 项、cargo fmt --all -- --check 及 git diff --check。新 list_tail_blanks 示例用 3 帧/0 正文字节验证父级迟确认、内层 Tight/Sealed、稳定范围和折叠意愿；既有 list_blanks、list_tightness、containers、container_folding、footnote_blocks 示例通过。完整日志：`/tmp/mdtui3-list-tail-validation.log`；初始两项失败基线：`/tmp/mdtui3-list-tail-baseline.log`。
+项目 devShell 验收全部通过：cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release cargo nextest run --workspace --no-fail-fast 各 669 项、cargo test --doc --workspace 54 项、cargo fmt --all -- --check 及 git diff --check。新 list_tail_blanks 示例用 3 帧/0 正文字节验证父级迟确认、内层 Tight/Sealed、稳定范围和折叠意愿；既有 list_blanks、list_tightness、containers、container_folding、footnote_blocks 示例通过。完整日志：`/tmp/mdstream-list-tail-validation.log`；初始两项失败基线：`/tmp/mdstream-list-tail-baseline.log`。
 
 README/TODO 已同步。实际段落间距、其它容器/tab 规则、分类上限及更完整块确认/撤销、终端 UI 继续保留 TODO；不声明完整 CommonMark 兼容。
 
@@ -764,9 +764,9 @@ README/TODO 已同步。实际段落间距、其它容器/tab 规则、分类上
 - [x] **查询与状态**：`FoldView::fold_candidate`、`source_fold_at`、`SourceFoldCandidates` 提供 ID/位置/预算窗口查询，`remove_source_fold` 释放注册及预览/意愿，旧 ID 不复用。语法父链不重挂，手工 parent 指向最内层包含其源码范围的语法节点。独立视图、批量 All/Subtree/Siblings/Focus、预览、源码锚点、导航及有界摘要/布局全部接入；标题级别/容器筛选及未来默认规则保持各自职责。
 - [x] **预算与增量**：注册每个端点查找、祖先检查、路径结束及提交扣 1 query / 1 object，零正文读取；成功前不改视图，取消/错误/失效没有半成品。千层引用两端共 2000 个祖先可逐帧暂停；R 个注册只保存 O(R) 当前索引，单点操作和点查询用有序索引，游标 O(1)。4096 历史范围后的百万字及 1000 次逐字追加不刷新历史范围或增加容器/标题扫描；反复注册/删除不保留历史记录。
 - [x] **布局与 EOF**：最外层有效范围占位，完整内部 tile 直接遮蔽，边界按预算消费；百万字与图片折叠不读取隐藏正文/对象。固定范围结束于旧 EOF 时只校正一次 tile 边界；与已关闭代码/数学遮蔽独立共存。新组合测试发现关闭代码块原有 EOF 遮蔽未刷新，已复用代码/数学/行范围的一次性刷新槽修复，不遍历旧范围。
-- [x] **模型与回归**：新增 `crates/mdtui3-core/tests/source_folding.rs` 17 项验收，包含 2400 组全量结构区间对照、1000 轮随机区间/高度/布局模型、240 次流式模型、UTF-8 全切点/逐前缀、CRLF/迟确认 Setext/表格、千层/百万字/4096 范围、双向行范围交叉拒绝、预览/同父兄弟/子树/聚焦、旧任务和测量拒绝、通知合并/重放、EOF 同 tile 多范围。保留原有兄弟语法扫描的预算计数，仅为手工范围增加标题区域的枚举。
+- [x] **模型与回归**：新增 `crates/mdstream-core/tests/source_folding.rs` 17 项验收，包含 2400 组全量结构区间对照、1000 轮随机区间/高度/布局模型、240 次流式模型、UTF-8 全切点/逐前缀、CRLF/迟确认 Setext/表格、千层/百万字/4096 范围、双向行范围交叉拒绝、预览/同父兄弟/子树/聚焦、旧任务和测量拒绝、通知合并/重放、EOF 同 tile 多范围。保留原有兄弟语法扫描的预算计数，仅为手工范围增加标题区域的枚举。
 
-验收通过：项目 devShell 的 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 686 项、`cargo test --doc --workspace` 55 项、`cargo fmt --all -- --check` 和 `git diff --check`。`source_folding` 示例注册 2 帧、布局 6 帧/56 个计费字节跳过百万字，导航 1 帧恢复源码锚点；既有 `table_row_folding`、`folding`、`fold_batch` 示例通过。日志：`/tmp/mdtui3-source-folds-validation.log`。开放章节交叉与关闭代码 EOF 的失败证据分别保存在 `/tmp/mdtui3-source-folds-boundary-baseline.log`、`/tmp/mdtui3-source-folds-eof-baseline.log`。
+验收通过：项目 devShell 的 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 686 项、`cargo test --doc --workspace` 55 项、`cargo fmt --all -- --check` 和 `git diff --check`。`source_folding` 示例注册 2 帧、布局 6 帧/56 个计费字节跳过百万字，导航 1 帧恢复源码锚点；既有 `table_row_folding`、`folding`、`fold_batch` 示例通过。日志：`/tmp/mdstream-source-folds-validation.log`。开放章节交叉与关闭代码 EOF 的失败证据分别保存在 `/tmp/mdstream-source-folds-boundary-baseline.log`、`/tmp/mdstream-source-folds-eof-baseline.log`。
 
 自动增长手工范围、尚未定型正文、手工嵌套、交叉拆分/优先级、重载后的业务身份映射、实际段内软换行/占位绘制及终端选区 UI 继续保留 TODO；本轮只标记上述固定范围核心完成。
 
@@ -780,7 +780,7 @@ README/TODO 已同步。实际段落间距、其它容器/tab 规则、分类上
 
 新增 15 项专用验收：640 组长度/前缀/换行/列宽布局对照、1000 轮随机与 240 次流式区间/高度模型、UTF-8 全切点/逐前缀、CRLF/无换行 EOF、行内边界逐字节截断、手工范围双向拒绝、零预算/原子注册/段尾暂停、百万字隐藏与检查点恢复、4096 历史注册、有界显示摘要、预览/批量/源码锚点/导航、晚定义及 Setext/表格、通知合并/重放、旧任务/测量/检查点拒绝。
 
-项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 701 项、`cargo test --doc --workspace` 56 项、`cargo fmt --all -- --check` 和 `git diff --check`。`paragraph_folding` 示例 8 帧/47 个计费字节跳过百万字、产生一次段尾恢复；既有 `source_folding`、`folding`、`table_row_folding` 示例通过。完整日志：`/tmp/mdtui3-paragraph-folds-validation.log`；专项日志：`/tmp/mdtui3-paragraph-folds-targeted.log`。首轮一个手工测试选区本身跨章节边界，已修正测试输入；没有降级范围校验。
+项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 701 项、`cargo test --doc --workspace` 56 项、`cargo fmt --all -- --check` 和 `git diff --check`。`paragraph_folding` 示例 8 帧/47 个计费字节跳过百万字、产生一次段尾恢复；既有 `source_folding`、`folding`、`table_row_folding` 示例通过。完整日志：`/tmp/mdstream-paragraph-folds-validation.log`；专项日志：`/tmp/mdstream-paragraph-folds-targeted.log`。首轮一个手工测试选区本身跨章节边界，已修正测试输入；没有降级范围校验。
 
 README/TODO 已同步。开放段落自动增长、容器跨物理叶块段落、自动长度策略、逻辑/显示行数预览、完整字素/对象截断、媒体详情及完整终端排版继续保留 TODO；本轮只标记已定型顶层段落的源码前缀预览与段尾恢复核心完成。
 
@@ -794,9 +794,9 @@ README/TODO 已同步。开放段落自动增长、容器跨物理叶块段落�
 
 复杂度依据：每对必定消费一个旧 opener，保存和提交/丢弃各至多一次；确认或失败计入 `delimiter_steps`。额外空间 O(实际消费的旧 opener 数)，注解仍为 O(log n) 区间操作，全库累计 O(n log n)/空间 O(n)。首管道前和失败路径的 `inline_bytes <= source().len()`；成功只做既有单元格边界扫描，不重复解析已消费前缀。千层引用的百万字增长不增加 delimiter、分类、容器、祖先或章节扫描，注解/容器容量不变；4096 对配对在判定时恰好增加 4096 个 delimiter_steps，1000 次尾部追加不遍历配对，4096 历史链接保持身份。内部存储验证百万字追加不增加配对容量，之后 200 轮无管道续行复用同一缓冲、不积累历史配对。解析调用仍为摊还保证，不承诺单次硬时延。
 
-新增 13 项验收：`crates/mdtui3-core/tests/closed_headers.rs` 11 项、UTF-8 全切点/逐前缀快照 1 项、内部存储 1 项。覆盖五种标记及软/硬换行、显式列表/引用、旧栈跨类型弹出和本行重开、120 组 flanking/局部栈模型、400 组长分隔行成功/晚失败范围模型、独立早管道语义对照、CRLF/EOF/Setext/作用域退出、稳定 BlockId/LinkId/MathId/脚注编号、合并 Update、共享预算原子暂停、预览/搜索源码映射与章节/容器/表格折叠。折叠百万字正文零读取。原拒绝测试明确改用双向标记保留拒绝覆盖，旧范围模型同时接受此次新增的 close-only 情形，未删除失败约束。
+新增 13 项验收：`crates/mdstream-core/tests/closed_headers.rs` 11 项、UTF-8 全切点/逐前缀快照 1 项、内部存储 1 项。覆盖五种标记及软/硬换行、显式列表/引用、旧栈跨类型弹出和本行重开、120 组 flanking/局部栈模型、400 组长分隔行成功/晚失败范围模型、独立早管道语义对照、CRLF/EOF/Setext/作用域退出、稳定 BlockId/LinkId/MathId/脚注编号、合并 Update、共享预算原子暂停、预览/搜索源码映射与章节/容器/表格折叠。折叠百万字正文零读取。原拒绝测试明确改用双向标记保留拒绝覆盖，旧范围模型同时接受此次新增的 close-only 情形，未删除失败约束。
 
-项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 714 项、`cargo test --doc --workspace` 57 项、`cargo fmt --all -- --check` 和 `git diff --check`。新示例 `cargo run -p mdtui3-core -r --example closed_headers` 验证百万字失败提交与成功丢弃、稳定链接和共享预算摘要，后者 17 帧/119 个计费字节；既有 open/inherited/late/long headers、long_delimiters、code/math/link headers 示例均通过。完整日志 `/tmp/mdtui3-closed-headers-validation.log`；两项失败基线 `/tmp/mdtui3-closed-headers-baseline.log`；专项 `/tmp/mdtui3-closed-headers-targeted.log` 与 `/tmp/mdtui3-closed-headers-chunking.log`。
+项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 714 项、`cargo test --doc --workspace` 57 项、`cargo fmt --all -- --check` 和 `git diff --check`。新示例 `cargo run -p mdstream-core -r --example closed_headers` 验证百万字失败提交与成功丢弃、稳定链接和共享预算摘要，后者 17 帧/119 个计费字节；既有 open/inherited/late/long headers、long_delimiters、code/math/link headers 示例均通过。完整日志 `/tmp/mdstream-closed-headers-validation.log`；两项失败基线 `/tmp/mdstream-closed-headers-baseline.log`；专项 `/tmp/mdstream-closed-headers-targeted.log` 与 `/tmp/mdstream-closed-headers-chunking.log`。
 
 README、TODO 只标记本子项；无法隔离的旧强调闭合、通用已发布样式撤销、其它候选/分类上限、更完整容器语义和终端 UI 继续保留待办。零运行时依赖与禁止 unsafe 保持。
 
@@ -810,9 +810,9 @@ README、TODO 只标记本子项；无法隔离的旧强调闭合、通用已发
 
 额外状态 O(1)，每次探测最多保存一个闭合摘要；提交/丢弃计一个 delimiter_steps。成功只额外消费互不重叠的当前表头，失败不重放，满足 inline_bytes <= source().len() + table_bytes；累计解析 O(n log n)/空间 O(n)，不承诺单次确认硬时延。千层引用中前序百万字代码加当前百万字长尾，后续每字只增加一次 inline_bytes/table_header_bytes，无分类/容器/章节/祖先或 delimiter 工作，注解和容器容量不变。4096 历史链接、4096 旧 opener、当前行 4096 链接/数学/脚注及 4096 列保持一次消费；历史对象不变。内部测试确认百万字期间摘要端点不变、200 轮成功/失败/取消后释放且不累积历史。
 
-新增 12 项验收：crates/mdtui3-core/tests/closed_code_headers.rs 10 项、全局 UTF-8 全切点/逐前缀快照 1 项、内部状态 1 项。覆盖独立早管道语义对照、四种 run 长度/三个闭合位置/四种作用域、12 种取消后缀、400 组范围/长分隔行模型、CRLF/EOF/Setext/作用域退出、共享预算原子暂停、逐标量/tile/预算源码映射、有界摘要/搜索、稳定 BlockId/对象、通知合并与旧任务失效；容器折叠百万字正文零读取。四处旧拒绝断言改为带语法后缀的明确拒绝案例或接受新增可隔离分支，保留原模型和回退验证。
+新增 12 项验收：crates/mdstream-core/tests/closed_code_headers.rs 10 项、全局 UTF-8 全切点/逐前缀快照 1 项、内部状态 1 项。覆盖独立早管道语义对照、四种 run 长度/三个闭合位置/四种作用域、12 种取消后缀、400 组范围/长分隔行模型、CRLF/EOF/Setext/作用域退出、共享预算原子暂停、逐标量/tile/预算源码映射、有界摘要/搜索、稳定 BlockId/对象、通知合并与旧任务失效；容器折叠百万字正文零读取。四处旧拒绝断言改为带语法后缀的明确拒绝案例或接受新增可隔离分支，保留原模型和回退验证。
 
-项目 devShell 全部通过：cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release cargo nextest run --workspace --no-fail-fast 各 726 项、cargo test --doc --workspace 58 项、cargo fmt --all -- --check 和 git diff --check。新 closed_code_headers 示例验证百万字成功丢弃/失败提交、稳定链接和预算预览（15 帧/101 个计费源码字节）；既有 code_headers、closed_headers、math_headers、link_headers 示例通过。完整日志 `/tmp/mdtui3-closed-code-headers-validation.log`；初始两项失败基线 `/tmp/mdtui3-closed-code-headers-baseline.log`；专项 `/tmp/mdtui3-closed-code-headers-targeted.log`。
+项目 devShell 全部通过：cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release cargo nextest run --workspace --no-fail-fast 各 726 项、cargo test --doc --workspace 58 项、cargo fmt --all -- --check 和 git diff --check。新 closed_code_headers 示例验证百万字成功丢弃/失败提交、稳定链接和预算预览（15 帧/101 个计费源码字节）；既有 code_headers、closed_headers、math_headers、link_headers 示例通过。完整日志 `/tmp/mdstream-closed-code-headers-validation.log`；初始两项失败基线 `/tmp/mdstream-closed-code-headers-baseline.log`；专项 `/tmp/mdstream-closed-code-headers-targeted.log`。
 
 README/TODO 已同步，仅标记上述独立子项。闭合后带其它行内语法的代码表头、通用已发布映射撤销、其它分类/容器限制与终端 UI 继续保留 TODO。零运行时依赖与禁止 unsafe 保持。
 
@@ -826,9 +826,9 @@ README/TODO 已同步，仅标记上述独立子项。闭合后带其它行内�
 
 额外状态 O(1)，每次探测最多一个定界端点对；提交/丢弃计一次 math_steps，美元串扫描继续原计数。成功只额外消费互不重叠的当前表头，失败不重放，满足 inline_bytes <= source().len() + table_bytes，累计 O(n log n)/空间 O(n)，不承诺单次解析硬时延。千层引用中前序百万字数学正文加当前百万字长尾，每字仅增加一次 inline_bytes/table_header_bytes，无分类、数学、容器、章节或祖先工作，注解/容器容量不变。250 层列表中的 4096 历史公式/链接、旧 opener、当前行对象和列保持一次消费，旧公式逐项不变。内部测试确认百万字期间端点和间隙索引不变，200 轮成功/失败/取消后端点对释放。
 
-新增 13 项验收：crates/mdtui3-core/tests/closed_math_headers.rs 11 项、全局 UTF-8 全切点/逐前缀快照 1 项、内部状态 1 项。覆盖独立早管道单元格语义、两种美元串/三个闭合位置/四种作用域、12 种取消后缀、400 组范围与长分隔行模型、CRLF/EOF/Setext/作用域退出、共享预算原子暂停、前缀与 tab 的数学源码映射、摘要/搜索和折叠零正文读取。四处旧拒绝断言更新为新增接受分支的语义模型或带语法后缀的明确拒绝案例，保留失败回退验证。
+新增 13 项验收：crates/mdstream-core/tests/closed_math_headers.rs 11 项、全局 UTF-8 全切点/逐前缀快照 1 项、内部状态 1 项。覆盖独立早管道单元格语义、两种美元串/三个闭合位置/四种作用域、12 种取消后缀、400 组范围与长分隔行模型、CRLF/EOF/Setext/作用域退出、共享预算原子暂停、前缀与 tab 的数学源码映射、摘要/搜索和折叠零正文读取。四处旧拒绝断言更新为新增接受分支的语义模型或带语法后缀的明确拒绝案例，保留失败回退验证。
 
-项目 devShell 全部通过：cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release cargo nextest run --workspace --no-fail-fast 各 739 项、cargo test --doc --workspace 59 项、cargo fmt --all -- --check 和 git diff --check。新 closed_math_headers 示例验证百万字成功丢弃/失败提交、稳定 MathId 及预算预览（14 帧/96 个计费源码字节）；既有 math_headers、closed_code_headers、closed_headers、container_math、link_headers 示例通过。完整日志 `/tmp/mdtui3-closed-math-headers-validation.log`；初始两项失败基线 `/tmp/mdtui3-closed-math-headers-baseline.log`；专项 `/tmp/mdtui3-closed-math-headers-targeted.log`。
+项目 devShell 全部通过：cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release cargo nextest run --workspace --no-fail-fast 各 739 项、cargo test --doc --workspace 59 项、cargo fmt --all -- --check 和 git diff --check。新 closed_math_headers 示例验证百万字成功丢弃/失败提交、稳定 MathId 及预算预览（14 帧/96 个计费源码字节）；既有 math_headers、closed_code_headers、closed_headers、container_math、link_headers 示例通过。完整日志 `/tmp/mdstream-closed-math-headers-validation.log`；初始两项失败基线 `/tmp/mdstream-closed-math-headers-baseline.log`；专项 `/tmp/mdstream-closed-math-headers-targeted.log`。
 
 README/TODO 已同步，仅标记上述独立子项。闭合后带其它行内语法的数学表头、通用已发布对象/样式撤销、其它分类/容器限制及终端 UI 继续保留 TODO。零运行时依赖与禁止 unsafe 保持。
 
@@ -842,9 +842,9 @@ README/TODO 已同步，仅标记上述独立子项。闭合后带其它行内�
 
 额外状态 O(1)，无正文复制、旧样式/对象撤销或前缀重解析；提交/丢弃各只处理一次候选并计入 delimiter_steps，失败的有界规范化计入 label_bytes。累计 O(n log n)/空间 O(n)，不承诺单次判定硬时延。千层引用中的百万字长尾只增加一次 inline_bytes/table_header_bytes，无标签、分类、分隔符、容器或章节/祖先重查，注解和容器容量不变；成功/失败判定的新增行内扫描均小于 12 字节。250 层列表中的 4096 历史链接、4096 旧 opener、4096 当前公式和 4096 列保留对象身份并复用已解析语义。两万旧引用之后晚定义只规范化 7 个标签字节；内部测试验证百万字期间端点和缓冲不变、200 轮成功/失败/取消不积累历史状态。
 
-新增 14 项验收：crates/mdtui3-core/tests/closed_link_headers.rs 12 项、UTF-8 全切点/逐前缀快照 1 项、内部状态 1 项。覆盖四种作用域/两个标签类型/三个闭合位置的早管道对照、400 组范围/长分隔行模型、16 种取消后缀、CRLF/EOF/Setext/作用域退出、空白及精确长度上限、部分 tab 源码映射、共享预算暂停/恢复、稳定 BlockId/LinkId/MathId、通知合并和旧任务失效。摘要、显示搜索及百万字容器折叠保持有界，折叠正文和对象零读取。原 200 组替换/转义模型只增加可隔离 shortcut 接受分支，保留其余拒绝断言。
+新增 14 项验收：crates/mdstream-core/tests/closed_link_headers.rs 12 项、UTF-8 全切点/逐前缀快照 1 项、内部状态 1 项。覆盖四种作用域/两个标签类型/三个闭合位置的早管道对照、400 组范围/长分隔行模型、16 种取消后缀、CRLF/EOF/Setext/作用域退出、空白及精确长度上限、部分 tab 源码映射、共享预算暂停/恢复、稳定 BlockId/LinkId/MathId、通知合并和旧任务失效。摘要、显示搜索及百万字容器折叠保持有界，折叠正文和对象零读取。原 200 组替换/转义模型只增加可隔离 shortcut 接受分支，保留其余拒绝断言。
 
-项目 devShell 全部通过：cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release cargo nextest run --workspace --no-fail-fast 各 753 项、cargo test --doc --workspace 60 项、cargo fmt --all -- --check 和 git diff --check。新 closed_link_headers 示例验证百万字成功丢弃/失败晚定义、稳定图片 ID 和预算预览（14 帧/94 个计费源码字节）。完整日志 `/tmp/mdtui3-closed-link-headers-validation.log`；初始两项失败基线 `/tmp/mdtui3-closed-link-headers-baseline.log`。
+项目 devShell 全部通过：cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release cargo nextest run --workspace --no-fail-fast 各 753 项、cargo test --doc --workspace 60 项、cargo fmt --all -- --check 和 git diff --check。新 closed_link_headers 示例验证百万字成功丢弃/失败晚定义、稳定图片 ID 和预算预览（14 帧/94 个计费源码字节）。完整日志 `/tmp/mdstream-closed-link-headers-validation.log`；初始两项失败基线 `/tmp/mdstream-closed-link-headers-baseline.log`。
 
 README/TODO 已同步，仅标记此独立子项。显式目标/引用后缀、闭合后其它行内语法、通用已发布对象/引用副作用撤销、其余分类/容器限制及终端 UI 继续保留待办。零运行时依赖与禁止 unsafe 保持。
 
@@ -856,23 +856,23 @@ README/TODO 已同步，仅标记此独立子项。显式目标/引用后缀、�
 
 失败、无管道、EOF、Setext 或作用域退出先提交原 shortcut，再应用完成后缀，保留原符号创建顺序和首引用副作用，直接目标仍可留下旧 shortcut 符号；full 引用按目标标签间接寻址，collapsed 复用已去前缀的旧标签。拒绝字节恢复原 parser 位置和同一 LinkId，后续完成只更新该对象；空白/过长旧标签仍遵循无 shortcut 对象及直接目标回退规则。既有局部样式、代码/数学对象和历史 LinkId 保持稳定；源标签包络、部分 tab 显示映射及晚定义无需回访旧引用。
 
-新增 14 项验收：crates/mdtui3-core/tests/link_suffix_headers.rs 12 项、crates/mdtui3-core/tests/chunking.rs 全 UTF-8 切点/逐前缀快照 1 项、内部状态 1 项。覆盖四种作用域和两种标签的独立早管道对照，400 组范围/长分隔行模型，显式目标/title/引用与总后缀精确上限，非法/未完成/CRLF/EOF/Setext/作用域退出，17 种取消后缀及稳定临时对象，已定义符号的 first_use、两万旧引用晚定义及首定义优先，部分 tab 映射、共享预算暂停/恢复、合并 Update 与旧缓存/测量/显示/搜索任务拒绝。同步更新既有接受范围断言，并保留含新语法时取消及 Provisional LinkId 更新的检查。
+新增 14 项验收：crates/mdstream-core/tests/link_suffix_headers.rs 12 项、crates/mdstream-core/tests/chunking.rs 全 UTF-8 切点/逐前缀快照 1 项、内部状态 1 项。覆盖四种作用域和两种标签的独立早管道对照，400 组范围/长分隔行模型，显式目标/title/引用与总后缀精确上限，非法/未完成/CRLF/EOF/Setext/作用域退出，17 种取消后缀及稳定临时对象，已定义符号的 first_use、两万旧引用晚定义及首定义优先，部分 tab 映射、共享预算暂停/恢复、合并 Update 与旧缓存/测量/显示/搜索任务拒绝。同步更新既有接受范围断言，并保留含新语法时取消及 Provisional LinkId 更新的检查。
 
 千层容器中三类后缀的百万字长尾每字节仅新增一次 inline/header 摘要计数，标签、delimiter、分类、容器、标题及 arena 计数保持不变。250 层列表、4096 旧对象/旧 opener/列的成功路径保留历史 ID，决议仅 4097 次 delimiter_steps，局部 key 规范化 3 字节；不回扫首单元格。固定后缀状态在每类 200 轮成功/失败/取消后释放，标签缓冲不增长。折叠百万字容器正文与对象零读取。累计 O(n log n)、空间 O(n)，无新增运行时依赖/unsafe，不承诺单次判定硬时延。
 
-项目 devShell 全部通过：cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release cargo nextest run --workspace --no-fail-fast 各 767 项、cargo test --doc --workspace 61 项、cargo fmt --all -- --check 和 git diff --check。新 link_suffix_headers 示例验证百万字成功局部引用/失败晚定义、稳定图片 ID 和预算预览（16 帧/112 个计费源码字节）；既有 closed_link_headers、link_headers、closed_headers、closed_code_headers、closed_math_headers 示例全部通过。完整日志 `/tmp/mdtui3-link-suffix-headers-validation.log`；初始两项失败基线 `/tmp/mdtui3-link-suffix-headers-baseline.log`；专项 `/tmp/mdtui3-link-suffix-headers-targeted.log`。
+项目 devShell 全部通过：cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release cargo nextest run --workspace --no-fail-fast 各 767 项、cargo test --doc --workspace 61 项、cargo fmt --all -- --check 和 git diff --check。新 link_suffix_headers 示例验证百万字成功局部引用/失败晚定义、稳定图片 ID 和预算预览（16 帧/112 个计费源码字节）；既有 closed_link_headers、link_headers、closed_headers、closed_code_headers、closed_math_headers 示例全部通过。完整日志 `/tmp/mdstream-link-suffix-headers-validation.log`；初始两项失败基线 `/tmp/mdstream-link-suffix-headers-baseline.log`；专项 `/tmp/mdstream-link-suffix-headers-targeted.log`。
 
 按可独立验收子项交付。含行内语法字符的显式后缀、闭合后其它语法、多行目标/title、通用对象/符号撤销及其余分类/容器/终端 UI 需求仍在 TODO。
 
 ## 2026-10-30 CommonMark ATX 标准样例评分交付
 
-选定此前未评分的 CommonMark 0.31.2 ATX headings 完整章节（62–79，共 18 例）。`crates/mdtui3-core/tests/fixtures/commonmark_atx.rs` 保留官方 Markdown 和 HTML 原值、John MacFarlane / CC BY-SA 4.0 归属、版本、来源及规范行号；`scripts/generate_commonmark_atx.py` 只读取本地官方 `spec.json`，以 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20` 固定完整输入并校验章节成员，支持 `--check` 复核生成结果。字符串转义保留每个字符，避免源文件尾部不可见空格；构建和测试离线且零新增依赖。
+选定此前未评分的 CommonMark 0.31.2 ATX headings 完整章节（62–79，共 18 例）。`crates/mdstream-core/tests/fixtures/commonmark_atx.rs` 保留官方 Markdown 和 HTML 原值、John MacFarlane / CC BY-SA 4.0 归属、版本、来源及规范行号；`scripts/generate_commonmark_atx.py` 只读取本地官方 `spec.json`，以 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20` 固定完整输入并校验章节成员，支持 `--check` 复核生成结果。字符串转义保留每个字符，避免源文件尾部不可见空格；构建和测试离线且零新增依赖。
 
-独立 `crates/mdtui3-core/tests/commonmark_atx.rs` 按块类型/顺序、标题级别、可见文字和强调比较官方 HTML，并核对标题索引。测试适配器保留所有空格、内部换行和代码 LF，只跳过结构空块及段落/标题的一个物理末尾 LF；不重解析 Markdown、不按样例修正输出。评分结果：13 支持（62–66、68–69、74–79）；1 刻意差异（70，既有缩进代码可中断段落）；4 未支持（67、71–73，标题尾部或关闭井号前的空格未裁剪）。四项缺口明确列入 TODO；未修改官方期望或宣称其符合规范。非支持项同时检查与官方不同、与单独固定的当前观察值相同，回归或改善均须复审分类。
+独立 `crates/mdstream-core/tests/commonmark_atx.rs` 按块类型/顺序、标题级别、可见文字和强调比较官方 HTML，并核对标题索引。测试适配器保留所有空格、内部换行和代码 LF，只跳过结构空块及段落/标题的一个物理末尾 LF；不重解析 Markdown、不按样例修正输出。评分结果：13 支持（62–66、68–69、74–79）；1 刻意差异（70，既有缩进代码可中断段落）；4 未支持（67、71–73，标题尾部或关闭井号前的空格未裁剪）。四项缺口明确列入 TODO；未修改官方期望或宣称其符合规范。非支持项同时检查与官方不同、与单独固定的当前观察值相同，回归或改善均须复审分类。
 
 新增 3 项测试：逐例分类与固定汇总、18 例全部 430 个切点及逐字符输入、适配器对空标题/空白/强调/级别/块边界/代码换行的敏感性。所有流式结果独立对照官方期望或已分类观察，不以整次解析自比较充当标准评分。样例最长仅 54 字节，不据此声称长输入或完整语法兼容；解析核心、复杂度与预算契约无改动。
 
-项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 770 项、`cargo test --doc --workspace` 61 项、`cargo fmt --all -- --check`、官方夹具 `--check` 和 `git diff --check`。另外验证修改过的上游输入会被摘要检查拒绝。独立报告命令：`nix develop -c cargo nextest run --workspace --test commonmark_atx --no-fail-fast --success-output immediate`。完整日志 `/tmp/mdtui3-commonmark-atx-validation.log`；专项分类日志 `/tmp/mdtui3-commonmark-atx-targeted.log`；原始评分观察 `/tmp/mdtui3-commonmark-atx-baseline.log`。
+项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 770 项、`cargo test --doc --workspace` 61 项、`cargo fmt --all -- --check`、官方夹具 `--check` 和 `git diff --check`。另外验证修改过的上游输入会被摘要检查拒绝。独立报告命令：`nix develop -c cargo nextest run --workspace --test commonmark_atx --no-fail-fast --success-output immediate`。完整日志 `/tmp/mdstream-commonmark-atx-validation.log`；专项分类日志 `/tmp/mdstream-commonmark-atx-targeted.log`；原始评分观察 `/tmp/mdstream-commonmark-atx-baseline.log`。
 
 本次完成该章节的固定样例覆盖与分类。标题空白缺口、完整缩进规则、其余 CommonMark/GFM 范围及终端 UI 继续保留 TODO。
 
@@ -884,20 +884,20 @@ README/TODO 已同步，仅标记此独立子项。显式目标/引用后缀、�
 
 官方夹具及投影的空白保留规则未改动。18 例独立评分更新为 17 支持（62–69、71–79）、1 刻意差异（70，既有缩进代码可中断段落）、0 未支持；全部 430 个切点及逐字符输入通过。适配器继续检查内部重复空格、强调、级别和块边界，未以 trim 或替换官方期望消除缺口。两个既有容器测试的尾空格断言随修复更新。
 
-新增 10 项验收：crates/mdtui3-core/tests/atx_whitespace.rs 9 项及 crates/mdtui3-core/tests/chunking.rs 1 项。包括 1600 组固定种子的独立原始区间模型、UTF-8 全切点/逐前缀快照、空标题/CRLF/EOF/失败尾缀、显式容器/部分 tab、原始和显示映射、逐 tile/逐标量读取、小共享预算暂停/恢复、名称搜索/slug、通知合并和旧任务/缓存/测量拒绝。百万字正文加百万字空白或井号尾缀，在千层引用中逐字增长不扫描祖先、不增加注解节点或容器容量，EOF 不读取隐藏尾缀；百万字前导空白不进入行内解析，失败尾缀仅一次消费。4096 个历史标题和行内对象后关闭只处理当前标题。累计 O(n log n)、空间 O(n)，不新增运行时依赖或 unsafe；失败尾缀的一次性消费仍属摊还保证，不承诺单次 append 硬时延。
+新增 10 项验收：crates/mdstream-core/tests/atx_whitespace.rs 9 项及 crates/mdstream-core/tests/chunking.rs 1 项。包括 1600 组固定种子的独立原始区间模型、UTF-8 全切点/逐前缀快照、空标题/CRLF/EOF/失败尾缀、显式容器/部分 tab、原始和显示映射、逐 tile/逐标量读取、小共享预算暂停/恢复、名称搜索/slug、通知合并和旧任务/缓存/测量拒绝。百万字正文加百万字空白或井号尾缀，在千层引用中逐字增长不扫描祖先、不增加注解节点或容器容量，EOF 不读取隐藏尾缀；百万字前导空白不进入行内解析，失败尾缀仅一次消费。4096 个历史标题和行内对象后关闭只处理当前标题。累计 O(n log n)、空间 O(n)，不新增运行时依赖或 unsafe；失败尾缀的一次性消费仍属摊还保证，不承诺单次 append 硬时延。
 
-项目 devShell 验收全部通过：cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release cargo nextest run --workspace --no-fail-fast 各 780 项、cargo test --doc --workspace 62 项、cargo fmt --all -- --check、官方夹具摘要与生成结果 --check、git diff --check。anchors、container_headings、heading_search 三个相关 release 示例通过；新增 README 示例演示长空白与跨追加 CRLF。完整日志 `/tmp/mdtui3-atx-whitespace-validation.log`；独立评分与专项日志 `/tmp/mdtui3-atx-whitespace-targeted.log`、`/tmp/mdtui3-atx-whitespace-regression.log`；修改前两项失败基线 `/tmp/mdtui3-atx-whitespace-baseline.log`。
+项目 devShell 验收全部通过：cargo check --workspace --all-targets、cargo clippy --workspace --all-targets -- -D warnings、debug/release cargo nextest run --workspace --no-fail-fast 各 780 项、cargo test --doc --workspace 62 项、cargo fmt --all -- --check、官方夹具摘要与生成结果 --check、git diff --check。anchors、container_headings、heading_search 三个相关 release 示例通过；新增 README 示例演示长空白与跨追加 CRLF。完整日志 `/tmp/mdstream-atx-whitespace-validation.log`；独立评分与专项日志 `/tmp/mdstream-atx-whitespace-targeted.log`、`/tmp/mdstream-atx-whitespace-regression.log`；修改前两项失败基线 `/tmp/mdstream-atx-whitespace-baseline.log`。
 
 本单元完成 ATX 原始空白与长尾缀需求。分类前缀上限、完整缩进/容器规则、其它 CommonMark/GFM 范围及终端 UI 继续保留 TODO。
 
 ## 2026-10-30 CommonMark Setext 标准样例评分交付
 
-- [x] **固定完整官方章节**：`crates/mdtui3-core/tests/fixtures/commonmark_setext.rs` 收录 CommonMark 0.31.2 Setext headings 的全部 27 例（80–106），逐字保存 Markdown 与 HTML，包括空格、tab 和 LF；附 John MacFarlane / CC BY-SA 4.0 归属、规范行号和完整 `spec.json` SHA-256。`scripts/generate_commonmark_setext.py` 只读另行下载的本地来源，校验固定摘要及章节成员后生成或 `--check`，来源被改动时拒绝；构建与测试不联网。
-- [x] **独立分类和可重复报告**：`crates/mdtui3-core/tests/commonmark_setext.rs` 对照官方 HTML，当前 **22 支持、2 刻意差异、3 未支持**。支持 80–81、83、86、88、90–106；85/87 分别沿用空行终止缩进代码、缩进代码中断段落的已记录方言；82/84/89 暴露 Setext 标题缩进及尾随 space/tab 未裁剪的缺口。非支持项另存当前观察值，同时断言仍不同于官方、且当前行为未改变；改善与回归都必须审查分类，不自动提高分数。
+- [x] **固定完整官方章节**：`crates/mdstream-core/tests/fixtures/commonmark_setext.rs` 收录 CommonMark 0.31.2 Setext headings 的全部 27 例（80–106），逐字保存 Markdown 与 HTML，包括空格、tab 和 LF；附 John MacFarlane / CC BY-SA 4.0 归属、规范行号和完整 `spec.json` SHA-256。`scripts/generate_commonmark_setext.py` 只读另行下载的本地来源，校验固定摘要及章节成员后生成或 `--check`，来源被改动时拒绝；构建与测试不联网。
+- [x] **独立分类和可重复报告**：`crates/mdstream-core/tests/commonmark_setext.rs` 对照官方 HTML，当前 **22 支持、2 刻意差异、3 未支持**。支持 80–81、83、86、88、90–106；85/87 分别沿用空行终止缩进代码、缩进代码中断段落的已记录方言；82/84/89 暴露 Setext 标题缩进及尾随 space/tab 未裁剪的缺口。非支持项另存当前观察值，同时断言仍不同于官方、且当前行为未改变；改善与回归都必须审查分类，不自动提高分数。
 - [x] **保留待评分语义**：测试投影检查块类型/顺序、标题级别和索引范围、显示文字/强调、根引用及根无序 tight 列表边界。同容器物理正文叶块只按已发布软/硬换行合并；空行两侧的代码块保持分离。仅省略结构空行和非代码块的一个物理末尾 LF，保留内部换行、所有空格/tab 和代码 LF；不 `trim`、不重解析 Markdown、不接收样例编号做特殊修正。投影是该章节测试适配器，不是库 HTML 渲染器；样例 91 不能作为支持 HTML 的证明。
 - [x] **流式及适配器验收**：全部 533 个单切点和 506 个逐字符前缀检查块/标题/容器稳定身份、源码范围及显示映射/样式、待分类范围，EOF 后与固定分类结果对照。独立敏感性检查覆盖空格/tab、强调、标题级别、内部软/硬换行、引用/列表边界及代码空行分块，避免适配器把待修复差异抹掉。
 
-独立运行：`nix develop -c cargo nextest run --workspace --test commonmark_setext --no-fail-fast --success-output immediate`；夹具复核：`python3 scripts/generate_commonmark_setext.py /path/to/spec.json --check`。3 项新增测试全部通过。项目 devShell 的 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 **783 项**、**62 项文档测试**、格式检查、ATX/Setext 夹具复核及 `git diff --check` 通过。完整日志 `/tmp/mdtui3-commonmark-setext-validation.log`，独立分类与分块日志 `/tmp/mdtui3-commonmark-setext-targeted.log`，初始公开语义观察 `/tmp/mdtui3-commonmark-setext-inspect.log`；另以独立 Python 读取逐对核验 27 份官方输入/HTML 并验证来源摘要篡改被拒绝。
+独立运行：`nix develop -c cargo nextest run --workspace --test commonmark_setext --no-fail-fast --success-output immediate`；夹具复核：`python3 scripts/generate_commonmark_setext.py /path/to/spec.json --check`。3 项新增测试全部通过。项目 devShell 的 `cargo check --workspace --all-targets`、clippy `-D warnings`、debug/release nextest 各 **783 项**、**62 项文档测试**、格式检查、ATX/Setext 夹具复核及 `git diff --check` 通过。完整日志 `/tmp/mdstream-commonmark-setext-validation.log`，独立分类与分块日志 `/tmp/mdstream-commonmark-setext-targeted.log`，初始公开语义观察 `/tmp/mdstream-commonmark-setext-inspect.log`；另以独立 Python 读取逐对核验 27 份官方输入/HTML 并验证来源摘要篡改被拒绝。
 
 本次完成评分而非全部语法支持，没有修改解析核心、依赖或终端 UI。Setext 首尾空白（82、84、89）明确保留 TODO；完整缩进/空行规则、分类长度上限、其余 CommonMark/GFM 范围及终端 UI 继续保留，短标准样例不替代已有长输入和预算/复杂度验收。
 
@@ -906,33 +906,33 @@ README/TODO 已同步，仅标记此独立子项。显式目标/引用后缀、�
 - [x] **官方空白缺口修复**：Setext 的整段原文首尾 space/tab 在下划线确认时隐藏，`Heading.content` 收缩到裁剪后的源码包络。固定 CommonMark 0.31.2 样例 82、84、89 改为支持，完整章节现为 **25 支持、2 刻意差异、0 未支持**；官方 Markdown/HTML 夹具、摘要和 HTML 投影代码不变。85/87 仍保留已记录的缩进代码方言差异，未改成官方期望。
 - [x] **单遍摘要与迟确认**：行内扫描同时维护首尾非 space/tab 字节及待定 CR，计入现有 `Work.inline_bytes`，只增加固定状态。LF/CRLF 后的 Setext 下划线完整确认时读取端点并写至多两个隐藏区间；不回扫正文、容器祖先或物理叶块。内部空白、软/硬换行、已确认代码/数学/链接、实体生成空格和原始源码映射保持；普通段落及失败下划线继续既有规则。序列关闭时清除端点，表头失败只消费未解析后缀，成功则隔离单元格。
 - [x] **身份与预算消费**：保留 BlockId、原始物理范围及已发布链接/数学对象；新 HeadingId 使用既有整段 Update 失效及合并协议。首尾 tile 的旧 key/测量/检查点、显示游标、名称搜索和 slug 任务正确失效；小预算显示读取原子暂停并推进，跨 tile/逐标量显示与全文一致，命中的源码映射、共享预算名称搜索/slug、折叠默认/预览/导航通过。
-- [x] **独立模型与对抗验收**：新增 10 项验收（`crates/mdtui3-core/tests/setext_whitespace.rs` 9 项及全局分块快照 1 项）。1200 组原始区间模型对照独立整串 trim；覆盖 UTF-8 全切点/逐字符前缀、CRLF/EOF/孤立 CR、实体/代码/未闭合候选、内部硬换行、列表 padding/任务/部分 tab、分类上限、作用域切换及表头失败/成功。既有官方 533 切点、506 逐字符前缀评分保持通过。
+- [x] **独立模型与对抗验收**：新增 10 项验收（`crates/mdstream-core/tests/setext_whitespace.rs` 9 项及全局分块快照 1 项）。1200 组原始区间模型对照独立整串 trim；覆盖 UTF-8 全切点/逐字符前缀、CRLF/EOF/孤立 CR、实体/代码/未闭合候选、内部硬换行、列表 padding/任务/部分 tab、分类上限、作用域切换及表头失败/成功。既有官方 533 切点、506 逐字符前缀评分保持通过。
 
 顶层及千层引用中的百万字正文加百万字尾部空白，逐字增长只计新增行内字节，分类/容器/标题上下文计数不变；下划线确认的旧正文/标签读取为零、区间树访问少于 1000。4096 个历史标题/链接/数学对象之后，再确认含 4096 个中间物理叶块的标题，旧对象和中间块不改写、标题步骤仅 2 次；空间保持固定摘要而非缓存原文。追加百万字折叠正文后，范围查询零正文计费；既有 `container_setext` release 示例以 16 帧/32 源码字节完成并跳过隐藏正文。整体仍是既有摊还 O(n log n)/空间 O(n) 契约，未把未闭合 opener 的实际收尾成本称作常数时间。
 
-项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **793 项**、`cargo test --doc --workspace` **63 项**、`cargo fmt --all -- --check`、官方 ATX/Setext 夹具 `--check` 和 `git diff --check`。`container_setext`、`heading_search`、`anchors` 三个 release 示例通过。完整日志 `/tmp/mdtui3-setext-whitespace-validation.log`；修改前官方评分的三项失败基线 `/tmp/mdtui3-setext-whitespace-baseline.log`；初次独立评分与容器回归 `/tmp/mdtui3-setext-whitespace-targeted.log`；专项分块/预算/复杂度 `/tmp/mdtui3-setext-whitespace-new-tests.log`；最终独立评分和文档复核 `/tmp/mdtui3-setext-whitespace-final-doc.log`。
+项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **793 项**、`cargo test --doc --workspace` **63 项**、`cargo fmt --all -- --check`、官方 ATX/Setext 夹具 `--check` 和 `git diff --check`。`container_setext`、`heading_search`、`anchors` 三个 release 示例通过。完整日志 `/tmp/mdstream-setext-whitespace-validation.log`；修改前官方评分的三项失败基线 `/tmp/mdstream-setext-whitespace-baseline.log`；初次独立评分与容器回归 `/tmp/mdstream-setext-whitespace-targeted.log`；专项分块/预算/复杂度 `/tmp/mdstream-setext-whitespace-new-tests.log`；最终独立评分和文档复核 `/tmp/mdstream-setext-whitespace-final-doc.log`。
 
 本单元完成已识别 Setext 标题的原始首尾空白需求。普通段落空白、完整缩进/空行规则、Setext 分类上限、剩余容器/tab 规则、其它 CommonMark/GFM 范围及终端 UI 继续按 TODO 推进；零运行时依赖及禁止 unsafe 保持。
 
 ## 2026-10-30 GFM 表格标准样例评分交付
 
-- [x] **固定完整官方章节**：`crates/mdtui3-core/tests/fixtures/gfm_tables.rs` 收录 GFM 0.29-gfm（2019-04-06）Tables (extension) 全部 8 例（198–205）的官方 Markdown 和 HTML，保留每个空格及 LF，附 GitHub / John MacFarlane 归属、CC BY-SA 4.0 许可、HTML 源码行号和样例锚点。`scripts/generate_gfm_tables.py` 读取另行下载的官方规范 HTML，以 SHA-256 `b153d814fdfc8624bb6da7449162c1cd707a637f7d1c1b636eb44b9cf63fa220` 固定整页来源；校验完整章节成员，只解码代码块的展示标记，离线生成或 `--check`。独立正则提取与 HTML 解码逐字符核验了 8 对输入/期望，篡改来源会被摘要校验拒绝。
-- [x] **独立分类和报告**：`crates/mdtui3-core/tests/gfm_tables.rs` 当前 **8 支持、0 刻意差异、0 未支持**。覆盖表头/正文、居中/右对齐、可选外侧管道、文本/代码/粗体中的转义管道、引用和空行终止、无管道稀疏行、表头/分隔行列数不符回退、缺失及多余单元格、无正文表格。每例直接比较固定官方 HTML，任一不符都会失败；没有用库输出替换标准期望或动态重分类。
+- [x] **固定完整官方章节**：`crates/mdstream-core/tests/fixtures/gfm_tables.rs` 收录 GFM 0.29-gfm（2019-04-06）Tables (extension) 全部 8 例（198–205）的官方 Markdown 和 HTML，保留每个空格及 LF，附 GitHub / John MacFarlane 归属、CC BY-SA 4.0 许可、HTML 源码行号和样例锚点。`scripts/generate_gfm_tables.py` 读取另行下载的官方规范 HTML，以 SHA-256 `b153d814fdfc8624bb6da7449162c1cd707a637f7d1c1b636eb44b9cf63fa220` 固定整页来源；校验完整章节成员，只解码代码块的展示标记，离线生成或 `--check`。独立正则提取与 HTML 解码逐字符核验了 8 对输入/期望，篡改来源会被摘要校验拒绝。
+- [x] **独立分类和报告**：`crates/mdstream-core/tests/gfm_tables.rs` 当前 **8 支持、0 刻意差异、0 未支持**。覆盖表头/正文、居中/右对齐、可选外侧管道、文本/代码/粗体中的转义管道、引用和空行终止、无管道稀疏行、表头/分隔行列数不符回退、缺失及多余单元格、无正文表格。每例直接比较固定官方 HTML，任一不符都会失败；没有用库输出替换标准期望或动态重分类。
 - [x] **保留评分语义**：窄投影仅读取公开表/列/行/单元格元数据及显示片段，核对表 ID、所属块与源码范围，保持表头/正文、顺序、对齐、代码/强调/粗体和根引用边界。隐式空单元格沿用公开语义，多余单元格必须已被解析器排除；不重新切管道、去反斜线、裁剪空白或按样例编号调整输出。只跳过结构空块及段落的一个物理末尾 LF；内部空格/tab 和实体生成的首尾空格均保留。
 - [x] **流式和适配器验收**：全部 **361 个切点、353 个逐字符前缀**对照块/标题/容器/表格身份、列宽提示、行/单元格源码范围及完成状态、原始/显示样式与待分类范围；最终输出仍直接比较官方期望。敏感性验收覆盖列/行顺序、默认与左/中/右对齐、无正文与空正文行、缺失/多余单元格、嵌套样式、空格/tab/实体、段落和引用边界。新增 3 项独立测试。
 
-独立报告：`nix develop -c cargo nextest run --workspace --test gfm_tables --no-fail-fast --success-output immediate`；夹具复核：`python3 scripts/generate_gfm_tables.py /path/to/gfm.html --check`。项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **796 项**、`cargo test --doc --workspace` **63 项**、`cargo fmt --all -- --check`、夹具复核及 `git diff --check`。完整日志 `/tmp/mdtui3-gfm-tables-validation.log`；独立分类与分块日志 `/tmp/mdtui3-gfm-tables-targeted.log`；首次公开语义观察 `/tmp/mdtui3-gfm-tables-inspect.log`；独立来源复核和篡改拒绝证据 `/tmp/mdtui3-gfm-tables-fixture-check.log`。
+独立报告：`nix develop -c cargo nextest run --workspace --test gfm_tables --no-fail-fast --success-output immediate`；夹具复核：`python3 scripts/generate_gfm_tables.py /path/to/gfm.html --check`。项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **796 项**、`cargo test --doc --workspace` **63 项**、`cargo fmt --all -- --check`、夹具复核及 `git diff --check`。完整日志 `/tmp/mdstream-gfm-tables-validation.log`；独立分类与分块日志 `/tmp/mdstream-gfm-tables-targeted.log`；首次公开语义观察 `/tmp/mdstream-gfm-tables-inspect.log`；独立来源复核和篡改拒绝证据 `/tmp/mdstream-gfm-tables-fixture-check.log`。
 
 本单元完成官方表格章节评分。8 例均为 ASCII、最长 56 字节，不能据此推断所有 Unicode、长输入、容器表格或完整 GFM 合规；其余标准范围、语法边界和终端表格排版继续保留 TODO。解析核心及其复杂度/预算契约未改动，保持零运行时依赖及禁止 unsafe。
 
 ## 2026-10-30 GFM 任务列表标准样例评分交付
 
-- [x] **固定完整官方章节**：`crates/mdtui3-core/tests/fixtures/gfm_tasks.rs` 收录 GFM 0.29-gfm（2019-04-06）Task list items (extension) 全部 2 例（279–280）的官方 Markdown/HTML，保留每个空格及 LF、HTML 源码行号和样例锚点，附 GitHub / John MacFarlane 归属与 CC BY-SA 4.0 许可。`scripts/generate_gfm_tasks.py` 从本地规范 HTML 离线生成或 `--check`；完整来源 SHA-256 为 `b153d814fdfc8624bb6da7449162c1cd707a637f7d1c1b636eb44b9cf63fa220`，校验章节成员，仅解码展示标记。独立正则提取/HTML 解码与生成器结果逐字符一致，来源篡改会被摘要检查拒绝。
-- [x] **独立分类报告**：`crates/mdtui3-core/tests/gfm_tasks.rs` 当前 **2 支持、0 刻意差异、0 未支持**。279 覆盖未勾选/已勾选兄弟任务；280 覆盖嵌套任务、各层独立状态和父子边界。逐例直接对照固定官方 HTML，差异即失败，不使用库输出重写期望或动态重分类。
+- [x] **固定完整官方章节**：`crates/mdstream-core/tests/fixtures/gfm_tasks.rs` 收录 GFM 0.29-gfm（2019-04-06）Task list items (extension) 全部 2 例（279–280）的官方 Markdown/HTML，保留每个空格及 LF、HTML 源码行号和样例锚点，附 GitHub / John MacFarlane 归属与 CC BY-SA 4.0 许可。`scripts/generate_gfm_tasks.py` 从本地规范 HTML 离线生成或 `--check`；完整来源 SHA-256 为 `b153d814fdfc8624bb6da7449162c1cd707a637f7d1c1b636eb44b9cf63fa220`，校验章节成员，仅解码展示标记。独立正则提取/HTML 解码与生成器结果逐字符一致，来源篡改会被摘要检查拒绝。
+- [x] **独立分类报告**：`crates/mdstream-core/tests/gfm_tasks.rs` 当前 **2 支持、0 刻意差异、0 未支持**。279 覆盖未勾选/已勾选兄弟任务；280 覆盖嵌套任务、各层独立状态和父子边界。逐例直接对照固定官方 HTML，差异即失败，不使用库输出重写期望或动态重分类。
 - [x] **保留评分语义与边界**：投影读取公开容器父关系、tight 状态、块/容器一致的任务元数据及显示片段，保持嵌套、条目顺序、勾选状态和正文/样式。核对任务标记的源码范围、原文与隐藏映射，根据 `checked` 输出语义复选框。两个样例标记后的单个 ASCII 空格经原文和隐藏映射校验后保留；不把其它 padding 归一化为单空格，不扫描源码发现任务标记。正文只去掉一个物理末尾 LF，内部空白及实体生成的首尾空格均保留。多行条目、引用、有序/loose 列表、其它块及不同任务 padding 显式拒绝，不把未覆盖语义静默丢弃后计为通过。
 - [x] **流式与适配器验收**：所有 **66 个切点、64 个逐字符前缀**对照块/容器身份、父关系、范围/状态、任务标记范围和勾选状态、原始/显示片段映射及待分类范围；结束后仍直接比较官方期望。另检查大小写 X 的状态、非任务条目、正文和条目数量、父子关系/兄弟顺序/新列表边界、代码/强调/粗体、空格/tab/实体以及超出投影范围的输入拒绝。共新增 4 项测试，手工变体与官方评分分开。
 
-独立报告：`nix develop -c cargo nextest run --workspace --test gfm_tasks --no-fail-fast --success-output immediate`；夹具复核：`python3 scripts/generate_gfm_tasks.py /path/to/gfm.html --check`。项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **800 项**、`cargo test --doc --workspace` **63 项**、`cargo fmt --all -- --check`、夹具复核及 `git diff --check`。完整日志 `/tmp/mdtui3-gfm-tasks-validation.log`；独立评分和分块日志 `/tmp/mdtui3-gfm-tasks-targeted.log`；独立来源核验及篡改拒绝 `/tmp/mdtui3-gfm-tasks-fixture-check.log`。
+独立报告：`nix develop -c cargo nextest run --workspace --test gfm_tasks --no-fail-fast --success-output immediate`；夹具复核：`python3 scripts/generate_gfm_tasks.py /path/to/gfm.html --check`。项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **800 项**、`cargo test --doc --workspace` **63 项**、`cargo fmt --all -- --check`、夹具复核及 `git diff --check`。完整日志 `/tmp/mdstream-gfm-tasks-validation.log`；独立评分和分块日志 `/tmp/mdstream-gfm-tasks-targeted.log`；独立来源核验及篡改拒绝 `/tmp/mdstream-gfm-tasks-fixture-check.log`。
 
 本单元完成官方任务列表章节评分。两个输入均为 ASCII、20/44 字节、最多两层列表，不能据此推断完整任务标记空白、空内容、多行/有序/loose 任务、任意深度、Unicode 或长输入合规。其它标准范围和交互绘制继续保留 TODO；复选框 HTML 仅为评分投影。解析核心及预算/复杂度契约未改动，保持零运行时依赖及禁止 unsafe。
 
@@ -948,7 +948,7 @@ README/TODO 已同步，仅标记此独立子项。显式目标/引用后缀、�
 
 新增 15 项专项验收：384 组独立标量换行布局/EOF/tile 边界模型、240 轮（480 次追加）区间/高度模型、UTF-8 全切点及逐前缀、CRLF/失败候选、Setext/整表改型与晚表头收缩、展开/收起/预览三种移除状态、原子注册与零预算、占位后段尾暂停、共享 recovery 恢复、百万字/4096 历史注册/千层容器、晚定义与行内闭合、源码导航/批量、手工预留与通知合并/重放。已有段落 1000 轮随机及其它折叠测试全部保留并通过。专项首轮修正两处测试输入假设：未定义 shortcut 标签沿用现有隐藏方括号语义；千层引用使用 1000 个连续 `>`，避免空格前缀超出既定 1024 字节分类窗口，没有更改解析期望或扩大方言。
 
-项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 815 项、`cargo test --doc --workspace` 64 项、`cargo fmt --all -- --check` 及 `git diff --check`。更新的 `paragraph_folding` release 示例先收起开放段落再追加百万字，8 帧/47 计费字节、一次段尾恢复；既有 `source_folding`、`folding`、`table_row_folding` 示例通过。完整日志：`/tmp/mdtui3-open-paragraph-validation.log`；专项日志：`/tmp/mdtui3-open-paragraph-targeted2.log`、`/tmp/mdtui3-open-paragraph-targeted3.log`（后者的千层测试输入修正已由完整验收复核）。
+项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 815 项、`cargo test --doc --workspace` 64 项、`cargo fmt --all -- --check` 及 `git diff --check`。更新的 `paragraph_folding` release 示例先收起开放段落再追加百万字，8 帧/47 计费字节、一次段尾恢复；既有 `source_folding`、`folding`、`table_row_folding` 示例通过。完整日志：`/tmp/mdstream-open-paragraph-validation.log`；专项日志：`/tmp/mdstream-open-paragraph-targeted2.log`、`/tmp/mdstream-open-paragraph-targeted3.log`（后者的千层测试输入修正已由完整验收复核）。
 
 README/TODO 已同步，只勾选显式开放顶层段落前缀折叠。容器跨物理叶块段落身份、自动发现/长度默认策略、逻辑/显示行数预览、完整字素/对象截断、媒体详情、通用手工范围增长和终端 UI 继续保留 TODO。
 
@@ -964,7 +964,7 @@ README/TODO 已同步，只勾选显式开放顶层段落前缀折叠。容器�
 
 新增 15 项专项测试：288 组独立标量换行布局模型、240 轮流式/960 次切换的区间与高度模型、UTF-8 全切点及逐前缀、CRLF/EOF/孤立 CR、部分 tab/lazy/任务标记、普通闭合与迟确认、长表头/分隔行成功失败、百万字/千层引用/250 层列表/4096 历史段落和叶块、注册原子性与重叠拒绝、段尾零预算暂停、共享 recovery、独立视图、导航/批量/预览及合并通知重放。既有 30 项段落测试继续通过。首轮两处测试输入计算修正为实际字节端点和隐藏内部 tile 起点；Clippy 提示的两处整除写法也已修正，无解析期望降级。
 
-项目 devShell 全部验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **830 项**、`cargo test --doc --workspace` **65 项**、`cargo fmt --all -- --check` 及 `git diff --check`。新增 `container_paragraph_folding` release 示例在百万字追加和兄弟条目恢复后仅 **6 帧/32 计费字节/一次段尾回调**；原 paragraph_folding、source_folding、container_folding release 示例均通过。完整日志 `/tmp/mdtui3-container-paragraph-validation.log`，专项日志 `/tmp/mdtui3-container-paragraph-targeted.log`。
+项目 devShell 全部验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **830 项**、`cargo test --doc --workspace` **65 项**、`cargo fmt --all -- --check` 及 `git diff --check`。新增 `container_paragraph_folding` release 示例在百万字追加和兄弟条目恢复后仅 **6 帧/32 计费字节/一次段尾回调**；原 paragraph_folding、source_folding、container_folding release 示例均通过。完整日志 `/tmp/mdstream-container-paragraph-validation.log`，专项日志 `/tmp/mdstream-container-paragraph-targeted.log`。
 
 README/TODO 已同步；已交付显式源码前缀核心。自动发现/长度默认策略、逻辑/显示行数前缀、完整字素/对象截断、媒体详情、完整容器/tab 方言及终端排版继续保留 TODO。保持零运行时依赖、禁止 unsafe 和累计 O(n log n)/空间 O(n) 契约。
 
@@ -978,7 +978,7 @@ README/TODO 已同步；已交付显式源码前缀核心。自动发现/长度�
 
 新增 **14 项**专项验收：400 个独立源码包络/1600 组窗口和长度筛选模型、UTF-8 全切点及逐前缀、CRLF/EOF/部分 tab/lazy、窗口每个字节边界、开放待分类长度、迟确认成功/失败、预算原子暂停与 4096 非候选逐项计费、共享注册预算及 2000 次祖先检查、独立视图与注册/预览/reset、错误文档/旧 revision/无效窗口、合并通知/重放和旧测量/注册拒绝、240 轮流式范围/可见性模型、千层/百万字/250 层列表/4096 历史及物理叶块。百万字后逐字追加 1000 次，各局部窗口恰好一个发现步骤、视图恰好 1000 次活动刷新；inline 只增加 1000，祖先及段尾索引不增长。未修改解析器或既有语法预期。
 
-项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **844 项**、`cargo test --doc --workspace` **66 项**、`cargo fmt --all -- --check` 及 `git diff --check`。新 `paragraph_discovery` release 示例：从百万字中段发现原首叶块仅 **1 query/object、0 正文字节**，共享预算注册合计 **8 帧**，追加后局部窗口保持身份；既有 container_paragraph_folding 示例仍为 **6 帧/32 字节/一次段尾回调**。完整日志 `/tmp/mdtui3-paragraph-discovery-validation.log`；专项日志 `/tmp/mdtui3-paragraph-discovery-targeted.log`。
+项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **844 项**、`cargo test --doc --workspace` **66 项**、`cargo fmt --all -- --check` 及 `git diff --check`。新 `paragraph_discovery` release 示例：从百万字中段发现原首叶块仅 **1 query/object、0 正文字节**，共享预算注册合计 **8 帧**，追加后局部窗口保持身份；既有 container_paragraph_folding 示例仍为 **6 帧/32 字节/一次段尾回调**。完整日志 `/tmp/mdstream-paragraph-discovery-validation.log`；专项日志 `/tmp/mdstream-paragraph-discovery-targeted.log`。
 
 README/TODO 已同步，本单元完成有预算候选发现。自动注册/默认长度策略、逻辑/显示行数前缀、完整字素/对象截断、媒体详情、完整容器方言及终端 UI 保留 TODO；零运行时依赖、禁止 unsafe 和累计复杂度契约保持。
 
@@ -992,25 +992,25 @@ README/TODO 已同步，本单元完成有预算候选发现。自动注册/默�
 
 共享 Budget 原子扣发现、两端祖先与最终注册步骤；最后一步同时初始化收起。任务 O(1) 空间、无正文回扫，未完成注册不修改视图，取消/失效保留已完成部分。结果返回累计检查/注册/跳过及当次变化包络；外部文档/视图变更使旧任务失效，新的收起区间按既有规则使测量、检查点与布局任务失效。
 
-新增 16 项验收（14 项 `crates/mdtui3-core/tests/paragraph_auto_folding.rs`、2 项复用既有布局模型），覆盖：
+新增 16 项验收（14 项 `crates/mdstream-core/tests/paragraph_auto_folding.rs`、2 项复用既有布局模型），覆盖：
 
 - 400 个独立段落包络/400 随机窗口长度模型，240 轮/960 次切换的流式区间与高度模型，72 组自动/手工及大小预算布局对照。
 - UTF-8 全切点/逐前缀、CRLF/无换行 EOF/孤立 CR、部分 tab/lazy、分类阈值、极值参数、晚表头收缩与 Setext/整表改型、多视图/排除/移除/预览/批量、未完成窗口跨合并更新恢复、通知重放及旧任务/测量拒绝。
 - 千层引用首次注册需 2006 个 query/object 步骤，250 层列表需 1006 步；预算耗尽时未完成注册不可见，已完成部分可见。4096 非段落逐个付费，4096 物理叶块整段只发现一次。
 - 4096 历史注册后追加百万字，随后逐字追加 1000 次（顶层/千层引用各一组），每次仅一步发现和一次活动范围刷新；无历史/正文/祖先回扫。隐藏布局只读取前缀与可见后文。
 
-项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 860 项、`cargo test --doc --workspace` 67 项、`cargo fmt --all -- --check`、`git diff --check`。完整日志 `/tmp/mdtui3-paragraph-auto-validation.log`；专项日志 `/tmp/mdtui3-paragraph-auto-targeted.log`、`/tmp/mdtui3-paragraph-auto-targeted-extra.log`。新 release 示例 `paragraph_auto_folding` 为 8 帧、零正文读取、显式展开跨封口保留；既有 `paragraph_discovery` 与 `container_paragraph_folding` release 示例也通过（后者 6 帧/32 源码字节）。
+项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 860 项、`cargo test --doc --workspace` 67 项、`cargo fmt --all -- --check`、`git diff --check`。完整日志 `/tmp/mdstream-paragraph-auto-validation.log`；专项日志 `/tmp/mdstream-paragraph-auto-targeted.log`、`/tmp/mdstream-paragraph-auto-targeted-extra.log`。新 release 示例 `paragraph_auto_folding` 为 8 帧、零正文读取、显式展开跨封口保留；既有 `paragraph_discovery` 与 `container_paragraph_folding` release 示例也通过（后者 6 帧/32 源码字节）。
 
 README/TODO 已同步。本单元完成有预算自动注册与源码字节长度默认策略；逻辑/显示行数前缀、完整字素/对象截断、媒体详情、完整容器方言及终端 UI 继续保留 TODO。零运行时依赖、禁止 unsafe 和累计复杂度契约保持。
 
 
 ## 2026-10-30 可复现语法生成 fuzz 与失败缩减交付
 
-新增 `crates/mdtui3-core/tests/support/syntax_fuzz.rs` 和 `crates/mdtui3-core/examples/syntax_fuzz.rs`，共享固定版本生成器、失败属性检查、精确输入/分块重放及确定性缩减。四个持久化 u64 种子各 36 例，共 144 例、19,536 个开放前缀；源码/分块/种子用 FNV-1a 指纹 8310356521655359848 锁定。十二类块产生式组合两层行内语法、显式引用/列表、晚定义、未闭合/错误候选、中文/emoji、CRLF 和跨 1 KiB 分类窗口长行，逐字符/随机/语法标记分块均参与验收。独立覆盖检查实际到达 46 个标题、53 张表、707 个容器、191 个链接、26 个行内数学、61 个脚注引用、72 个代码块和 32 个数学块；68 例含 CR、38 例含 Unicode、24 例跨分类窗口。
+新增 `crates/mdstream-core/tests/support/syntax_fuzz.rs` 和 `crates/mdstream-core/examples/syntax_fuzz.rs`，共享固定版本生成器、失败属性检查、精确输入/分块重放及确定性缩减。四个持久化 u64 种子各 36 例，共 144 例、19,536 个开放前缀；源码/分块/种子用 FNV-1a 指纹 8310356521655359848 锁定。十二类块产生式组合两层行内语法、显式引用/列表、晚定义、未闭合/错误候选、中文/emoji、CRLF 和跨 1 KiB 分类窗口长行，逐字符/随机/语法标记分块均参与验收。独立覆盖检查实际到达 46 个标题、53 张表、707 个容器、191 个链接、26 个行内数学、61 个脚注引用、72 个代码块和 32 个数学块；68 例含 CR、38 例含 Unicode、24 例跨分类窗口。
 
-`crates/mdtui3-core/tests/chunking.rs` 的完整快照原样移入 `crates/mdtui3-core/tests/support/snapshot.rs`，只放开测试模块可见性，没有删减或规范化旧语义投影。每个开放前缀及 EOF 与一次 append 对照，覆盖块/容器/标题/表格、链接/引用符号、数学/脚注及内容映射、样式与显示映射；独立验证 UTF-8 范围、源码覆盖、父先于子与深度/包含、对象 ID、行/单元格和 payload 顺序、pending 上限、重复 finish 和 EOF 后 append 拒绝。未修改解析核心或官方标准样例，零新增依赖，现有复杂度和预算测试全部保留。
+`crates/mdstream-core/tests/chunking.rs` 的完整快照原样移入 `crates/mdstream-core/tests/support/snapshot.rs`，只放开测试模块可见性，没有删减或规范化旧语义投影。每个开放前缀及 EOF 与一次 append 对照，覆盖块/容器/标题/表格、链接/引用符号、数学/脚注及内容映射、样式与显示映射；独立验证 UTF-8 范围、源码覆盖、父先于子与深度/包含、对象 ID、行/单元格和 payload 顺序、pending 上限、重复 finish 和 EOF 后 append 拒绝。未修改解析核心或官方标准样例，零新增依赖，现有复杂度和预算测试全部保留。
 
-失败文件 `mdtui3-syntax-fuzz-v1` 保存种子、case 序号、注入模式、绝对字节切点及原始输入，保留空追加、NUL、CRLF 和未终止 EOF；重放不重新生成。CLI 失败先写原件，再写 `.min`，退出 1；正常退出 0，格式/参数/IO 错误退出 2。缩减按固定次序删除字符区间和分块切点、映射剩余端点，直到单字符/单切点删除均不能保持原失败阶段/属性；结果确定且保持 UTF-8，不承诺全局最小。工具可捕获 panic unwind；对全文重复解析属于测试成本，不声称解析核心的增量预算适用于缩减器，abort/OOM/挂死恢复不在本单元范围。
+失败文件 `mdstream-syntax-fuzz-v1` 保存种子、case 序号、注入模式、绝对字节切点及原始输入，保留空追加、NUL、CRLF 和未终止 EOF；重放不重新生成。CLI 失败先写原件，再写 `.min`，退出 1；正常退出 0，格式/参数/IO 错误退出 2。缩减按固定次序删除字符区间和分块切点、映射剩余端点，直到单字符/单切点删除均不能保持原失败阶段/属性；结果确定且保持 UTF-8，不承诺全局最小。工具可捕获 panic unwind；对全文重复解析属于测试成本，不声称解析核心的增量预算适用于缩减器，abort/OOM/挂死恢复不在本单元范围。
 
 新增 7 项验收覆盖固定语料、指纹与文件往返、非法切点/版本拒绝、实际语法覆盖，以及三个独立注入故障：
 
@@ -1020,7 +1020,7 @@ README/TODO 已同步。本单元完成有预算自动注册与源码字节长�
 
 三种注入只改变驱动的观察快照或输入适配器，不进入库。测试重复缩减得到同一 case，并逐字符/逐切点验证不可再减；取消注入后同一输入通过。CLI 独立验收额外 256 例（seed 305419896）通过，三个故障及缩减文件重放均按预期退出 1，重复缩减文件 `cmp` 字节一致，去掉注入的重放均退出 0。
 
-项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **867 项**、`cargo test --doc --workspace` **67 项**、`cargo fmt --all -- --check`、`git diff --check`。完整日志 `/tmp/mdtui3-syntax-fuzz-validation.log`；专项及旧分块回归 `/tmp/mdtui3-syntax-fuzz-targeted.log`；CLI 生成/故障/重放 `/tmp/mdtui3-syntax-fuzz-cli.log`，原件及缩减文件在 `/tmp/mdtui3-syntax-fuzz-{lose-style,bad-range,split-crlf}.case[.min]`。
+项目 devShell 验收通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **867 项**、`cargo test --doc --workspace` **67 项**、`cargo fmt --all -- --check`、`git diff --check`。完整日志 `/tmp/mdstream-syntax-fuzz-validation.log`；专项及旧分块回归 `/tmp/mdstream-syntax-fuzz-targeted.log`；CLI 生成/故障/重放 `/tmp/mdstream-syntax-fuzz-cli.log`，原件及缩减文件在 `/tmp/mdstream-syntax-fuzz-{lose-style,bad-range,split-crlf}.case[.min]`。
 
 README/TODO 已同步。完成可复现语法生成和失败缩减，不将自比较当作 CommonMark/GFM 合规率或覆盖率引导 fuzz；32 位索引执行、更广性能矩阵、其余语法边界及终端 UI 继续保留 TODO。
 
@@ -1028,9 +1028,9 @@ README/TODO 已同步。完成可复现语法生成和失败缩减，不将自�
 
 审计四类稀疏索引的容量倍增、中点、端点/开放哨兵、arena 索引和容量字节乘积，以及高度宽整数转换、预算累计、源码窗口、对象查询和有界语法整数。`HeightIndex::grow_to` 保持长度不超过 `isize::MAX`，`CheckpointIndex::insert` 保持 ID 小于该上限；树容量最多到 `isize::MAX + 1`。内部标注范围来自 String 或已验证的高度端点，折叠树键来自 arena；开放终点 `usize::MAX` 不作为树键。高度先扩为 u128 再乘，定位商/余数分别受子树宽度/u64 高度限制。README 的审计表记录了各项前提及未验证边界。
 
-修复 `HeightIndex::ticket(TileId(usize::MAX))` 在检查结果为 false 时仍因 `then_some` 急切构造而计算 `+1` 的问题。新增回归在原代码上确实触发 debug 溢出（`/tmp/mdtui3-index32-reproduction.log`），改成 `then` 延迟构造后正常返回 None；公开 API、有效测量行为和复杂度不变。其余生产代码仅补充边界说明，没有增加运行时依赖或 unsafe，也没有改动解析方言/标准期望。
+修复 `HeightIndex::ticket(TileId(usize::MAX))` 在检查结果为 false 时仍因 `then_some` 急切构造而计算 `+1` 的问题。新增回归在原代码上确实触发 debug 溢出（`/tmp/mdstream-index32-reproduction.log`），改成 `then` 延迟构造后正常返回 None；公开 API、有效测量行为和复杂度不变。其余生产代码仅补充边界说明，没有增加运行时依赖或 unsafe，也没有改动解析方言/标准期望。
 
-新增 `crates/mdtui3-core/src/index_boundaries.rs` 共 **11 项**独立验收，使用 u128 坐标的线性区间、稀疏写入日志和 BTreeMap 对照实际索引，不复制二叉树实现、不分配巨型源码/叶数组。32 位运行覆盖全部二次幂附近、2,147,483,647 长度与最后有效 tile；64 位同时运行上述边界和本机 `isize::MAX` 边界。覆盖：
+新增 `crates/mdstream-core/src/index_boundaries.rs` 共 **11 项**独立验收，使用 u128 坐标的线性区间、稀疏写入日志和 BTreeMap 对照实际索引，不复制二叉树实现、不分配巨型源码/叶数组。32 位运行覆盖全部二次幂附近、2,147,483,647 长度与最后有效 tile；64 位同时运行上述边界和本机 `isize::MAX` 边界。覆盖：
 
 - 每个边界的增长、前缀高度、超过 u64 的总高度、`u64::MAX` 单片高度与双向定位；每种长度上限 160 次赋值/置零/失效/重置模型及嵌套遮蔽/基础高度保留。
 - 检查点 80 次插入/区间失效与有序前驱模型，最大距离查询、版本令牌/旧测量拒绝、最后有效位置及单步共享预算回收。
@@ -1043,9 +1043,9 @@ README/TODO 已同步。完成可复现语法生成和失败缩减，不将自�
 
 项目 devShell 完整验收通过：x86_64 与 i686 各执行 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **878 项、0 skipped**，两个目标的文档测试各 **67 项**；`cargo fmt --all -- --check`、`nixfmt --check flake.nix`、`bash -n scripts/check-index32.sh`、`git diff --check` 通过。既有标准样例、144 例固定种子语法 fuzz/19,536 开放前缀、百万字/深嵌套及预算回归全部保留并在两种字长执行。日志：
 
-- x86_64 完整验收：`/tmp/mdtui3-index32-native-validation.log`。
-- i686 完整验收：`/tmp/mdtui3-index32-validation.log`；工具链准备/首次目标检查：`/tmp/mdtui3-index32-bootstrap.log`。
-- 两种字长的 11 项专项：`/tmp/mdtui3-index32-targeted-final.log`；ELF 核验：`/tmp/mdtui3-index32-elf.log`。
+- x86_64 完整验收：`/tmp/mdstream-index32-native-validation.log`。
+- i686 完整验收：`/tmp/mdstream-index32-validation.log`；工具链准备/首次目标检查：`/tmp/mdstream-index32-bootstrap.log`。
+- 两种字长的 11 项专项：`/tmp/mdstream-index32-targeted-final.log`；ELF 核验：`/tmp/mdstream-index32-elf.log`。
 
 README/TODO 已同步。稀疏索引验证不保证接近 2 GiB 的真实文档/密集 arena 可分配；OOM/分配失败恢复、进程级身份耗尽、u64 revision/序列/计数器绕回及其它 32 位 ABI/无 64 位原子的平台未实测。更广性能矩阵、其余语法边界及终端 UI 继续保留 TODO。
 
@@ -1055,20 +1055,20 @@ README/TODO 已同步。稀疏索引验证不保证接近 2 GiB 的真实文档/
 - `scripts/measure-performance.sh` 在项目 devShell 内按新目录保存环境、Git 状态、工具链/flake/源码哈希、Cargo metadata 和逐进程 CSV。输出 schema 2 包括完整解析计数、闭合增量、实际公开 arena/表格 Vec/scratch 容量、吞吐、共享预算消费及 nearest-rank p50/p95/p99/max。测量边界、部分帧与容量遗漏项明确记录在 [性能矩阵](docs/performance.md)。
 - 默认三轮 17 × 3 规模共 153 行、4,743 个查询样本已保存在 [原始 CSV](docs/performance-baseline.csv)；跨进程所有非时间字段逐项一致。百万字专项验证晚闭合只消费 2 个新 inline 字节，晚定义仅规范化一个 3 字节标签；稀疏表单元格数为 columns + rows。resize 每次一个索引访问、不改变 arena；高度修正沿对数路径更新，65/130 轮复用固定工作集节点。
 - 9 项新验收覆盖完整语义快照及 UTF-8 字节切分、固定指纹/重复输出、三规模 n/log n 计数界、宽表物理存储、百万字迟确认、两次查询/恢复/文本对象消费/测量共享预算、resize/修正和离屏增长、分位数定义。复杂度断言不依赖任何机器时间阈值。
-- 验收：项目 devShell `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **887 项通过**、`cargo test --doc --workspace` **67 项通过**、`cargo fmt --all -- --check`；脚本语法、CSV 重复计数/字段及 `git diff --check` 通过。完整日志 `/tmp/mdtui3-performance-validation.log`，专项 `/tmp/mdtui3-performance-targeted.log`，原始三轮与环境 `/tmp/mdtui3-performance-matrix-final/`。
+- 验收：项目 devShell `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **887 项通过**、`cargo test --doc --workspace` **67 项通过**、`cargo fmt --all -- --check`；脚本语法、CSV 重复计数/字段及 `git diff --check` 通过。完整日志 `/tmp/mdstream-performance-validation.log`，专项 `/tmp/mdstream-performance-targeted.log`，原始三轮与环境 `/tmp/mdstream-performance-matrix-final/`。
 
 边界：按 Unicode 标量计列的合成消费器不代表实际终端排版；部分高密度帧会耗尽预算，分位数不冒充完整视口完成时延。记录的是指定公开存储的容量与扩容次数，不是总堆/RSS/峰值，解析仍无单次 append 硬时延保证。多平台性能、全部语法组合、完整内存统计、真实缓存依赖链及终端 UI 继续保留；现有独立模型和 32 位验收保持。
 
 ## 2026-10-30 存储压缩与缓存回收测量交付
 
-- [x] **可复跑存储实验**：`crates/mdtui3-core/examples/storage.rs`、共享 `crates/mdtui3-core/tests/support/storage.rs` 和 `scripts/measure-storage.sh` 覆盖三规模纯文本/密集语法/容器、语义窗口与整篇栈、视口输出新建/复用、三种检查点 payload 表示及稀疏位置的 filled/clear/drain/refill。脚本保存环境/源码哈希/权威 target 目录，拒绝覆盖和非法参数，核对重复非时间指标；[方法与结果](docs/storage.md)、[原始 CSV](docs/storage-baseline.csv) 和[环境](docs/storage-environment.txt) 随库保存。
+- [x] **可复跑存储实验**：`crates/mdstream-core/examples/storage.rs`、共享 `crates/mdstream-core/tests/support/storage.rs` 和 `scripts/measure-storage.sh` 覆盖三规模纯文本/密集语法/容器、语义窗口与整篇栈、视口输出新建/复用、三种检查点 payload 表示及稀疏位置的 filled/clear/drain/refill。脚本保存环境/源码哈希/权威 target 目录，拒绝覆盖和非法参数，核对重复非时间指标；[方法与结果](docs/storage.md)、[原始 CSV](docs/storage-baseline.csv) 和[环境](docs/storage-environment.txt) 随库保存。
 - [x] **查询 scratch 可观测性**：`Runs::scratch_stats()` O(1) 返回待处理帧、实际容量及分配/扩容调用，不读取正文或修改查询结果。64 次 dense 窗口查询共 192 次栈分配/扩容、单次峰值 1,152 字节；plain 为 64 次/288 字节。百万字与全篇查询证明栈按深度增长；不把此单栈统计当作全部临时分配。现有 `viewport_into` 预热后 64 次查询容量增长为零，新建 Vec 为 64，结果相同。
 - [x] **有证据的最小压缩**：检查点子索引改用下标 + 1 的 `Option<NonZeroUsize>`，保留树形、身份、版本和所有公开操作语义。x86_64 的 Vec payload 节点从 88 到 72 字节，2,048 个稀疏状态 arena 从 2,883,584 到 2,359,296 字节（下降 18.2%）；内联数组/Box 节点也各减少 16 字节。前后一轮/三轮共 2,928 条指标、324 个阶段，60 个尺寸/容量值改变，其余非时间字段（含访问数、节点数、回收帧数和校验值）全部相同，不声称耗时提速。
 - [x] **回收收益与边界**：clear 一次访问、不析构；2,048 个 Vec/Box 状态经分帧 drain 及调用方显式丢弃释放 524,288 字节外部 payload。31 节点/帧时，相邻/稀疏树分别扫描 4,095/17,444 节点、133/563 帧；arena 不缩容、相同位置 refill 不新增 arena 分配。独立二分区间集合/深度模型、BTreeMap 前驱及析构计数验证零/非对称预算、部分回收、旧 token 拒绝与 32 次 clear/refill，不把 Budget 当作用户析构时间上界。
 
-验收：新增 `crates/mdtui3-core/tests/storage.rs` 7 项测试；项目 devShell 的 check、clippy、debug/release nextest 各 894 项、67 项文档测试、fmt、脚本语法、原始 CSV/指纹/源码哈希复核及 diff 检查通过。同一套 check、clippy、debug/release 各 894 项与 67 项文档测试在真实 i686 目标通过。三轮每轮 81 阶段的全部非时间字段一致；CLI 非法参数和拒绝覆盖检查通过。
+验收：新增 `crates/mdstream-core/tests/storage.rs` 7 项测试；项目 devShell 的 check、clippy、debug/release nextest 各 894 项、67 项文档测试、fmt、脚本语法、原始 CSV/指纹/源码哈希复核及 diff 检查通过。同一套 check、clippy、debug/release 各 894 项与 67 项文档测试在真实 i686 目标通过。三轮每轮 81 阶段的全部非时间字段一致；CLI 非法参数和拒绝覆盖检查通过。
 
-完整日志：`/tmp/mdtui3-storage-validation.log`、`/tmp/mdtui3-storage-index32.log`；专项与三轮驱动：`/tmp/mdtui3-storage-targeted-final.log`；原始目录：`/tmp/mdtui3-storage-measurements/`；独立前后/哈希核验：`/tmp/mdtui3-storage-artifacts.log`；CLI：`/tmp/mdtui3-storage-cli.log`。查询 scratch 复用有分配收益线索，语义/修订拆分和大型状态叶存储也有容量优化空间，但尚无实现与端到端对照；历史树节点回收、完整堆/RSS 峰值、其它 ABI/跨机器性能及终端 UI 继续保留。保持零运行时依赖与禁止 unsafe。
+完整日志：`/tmp/mdstream-storage-validation.log`、`/tmp/mdstream-storage-index32.log`；专项与三轮驱动：`/tmp/mdstream-storage-targeted-final.log`；原始目录：`/tmp/mdstream-storage-measurements/`；独立前后/哈希核验：`/tmp/mdstream-storage-artifacts.log`；CLI：`/tmp/mdstream-storage-cli.log`。查询 scratch 复用有分配收益线索，语义/修订拆分和大型状态叶存储也有容量优化空间，但尚无实现与端到端对照；历史树节点回收、完整堆/RSS 峰值、其它 ABI/跨机器性能及终端 UI 继续保留。保持零运行时依赖与禁止 unsafe。
 
 ## 2026-10-30 查询 scratch 复用交付
 
@@ -1077,7 +1077,7 @@ README/TODO 已同步。稀疏索引验证不保证接近 2 GiB 的真实文档/
 - [x] **可复跑分配对照**：扩展原 storage 驱动，三规模/三轮共 3,303 条指标、378 个阶段，非时间字段逐项相同。65,536 参数、64 次窗口查询：plain 语义/显示新栈各 64 次分配，dense/containers 各 192 次，预热后全部为 0；预热分别 1/3/3 次，容量 288/1,152/1,152 字节。对应预算游标 plain 256→64、dense 21,072→128、containers 7,344→128，包含每个新窗口的冷启动。输出、访问数、容量及预算消费对照相同；旧压缩后基线的全部非时间指标不变。原始 CSV、环境和限制见 [测量记录](docs/storage.md#查询-scratch-复用实验)。时间记录与回归并行，不据此声称吞吐或真实终端时延改善。
 - [x] **模型和回归**：新增 11 项测试、3 项文档样例（含 2 项 compile-fail）。400 组独立字节样式/1,200 窗口模型、字面显示预期、全部 UTF-8 范围/切点、实体/代码 CRLF/部分 tab/表格和数学映射、双查询与保留结果、跨文档/流式迟确认/异常退出通过。百万字/千层引用/密集语法及稀疏最大字长树验证 O(log n) 栈和窗口访问界；多种非对称预算、共享依赖消费、旧版本/文档拒绝与空查询验证原子性。既有分块、搜索、摘要/预览、导航、折叠与预算回归全部保留。
 
-验收：x86_64 和实际 i686 的项目 devShell check、clippy、debug/release nextest **各 905 项通过、0 skipped**；文档测试各 **70 项**（68 运行、2 compile-fail），fmt、脚本语法、CSV/哈希复核与 diff 检查通过。完整日志 `/tmp/mdtui3-query-scratch-validation.log`、`/tmp/mdtui3-query-scratch-index32.log`；专项 `/tmp/mdtui3-query-scratch-targeted.log`、`/tmp/mdtui3-query-scratch-targeted-extra.log`；三轮记录 `/tmp/mdtui3-query-scratch-measurements/`，跨轮/旧基线/源码校验 `/tmp/mdtui3-query-scratch-artifacts.log`。
+验收：x86_64 和实际 i686 的项目 devShell check、clippy、debug/release nextest **各 905 项通过、0 skipped**；文档测试各 **70 项**（68 运行、2 compile-fail），fmt、脚本语法、CSV/哈希复核与 diff 检查通过。完整日志 `/tmp/mdstream-query-scratch-validation.log`、`/tmp/mdstream-query-scratch-index32.log`；专项 `/tmp/mdstream-query-scratch-targeted.log`、`/tmp/mdstream-query-scratch-targeted-extra.log`；三轮记录 `/tmp/mdstream-query-scratch-measurements/`，跨轮/旧基线/源码校验 `/tmp/mdstream-query-scratch-artifacts.log`。
 
 README/TODO 已同步。scratch 保留历史峰值容量，更深工作集可能继续增长；每个活动游标有独立栈，重建需重新预热。其它消费者的瞬时分配、语义/修订存储拆分、历史树节点回收、完整堆/RSS 峰值、多平台性能及终端 UI 继续保留后续。
 
@@ -1092,7 +1092,7 @@ README/TODO 已同步。scratch 保留历史峰值容量，更深工作集可能
 - 未完成 `finish` 返回拥有进度的原任务；零或非对称额度不推进，Covered 重放零工作。失效状态只转移所有权，析构由调用方决定。丢弃任务等同于丢弃缓存，保持任务即可暂停；不会在 Drop 中无预算完成迁移。
 - 维护期间不能写缓存，完成后继续消费暂存的有序/合并 Update，漏通知需要 rebuild；旧 drain arena 游标须置零。临时峰值包括新旧 arena，旧分配在最后一个节点退役时归还；不承诺每种状态分布都节省容量，没有严格内存上限或分配器/析构的硬实时保证。
 
-实现、示例和实验分别见 `crates/mdtui3-core/src/checkpoints.rs`、[README](README.md#检查点历史树压缩) 与 [存储实验](docs/storage.md#检查点历史树压缩实验)。沿用共享 storage 驱动和三轮脚本，新增内联/Box/Vec 相邻与 Vec 稀疏四组，每组填充保留 1/16、压缩和回填三个阶段。仓库保存 [4,563 条指标/486 阶段原始记录](docs/checkpoint-compaction-baseline.csv) 及 [环境/源码哈希](docs/checkpoint-compaction-environment.txt)；各轮非时间字段一致，前一查询复用基线的 975 个非时间字段逐项不变。
+实现、示例和实验分别见 `crates/mdstream-core/src/checkpoints.rs`、[README](README.md#检查点历史树压缩) 与 [存储实验](docs/storage.md#检查点历史树压缩实验)。沿用共享 storage 驱动和三轮脚本，新增内联/Box/Vec 相邻与 Vec 稀疏四组，每组填充保留 1/16、压缩和回填三个阶段。仓库保存 [4,563 条指标/486 阶段原始记录](docs/checkpoint-compaction-baseline.csv) 及 [环境/源码哈希](docs/checkpoint-compaction-environment.txt)；各轮非时间字段一致，前一查询复用基线的 975 个非时间字段逐项不变。
 
 2,048 个状态保留 128 个：相邻 Vec arena 294,912 → 73,728 字节（下降 75%），稀疏 Vec arena 2,359,296 → 147,456 字节（下降 93.75%）；内联/Box 相邻同为 75%。旧 arena 最终容量为零，外置 payload 各释放 491,520 字节、保留 32,768 字节。相邻/稀疏分别 5,374 / 19,548 步、174 / 631 帧、9,723 / 25,680 次树访问，scratch 均 128 字节。回填恢复原节点数/arena 容量但增加分配次数，说明压缩适用于历史工作集收缩，固定工作集可继续使用原 drain 复用。测量记录的是明确 arena/Vec 容量和已知 payload，不冒充进程或总堆峰值，不以时间阈值证明复杂度。
 
@@ -1106,7 +1106,7 @@ README/TODO 已同步。scratch 保留历史峰值容量，更深工作集可能
 
 验收：项目 devShell `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **916/916**，文档测试 **72/72**，`cargo fmt --all -- --check`、脚本语法与 diff 检查通过；`nix develop .#index32 -c bash scripts/check-index32.sh` 实际 i686 的对应 check/clippy、debug/release 各 **916/916**、文档 **72/72** 及格式检查通过。三轮 storage release 驱动、CSV/旧基线/源码哈希复核通过。
 
-日志：`/tmp/mdtui3-checkpoint-compaction-validation.log`、`/tmp/mdtui3-checkpoint-compaction-index32.log`；专项 `...-targeted-final.log`；原始测量 `/tmp/mdtui3-checkpoint-compaction-measurements/`；复核 `/tmp/mdtui3-checkpoint-compaction-artifacts.log`。保留并发可写压缩、渐进释放旧 Vec 分配、硬内存上限、总堆/OOM、序号耗尽及其它 ABI；语义/修订拆分和终端 UI 未扩展。
+日志：`/tmp/mdstream-checkpoint-compaction-validation.log`、`/tmp/mdstream-checkpoint-compaction-index32.log`；专项 `...-targeted-final.log`；原始测量 `/tmp/mdstream-checkpoint-compaction-measurements/`；复核 `/tmp/mdstream-checkpoint-compaction-artifacts.log`。保留并发可写压缩、渐进释放旧 Vec 分配、硬内存上限、总堆/OOM、序号耗尽及其它 ABI；语义/修订拆分和终端 UI 未扩展。
 
 ## 2026-10-31 TODO 归档
 
