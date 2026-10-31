@@ -2,6 +2,8 @@ mod cli;
 #[allow(dead_code)]
 mod screen;
 mod terminal;
+#[allow(dead_code)]
+mod theme;
 
 use std::fs::File;
 use std::io::{self, Write};
