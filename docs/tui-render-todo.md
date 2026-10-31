@@ -148,13 +148,15 @@ P06 证据（2026-10-31）：新增 `tests/fixtures/` 19 个 Markdown fixture（
 
 P07 证据（2026-10-31）：新增 `tests/core_probes.rs`，集中映射与 14 个只读核心探针全部通过——§4.1.1 `empty_info_fence_is_skipped_by_layout_pass`；§4.1.2 `raw_runs_differ_from_display_and_cursor`；§4.1.3/§4.1.14 `width_change_requires_reset_and_clear`；§4.1.4 `append_invalidates_from_earliest_layout_tile_to_end`；§4.1.5 `heading_anchors_stale_after_append`；§4.1.6 `checkpoint_payload_ownership_survives_until_drain_and_compaction`；§4.1.7 `sidebar_excerpt_is_budgeted_and_truncated`；§4.1.8 `style_bit_union_loses_nesting_and_math_is_flagged`；§4.1.9 `end_tile_tracks_tile_boundaries_not_markdown_lines`；§4.1.10 `checkpoint_keys_are_tile_ids` + `checkpoint_replay_emits_target_once`；§4.1.11 `display_cursor_stale_rules`；§4.1.12 `drain_before_keeps_future_checkpoints`；§4.1.13 `link_destination_stays_raw_and_fragments_decode_only_percent`。`cargo test --manifest-path crates/mdtui-tui/Cargo.toml` 66 passed，fmt/clippy 通过；未修改核心 `src/**`，无新增依赖，P10 硬门槛开放。
 
+P10 证据（2026-10-31）：新增 `src/render/{mod,input}.rs`；静态 `DisplayInput::from_document` 只消费 `Document::display_runs_in`，P28 可逐段调用 `push_run(DisplayRun)`；`InputToken` 保留 text/source/replacement/block/link/style，并以 `TokenKind::{Text,SoftBreak,HardBreak}` 区分软/硬换行，不在摄取层决定空格/消失；HIDDEN run 跳过，容器前缀不泄漏；core display 已处理实体、代码空白与 CRLF，摄取层保持代码空格/tab 原样；core `Style` 映射到 `StyleRole` 的 EMPHASIS/STRONG/STRIKE/CODE/LINK，并只最小新增 `StyleRole::MATH` 旗标，不做 P14 优先级；测试 `entities_and_code_whitespace_are_not_renormalized`、`soft_hard_and_crlf_breaks_become_distinct_tokens`、`hidden_container_prefixes_do_not_leak_and_metadata_survives`、`core_styles_map_to_tui_roles_including_math`、`incremental_feed_matches_static_ingestion_and_preserves_order`、`fixture_inline_and_paragraphs_ingest_end_to_end` 通过；`cargo test --manifest-path crates/mdtui-tui/Cargo.toml` 72 passed，fmt/clippy 通过；未实现 P11 宽度或 P12+ 块渲染。
+
 ### 阶段 P1：静态语义渲染（先不接视口/终端）
 
 这一阶段把 `Document` 的语义 run 变成 `Screen`，只在内存中验证 cell 网格；不要求交互和流式首屏。
 
 | ID | 任务 | 依赖 | 验证 / 完成定义 |
 | --- | --- | --- | --- |
-| P10 | run 摄取与归一化 | P04、P05、P07 | 静态整篇可用 `display_runs_in`，逐帧路径只允许 P28 的预算化显示段；跳过 HIDDEN；保留 code 空白、实体替换、软/硬换行、容器前缀隐藏；新增 `a &amp; b`、代码内多空格/tab、CRLF 单元测试和 §3.2/§3.4 fixture。 |
+| [x] P10 | run 摄取与归一化 | P04、P05、P07 | 静态整篇可用 `display_runs_in`，逐帧路径只允许 P28 的预算化显示段；跳过 HIDDEN；保留 code 空白、实体替换、软/硬换行、容器前缀隐藏；新增 `a &amp; b`、代码内多空格/tab、CRLF 单元测试和 §3.2/§3.4 fixture。 |
 | P11 | Unicode 字素与显示宽度 | P04、P10 | 采用固定版本 `unicode-segmentation`/`unicode-width`；覆盖 `•`、`│`、`─`、`═`、CJK、emoji、组合、ZWJ、NBSP、tab；宽字符只写首 cell，后续 cell 标记占位。 |
 | P12 | 标题渲染与文字拼合 | P10、P11 | 按 §3.1/§3.12：整行统一标题样式；H1–H5 下划线变体；H6 无下划线；超宽不折行；链接/图片文字丢弃；强调文字按规则重排。TUI cell 网格在正文内容区宽处裁剪，禁止把越界 cell 交给终端自动折行；`--once` 保留参考字节。测试至少包含规格中的 ``# **B** *I* `c` [l](u) ~~s~~`` 例子和超宽标题 fixture。 |
 | P13 | 段落渲染与折行 | P10、P11 | 软换行变空格、硬换行消失、首尾空白裁剪、连续空格保留；逐字符贪心折行；宽 0/1 退化；测试所有 §3.2/§5 段落案例。 |

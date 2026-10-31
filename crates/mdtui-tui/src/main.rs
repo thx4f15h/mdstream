@@ -1,5 +1,7 @@
 mod cli;
 #[allow(dead_code)]
+mod render;
+#[allow(dead_code)]
 mod screen;
 mod terminal;
 #[allow(dead_code)]

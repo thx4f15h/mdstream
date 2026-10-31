@@ -13,6 +13,7 @@ const LIST_MARKER_FLAG: u16 = 1 << 7;
 const RULE_FLAG: u16 = 1 << 8;
 const TABLE_BORDER_FLAG: u16 = 1 << 9;
 const META_FLAG: u16 = 1 << 10;
+const MATH_FLAG: u16 = 1 << 11;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StyleRole {
@@ -33,6 +34,7 @@ impl StyleRole {
     pub const RULE: Self = Self::new(RULE_FLAG, 0);
     pub const TABLE_BORDER: Self = Self::new(TABLE_BORDER_FLAG, 0);
     pub const META: Self = Self::new(META_FLAG, 0);
+    pub const MATH: Self = Self::new(MATH_FLAG, 0);
 
     const fn new(flags: u16, heading_level: u8) -> Self {
         Self {
