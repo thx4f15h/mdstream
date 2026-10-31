@@ -1,4 +1,6 @@
 mod cli;
+#[allow(dead_code)]
+mod screen;
 mod terminal;
 
 use std::fs::File;
