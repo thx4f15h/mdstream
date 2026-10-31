@@ -7,6 +7,8 @@ description = "Terminal Markdown reader for mdtui3"
 [dependencies]
 crossterm = { version = "=0.29.0", default-features = false, features = ["events"] }
 mdtui3 = { path = "../.." }
+unicode-segmentation = "=1.13.3"
+unicode-width = { version = "=0.2.3", default-features = false }
 
 [dev-dependencies]
 insta = { version = "=1.49.0", default-features = false }

@@ -150,6 +150,8 @@ P07 证据（2026-10-31）：新增 `tests/core_probes.rs`，集中映射与 14 
 
 P10 证据（2026-10-31）：新增 `src/render/{mod,input}.rs`；静态 `DisplayInput::from_document` 只消费 `Document::display_runs_in`，P28 可逐段调用 `push_run(DisplayRun)`；`InputToken` 保留 text/source/replacement/block/link/style，并以 `TokenKind::{Text,SoftBreak,HardBreak}` 区分软/硬换行，不在摄取层决定空格/消失；HIDDEN run 跳过，容器前缀不泄漏；core display 已处理实体、代码空白与 CRLF，摄取层保持代码空格/tab 原样；core `Style` 映射到 `StyleRole` 的 EMPHASIS/STRONG/STRIKE/CODE/LINK，并只最小新增 `StyleRole::MATH` 旗标，不做 P14 优先级；测试 `entities_and_code_whitespace_are_not_renormalized`、`soft_hard_and_crlf_breaks_become_distinct_tokens`、`hidden_container_prefixes_do_not_leak_and_metadata_survives`、`core_styles_map_to_tui_roles_including_math`、`incremental_feed_matches_static_ingestion_and_preserves_order`、`fixture_inline_and_paragraphs_ingest_end_to_end` 通过；`cargo test --manifest-path crates/mdtui-tui/Cargo.toml` 72 passed，fmt/clippy 通过；未实现 P11 宽度或 P12+ 块渲染。
 
+P11 证据（2026-10-31）：固定 `unicode-segmentation = 1.13.3` 与 `unicode-width = 0.2.3`（关闭 `cjk` 默认特性，使参考要求的 `•`/框线等 East Asian Ambiguous 字符保持 1 格，并对特殊符号显式覆盖）；新增 `src/render/text.rs`，提供带 byte offset 的 extended-grapheme `graphemes`、`display_width`、`fit_prefix` 和可复用 `TextCursor`；`•│─═┌┬┐└┴┘╞╪╡`/空格/NBSP/é 为 1，CJK/emoji/`⬜`/`✅` 为 2，tab 固定 1 格，其他 control 宽 0 且不写 cell，>2 raw width 的簇按 2 格 clamp；零宽簇没有 base 返回 `NoBaseForZeroWidth`，有 base 时复用 `Screen::append_combining`；宽字符成对写入，content_width=1 时整簇拒绝而非半格。测试 `reference_width_table_is_explicit`、`extended_graphemes_keep_combining_and_zwj_sequences_intact`、`tab_control_zero_width_and_oversize_have_explicit_policies`、`prefix_fit_never_splits_a_wide_grapheme`、`cursor_writes_wide_cells_with_continuation`、`content_width_one_rejects_wide_grapheme_without_half_cell`、`zero_width_cluster_requires_and_reuses_a_base_cell`、`controls_are_skipped_without_advancing_the_cursor` 通过；`cargo test --manifest-path crates/mdtui-tui/Cargo.toml` 80 passed，fmt/clippy 通过；未实现 P12+ 块渲染或列表分词（tab 在列表中的分词留 P18）。
+
 ### 阶段 P1：静态语义渲染（先不接视口/终端）
 
 这一阶段把 `Document` 的语义 run 变成 `Screen`，只在内存中验证 cell 网格；不要求交互和流式首屏。
@@ -157,7 +159,7 @@ P10 证据（2026-10-31）：新增 `src/render/{mod,input}.rs`；静态 `Displa
 | ID | 任务 | 依赖 | 验证 / 完成定义 |
 | --- | --- | --- | --- |
 | [x] P10 | run 摄取与归一化 | P04、P05、P07 | 静态整篇可用 `display_runs_in`，逐帧路径只允许 P28 的预算化显示段；跳过 HIDDEN；保留 code 空白、实体替换、软/硬换行、容器前缀隐藏；新增 `a &amp; b`、代码内多空格/tab、CRLF 单元测试和 §3.2/§3.4 fixture。 |
-| P11 | Unicode 字素与显示宽度 | P04、P10 | 采用固定版本 `unicode-segmentation`/`unicode-width`；覆盖 `•`、`│`、`─`、`═`、CJK、emoji、组合、ZWJ、NBSP、tab；宽字符只写首 cell，后续 cell 标记占位。 |
+| [x] P11 | Unicode 字素与显示宽度 | P04、P10 | 采用固定版本 `unicode-segmentation`/`unicode-width`；覆盖 `•`、`│`、`─`、`═`、CJK、emoji、组合、ZWJ、NBSP、tab；宽字符只写首 cell，后续 cell 标记占位。 |
 | P12 | 标题渲染与文字拼合 | P10、P11 | 按 §3.1/§3.12：整行统一标题样式；H1–H5 下划线变体；H6 无下划线；超宽不折行；链接/图片文字丢弃；强调文字按规则重排。TUI cell 网格在正文内容区宽处裁剪，禁止把越界 cell 交给终端自动折行；`--once` 保留参考字节。测试至少包含规格中的 ``# **B** *I* `c` [l](u) ~~s~~`` 例子和超宽标题 fixture。 |
 | P13 | 段落渲染与折行 | P10、P11 | 软换行变空格、硬换行消失、首尾空白裁剪、连续空格保留；逐字符贪心折行；宽 0/1 退化；测试所有 §3.2/§5 段落案例。 |
 | P14 | 强调/代码内联样式 | P10、P05 | 粗体、斜体、删除线、代码、数学的前景/背景；核心 `Style` 只有位并集，无法恢复嵌套顺序，采用固定前景优先级 `CODE > MATH > STRONG/EMPHASIS > STRIKE`（`STRONG` 与 `STRIKE` 同时存在时用强调色叠删除线；`MATH` 覆盖 `STRONG/EMPHASIS` 前景）；`~~a **b**~~` 这类“外删内强/斜”按固定优先级用强调色，`**$x$**` 用 MATH 前景，均作为规格差异记录；代码保留外层标志；每段独立复位；golden 覆盖两种嵌套顺序与 `**$x$**` 并标注差异。 |
