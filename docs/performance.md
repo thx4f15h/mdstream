@@ -1,6 +1,8 @@
 # 核心性能矩阵
 
-`examples/scaling.rs` 与 `tests/performance.rs` 共用固定工作负载 `tests/support/performance.rs`。矩阵只测核心解析、索引和有预算消费，不实现终端 UI，不添加运行时依赖。CSV schema 2 替代旧 scaling 示例的输出格式。
+`crates/mdtui3-core/examples/scaling.rs` 与 `crates/mdtui3-core/tests/performance.rs` 共用固定工作负载 `crates/mdtui3-core/tests/support/performance.rs`。矩阵只测核心解析、索引和有预算消费，不实现终端 UI，不添加运行时依赖。CSV schema 2 替代旧 scaling 示例的输出格式。
+
+仓库现采用 workspace 布局；本文正文使用当前路径，已保存的 `*-environment.txt` 与基线 CSV 是测量时生成的原始快照，内部仍保留当时的 `src/`、`tests/`、`examples/` 路径。
 
 ## 复跑
 
@@ -11,8 +13,8 @@ nix develop -c bash scripts/measure-performance.sh /tmp/mdtui3-matrix
 # 可选参数：输出目录、基准字节数、每场景查询样本数、独立进程重复次数
 nix develop -c bash scripts/measure-performance.sh /tmp/mdtui3-matrix-large 262144 101 3
 # 只输出一轮 CSV；规模为 base、2 × base、4 × base
-nix develop -c cargo run -r --example scaling -- 65536 31
-nix develop -c cargo nextest run --test performance
+nix develop -c cargo run -p mdtui3-core -r --example scaling -- 65536 31
+nix develop -c cargo nextest run --workspace --test performance
 ```
 
 脚本拒绝已有输出目录；保存 `environment.txt`（UTC 时间、主机、内核、Git HEAD/脏状态、Rust/Cargo/CPU、输入参数及工作负载/flake 哈希）、Cargo metadata 的权威 target 目录，以及每次进程的 CSV 和构建日志。Cargo 构建不在测量区间内。默认共 17 场景 × 3 规模 × 3 次进程 = 153 行，每行预热一次后采样 31 次。工作负载不含随机数，CSV 提供实际源码字节数和 FNV-1a 指纹；`requested_bytes` 是生成参数，并非每种文档的实际长度。每个进程按固定顺序运行，不做 CPU 绑核、缓存清空或频率固定。

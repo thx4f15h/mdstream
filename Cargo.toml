@@ -1,14 +1,7 @@
-[package]
-name = "mdtui3"
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
-description = "Append-only Markdown parsing and lazy viewport indexing with bounded work"
-
-[lib]
-name = "mdtui3"
-
-[[example]]
-name = "stream"
-path = "examples/stream.rs"
-
-[dependencies]

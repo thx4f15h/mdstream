@@ -7,9 +7,9 @@ set -euo pipefail
 index_target=i686-unknown-linux-gnu
 rustc -Vv
 rustc --print cfg --target "$index_target"
-cargo check --all-targets --target "$index_target"
-cargo clippy --all-targets --target "$index_target" -- -D warnings
-cargo nextest run --target "$index_target" --no-fail-fast
-cargo nextest run --target "$index_target" --release --no-fail-fast
-cargo test --doc --target "$index_target"
+cargo check --workspace --all-targets --target "$index_target"
+cargo clippy --workspace --all-targets --target "$index_target" -- -D warnings
+cargo nextest run --workspace --target "$index_target" --no-fail-fast
+cargo nextest run --workspace --target "$index_target" --release --no-fail-fast
+cargo test --doc --workspace --target "$index_target"
 cargo fmt --all -- --check

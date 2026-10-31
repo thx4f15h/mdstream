@@ -1,0 +1,12 @@
+[package]
+name = "mdtui3-core"
+version.workspace = true
+edition.workspace = true
+description = "Append-only Markdown parsing and lazy viewport indexing with bounded work"
+
+[lib]
+name = "mdtui3"
+
+[[example]]
+name = "stream"
+path = "examples/stream.rs"

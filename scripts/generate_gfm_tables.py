@@ -2,7 +2,7 @@
 """Extract the complete Tables section from the pinned official GFM HTML.
 
 Download https://github.github.com/gfm/ separately, then run:
-python3 scripts/generate_gfm_tables.py /path/to/gfm.html > tests/fixtures/gfm_tables.rs
+python3 scripts/generate_gfm_tables.py /path/to/gfm.html > crates/mdtui3-core/tests/fixtures/gfm_tables.rs
 Use --check to verify the checked-in fixture without writing it. No network or
 mdtui3 parser is used here. Only HTML presentation markup is decoded; Markdown
 and expected HTML code-block contents retain every upstream character.
@@ -95,7 +95,7 @@ def main():
     args = parser.parse_args()
     generated = generate(args.spec)
     if args.check:
-        fixture = Path(__file__).resolve().parents[1] / "tests/fixtures/gfm_tables.rs"
+        fixture = Path(__file__).resolve().parents[1] / "crates/mdtui3-core/tests/fixtures/gfm_tables.rs"
         if fixture.read_text() != generated:
             parser.error("checked-in Tables fixture differs from the pinned upstream data")
         print("GFM 0.29-gfm Tables fixture: 8 verbatim examples verified")

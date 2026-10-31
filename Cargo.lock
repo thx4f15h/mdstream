@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "mdtui3"
+name = "mdtui3-core"
 version = "0.1.0"

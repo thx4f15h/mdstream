@@ -14,7 +14,7 @@
 //! ```
 
 #![forbid(unsafe_code)]
-#![doc = include_str!("../README.md")]
+#![doc = include_str!("../../../README.md")]
 
 mod anchors;
 mod annotations;

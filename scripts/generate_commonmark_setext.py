@@ -2,7 +2,7 @@
 """Extract the complete Setext section from the pinned, locally downloaded spec.
 
 Download https://spec.commonmark.org/0.31.2/spec.json separately, then run:
-python3 scripts/generate_commonmark_setext.py /path/to/spec.json > tests/fixtures/commonmark_setext.rs
+python3 scripts/generate_commonmark_setext.py /path/to/spec.json > crates/mdtui3-core/tests/fixtures/commonmark_setext.rs
 Use --check to verify the checked-in fixture without writing it. No network or
 mdtui3 parser is used here; upstream Markdown and HTML are copied unchanged.
 """
@@ -50,7 +50,7 @@ def main():
     args = parser.parse_args()
     generated = generate(args.spec)
     if args.check:
-        fixture = Path(__file__).resolve().parents[1] / "tests/fixtures/commonmark_setext.rs"
+        fixture = Path(__file__).resolve().parents[1] / "crates/mdtui3-core/tests/fixtures/commonmark_setext.rs"
         if fixture.read_text() != generated:
             parser.error("checked-in Setext fixture differs from the pinned upstream data")
         print("CommonMark 0.31.2 Setext fixture: 27 verbatim examples verified")
