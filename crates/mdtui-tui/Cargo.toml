@@ -6,3 +6,9 @@ description = "Terminal Markdown reader for mdtui3"
 
 [dependencies]
 mdtui3 = { path = "../.." }
+
+[dev-dependencies]
+insta = { version = "=1.49.0", default-features = false }
+portable-pty = "=0.9.0"
+tempfile = "=3.27.0"
+vt100 = "=0.18.1"

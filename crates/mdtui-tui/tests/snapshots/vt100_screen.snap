@@ -1,0 +1,12 @@
+---
+source: tests/harness.rs
+---
+size=3x12
+cursor=0,5
+00|abC你|
+01||
+02||
+cell=(0,0) text="a" fg=Default bg=Default bold=false dim=false italic=false underline=false inverse=false wide=false continuation=false
+cell=(0,1) text="b" fg=Default bg=Default bold=false dim=false italic=false underline=false inverse=false wide=false continuation=false
+cell=(0,2) text="C" fg=Rgb(255, 121, 198) bg=Rgb(40, 40, 40) bold=true dim=false italic=true underline=true inverse=false wide=false continuation=false
+cell=(0,3) text="你" fg=Default bg=Default bold=false dim=false italic=false underline=false inverse=false wide=true continuation=false
