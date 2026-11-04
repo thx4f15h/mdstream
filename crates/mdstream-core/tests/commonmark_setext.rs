@@ -361,7 +361,8 @@ fn setext_projection_preserves_whitespace_styles_and_block_scope() {
         project(&parse("- a\n- b\n")),
         "<ul>\n<li>a</li>\n<li>b</li>\n</ul>\n"
     );
-    assert_eq!(project(&parse("  a\t\n")), "<p>  a\t</p>\n");
+    assert_eq!(project(&parse("  a\t\n")), "<p>a</p>\n");
+    assert_eq!(project(&parse("a\tb\n")), "<p>a\tb</p>\n");
     assert_eq!(project(&parse("a\n\nb\n")), "<p>a</p>\n<p>b</p>\n");
     assert_eq!(
         project(&parse("    a  \n\n    b\n")),

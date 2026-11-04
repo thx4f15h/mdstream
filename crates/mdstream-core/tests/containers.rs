@@ -133,7 +133,7 @@ fn blanks_explicit_continuations_empty_tasks_and_opaque_inner_fence() {
         doc.block(doc.block_at(blank).unwrap()).unwrap().container,
         Some(item)
     );
-    assert_eq!(b[3].source.end, blank);
+    assert_eq!(b[3].source.end, blank + 1);
     assert!(visible(&doc).contains("inner\n---\na | b\n- | -\n"));
     // Root code and table classification retain priority over marker-looking bytes.
     let doc = parsed("```\n> - literal\n```\na | b\n- | -\nvalue | row\n\n    > code\n");

@@ -515,7 +515,7 @@ fn dense_history_openers_and_columns_reuse_live_objects_without_reparsing() {
 }
 
 #[test]
-fn lazy_partial_tab_block_and_opaque_boundaries_retain_existing_rules() {
+fn partial_tab_headers_confirm_while_lazy_block_and_opaque_boundaries_cancel() {
     for (prior, header, delimiter) in [
         ("> a [old\n", "end] ", "> -|-\n"),
         ("- [old\n", "\tend] ", "  -|-\n"),
@@ -526,7 +526,12 @@ fn lazy_partial_tab_block_and_opaque_boundaries_retain_existing_rules() {
         ("a ![old $math\n", "end$] ", "-|-\n"),
     ] {
         let source = format!("{prior}{header}{}|b\n{delimiter}", "x".repeat(1030));
-        assert!(parse(&source).tables().is_empty(), "{prior:?} {header:?}");
+        // Fully matched partial-tab headers now share normal eligibility.
+        assert_eq!(
+            parse(&source).tables().len(),
+            usize::from(header.starts_with('\t')),
+            "{prior:?} {header:?}"
+        );
     }
 }
 

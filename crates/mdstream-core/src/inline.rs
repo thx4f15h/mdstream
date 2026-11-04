@@ -145,6 +145,100 @@ struct Code {
     all_spaces: bool,
     // Last payload byte (or CRLF); container prefixes are never payload.
     last: Span,
+    // Semantic whitespace can be a virtual column owned by a raw tab byte.
+    last_space: bool,
+}
+
+impl Code {
+    fn new(open: Span) -> Self {
+        Self {
+            open,
+            all_spaces: true,
+            last: Span::new(open.end, open.end),
+            last_space: false,
+        }
+    }
+
+    fn payload(&mut self, byte: u8, pos: usize, previous: Option<u8>) {
+        self.all_spaces &= crate::display::code_space(byte);
+        self.last_space = crate::display::code_space(byte);
+        self.last = Span::new(
+            pos - usize::from(byte == b'\n' && previous == Some(b'\r')),
+            pos + 1,
+        );
+    }
+}
+
+const MAX_CODE_FALLBACK_RUNS: usize = 32;
+
+// Summaries between mismatched backtick runs, never copied/replayed body text.
+// At most 32 runs: greedy matching takes at most 32 comparisons per run.
+// Other inline syntax stays opaque even when the outer opener fails.
+#[derive(Default)]
+struct CodeFallback {
+    runs: Vec<Code>,
+    overflow: bool,
+    // A late table header ends the old sequence at the preceding line. Keep
+    // its last summary, including when the new line exceeds the run bound.
+    boundary: Option<(usize, Option<Code>, bool)>,
+}
+
+impl CodeFallback {
+    fn clear(&mut self) {
+        self.runs.clear();
+        self.overflow = false;
+        self.boundary = None;
+    }
+
+    fn push(&mut self, open: Span) {
+        if self.runs.len() == MAX_CODE_FALLBACK_RUNS {
+            self.overflow = true;
+        } else {
+            self.runs.push(Code::new(open));
+        }
+    }
+
+    fn isolate(&mut self) {
+        self.boundary = Some((self.runs.len(), self.runs.last().copied(), self.overflow));
+    }
+
+    fn confirm_header(&mut self, effects: &mut Effects<'_>) {
+        if let Some((len, last, overflow)) = self.boundary.take() {
+            self.runs.truncate(len);
+            if let Some(last) = last {
+                self.runs[len - 1] = last;
+            }
+            self.overflow = overflow;
+            self.commit(effects);
+        }
+    }
+
+    fn commit(&mut self, effects: &mut Effects<'_>) {
+        if !self.overflow {
+            let mut i = 0;
+            while i < self.runs.len() {
+                let mut code = self.runs[i];
+                let close = (i + 1..self.runs.len()).find(|&j| {
+                    effects.work.delimiter_steps += 1;
+                    code.open.len() == self.runs[j].open.len()
+                });
+                if let Some(j) = close {
+                    code.all_spaces &= j == i + 1;
+                    code.last = self.runs[j - 1].last;
+                    code.last_space = self.runs[j - 1].last_space;
+                    CodePair {
+                        code,
+                        close: self.runs[j].open,
+                    }
+                    .commit(effects);
+                    i = j + 1;
+                } else {
+                    i += 1;
+                }
+            }
+        }
+        self.clear();
+    }
 }
 
 struct CodePair {
@@ -160,6 +254,7 @@ impl CodePair {
             effects.source,
             self.code.all_spaces,
             self.code.last,
+            self.code.last_space,
         );
         effects.update.change(content, ChangeKind::Text);
         effects.mark(content, Style::CODE, None);
@@ -245,6 +340,7 @@ enum Tail {
     Label {
         candidate: Candidate,
         start: usize,
+        escaped: bool,
     },
 }
 
@@ -259,8 +355,8 @@ enum HeaderLinkSuffix {
     Label(Span),
 }
 
-/// Single-pass delimiter machine. Each delimiter is pushed/popped at most once.
-/// Crossing pairs discard intervening openers; there is no backtracking.
+/// Single-pass byte scanner. Each emphasis delimiter is pushed/popped once.
+/// Failed code matches bounded run summaries; it never replays body bytes.
 #[derive(Default)]
 pub(crate) struct Inline {
     // Non-space/tab endpoints of the raw sequence, excluding its final LF/CRLF.
@@ -272,6 +368,7 @@ pub(crate) struct Inline {
     last: [Option<usize>; 5],
     run: Option<Run>,
     code: Option<Code>,
+    code_fallback: CodeFallback,
     math: Option<MathCandidate>,
     footnote: Option<usize>,
     bracket: Option<Bracket>,
@@ -285,6 +382,9 @@ pub(crate) struct Inline {
     escape: Option<usize>,
     previous: Option<u8>,
     spaces: Option<usize>,
+    // Entire raw space/tab suffix to hide on a confirmed ordinary break.
+    // `spaces` separately tracks only the immediate ASCII-space hard marker.
+    whitespace: Option<usize>,
     carriage: bool,
     line_break: Option<LineBreak>,
     autolink: Option<usize>,
@@ -319,7 +419,7 @@ pub(crate) struct Inline {
 
 impl Inline {
     /// Feed at most three semantic spaces owned by one original tab byte.
-    /// This is only used before a nonblank same-scope continuation, so it can
+    /// Used before nonblank container text (new or continuing), so it can
     /// neither create a delimiter nor become a trailing ordinary line break.
     pub fn virtual_spaces(&mut self, at: usize, columns: u8, effects: &mut Effects<'_>) {
         self.math_prefix(at, effects);
@@ -343,6 +443,7 @@ impl Inline {
             && self.tail.is_none()
             && self.escape.is_none()
             && self.spaces.is_none()
+            && self.whitespace.is_none()
             && !self.carriage
             && self.autolink.is_none()
             && self.entity.is_none()
@@ -359,6 +460,9 @@ impl Inline {
         self.header_crossed = false;
         self.header_bracket = self.bracket.map(|b| b.open);
         self.header_opaque = self.code.is_some() || self.math.is_some();
+        if self.code.is_some() {
+            self.code_fallback.isolate();
+        }
         self.previous = None;
         self.line_break.take()
     }
@@ -408,6 +512,7 @@ impl Inline {
         if let Some(pair) = self.header_code.take() {
             effects.work.delimiter_steps += 1;
             pair.commit(effects);
+            self.code_fallback.clear();
         }
         if let Some(pair) = self.header_math.take() {
             effects.work.math_steps += 1;
@@ -421,6 +526,7 @@ impl Inline {
     }
 
     fn clear_header(&mut self) {
+        self.code_fallback.boundary = None;
         self.header_floor = 0;
         self.header_crossed = false;
         self.header_bracket = None;
@@ -435,6 +541,7 @@ impl Inline {
     /// finish its pending run: that could publish a cross-line mapping/object.
     pub fn confirm_header(&mut self, effects: &mut Effects<'_>) -> bool {
         debug_assert!(!self.header_crossed);
+        self.code_fallback.confirm_header(effects);
         // In an independent cell a full reference suffix is itself a shortcut.
         // Its inert label has no other local effects or pending delimiter state.
         // Publish it before any later cell objects, without replaying the row.
@@ -540,6 +647,17 @@ impl Inline {
         self.raw_content
     }
 
+    /// Raw paragraph suffix, excluding its physical LF/CRLF. The existing
+    /// byte scan includes opaque/failed inline candidates and never trims
+    /// decoded entity or code-span output. A lone final CR is content.
+    pub fn paragraph_tail(&self, end: usize) -> Option<Span> {
+        let start = self
+            .raw_content?
+            .end
+            .max(self.raw_cr.map_or(0, |cr| cr + 1));
+        (start < end).then_some(Span::new(start, end))
+    }
+
     fn byte(&mut self, byte: u8, pos: usize, effects: &mut Effects<'_>) {
         if self.bracket.is_some() && !self.label_overflow {
             if self.label.len() <= MAX_LABEL_BYTES {
@@ -595,11 +713,12 @@ impl Inline {
             if byte == b'`' {
                 self.start_run(byte, pos);
             } else {
-                code.all_spaces &= crate::display::code_space(byte);
-                code.last = Span::new(
-                    pos - usize::from(byte == b'\n' && self.previous == Some(b'\r')),
-                    pos + 1,
-                );
+                code.payload(byte, pos, self.previous);
+                if !self.code_fallback.overflow
+                    && let Some(inner) = self.code_fallback.runs.last_mut()
+                {
+                    inner.payload(byte, pos, self.previous);
+                }
             }
             return;
         }
@@ -683,6 +802,7 @@ impl Inline {
         }
         if self.carriage && byte != b'\n' {
             self.spaces = None;
+            self.whitespace = None;
             self.escape = None;
         }
         self.carriage = byte == b'\r';
@@ -693,13 +813,19 @@ impl Inline {
             let end = pos - usize::from(self.previous == Some(b'\r'));
             let escape = self.escape.take().filter(|at| *at + 1 == end);
             let spaces = self.spaces.take();
+            let whitespace = self.whitespace.take();
             self.line_break = Some(LineBreak {
                 newline: Span::new(pos, pos + 1),
-                hidden: Span::new(escape.or(spaces).unwrap_or(end), end),
+                hidden: Span::new(escape.or(whitespace).unwrap_or(end), end),
                 hard: escape.is_some() || spaces.is_some_and(|start| end - start >= 2),
             });
             self.bang = None;
             return;
+        }
+        if matches!(byte, b' ' | b'\t') {
+            self.whitespace.get_or_insert(pos);
+        } else {
+            self.whitespace = None;
         }
         if byte == b' ' {
             self.spaces.get_or_insert(pos);
@@ -825,18 +951,17 @@ impl Inline {
                         self.header_code = Some(pair);
                     } else {
                         pair.commit(effects);
+                        self.code_fallback.clear();
                     }
                     self.code = None;
                 } else {
                     code.all_spaces = false;
                     code.last = run.source;
+                    code.last_space = false;
+                    self.code_fallback.push(run.source);
                 }
             } else {
-                self.code = Some(Code {
-                    open: run.source,
-                    all_spaces: true,
-                    last: Span::new(run.source.end, run.source.end),
-                });
+                self.code = Some(Code::new(run.source));
             }
             return;
         }
@@ -910,6 +1035,7 @@ impl Inline {
                     self.tail = Some(Tail::Label {
                         candidate,
                         start: pos,
+                        escaped: false,
                     })
                 }
                 _ => {
@@ -948,8 +1074,15 @@ impl Inline {
                 }
                 Progress::Pending => self.tail = Some(Tail::Destination { candidate, parser }),
             },
-            Tail::Label { candidate, start } => {
-                if pos - start - 1 > MAX_LABEL_BYTES || matches!(byte, b'\n' | b'\r' | b'[') {
+            Tail::Label {
+                candidate,
+                start,
+                escaped,
+            } => {
+                if pos - start - 1 > MAX_LABEL_BYTES
+                    || matches!(byte, b'\n' | b'\r')
+                    || (byte == b'[' && !escaped)
+                {
                     if self.header_link.is_some() {
                         self.cancel_header(effects);
                         self.header_crossed = true;
@@ -957,7 +1090,7 @@ impl Inline {
                     self.seal_candidate(candidate, effects);
                     return false;
                 }
-                if byte == b']' {
+                if byte == b']' && !escaped {
                     let source = Span::new(start, pos + 1);
                     if self.header_link.is_some() {
                         self.header_link_suffix = Some(HeaderLinkSuffix::Label(source));
@@ -965,7 +1098,13 @@ impl Inline {
                         self.reference_tail(candidate, source, effects);
                     }
                 } else {
-                    self.tail = Some(Tail::Label { candidate, start });
+                    // Track parity while consuming the suffix once. Keep its
+                    // raw spelling for symbol matching, including escapes.
+                    self.tail = Some(Tail::Label {
+                        candidate,
+                        start,
+                        escaped: !escaped && byte == b'\\',
+                    });
                 }
             }
         }
@@ -1010,6 +1149,9 @@ impl Inline {
             self.seal_candidate(candidate, effects);
         }
         self.finish_run(None, effects);
+        if self.code.is_some() {
+            self.code_fallback.commit(effects);
+        }
         effects.work.delimiter_steps += self.stack.len() as u64;
         self.stack.clear();
         self.last = [None; 5];
@@ -1022,6 +1164,7 @@ impl Inline {
         self.escape = None;
         self.previous = None;
         self.spaces = None;
+        self.whitespace = None;
         self.carriage = false;
         self.line_break = None;
         self.autolink = None;
@@ -1033,6 +1176,26 @@ impl Inline {
 #[cfg(test)]
 mod tests {
     use crate::{Document, LinkId};
+
+    #[test]
+    fn failed_code_journal_storage_is_bounded_and_reused() {
+        let mut doc = Document::new();
+        doc.append(&format!("`x{}", "``x".repeat(1000))).unwrap();
+        let journal = &doc.inline.code_fallback;
+        assert!(journal.overflow);
+        assert_eq!(journal.runs.len(), super::MAX_CODE_FALLBACK_RUNS);
+        let capacity = journal.runs.capacity();
+        assert_eq!(capacity, super::MAX_CODE_FALLBACK_RUNS);
+        for _ in 0..1000 {
+            doc.append("``x").unwrap();
+            assert_eq!(doc.inline.code_fallback.runs.capacity(), capacity);
+        }
+        doc.append("` end\n\n").unwrap();
+        assert!(doc.inline.code_fallback.runs.is_empty());
+        assert!(!doc.inline.code_fallback.overflow);
+        assert!(doc.inline.code_fallback.boundary.is_none());
+        assert_eq!(doc.inline.code_fallback.runs.capacity(), capacity);
+    }
 
     #[test]
     fn isolated_link_suffixes_keep_fixed_spans_and_release_them_on_resolution() {

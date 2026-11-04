@@ -85,7 +85,6 @@ enum Active {
     List {
         list: ContainerId,
         item: ContainerId,
-        indent: usize,
         content_indent: usize,
         spacing: ItemSpacing,
     },
@@ -124,18 +123,27 @@ pub(crate) struct Containers {
 }
 
 pub(crate) struct ContainerOptions {
+    pub partial_container: bool,
     pub complete: bool,
     pub root_markers: bool,
+    pub root_paragraph: bool,
     pub paragraph: Option<ContainerId>,
     // Only an active nonblank inline sequence can retain unmatched frames.
     pub lazy_paragraph: Option<ContainerId>,
     pub table_header: Option<(ContainerId, usize)>,
     // Match this fence's existing path, but do not interpret its payload as
-    // new containers. A missing prefix/sibling still ends that exact scope.
+    // new containers. Missing quotes, nonblank missing prefixes and siblings end it.
     pub fence: Option<ContainerId>,
+    // Only code fences accept omitted list indentation on complete blank lines.
+    pub code_fence: bool,
 }
 
 pub(crate) struct ContainerLine {
+    // A read-only partial-prefix probe found a new container, sibling list,
+    // or ended empty item. Route it through line() for structural mutation.
+    pub new_container: bool,
+    // Prefix already includes four columns of container code indentation.
+    pub indented: bool,
     pub prefix: usize,
     // Unconsumed columns of the tab at prefix - 1.
     pub virtual_spaces: u8,
@@ -174,16 +182,39 @@ impl Containers {
         self.active.last().map(|a| a.inner())
     }
 
-    /// Match the entire existing path before committing partial tabs.
-    /// Non-fence probes accept ATX/fence/indented-code leaves, or (when allowed)
-    /// nonblank ordinary continuations. Other lines retain the original
-    /// sibling/leaf classifier without side effects.
+    // Empty items cannot acquire their first content after a blank. Keep the
+    // frame until the next classified line so same-marker siblings can still
+    // reuse the List and resolve its spacing. Both blank representations are
+    // already cached; no retained ancestor or historical leaf is inspected.
+    fn empty_after_blank(&self, depth: usize) -> bool {
+        let Active::List { item, spacing, .. } = self.active[depth] else {
+            return false;
+        };
+        !spacing.has_content
+            && (spacing.pending_blank || self.blank_from.is_some_and(|from| from <= depth))
+            && matches!(
+                self.nodes[item.0].kind,
+                ContainerKind::Item { task: None, .. }
+            )
+    }
+
+    /// Match the entire existing path for leaves, or the ancestors of a
+    /// sibling marker, before committing partial tabs. Empty different markers
+    /// still obey the retained scope's paragraph-interruption rule in line().
+    /// Non-fence probes also accept Item code with whole-byte path boundaries.
+    /// Partial paths accept headings/fence/rule/indented-code leaves, complete
+    /// blanks and ordinary text, including new paragraphs. List/quote candidates
+    /// and ended empty items are handed to the structural classifier; other
+    /// lines retain the original sibling/leaf classifier without side effects.
+    /// Active prose may omit a path suffix after a tab was partially consumed;
+    /// the existing lazy predicate decides eligibility without visiting that suffix.
     pub fn partial_prefix(
         &self,
         source: &str,
         span: Span,
         complete: Option<bool>,
         text: bool,
+        paragraph: bool,
         work: &mut Work,
     ) -> Option<ContainerLine> {
         if complete.is_some() {
@@ -210,40 +241,105 @@ impl Containers {
         prefix.split_tabs = true;
         let mut matched = true;
         let mut quotes = 0;
-        for frame in &self.active {
+        let mut new_container = false;
+        for (depth, frame) in self.active.iter().enumerate() {
             work.container_steps += 1;
             matched = match *frame {
                 Active::Quote(_) => {
-                    quotes += 1;
-                    prefix.quote()
+                    let matched = prefix.quote();
+                    quotes += usize::from(matched);
+                    matched
                 }
-                Active::List { content_indent, .. } => prefix.consume_indent(content_indent),
+                Active::List { content_indent, .. } => {
+                    // A sibling needs only its ancestors, not the old Item's
+                    // content indentation. Defer all mutations and priorities
+                    // to line(); fence probes still require the entire path.
+                    if complete.is_some()
+                        && prefix.partial
+                        && prefix.spaces() <= 3
+                        && prefix.spaces() < content_indent
+                        && prefix.marker().is_some()
+                    {
+                        new_container = true;
+                        break;
+                    }
+                    if self.empty_after_blank(depth) {
+                        // A split ancestor must reach line() atomically even
+                        // when the next payload is ordinary text or code.
+                        new_container = prefix.partial;
+                        matched = new_container;
+                        break;
+                    }
+                    prefix.consume_indent(content_indent)
+                }
             };
             if !matched {
                 break;
             }
         }
-        if matched && let Some(complete) = complete {
+        // Active prose or a pending header may retain an omitted path suffix.
+        // The header falls back to prose because lazy lines cannot confirm a
+        // table. Sibling markers already defer to line() above. Commit the
+        // consumed tab columns without walking the missing frames
+        // or treating this lazy line as a new table/leaf candidate. A failed
+        // lazy predicate leaves the original structural classifier untouched.
+        let lazy = !matched
+            && complete.is_some()
+            && (text || paragraph)
+            && prefix.partial
+            && prefix.lazy_text(source, span, false, work);
+        if lazy {
+            matched = true;
+        }
+        let mut indented = false;
+        if matched
+            && !lazy
+            && !new_container
+            && let Some(complete) = complete
+        {
+            // A fully matched path without active prose may consume list code
+            // indentation even when its boundary did not split a tab. Failed
+            // probes leave the original leaf/lazy classifier untouched.
+            if !text && matches!(self.active.last(), Some(Active::List { .. })) {
+                let mut probe = prefix;
+                probe.inspected = 0;
+                indented = probe.consume_indent(4) && (!complete || probe.spaces_end < probe.end);
+                prefix.inspected += probe.inspected;
+                if indented {
+                    probe.inspected = prefix.inspected;
+                    prefix = probe;
+                }
+            }
             let payload = Span::new(prefix.pos, span.end);
-            matched = prefix.partial;
-            if matched {
+            matched = prefix.partial || indented;
+            if matched && !indented {
                 work.classified_bytes += payload.len() as u64;
                 matched = match crate::block::classify_indented(
                     source,
                     payload,
                     complete,
                     None,
-                    true,
+                    paragraph,
                     prefix.virtual_spaces as u8,
+                    ((prefix.column + prefix.virtual_spaces) % 4) as u8,
                 ) {
-                    crate::block::Line::Heading { .. }
+                    crate::block::Line::Blank
+                    | crate::block::Line::Heading { .. }
+                    | crate::block::Line::Definition { .. }
+                    | crate::block::Line::FootnoteDefinition { .. }
+                    | crate::block::Line::Setext(_)
                     | crate::block::Line::FenceOpen { .. }
-                    | crate::block::Line::Indented { .. } => true,
-                    crate::block::Line::Text if text => {
-                        prefix.spaces() <= 3
-                            && prefix.spaces_end < prefix.end
-                            && prefix.bytes[prefix.spaces_end] != b'>'
-                            && prefix.marker().is_none()
+                    | crate::block::Line::Indented { .. }
+                    | crate::block::Line::Rule => true,
+                    crate::block::Line::Text
+                        if prefix.spaces() <= 3 && prefix.spaces_end < prefix.end =>
+                    {
+                        new_container =
+                            prefix.bytes[prefix.spaces_end] == b'>' || prefix.marker().is_some();
+                        // A pending table header also admits ordinary text:
+                        // its short delimiter can confirm in the same scope,
+                        // or fall back with the original virtual-space map.
+                        true
                     }
                     _ => false,
                 };
@@ -251,6 +347,8 @@ impl Containers {
         }
         work.container_bytes += prefix.inspected;
         matched.then_some(ContainerLine {
+            new_container,
+            indented,
             prefix: prefix.pos,
             virtual_spaces: prefix.virtual_spaces as u8,
             kind: if quotes == 0 {
@@ -258,7 +356,7 @@ impl Containers {
             } else {
                 BlockKind::Quote { depth: quotes }
             },
-            lazy: false,
+            lazy,
             detached_blank: false,
         })
     }
@@ -272,10 +370,66 @@ impl Containers {
         scope: Option<ContainerId>,
         work: &mut Work,
     ) -> Option<usize> {
+        if let Ok(prefix) = self.delimiter_cursor(source, span, scope, false, work) {
+            return Some(prefix.pos);
+        }
+        // Extend only paths rejected by the original byte-aligned probe.
+        // Match atomically; four residual columns still belong to code. Both
+        // walks inspect this bounded physical prefix, never retained ancestors
+        // without input or the growing separator tail.
+        let mut prefix = self
+            .delimiter_cursor(source, span, scope, true, work)
+            .ok()?;
+        let inspected = prefix.inspected;
+        let accepted = prefix.partial && prefix.spaces() <= 3;
+        work.container_bytes += prefix.inspected - inspected;
+        accepted.then_some(prefix.pos)
+    }
+
+    /// A footnote path and its four-column continuation indent may split tabs.
+    /// Return the final byte endpoint and its residual columns; failed partial
+    /// probes preserve the original path/blank spelling.
+    pub fn footnote_prefix(
+        &self,
+        source: &str,
+        span: Span,
+        scope: Option<ContainerId>,
+        work: &mut Work,
+    ) -> Option<(usize, Option<(usize, u8)>)> {
+        for split_tabs in [true, false] {
+            let mut prefix = match self.delimiter_cursor(source, span, scope, split_tabs, work) {
+                Ok(prefix) => prefix,
+                Err(true) => continue,
+                Err(false) => return None,
+            };
+            let start = prefix.pos;
+            let inspected = prefix.inspected;
+            let payload = prefix
+                .consume_indent(4)
+                .then_some((prefix.pos, prefix.virtual_spaces as u8));
+            work.container_bytes += prefix.inspected - inspected;
+            if payload.is_some() || !prefix.partial {
+                return Some((start, payload));
+            }
+        }
+        None
+    }
+
+    // On a path mismatch, report whether a tab was split: only such probes
+    // can differ from the original spelling and need a fallback path walk.
+    fn delimiter_cursor<'a>(
+        &self,
+        source: &'a str,
+        span: Span,
+        scope: Option<ContainerId>,
+        split_tabs: bool,
+        work: &mut Work,
+    ) -> Result<Prefix<'a>, bool> {
         if scope != self.inner() {
-            return None;
+            return Err(false);
         }
         let mut prefix = Prefix::new(source, span, false);
+        prefix.split_tabs = split_tabs;
         let mut matched = true;
         for frame in &self.active {
             work.container_steps += 1;
@@ -288,7 +442,11 @@ impl Containers {
             }
         }
         work.container_bytes += prefix.inspected;
-        matched.then_some(prefix.pos)
+        if matched {
+            Ok(prefix)
+        } else {
+            Err(prefix.partial)
+        }
     }
 
     pub fn stats(&self) -> ArenaStats {
@@ -347,6 +505,9 @@ impl Containers {
                 Active::Quote(id) => {
                     self.quotes.pop();
                     self.close(id, end, work, update);
+                    // A quote's internal blank does not separate blocks or
+                    // sibling items outside that quote, even if it ends a list.
+                    self.trailing_blank = false;
                 }
                 Active::List { list, item, .. } => {
                     self.close(item, end, work, update);
@@ -360,8 +521,8 @@ impl Containers {
             && self.trailing_blank
             && let Some(Active::List { spacing, .. }) = self.active.last_mut()
         {
-            // Closing any number of trailing descendants delivers one pending
-            // separator. Closure alone never confirms Loose, including EOF.
+            // Trailing list descendants deliver one pending separator, unless
+            // a quote boundary consumed it. Closure alone never confirms Loose.
             spacing.pending_blank = true;
             work.list_steps += 1;
         }
@@ -392,7 +553,8 @@ impl Containers {
 
     /// Observe only an item's direct payload or a newly opened direct child.
     /// Blanks inside a quote/nested list never walk or update ancestor items;
-    /// only a trailing separator survives closure to a resumed parent scope.
+    /// only a trailing list separator survives closure to a resumed parent
+    /// scope; closing a quote consumes its internal separator.
     /// A marker-only first line is not a separator; trailing blanks alone do
     /// not loosen a list. A later sibling can confirm even an empty old item.
     pub fn observe_payload(
@@ -448,23 +610,115 @@ impl Containers {
         update: &mut Update,
     ) -> Option<ContainerLine> {
         let ContainerOptions {
+            partial_container,
             complete,
             root_markers,
+            root_paragraph,
             paragraph,
             lazy_paragraph,
             table_header,
             fence,
+            code_fence,
         } = options;
         let mut prefix = Prefix::new(source, span, complete);
+        // A single bounded reverse scan makes rule priority O(1) per frame,
+        // even for long chains of failed `* ` list prefixes.
+        let rule_suffix = if complete { prefix.rule_suffix() } else { None };
         let mut keep = 0;
         let mut quotes = 0;
         let mut kind = BlockKind::Paragraph;
         let mut new_item = None;
+        let mut indented = false;
+        let mut sibling_marker = false;
+        // Commit a new list/quote, sibling marker, or ended empty item
+        // after matching its ancestors. Failed probes leave the original path intact.
+        // Each matched frame consumes positive columns in this bounded prefix;
+        // the whitespace endpoint stays cached across all list ancestors.
+        if partial_container {
+            let mut probe = prefix;
+            probe.split_tabs = true;
+            probe.inspected = 0;
+            let mut matched = true;
+            let mut sibling = false;
+            let mut retained = 0;
+            let mut retained_quotes = 0;
+            let mut ended_empty = false;
+            for frame in &self.active {
+                work.container_steps += 1;
+                matched = match *frame {
+                    Active::Quote(_) => {
+                        retained_quotes += 1;
+                        probe.quote()
+                    }
+                    Active::List { content_indent, .. } => {
+                        if probe.partial
+                            && probe.spaces() <= 3
+                            && probe.spaces() < content_indent
+                            && probe.marker().is_some()
+                        {
+                            sibling = true;
+                            break;
+                        }
+                        if self.empty_after_blank(retained) {
+                            ended_empty = true;
+                            break;
+                        }
+                        probe.consume_indent(content_indent)
+                    }
+                };
+                if !matched {
+                    break;
+                }
+                retained += 1;
+            }
+            let mut accept = matched
+                && probe.partial
+                && (ended_empty
+                    || (probe.spaces() <= 3
+                        && !probe.is_rule(rule_suffix)
+                        && (probe.bytes.get(probe.spaces_end) == Some(&b'>')
+                            || probe.marker().is_some())));
+            if accept
+                && complete
+                && !sibling
+                && !ended_empty
+                && paragraph.is_some()
+                && paragraph == self.inner()
+            {
+                let text = &probe.bytes[probe.spaces_end..probe.end];
+                probe.inspected += text.len() as u64;
+                accept = crate::block::setext_level(text).is_none();
+            }
+            // Keep an exact-scope table delimiter on this matched path.
+            // The new-container loop below gives it priority over a list
+            // marker, just as for whole-byte indentation boundaries.
+            work.container_bytes += probe.inspected;
+            if accept {
+                probe.inspected = prefix.inspected;
+                probe.split_tabs = false;
+                prefix = probe;
+                keep = retained;
+                quotes = retained_quotes;
+                // A lazy empty marker can retain this prefix without opening
+                // a new node; preserve the explicitly matched quote kind too.
+                if quotes > 0 {
+                    kind = BlockKind::Quote { depth: quotes };
+                }
+            }
+        }
         while keep < self.active.len() {
             work.container_steps += 1;
             match self.active[keep] {
                 Active::Quote(_) => {
-                    if !prefix.quote() {
+                    let code = if keep + 1 == self.active.len() && fence.is_none() {
+                        prefix.quote_code()
+                    } else {
+                        None
+                    };
+                    if let Some(code) = code {
+                        prefix = code;
+                        indented = true;
+                    } else if !prefix.quote() {
                         break;
                     }
                     quotes += 1;
@@ -473,13 +727,17 @@ impl Containers {
                 Active::List {
                     list,
                     item,
-                    indent,
                     content_indent,
                     ..
                 } => {
                     let spaces = prefix.spaces();
+                    // Below the current Item's body indentation, a legal marker
+                    // starts a sibling even when its indentation changed. At or
+                    // beyond the body boundary it belongs inside the old Item.
                     if (keep > 0 || root_markers)
-                        && spaces == indent
+                        && spaces <= 3
+                        && spaces < content_indent
+                        && !prefix.is_rule(rule_suffix)
                         && let Some(marker) = prefix.marker()
                     {
                         if self.nodes[list.0].kind
@@ -487,6 +745,7 @@ impl Containers {
                                 marker: marker.kind,
                             })
                         {
+                            sibling_marker = true;
                             break;
                         }
                         // A child's tail must reach the old Item before the
@@ -515,24 +774,33 @@ impl Containers {
                         self.active[keep] = Active::List {
                             list,
                             item,
-                            indent,
                             content_indent: marker.column - prefix.column,
                             spacing: ItemSpacing::default(),
                         };
                         prefix.pos = marker.end;
                         prefix.column = marker.column;
+                        prefix.virtual_spaces = 0;
+                        if let Some(spaces) = marker.code_spaces {
+                            prefix.column += 4;
+                            prefix.virtual_spaces = usize::from(spaces);
+                            indented = true;
+                        }
                         kind = BlockKind::ListItem {
-                            indent,
+                            indent: spaces,
                             number: marker.number,
                             task: None,
                         };
                         new_item = Some(item);
-                    } else if !prefix.consume_indent(content_indent) {
+                    } else if self.empty_after_blank(keep) || !prefix.consume_indent(content_indent)
+                    {
                         break;
                     }
                 }
             }
             keep += 1;
+            if indented {
+                break;
+            }
         }
         // Blank classification is bounded by the physical prefix window. No
         // long-line retry and no missing quote is retained. The only scan below
@@ -554,6 +822,25 @@ impl Containers {
                 .copied()
                 .unwrap_or(self.active.len());
             self.close_to(retained, span.start, work, update);
+            if code_fence && fence == self.inner() {
+                prefix.spaces();
+                if prefix.spaces_end == prefix.end {
+                    // All quotes matched, and only list indentation is missing.
+                    // Its insufficient whitespace is structural; keep the line
+                    // ending as literal code, without recording a list separator.
+                    self.end = span.end;
+                    work.container_bytes += prefix.inspected;
+                    return Some(ContainerLine {
+                        new_container: false,
+                        indented: false,
+                        prefix: prefix.end,
+                        virtual_spaces: 0,
+                        kind,
+                        lazy: false,
+                        detached_blank: false,
+                    });
+                }
+            }
             // The last explicitly matched Item also owns this separator (the
             // pre-existing exact-scope blank rule). Its omitted child lists
             // may now survive until the next line resolves the actual scope.
@@ -566,6 +853,8 @@ impl Containers {
             self.end = span.end;
             work.container_bytes += prefix.inspected;
             return Some(ContainerLine {
+                new_container: false,
+                indented: false,
                 prefix: prefix.pos,
                 virtual_spaces: 0,
                 kind,
@@ -576,13 +865,15 @@ impl Containers {
         if keep < self.active.len()
             && lazy_paragraph.is_some()
             && lazy_paragraph == self.inner()
-            && prefix.lazy_text(source, span, work)
+            && prefix.lazy_text(source, span, sibling_marker, work)
         {
             self.end = span.end;
             work.container_bytes += prefix.inspected;
             return Some(ContainerLine {
+                new_container: false,
+                indented: false,
                 prefix: prefix.pos,
-                virtual_spaces: 0,
+                virtual_spaces: prefix.virtual_spaces as u8,
                 kind,
                 lazy: true,
                 detached_blank: false,
@@ -593,6 +884,9 @@ impl Containers {
             self.resolve_blank();
         }
         while !self.active.is_empty() || root_markers {
+            if indented {
+                break;
+            }
             if fence.is_some() && fence == self.inner() {
                 break;
             }
@@ -613,6 +907,11 @@ impl Containers {
             if indent > 3 {
                 break;
             }
+            // Rules win over new lists; the leaf classifier still gives an
+            // exact-scope paragraph's Setext underline priority over a rule.
+            if prefix.is_rule(rule_suffix) {
+                break;
+            }
             // A continuing paragraph's underline wins over opening an empty
             // nested list, but cannot consume a sibling item's marker.
             if complete && paragraph.is_some() && paragraph == self.inner() {
@@ -622,7 +921,19 @@ impl Containers {
                     break;
                 }
             }
-            if prefix.quote() {
+            let code = prefix.quote_code();
+            let leaf = if code.is_none() {
+                prefix.quote_leaf(source, span, rule_suffix, work)
+            } else {
+                None
+            };
+            if code.is_some() || leaf.is_some() || prefix.quote() {
+                if let Some(code) = code {
+                    prefix = code;
+                    indented = true;
+                } else if let Some(leaf) = leaf {
+                    prefix = leaf;
+                }
                 self.observe_payload(false, span.start, work, update);
                 let id = self.open(ContainerKind::Quote, self.inner(), span.start, work);
                 self.push(Active::Quote(id));
@@ -630,6 +941,18 @@ impl Containers {
                 kind = BlockKind::Quote { depth: quotes };
                 new_item = None;
             } else if let Some(marker) = prefix.marker() {
+                // Empty markers and ordered starts other than 1 cannot
+                // interrupt prose in this exact retained scope. Only complete
+                // bounded lines prove emptiness; the parsed number is already
+                // final even for a long line. Siblings replaced their Item
+                // above, and new containers have a different identity.
+                if ((complete && marker.end == prefix.end)
+                    || marker.number.is_some_and(|number| number != 1))
+                    && ((paragraph.is_some() && paragraph == self.inner())
+                        || (root_paragraph && self.inner().is_none()))
+                {
+                    break;
+                }
                 self.observe_payload(false, span.start, work, update);
                 let list = self.open(
                     ContainerKind::List {
@@ -651,12 +974,17 @@ impl Containers {
                 self.push(Active::List {
                     list,
                     item,
-                    indent,
                     content_indent: marker.column - prefix.column,
                     spacing: ItemSpacing::default(),
                 });
                 prefix.pos = marker.end;
                 prefix.column = marker.column;
+                prefix.virtual_spaces = 0;
+                if let Some(spaces) = marker.code_spaces {
+                    prefix.column += 4;
+                    prefix.virtual_spaces = usize::from(spaces);
+                    indented = true;
+                }
                 kind = BlockKind::ListItem {
                     indent,
                     number: marker.number,
@@ -668,6 +996,7 @@ impl Containers {
             }
         }
         if let Some(item) = new_item
+            && !indented
             && let Some(task) = prefix.task()
         {
             let ContainerKind::Item { task: stored, .. } = &mut self.nodes[item.0].kind else {
@@ -682,8 +1011,10 @@ impl Containers {
         self.end = span.end;
         work.container_bytes += prefix.inspected;
         self.inner().map(|_| ContainerLine {
+            new_container: false,
+            indented,
             prefix: prefix.pos,
-            virtual_spaces: 0,
+            virtual_spaces: prefix.virtual_spaces as u8,
             kind,
             lazy: false,
             detached_blank: false,
@@ -696,8 +1027,10 @@ struct Marker {
     number: Option<u32>,
     end: usize,
     column: usize,
+    code_spaces: Option<u8>,
 }
 
+#[derive(Clone, Copy)]
 struct Prefix<'a> {
     bytes: &'a [u8],
     pos: usize,
@@ -727,6 +1060,42 @@ impl<'a> Prefix<'a> {
             spaces_column: 0,
             inspected: 0,
         }
+    }
+
+    /// First and third-from-last marker of the maximal homogeneous rule
+    /// suffix. Any marker between these endpoints starts a valid rule; other
+    /// prefixes cannot. Keep only offsets, not a suffix copy or ancestor state.
+    fn rule_suffix(&mut self) -> Option<(usize, usize)> {
+        let mut marker = None;
+        let mut first = self.end;
+        let mut third = None;
+        let mut count = 0;
+        for at in (self.pos..self.end).rev() {
+            self.inspected += 1;
+            let byte = self.bytes[at];
+            if matches!(byte, b' ' | b'\t') {
+                continue;
+            }
+            if !matches!(byte, b'*' | b'-' | b'_') || marker.is_some_and(|old| old != byte) {
+                break;
+            }
+            marker = Some(byte);
+            first = at;
+            count += 1;
+            if count == 3 {
+                third = Some(at);
+            }
+        }
+        Some((first, third?))
+    }
+
+    fn is_rule(&mut self, suffix: Option<(usize, usize)>) -> bool {
+        let Some((first, third)) = suffix else {
+            return false;
+        };
+        // Use the same physical columns (including partial tab residue) as
+        // leaf classification, so a rule cannot become a nested list first.
+        self.spaces() <= 3 && (first..=third).contains(&self.spaces_end)
     }
 
     /// Remaining columns in the cached horizontal whitespace run.
@@ -786,7 +1155,13 @@ impl<'a> Prefix<'a> {
         true
     }
 
-    fn lazy_text(&mut self, source: &str, span: Span, work: &mut Work) -> bool {
+    fn lazy_text(
+        &mut self,
+        source: &str,
+        span: Span,
+        sibling_marker: bool,
+        work: &mut Work,
+    ) -> bool {
         // Only the bounded, as-yet-unconsumed payload is examined. No probe
         // mutates the path or consumes text that must remain visible.
         let payload = Span::new(self.pos, span.end);
@@ -799,7 +1174,15 @@ impl<'a> Prefix<'a> {
         }
         let spaces = self.spaces();
         if spaces <= 3
-            && (self.bytes.get(self.spaces_end) == Some(&b'>') || self.marker().is_some())
+            && (self.bytes.get(self.spaces_end) == Some(&b'>')
+                || self.marker().is_some_and(|marker| {
+                    // Like explicit paragraph continuations, lazy text is
+                    // interrupted only by an ordered start of 1. A different
+                    // sibling marker still replaces the old list; matching
+                    // siblings were already handled on the old path.
+                    (!self.complete || marker.end < self.end)
+                        && (sibling_marker || marker.number.is_none_or(|number| number == 1))
+                }))
         {
             return false;
         }
@@ -815,6 +1198,103 @@ impl<'a> Prefix<'a> {
             }
             _ => false,
         }
+    }
+
+    /// Atomically accept an explicit quote followed by tab-containing code
+    /// indentation. Only inspect this bounded prefix; failed probes preserve
+    /// the old quote/leaf spelling. Carry the final tab's unused columns.
+    fn quote_code(&mut self) -> Option<Self> {
+        let mut probe = *self;
+        probe.inspected = 0;
+        probe.split_tabs = true;
+        let start = probe.pos;
+        let accepted = probe.quote()
+            && probe.consume_indent(4)
+            && (!probe.complete || probe.spaces_end < probe.end);
+        let has_tab = if accepted {
+            probe.inspected += (probe.pos - start) as u64;
+            probe.bytes[start..probe.pos].contains(&b'\t')
+        } else {
+            false
+        };
+        self.inspected += probe.inspected;
+        probe.inspected = self.inspected;
+        (accepted && has_tab).then_some(probe)
+    }
+
+    /// A new quote may split its tab separator for a confirmed code/math fence,
+    /// ATX, rule, valid definition, nested quote/list, complete blank or text.
+    /// Text retains unused separator columns through the existing display map;
+    /// Incomplete blanks and candidates outside the window keep the old spelling.
+    fn quote_leaf(
+        &mut self,
+        source: &str,
+        span: Span,
+        rule_suffix: Option<(usize, usize)>,
+        work: &mut Work,
+    ) -> Option<Self> {
+        if self.spaces() > 3 {
+            return None;
+        }
+        let at = self.spaces_end;
+        self.inspected += 2.min(self.end - at) as u64;
+        if self.bytes.get(at..self.end)?.get(..2) != Some(b">\t")
+            || indent_width(b'\t', self.spaces_column + 1) == 1
+        {
+            return None;
+        }
+        let mut probe = *self;
+        probe.inspected = 0;
+        probe.split_tabs = true;
+        let quoted = probe.quote();
+        debug_assert!(quoted);
+        // The next explicit marker proves a nested quote without classifying
+        // its suffix. Repeated `>\t >` prefixes therefore stay linear.
+        let nested_quote = probe.spaces() <= 3 && probe.spaces_end < probe.end && {
+            probe.inspected += 1;
+            probe.bytes[probe.spaces_end] == b'>'
+        };
+        let candidate = probe.spaces() <= 3 && probe.spaces_end < probe.end;
+        // The suffix already proves a complete homogeneous rule. Reuse it
+        // instead of rescanning the remaining payload at every new quote.
+        let accepted = nested_quote
+            // spaces() above already found the horizontal whitespace endpoint.
+            // A complete blank needs no indentation cap or payload rescan.
+            || probe.complete && probe.spaces_end == probe.end
+            || probe.is_rule(rule_suffix)
+            // Marker parsing is bounded (at most nine digits plus following
+            // whitespace). On success the next iteration consumes that same
+            // marker; failed markers may still classify as ordinary text below.
+            || probe.spaces() <= 3 && probe.marker().is_some()
+            || candidate && {
+                let payload = Span::new(probe.pos, span.end);
+                work.classified_bytes += payload.len() as u64;
+                match crate::block::classify_indented(
+                    source,
+                    payload,
+                    probe.complete,
+                    None,
+                    false,
+                    probe.virtual_spaces as u8,
+                    ((probe.column + probe.virtual_spaces) % 4) as u8,
+                ) {
+                    crate::block::Line::Text
+                    | crate::block::Line::FenceOpen { .. }
+                    | crate::block::Line::Heading { .. }
+                    | crate::block::Line::FootnoteDefinition { .. } => true,
+                    crate::block::Line::Definition { label, .. } => {
+                        // Match intern's rejection without allocating or
+                        // mutating symbols in this speculative prefix probe.
+                        probe.inspected += label.len() as u64;
+                        label.len() <= crate::references::MAX_LABEL_BYTES
+                            && source[label.range()].chars().any(|c| !c.is_whitespace())
+                    }
+                    _ => false,
+                }
+            };
+        self.inspected += probe.inspected;
+        probe.inspected = self.inspected;
+        accepted.then_some(probe)
     }
 
     fn quote(&mut self) -> bool {
@@ -881,28 +1361,66 @@ impl<'a> Prefix<'a> {
             if !self.complete {
                 return None;
             }
-            // Empty items still require at least one indentation space for continuation.
+            // A complete empty marker has one (possibly implicit) separator
+            // column for continuation, independent of trailing whitespace.
             return Some(Marker {
                 kind,
                 number,
                 end: at,
-                column,
+                column: column + 1,
+                code_spaces: None,
             });
         }
         self.inspected += 1;
         if !matches!(self.bytes[at], b' ' | b'\t') {
             return None;
         }
+        let whitespace = at;
+        let marker_column = column;
         while at < self.end && matches!(self.bytes[at], b' ' | b'\t') {
             self.inspected += 1;
             column += indent_width(self.bytes[at], column);
             at += 1;
+        }
+        if self.complete && at == self.end {
+            return Some(Marker {
+                kind,
+                number,
+                end: at,
+                column: marker_column + 1,
+                code_spaces: None,
+            });
+        }
+        // A bounded first-line prefix with at least five whitespace columns uses
+        // one column as separator and four as code indentation. Reuse the scanned
+        // whitespace endpoint; advancing the probe consumes at most five bytes.
+        // Incomplete prefixes retain the existing dialect.
+        if column - marker_column >= 5 && (!self.complete || at < self.end) {
+            let mut probe = *self;
+            probe.pos = whitespace;
+            probe.column = marker_column;
+            probe.virtual_spaces = 0;
+            probe.split_tabs = true;
+            probe.spaces_end = at;
+            probe.spaces_column = column;
+            probe.inspected = 0;
+            let consumed = probe.consume_indent(5);
+            debug_assert!(consumed);
+            self.inspected += probe.inspected;
+            return Some(Marker {
+                kind,
+                number,
+                end: probe.pos,
+                column: marker_column + 1,
+                code_spaces: Some(probe.virtual_spaces as u8),
+            });
         }
         Some(Marker {
             kind,
             number,
             end: at,
             column,
+            code_spaces: None,
         })
     }
 

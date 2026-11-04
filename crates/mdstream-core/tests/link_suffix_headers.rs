@@ -488,7 +488,12 @@ fn partial_tab_labels_map_to_raw_source_while_lazy_headers_and_opaque_closures_c
             "{prior}{header}{}|b\n{delimiter}",
             "x".repeat(1030)
         ));
-        assert!(doc.tables().is_empty(), "{prior:?} {header:?}");
+        // The complete partial-tab path can isolate the inherited suffix.
+        assert_eq!(
+            doc.tables().len(),
+            usize::from(header.starts_with('\t')),
+            "{prior:?} {header:?}"
+        );
     }
 }
 

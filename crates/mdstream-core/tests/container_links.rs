@@ -83,14 +83,16 @@ fn references_normalize_payload_only_and_reuse_collapsed_symbols() {
         };
         assert_eq!(doc.references()[symbol.0].label, name);
         assert_eq!(doc.link_destination(id), None);
-        let update = doc.append(&format!("> [{name}]: /late 'title'\n")).unwrap();
+        let update = doc
+            .append(&format!(">\n> [{name}]: /late 'title'\n"))
+            .unwrap();
         assert!(update.new_links.is_empty());
         assert_eq!(*doc.link_info(id).unwrap(), info);
         assert_eq!(doc.link_destination(id), Some("/late"));
         assert_eq!(doc.link_title(id), Some("title"));
         doc.finish();
     }
-    let doc = parse("> [a&amp;\n> b][]\n> [a&amp; b]: /raw\n");
+    let doc = parse("> [a&amp;\n> b][]\n>\n> [a&amp; b]: /raw\n");
     assert_eq!(label(&doc, 0), "a&\nb");
     assert_eq!(doc.link_destination(LinkId(0)), Some("/raw"));
 }
@@ -142,7 +144,7 @@ fn lazy_and_equivalent_prefixes_continue_but_scope_and_blocks_end_labels() {
         "> # heading\n",
         "> ```\n> raw\n> ```\n",
         ">     code\n",
-        "> [r]: /url\n",
+        ">\n> [r]: /url\n",
         "> [^n]: body\n",
         "> h|h\n> -|-\n>\n",
         "> ---\n",
@@ -502,6 +504,7 @@ fn many_lazy_lines_and_late_definitions_do_not_scan_ancestors_or_old_references(
     for _ in 0..20_000 {
         doc.append("> [a\n> b][]\n").unwrap();
     }
+    doc.append(">\n").unwrap();
     let before = doc.work();
     let update = doc.append("> [a b]: /late\n").unwrap();
     assert!(update.new_links.is_empty());

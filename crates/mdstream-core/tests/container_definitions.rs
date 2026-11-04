@@ -30,7 +30,7 @@ fn note<'a>(doc: &'a Document, label: &str) -> (FootnoteId, &'a Footnote) {
 
 #[test]
 fn definitions_share_global_namespaces_with_first_definition_and_reference_order() {
-    let source = "[before][中 KEY] [^n]\n> - [x] [中   Key]: <a b> 'title'\n>   [^n]: **raw** &amp; $x$ [^opaque]\r\n>   > [nested][中 key] [^n]\n> - [中 KEY]: /ignored\n>   [^n]: duplicate\n> [^unused]: no number\n[after][中 key] [^n] [^N]\n[中 key]: /root-ignored\n[^n]: root duplicate\n[^N]: root case\n";
+    let source = "[before][中 KEY] [^n]\n> - [x] [中   Key]: <a b> 'title'\n>   [^n]: **raw** &amp; $x$ [^opaque]\r\n>   > [nested][中 key] [^n]\n> - [中 KEY]: /ignored\n>   [^n]: duplicate\n> [^unused]: no number\n[after][中 key] [^n] [^N]\n\n[中 key]: /root-ignored\n[^n]: root duplicate\n[^N]: root case\n";
     let doc = parse(source);
     assert_eq!(
         doc.references()
@@ -562,7 +562,7 @@ fn generated_definitions_match_independent_first_definition_and_physical_range_m
         let depth = (seed >> 32) as usize % 20 + 1;
         let label = format!("n{}", (seed >> 48) % 37);
         let prefix = ">".repeat(depth);
-        source.push_str(&format!("{prefix} - [{label}] [^{label}]\n"));
+        source.push_str(&format!("{prefix} - [{label}] [^{label}]\n{prefix}   \n"));
         let start = source.len();
         source.push_str(&format!("{prefix}   [{label}]: <url {i}> 'title{i}'\r\n"));
         first_links

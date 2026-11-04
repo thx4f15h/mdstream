@@ -100,13 +100,35 @@ fn delimiters_escapes_and_failed_candidates_keep_existing_inline_rules() {
 
 #[test]
 fn atomic_scope_failure_and_unexpanded_whitespace_do_not_leak_mappings() {
-    for source in [
-        "- > $a\n\tb$\n",
-        "- $a\n\t  b$\n",
-        "- $a\n\t\n",
-        "- $a\n\t",
-        "- $a\n\t- nested\n",
-    ] {
+    // Completed short blanks, including EOF, now consume the Item indent.
+    for source in ["- $a\n\t\n", "- $a\n\t"] {
+        let doc = parse(source);
+        assert_eq!(doc.blocks()[1].kind, BlockKind::Blank);
+        let tab = source.find('\t').unwrap();
+        let runs: Vec<_> = doc
+            .display_runs_in(Span::new(tab, tab + 1))
+            .unwrap()
+            .collect();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].text, "  ");
+        assert_eq!(runs[0].replacement, Some(Span::new(tab, tab + 1)));
+    }
+
+    // Lazy text after a partially consumed Item tab can now omit the Quote.
+    let source = "- > $a\n\tb$\n";
+    let doc = parse(source);
+    assert_eq!(read(doc.math_content(MathId(0)).unwrap()), "a\n\tb");
+    assert_eq!(read(doc.math_payload(MathId(0)).unwrap()), "a\n  b");
+    let tab = source.find('\t').unwrap();
+    let runs: Vec<_> = doc
+        .display_runs_in(Span::new(tab, tab + 1))
+        .unwrap()
+        .collect();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].text, "  ");
+    assert_eq!(runs[0].replacement, Some(Span::new(tab, tab + 1)));
+
+    for source in ["- $a\n\t  b$\n", "- $a\n\t- nested\n"] {
         let doc = parse(source);
         assert!(
             doc.display_runs_in(Span::new(0, source.len()))
@@ -122,7 +144,9 @@ fn atomic_scope_failure_and_unexpanded_whitespace_do_not_leak_mappings() {
     ));
     assert_eq!(read(doc.math_block_payload(BlockId(0)).unwrap()), "");
     assert_eq!(doc.blocks()[0].source.end, "- > $$\n".len());
-    assert_eq!(visible(&doc), "\toutside\n");
+    assert_eq!(doc.blocks()[1].kind, BlockKind::Code { info: None });
+    assert_eq!(doc.blocks()[1].container, None);
+    assert_eq!(visible(&doc), "outside\n");
     // Existing block contents stay literal, even blank or over-indented;
     // only the path's final partially consumed tab is expanded.
     let doc = parse("- $$\n\t\t x\n\t");
@@ -309,15 +333,15 @@ fn generated_nested_math_matches_independent_column_and_source_models() {
 }
 
 #[test]
-fn math_tabs_compose_with_setext_and_do_not_start_partial_table_headers() {
+fn math_tabs_compose_with_setext_and_partial_table_headers() {
     for padding in [0, BLOCK_LOOKAHEAD + 10] {
         let source = format!("- $a\n\t{}b$ | h\n  - | -\n", "x".repeat(padding));
         let doc = parse(&source);
-        assert!(doc.tables().is_empty());
-        assert_eq!(doc.maths().len(), 1);
+        assert_eq!(doc.tables().len(), 1);
+        assert!(doc.maths().is_empty());
         assert_eq!(
-            read(doc.math_payload(MathId(0)).unwrap()),
-            format!("a\n  {}b", "x".repeat(padding))
+            doc.text(doc.tables()[0].cell(0, 0).unwrap().source),
+            Some(format!("{}b$", "x".repeat(padding)).as_str())
         );
     }
     let doc = parse("- $a\n\tb$\n  ===\n");

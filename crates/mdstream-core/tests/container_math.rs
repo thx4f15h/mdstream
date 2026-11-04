@@ -144,7 +144,7 @@ fn scope_and_block_interruptions_end_candidates_without_replaying_body() {
         "> $open\n> ---\n> end$\n",
         "> $open\n> ```\n> raw\n> ```\n> end$\n",
         "> $open\n>     raw\n> end$\n",
-        "> $open\n> [r]: /u\n> end$\n",
+        "> $open\n>\n> [r]: /u\n> end$\n",
         "> $open\n> [^r]: raw\n> end$\n",
         "> $open\n> h|h\n> -|-\n> end$|z\n",
     ] {

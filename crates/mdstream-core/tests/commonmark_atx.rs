@@ -177,7 +177,8 @@ fn atx_projection_preserves_text_styles_block_boundaries_and_empty_headings() {
     // Sensitivity checks for the adapter itself: it must not erase precisely
     // the semantics being scored (notably a whitespace or emphasis defect).
     assert_eq!(project(&parse("#\n\n##\n")), "<h1></h1>\n<h2></h2>\n");
-    assert_eq!(project(&parse("text  \n")), "<p>text  </p>\n");
+    assert_eq!(project(&parse("text  \n")), "<p>text</p>\n");
+    assert_eq!(project(&parse("text &#32;\n")), "<p>text  </p>\n");
     assert_eq!(project(&parse("a\nb\n")), "<p>a\nb</p>\n");
     assert_eq!(project(&parse("a\n\nb\n")), "<p>a</p>\n<p>b</p>\n");
     assert_eq!(

@@ -46,13 +46,13 @@ fn nested_tail_confirms_only_the_resumed_list() {
 }
 
 #[test]
-fn trailing_quote_children_propagate_but_internal_blanks_and_new_markers_do_not() {
+fn quote_boundaries_consume_tails_while_nested_list_tails_propagate() {
     use ListTightness::{Loose, Tight};
     for (source, expected) in [
-        ("- > quote\n  >\n- sibling\n", vec![Loose]),
-        ("- > quote\n  >\n  # parent\n", vec![Loose]),
-        ("- > - inner\n  >   \n- sibling\n", vec![Loose, Tight]),
-        ("- - > quote\n    >\n- sibling\n", vec![Loose, Tight]),
+        ("- > quote\n  >\n- sibling\n", vec![Tight]),
+        ("- > quote\n  >\n  # parent\n", vec![Tight]),
+        ("- > - inner\n  >   \n- sibling\n", vec![Tight, Tight]),
+        ("- - > quote\n    >\n- sibling\n", vec![Tight, Tight]),
         ("- > quote\n  >\n  > more\n- sibling\n", vec![Tight]),
         ("- > quote\n  >\n", vec![Tight]),
         ("- >\n- sibling\n", vec![Tight]),
@@ -220,8 +220,9 @@ fn deep_tail_delivery_costs_one_step_beyond_actual_closures() {
     let before = doc.work();
     let update = doc.append("- sibling\n").unwrap();
     assert_eq!(update.closed_containers.len(), 1001);
-    assert_eq!(update.loosened_lists, [ContainerId(0)]);
-    assert_eq!(doc.work().list_steps - before.list_steps, 4);
+    assert!(update.loosened_lists.is_empty());
+    assert_eq!(lists(&doc), [ListTightness::Tight]);
+    assert_eq!(doc.work().list_steps - before.list_steps, 2);
     assert_eq!(doc.work().container_steps - before.container_steps, 1003);
 }
 

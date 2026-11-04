@@ -55,7 +55,14 @@ fn partial_fence_openers_interrupt_paragraphs_and_preserve_literal_payloads() {
             block.kind,
             BlockKind::Code { .. } | BlockKind::Math { closed: true, .. }
         ));
-        assert_eq!(visible(&doc, block.source), "  *中* &amp; | $x$\n");
+        assert_eq!(
+            visible(&doc, block.source),
+            if marker == "$$" {
+                "  *中* &amp; | $x$\n"
+            } else {
+                "*中* &amp; | $x$\n"
+            }
+        );
         assert!(doc.maths().is_empty());
         assert!(doc.tables().is_empty());
         assert_eq!(block.source.end, source.find("- sibling").unwrap());
@@ -172,15 +179,40 @@ fn new_leaves_interrupt_pending_and_confirmed_tables_without_consuming_cells() {
     assert_eq!(doc.blocks()[1].kind, BlockKind::Code { info: None });
     assert_eq!(doc.work().table_candidate_bytes, 0);
     assert!(doc.work().inline_bytes < 20);
-    // New partial-tab table headers, underlines and definitions are excluded.
-    for source in [
-        "- first\n\ta|b\n  -|-\n",
-        "- first\n\t===\n",
-        "- first\n\t[r]: /u\n",
-        "- first\n\t[^n]: body\n",
-    ] {
+    let title = parse("- first\n\t===\n");
+    assert_eq!(title.headings().entries()[0].block, BlockId(0));
+    assert_eq!(
+        title.headings().entries()[0].container,
+        title.blocks()[0].container
+    );
+    let definition = parse("- first\n\t[r]: /u\n");
+    assert_eq!(
+        definition.blocks()[1].container,
+        definition.blocks()[0].container
+    );
+    assert_eq!(definition.blocks()[1].kind, BlockKind::Paragraph);
+    assert!(
+        definition
+            .references()
+            .iter()
+            .all(|r| r.destination.is_none())
+    );
+    let footnote = parse("- first\n\t[^n]: body\n");
+    let definition = footnote
+        .footnote(FootnoteId(0))
+        .unwrap()
+        .definition
+        .unwrap();
+    assert_eq!(footnote.text(definition.content), Some("body"));
+    assert_eq!(
+        footnote.block(definition.block).unwrap().container,
+        footnote.blocks()[0].container
+    );
+    // Fully matched partial-tab headers now use the existing table path.
+    {
+        let source = "- first\n\ta|b\n  -|-\n";
         let doc = parse(source);
-        assert!(doc.tables().is_empty());
+        assert_eq!(doc.tables().len(), 1);
         assert!(doc.headings().entries().is_empty());
         assert!(doc.references().iter().all(|r| r.destination.is_none()));
         assert!(doc.footnotes().iter().all(|f| f.definition.is_none()));
@@ -189,15 +221,46 @@ fn new_leaves_interrupt_pending_and_confirmed_tables_without_consuming_cells() {
 
 #[test]
 fn failed_paths_new_containers_blank_and_unhandled_leaf_tabs_are_atomic() {
+    // Completed short blanks, including EOF, now consume the Item indent.
+    for source in ["- first\n\t\n", "- first\n\t"] {
+        let doc = parse(source);
+        assert_eq!(doc.blocks()[1].kind, BlockKind::Blank);
+        let tab = source.find('\t').unwrap();
+        let runs: Vec<_> = doc
+            .display_runs_in(Span::new(tab, tab + 1))
+            .unwrap()
+            .collect();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].text, "  ");
+        assert_eq!(runs[0].replacement, Some(Span::new(tab, tab + 1)));
+    }
+
+    let nested = parse("- first\n\t- nested\n");
+    assert_eq!(nested.container_count(), 4);
+    assert_eq!(
+        visible(&nested, Span::new(0, nested.source().len())),
+        "first\nnested\n"
+    );
+    let quote = parse("- first\n\t> nested\n");
+    assert_eq!(quote.container_count(), 3);
+    assert_eq!(
+        visible(&quote, Span::new(0, quote.source().len())),
+        "first\nnested\n"
+    );
+    assert_eq!(
+        quote.container(ContainerId(2)).unwrap().parent,
+        Some(ContainerId(1))
+    );
+    let heading = parse(">\t # three columns after the quote separator\n");
+    assert_eq!(heading.headings().entries().len(), 1);
+    assert_eq!(
+        visible(&heading, Span::new(0, heading.source().len())),
+        "three columns after the quote separator\n"
+    );
     for source in [
         "- > first\n\t# missing quote\n",
         "- > first\n\t```\n",
-        "- first\n\t- nested\n",
-        "- first\n\t> nested\n",
-        "- first\n\t\n",
-        "- first\n\t",
         "- first\n\t\t# literal\n",
-        ">\t# first line still uses original prefix rules\n",
     ] {
         let doc = parse(source);
         assert!(doc.headings().entries().is_empty(), "{source:?}");
@@ -430,10 +493,11 @@ fn repeated_deep_leaves_and_historical_headings_have_bounded_prefix_work() {
 
 #[test]
 fn display_budget_search_and_excerpt_preserve_hidden_and_retained_tab_maps() {
-    let doc = parse("- old\n\t# 中🙂\n\t```\n\t中🙂\r\n\t```\n\t   中🙂\n");
+    // One-column opener removes one of the continuation tab's two virtual columns.
+    let doc = parse("- old\n\t# 中🙂\n   ```\n\t中🙂\r\n\t```\n\t   中🙂\n");
     let source = Span::new(0, doc.source().len());
     let expected = visible(&doc, source);
-    assert_eq!(expected, "old\n中🙂\n  中🙂\n 中🙂\n");
+    assert_eq!(expected, "old\n中🙂\n 中🙂\n 中🙂\n");
     let tiled: String = (0..doc.tile_count())
         .flat_map(|i| doc.display_runs(TileId(i)).unwrap())
         .filter(|r| !r.style.contains(Style::HIDDEN))
@@ -492,9 +556,9 @@ fn display_budget_search_and_excerpt_preserve_hidden_and_retained_tab_maps() {
     let mut hits = Vec::new();
     let mut budget = Budget::new(WorkLimit::unlimited());
     search.advance(&doc, &mut budget, &mut hits).unwrap();
-    assert_eq!(hits.len(), 3);
+    assert_eq!(hits.len(), 2);
     assert_eq!(hits[0].source, Span::new(mapped, mapped + 1));
-    assert_eq!(hits[1].source, hits[0].source);
+    assert_eq!(doc.text(hits[1].source), Some(" "));
     let mut excerpt = DisplayExcerpt::new(
         &doc,
         Span::new(mapped, mapped + 1),

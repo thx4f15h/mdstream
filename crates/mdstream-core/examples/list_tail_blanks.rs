@@ -2,7 +2,8 @@ use mdstream::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut doc = Document::new();
-    doc.append("- outer\n  - > child\n    >\n")?;
+    // Only the blank outside the quote can separate the outer sibling.
+    doc.append("- outer\n  - > child\n    >\n    \n")?;
     let list = ContainerId(0);
     let inner = ContainerId(2);
     let mut view = FoldView::new(&doc, 1)?;

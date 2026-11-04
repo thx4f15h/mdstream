@@ -66,15 +66,21 @@ impl DisplayIndex {
 
     /// Only inspect the endpoints: the inline scanner maintains all-spaces as
     /// bytes arrive, so closing a huge span never rereads its body.
-    pub fn code(&mut self, source: Span, text: &str, all_spaces: bool, last: Span) {
+    pub fn code(
+        &mut self,
+        source: Span,
+        text: &str,
+        all_spaces: bool,
+        last: Span,
+        last_space: bool,
+    ) {
         if source.is_empty() {
             return;
         }
         let bytes = text.as_bytes();
-        let last_virtual = self.spaces.last().is_some_and(|s| s.0 == last);
-        let trim = !all_spaces
-            && code_space(bytes[source.start])
-            && (code_space(bytes[last.end - 1]) || last_virtual);
+        // A failed outer candidate may publish this code after later virtual
+        // spaces. Use its semantic tail summary, not the latest space mapping.
+        let trim = !all_spaces && code_space(bytes[source.start]) && last_space;
         let leading_end = source.start
             + if trim {
                 1 + usize::from(bytes[source.start..source.end].starts_with(b"\r\n"))

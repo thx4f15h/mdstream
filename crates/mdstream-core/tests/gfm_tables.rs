@@ -321,7 +321,8 @@ fn table_projection_preserves_cells_alignment_styles_and_boundaries() {
         project(&parse("a|b\n-|-\n&#32;x&#32;|&amp;\n")).contains("<td> x </td>\n<td>&amp;</td>")
     );
     assert!(project(&parse("a|b\n-|-\n*`x`*|z\n")).contains("<td><em><code>x</code></em></td>"));
-    assert_eq!(project(&parse("  a\t\n")), "<p>  a\t</p>\n");
+    assert_eq!(project(&parse("  a\t\n")), "<p>a</p>\n");
+    assert_eq!(project(&parse("a\tb\n")), "<p>a\tb</p>\n");
     assert_eq!(project(&parse("a\nb\n")), "<p>a\nb</p>\n");
     assert_eq!(project(&parse("a\n\nb\n")), "<p>a</p>\n<p>b</p>\n");
     assert_eq!(project(&parse("& < \\\"\n")), "<p>&amp; &lt; &quot;</p>\n");

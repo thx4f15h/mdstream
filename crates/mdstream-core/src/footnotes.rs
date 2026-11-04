@@ -28,7 +28,7 @@ pub struct FootnoteDefinition {
     pub block: BlockId,
     /// Raw body envelope, without the opener or final LF/CRLF. Includes internal
     /// line endings, container prefixes and continuation indentation; use
-    /// Document::footnote_payload to omit the latter two without decoding text.
+    /// Document::footnote_payload to omit the latter two and map split tabs.
     pub content: Span,
     pub state: SyntaxState,
 }
@@ -76,11 +76,17 @@ pub(crate) struct Footnotes {
     pub entries: Vec<Footnote>,
     pub references: Vec<FootnoteReference>,
     // Source-ordered continuation prefixes of winning definitions only.
-    gaps: Vec<Span>,
+    gaps: Vec<FootnoteGap>,
     // Only the active definition can defer a blank separating list children.
     trailing_blank: bool,
     numbered: usize,
     pub revision: u64,
+}
+
+struct FootnoteGap {
+    source: Span,
+    // A split final tab contributes these spaces, mapped to its single byte.
+    spaces: u8,
 }
 
 impl Footnotes {
@@ -210,25 +216,25 @@ impl Document {
         let BlockKind::FootnoteDefinition { symbol } = self.blocks[id.0].kind else {
             return false;
         };
-        let prefix = self.containers.delimiter_prefix(
+        let prefix = self.containers.footnote_prefix(
             &self.source,
             span,
             self.blocks[id.0].container,
             &mut self.work,
         );
         let mut blank = false;
-        let payload = prefix.and_then(|prefix| {
+        let payload = prefix.and_then(|(prefix, indented)| {
             let body = &self.source.as_bytes()[prefix..block::body_end(&self.source, span)];
             blank = complete && body.iter().all(|b| matches!(b, b' ' | b'\t'));
-            if body.starts_with(b"    ") {
-                Some(prefix + 4)
+            if let Some(payload) = indented {
+                Some(payload)
             } else if blank {
-                Some(prefix)
+                Some((prefix, 0))
             } else {
                 None
             }
         });
-        let Some(payload) = payload else {
+        let Some((payload, spaces)) = payload else {
             if self.footnotes.trailing_blank {
                 // Internal blank paragraphs do not loosen a surrounding list.
                 // A trailing blank followed by another child/sibling does.
@@ -241,7 +247,10 @@ impl Document {
         self.footnotes.trailing_blank = blank;
         if payload > span.start && self.footnotes.entries[symbol.0].definition.unwrap().block == id
         {
-            self.footnotes.gaps.push(Span::new(span.start, payload));
+            self.footnotes.gaps.push(FootnoteGap {
+                source: Span::new(span.start, payload),
+                spaces,
+            });
         }
         let line = StreamingLine {
             block: id,
@@ -324,9 +333,10 @@ impl Document {
     }
 
     /// O(1) mapped reader of a definition's committed body. Omits matched
-    /// container prefixes and four-space continuation indentation, preserving
-    /// all other raw spelling and internal LF/CRLF. Each omitted fragment has
-    /// empty text but still charges source bytes, one query and one object.
+    /// container prefixes and four-column continuation indentation, using
+    /// physical four-column tab stops. A split final tab maps to 1..3 spaces;
+    /// all other raw spelling and internal LF/CRLF are preserved. Each omitted
+    /// fragment has empty text but charges source bytes, one query and one object.
     /// First successful advance locates gaps in O(log G); later steps are O(1).
     pub fn footnote_payload(&self, id: FootnoteId) -> Option<FootnoteContent<'_>> {
         let mut cursor = self.footnote_content(id)?;
@@ -378,14 +388,15 @@ impl FootnoteReferences<'_> {
 pub struct FootnoteChunk<'a> {
     /// Consumed source, including omitted prefix fragments in payload mode.
     pub source: Span,
-    /// Borrows exactly source, or is empty for an omitted prefix fragment.
+    /// Borrows exactly source, is empty for an omitted prefix fragment, or is
+    /// 1..3 static spaces mapped to one partially consumed tab byte.
     pub text: &'a str,
 }
 
 pub struct FootnoteContent<'a> {
     source: &'a str,
     remaining: Span,
-    gaps: &'a [Span],
+    gaps: &'a [FootnoteGap],
     gap: Option<usize>,
 }
 
@@ -395,7 +406,8 @@ impl<'a> FootnoteContent<'a> {
     }
 
     /// At most TILE_BYTES source UTF-8 bytes, one query/object per chunk,
-    /// including empty prefix fragments. Four bytes suffice for progress;
+    /// including empty prefix fragments. Charges the maximum of source/text
+    /// bytes; split tabs are atomic. Four bytes suffice for progress;
     /// exhaustion preserves position and charges nothing.
     pub fn advance(
         &mut self,
@@ -419,18 +431,30 @@ impl<'a> FootnoteContent<'a> {
         if end == self.remaining.start {
             return Err(Completion::BudgetExhausted);
         }
-        // The lookup is paid only on a call guaranteed to make progress.
-        let mut gap = self
-            .gap
-            .unwrap_or_else(|| self.gaps.partition_point(|g| g.end <= self.remaining.start));
+        // Locate the next prefix after checking basic progress. A split tab
+        // additionally requires its full output-byte budget before advancing.
+        let mut gap = self.gap.unwrap_or_else(|| {
+            self.gaps
+                .partition_point(|g| g.source.end <= self.remaining.start)
+        });
         let mut omitted = false;
+        let mut spaces = 0;
         if let Some(g) = self.gaps.get(gap) {
-            if self.remaining.start < g.start {
-                end = end.min(g.start);
+            if self.remaining.start < g.source.start {
+                end = end.min(g.source.start);
             } else {
-                end = end.min(g.end);
+                let hidden_end = g.source.end - usize::from(g.spaces > 0);
+                if self.remaining.start < hidden_end {
+                    end = end.min(hidden_end);
+                } else {
+                    spaces = usize::from(g.spaces);
+                    if available.bytes < spaces {
+                        return Err(Completion::BudgetExhausted);
+                    }
+                    end = g.source.end;
+                }
                 omitted = true;
-                if end == g.end {
+                if end == g.source.end {
                     gap += 1;
                 }
             }
@@ -439,7 +463,7 @@ impl<'a> FootnoteContent<'a> {
         let charged = budget.charge(WorkLimit {
             queries: 1,
             objects: 1,
-            bytes: source.len(),
+            bytes: source.len().max(spaces),
             ..WorkLimit::default()
         });
         debug_assert!(charged);
@@ -448,7 +472,7 @@ impl<'a> FootnoteContent<'a> {
         Ok(Some(FootnoteChunk {
             source,
             text: if omitted {
-                ""
+                &"   "[..spaces]
             } else {
                 &self.source[source.range()]
             },
@@ -459,6 +483,26 @@ impl<'a> FootnoteContent<'a> {
 #[cfg(test)]
 mod tests {
     use crate::Document;
+
+    #[test]
+    fn partial_tab_storage_is_per_winning_line_not_body_or_reference() {
+        let mut doc = Document::new();
+        doc.append(&format!("- [^n]: first\n\t\t{}", "x".repeat(2048)))
+            .unwrap();
+        assert_eq!(doc.footnotes.gaps.len(), 1);
+        assert_eq!(doc.footnotes.gaps[0].spaces, 2);
+        let capacity = doc.footnotes.gaps.capacity();
+        for _ in 0..1000 {
+            doc.append("x").unwrap();
+        }
+        assert_eq!(doc.footnotes.gaps.len(), 1);
+        assert_eq!(doc.footnotes.gaps.capacity(), capacity);
+        doc.append("\n- [^n]: duplicate\n\t\tignored\n- [^m]: next\n\t\tlast\n")
+            .unwrap();
+        assert_eq!(doc.footnotes.gaps.len(), 2);
+        assert!(doc.footnotes.gaps.iter().all(|g| g.spaces == 2));
+        assert!(doc.footnotes.gaps[0].source.end <= doc.footnotes.gaps[1].source.start);
+    }
 
     #[test]
     fn prefix_storage_tracks_lines_without_copying_body_or_duplicate_definitions() {
@@ -483,7 +527,7 @@ mod tests {
             doc.footnotes
                 .gaps
                 .windows(2)
-                .all(|g| g[0].end <= g[1].start)
+                .all(|g| g[0].source.end <= g[1].source.start)
         );
         assert_eq!(doc.blocks.len(), 3);
         assert_eq!(doc.footnotes.entries.len(), 2);

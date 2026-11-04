@@ -1124,3 +1124,1233 @@ README/TODO 已同步。scratch 保留历史峰值容量，更深工作集可能
 - [x] **Setext 标题首尾空白**：官方样例 82、84、89 已由原文端点摘要与迟确认隐藏修复，官方输入/期望和评分投影不变；保持多行、源码映射、稳定对象、分块及复杂度。1200 组模型、千层/百万字、4096 历史对象/叶块、共享预算和失效验收见 [Setext 空白交付](DONE.md#2026-10-30-setext-原始首尾空白交付)。85、87 的缩进代码差异继续沿用已记录方言，完整缩进/空行和分类上限另行推进。
 - [x] **GFM 表格章节独立评分**：固定 0.29-gfm 全部 8 个表格样例（198–205）的官方输入和 HTML，当前 8 支持、0 刻意差异、0 未支持；来源摘要校验、离线独立报告、361 个切点/353 个逐字符前缀及投影敏感性验收见 [GFM 表格评分交付](DONE.md#2026-10-30-gfm-表格标准样例评分交付)。仅说明这 8 个短样例通过，不代表完整 GFM 兼容或实际表格排版已完成。
 - [x] **GFM 任务列表章节独立评分**：固定 0.29-gfm 全部 2 个任务列表样例（279–280）的官方输入和 HTML，当前 2 支持、0 刻意差异、0 未支持；来源摘要校验、离线独立报告、66 个切点/64 个逐字符前缀和投影敏感性/边界拒绝验收见 [GFM 任务列表评分交付](DONE.md#2026-10-30-gfm-任务列表标准样例评分交付)。仅涵盖这两个短样例的勾选状态、兄弟及嵌套结构，不代表完整任务语法、任意嵌套或交互绘制已完成。
+
+## 2026-11-03 CommonMark Paragraphs 标准样例评分交付
+
+- [x] **完整官方章节与离线重建**：`crates/mdstream-core/tests/fixtures/commonmark_paragraphs.rs` 固定 CommonMark 0.31.2 Paragraphs 全部 8 例（219–226），逐字保存官方 Markdown/HTML、规范行号、John MacFarlane / CC BY-SA 4.0 归属和完整 `spec.json` SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20`。`scripts/generate_commonmark_paragraphs.py` 只读取本地官方来源，校验摘要及完整章节成员后生成或 `--check`；改动来源会被拒绝。构建/测试不联网，零新增依赖。
+- [x] **独立分类与固定观察**：`crates/mdstream-core/tests/commonmark_paragraphs.rs` 报告 **4 支持（219–221、225）、1 刻意差异（223）、3 未支持（222、224、226）**。223 沿用已记录的缩进代码可中断段落方言；222/224 保留段落行首缩进，226 的内部硬换行正确但段落末尾空格未裁剪。非支持项同时断言与官方不同、与单独固定的观察相同；改善和回归都须复核分类，不用当前输出代替官方期望。
+- [x] **保留评分语义**：窄投影读取公开块和显示片段，核对段落/代码类型、顺序、边界、可见文字、软/硬换行和代码末尾 LF。仅省略结构空块和段落的一个物理末尾 LF，保留所有缩进、内部空白与尾空格，不 trim、不重解析 Markdown、不按样例编号修正输出。容器、标题、行内代码/链接/数学等超出范围的结构和样式明确拒绝；投影不是库 HTML 渲染器。
+- [x] **流式和适配器验收**：新增 4 项测试，覆盖独立评分、全部 **160 个单切点及 152 个逐字符前缀**、空白/强调/换行/块边界敏感性、范围外输入拒绝。快照核对块身份/范围、显示映射/样式和 pending；EOF 后独立对照官方期望或固定分类观察。8 例均为 ASCII，最长 64 字节，不代表 Unicode、长输入、容器段落或其余章节已评分。
+
+独立报告：`nix develop -c cargo nextest run --workspace --test commonmark_paragraphs --no-fail-fast --success-output immediate`；夹具复核：`python3 scripts/generate_commonmark_paragraphs.py /path/to/spec.json --check`。本单元只扩充章节评分，解析核心及复杂度/预算契约未改动，保持零运行时依赖及禁止 unsafe。TODO 保留宽泛标准覆盖项，并新增段落空白缺口；完整缩进规则、其余 CommonMark/GFM 范围及 UI 继续待办。
+
+项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **920 项**、`cargo test --doc --workspace` **72 项（69 + 3）**、`cargo fmt --all -- --check`、夹具逐字重建/篡改拒绝及 `git diff --check`。专项评分和切点日志 `/tmp/mdtui3-goal-run/paragraphs-targeted.log`；全量回归日志 `/tmp/mdtui3-goal-run/paragraphs-validation.log`；来源核验日志 `/tmp/mdtui3-goal-run/paragraphs-fixture-check.log`。
+
+## 2026-11-03 顶层段落行首缩进交付
+
+- [x] **修复 222/224，更新真实评分**：已分类顶层段落每个物理行开头的 1–3 个 ASCII 空格隐藏后再进入行内解析；源码、块身份/范围及原始映射不变。Paragraphs 当前评分为 **6 支持（219–222、224–225）、1 刻意差异（223）、1 未支持（226）**；上一节的 4/1/3 为首次评分历史。官方夹具逐字保留，评分投影未增加 trim 或按编号修正，相关投影敏感性测试同步核对新显示结果。
+- [x] **明确方言与流式边界**：四空格代码仍可中断段落；容器、tab/混合缩进和段末空格保持已有规则。短尾部 LF/EOF 分类前原文可见；长行在有界前瞻提交后立即处理缩进。早管道候选在失败后首次消费时隐藏缩进，长候选的已消费前缀不重放。跨行代码/强调/链接/数学及后续 Setext 继承段落缩进语义；数学 payload 复用已有 gap 索引省略缩进，raw content 保留原文。
+- [x] **复杂度与预算**：每个物理行首最多检查三个空格和一个后继字节，隐藏空格计入 `Work.inline_bytes`，增加至多一个有界隐藏区间，无新增解析状态及历史/正文/祖先回扫；累计 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 保持。百万字后逐字追加 1000 次，inline 工作恰为 1000，分类/容器/区间树访问均不增加；4096 个缩进行的工作量有明确上界。隐藏缩进和 CR 仍按显示窗口及前瞻计费，零预算不移动，6 bytes / 1 query / 1 object 持续推进。
+- [x] **专项边界验收**：新增 `tests/paragraph_indent.rs` 5 项，覆盖 UTF-8/CRLF/EOF、13 组短/长输入的全切点与逐字符前缀及完整元数据快照、表头成功/失败、跨行对象、原始源码/隐藏映射、tile 与预算读取、旧任务失效、百万字/4096 行复杂度。官方 8 例继续通过 160 切点/152 前缀；Setext、代码空白及表格投影中的旧顶层缩进预期按新方言更新。
+
+项目 devShell 验收：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **925 项**、`cargo test --doc --workspace` **72 项（69 + 3）**、`cargo fmt --all -- --check` 全通过。专项日志 `/tmp/mdtui3-goal-run/paragraph-indent-targeted.log`；完整验收 `/tmp/mdtui3-goal-run/paragraph-indent-validation.log`；固定官方来源运行 `scripts/generate_commonmark_paragraphs.py --check` 通过，日志 `/tmp/mdtui3-goal-run/paragraph-indent-fixture-check.log`。README/TODO 已记录新评分与适用边界；226、容器/完整缩进规则和宽泛标准覆盖继续未完成。
+
+## 2026-11-03 顶层段落末尾空白交付
+
+- [x] **修复 226，保留官方判据**：顶层段落关闭时隐藏最后一个物理 LF/CRLF（或无换行 EOF）之前的原始 space/tab 尾部。Paragraphs 219–226 的当前评分为 **7 支持、1 刻意差异（223）、0 未支持**；以上 4/1/3 和 6/1/1 保留为历史交付记录。官方 Markdown/HTML 及投影逻辑不变，未在投影中 trim。相邻 ATX/Setext/表格投影与预算读取测试的旧段尾预期更新，并保留内部空白及实体生成尾空格的敏感性。
+- [x] **流式、硬换行及源码边界**：开放尾部保持暂定可见，续行提交才确认已有软/硬换行；EOF、空行或后继块关闭段落时仅隐藏原始尾部，末尾物理 LF 无换行语义标记，字面反斜杠保留。原文、块范围/身份、显示源码映射不变；隐藏区间产生可见性与 dirty 通知，旧 tile key 和 revision 绑定游标失效。实体产生的空格及已闭合代码/数学/链接内部空白保留，未闭合候选按原文端点裁剪；孤立 CR、Unicode 空白、form feed 不裁剪。容器段末、内部 tab 换行、完整缩进与 223 方言继续留在 TODO。
+- [x] **单遍与表头状态移交**：复用既有行内扫描的原始端点，关闭无需回扫尾部或正文，仅一次 O(log n) 隐藏标记；晚表头保存旧段尾的 O(1) 范围，成功时在移交行内状态后提交，失败时保留续行语义。保持累计 O(n log n)、空间 O(n)、零运行时依赖和禁止 unsafe。百万空格后逐字追加 1000 次只有 1000 inline 字节工作，分类/容器/注解树不增长；EOF 无 inline/分类回扫且树访问少于 300，4096 次段落关闭满足计数上界。
+- [x] **6 项专项回归**：`tests/paragraph_tail.rs` 覆盖 UTF-8/CRLF/EOF、硬/软换行、实体/代码/数学/链接、失败候选、代码/容器/Setext 边界、早/晚表头成功与失败、全切点/逐前缀完整快照、跨 tile 映射、零预算暂停及 6 bytes / 1 query / 1 object 推进、百万空格及 4096 段关闭。修复前 226 的显示缺口由同一测试复现，日志 `/tmp/mdtui3-goal-run/paragraph-tail-repro.log`；专项通过日志 `/tmp/mdtui3-goal-run/paragraph-tail-targeted.log`。
+
+项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **931 项**、`cargo test --doc --workspace` **72 项（69 + 3）**、`cargo fmt --all -- --check`、官方 Paragraphs 夹具逐字重建 `--check`、`git diff --check`。官方 8 例的 **160 个切点 / 152 个逐字符前缀**继续通过。完整日志 `/tmp/mdtui3-goal-run/paragraph-tail-validation.log`。README/TODO 已同步真实评分与开放尾部契约，宽泛标准覆盖及完整空白/容器规则未勾选。
+
+## 2026-11-03 CommonMark Hard line breaks 标准样例评分交付
+
+- [x] **完整章节与独立来源**：固定 CommonMark 0.31.2 Hard line breaks 633–647 全部 15 例，`tests/fixtures/commonmark_hard_breaks.rs` 逐字保留官方 Markdown/HTML、规范行号、John MacFarlane / CC BY-SA 4.0 归属及完整来源 SHA-256。`scripts/generate_commonmark_hard_breaks.py` 从本地固定来源生成或 `--check`，先核对摘要和章节成员；重新下载官方数据摘要一致、夹具逐字重建及篡改拒绝均通过，构建与测试不联网。
+- [x] **真实分类与范围**：`tests/commonmark_hard_breaks.rs` 报告 **11 支持（633–635、638–641、644–647）、2 刻意差异（636–637）、2 未支持（642–643）**。支持项覆盖空格/反斜线硬换行、强调内换行、代码 span 的 LF 归一化及段落/ATX 末尾边界；636–637 沿用已记录的缩进代码中断段落方言，642–643 的原始 HTML 属需求范围外。四个非支持样例保留独立当前观察，断言与官方不同且行为未变；不替换官方期望、不删样例、不把未支持算成符合。
+- [x] **流式与投影验证**：4 项测试包括逐例评分、全部 **199 个单切点 / 184 个逐字符前缀**、投影敏感性和边界拒绝。快照核对块/标题身份与范围、显示映射/样式及 pending；EOF 后仍对照官方期望或固定分类差异。投影仅读取公开语义，保留空格/tab、代码 LF、强调/代码 span 和软/硬换行，只省略结构空块与无行内换行标记的末尾物理 LF；不 trim、不重解析 Markdown、不按编号调整输出，拒绝未评分结构/样式。
+- [x] **交付边界**：15 例均为 ASCII，最长 21 字节，不将该评分推广为 Unicode、HTML、完整缩进/容器、其它章节或长输入复杂度/预算验收。本单元只新增离线夹具、生成器、评分测试及文档，解析核心和运行时依赖未改；README/TODO 已同步分类，宽泛标准覆盖与完整缩进规则保持待办。
+
+项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **935 项**、`cargo test --workspace --doc` **72 项（69 + 3）**、官方夹具 `--check` 和 `git diff --check`。专项日志 `/tmp/mdtui3-goal-run/hard-breaks-targeted.log`；来源核验 `/tmp/mdtui3-goal-run/hard-breaks-fixture-check.log`；完整验收 `/tmp/mdtui3-goal-run/hard-breaks-validation.log`，可复跑命令脚本 `/tmp/mdtui3-goal-run/hard-breaks-validate.sh`。
+
+## 2026-11-03 CommonMark Soft line breaks 标准样例评分交付
+
+- [x] **完整章节与独立来源**：固定 CommonMark 0.31.2 Soft line breaks 648–649 全部 2 例；`tests/fixtures/commonmark_soft_breaks.rs` 逐字保留官方 Markdown/HTML、规范行号、John MacFarlane / CC BY-SA 4.0 归属及完整来源 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20`。`scripts/generate_commonmark_soft_breaks.py` 校验本地固定来源摘要和章节成员后生成或 `--check`；重新下载的官方数据摘要一致，夹具逐字重建、篡改来源拒绝及生成器语法检查通过。构建与测试不联网，零新增依赖。
+- [x] **真实评分与边界**：**2 支持、0 刻意差异、0 未支持**，验证普通软换行及换行两侧空格的官方结果。两例仅为 8、10 字节 ASCII 输入；不据此声称容器、tab/混合缩进、CR/CRLF、Unicode、长输入复杂度和预算边界全部符合，也不扩充解析方言。
+- [x] **流式及语义验证**：4 项测试覆盖逐例报告、全部 **20 个单切点 / 18 个逐字符前缀**、投影敏感性及范围拒绝。快照比较块身份/范围、显示映射/样式与 pending；EOF 后同时对照官方 HTML 和内部 LF 的 `SOFT_BREAK`、原始源码区间、无替代内容及无 `HARD_BREAK`，不会将纯文本 LF 当作正确语义标记。投影仅读取公开段落/显示接口，保留内部空白与软/硬换行区别，只省略结构空块和无行内换行标记的段末物理 LF；不 trim、不重解析 Markdown、不按样例编号调整输出，拒绝未评分结构/样式。
+
+复跑：`nix develop -c cargo nextest run --workspace --test commonmark_soft_breaks --no-fail-fast --success-output immediate`；来源复核：`python3 scripts/generate_commonmark_soft_breaks.py /path/to/spec.json --check`。README/TODO 已同步覆盖范围；宽泛标准覆盖、完整空白/容器规则及其它章节继续待办。本单元未修改解析核心、运行时依赖或复杂度/预算契约。
+
+项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **939 项**、`cargo test --workspace --doc` **72 项（69 + 3）**、官方夹具 `--check` 和 `git diff --check`。专项日志 `/tmp/mdtui3-goal-run/soft-breaks-targeted.log`；来源核验 `/tmp/mdtui3-goal-run/soft-breaks-fixture-check.log`；完整验收 `/tmp/mdtui3-goal-run/soft-breaks-validation.log`；可复跑脚本 `/tmp/mdtui3-goal-run/soft-breaks-validate.sh`。
+
+## 2026-11-03 内部换行混合尾空白交付
+
+- [x] **范围与流式方言**：修复 TODO 的普通内部 tab 换行缺口；同一行内序列的 LF/CRLF 确认为内部换行后，隐藏此前连续的原始 space/tab。顶层及已识别同作用域显式/lazy 容器续行、Setext 正文沿用该规则；紧邻换行的至少两个 ASCII 空格或反斜线仍决定硬换行，tab 不转换成硬换行空格。下一行确认前保持暂定可见，晚表头成功丢弃待定换行、失败提交；原始源码、对象与块身份及映射保持。
+- [x] **算法与预算**：`Inline` 仅增加一个 O(1) 混合空白尾部起点，现有单遍扫描同时维护硬换行所需的连续 ASCII 空格起点；CRLF 保留、孤立 CR 重置。换行确认扩大原有隐藏区间，无尾部逆扫、正文重放或祖先访问；累计 O(n log n)、空间 O(n)，零新增依赖、无 unsafe。显示仍通过现有共享 Budget 按原始字节计费，隐藏区间改变会失效旧缓存和 revision 绑定任务。
+- [x] **独立回归**：新增 `tests/internal_tab_breaks.rs` 六项测试；修复前 5 失败/1 通过，修复后全部通过。包含 1–6 字节 space/tab 全组合 × 顶层/引用/列表/引用 lazy × LF/CRLF 的 **1008 组模型**，UTF-8 全切点/逐前缀、早/晚表头成功与失败、Setext、行内字面内容、实体、孤立 CR、流式缓存失效、tile/源码映射及零预算暂停/6 字节预算推进。百万字混合尾部后 1000 次单字节追加恰好增加 1000 `inline_bytes`，分类/容器/树计数不增长；换行关闭仅消费新增 4 字节，另验证 4096 个内部换行。
+- [x] **已有观察与剩余范围**：Setext 空白测试中的内部 tab、拒绝下划线和过长下划线三处显示期望按新方言更新，原始包络断言保持；九项 Setext 空白测试通过。官方 Paragraphs/Hard line breaks/Soft line breaks 输入、期望和评分保持不变。容器段末裁剪、行首 tab/混合缩进、不透明失败候选的完整回退和完整缩进规则仍待办；不对显示输出 trim，不将宽泛空白或标准覆盖 TODO 标为完成。README/TODO 已同步。
+
+项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **945 项**、`cargo test --workspace --doc` **72 项（69 + 3）**、Paragraphs/Hard line breaks/Soft line breaks 官方夹具 `--check` 及 `git diff --check`。修复前复现 `/tmp/mdtui3-goal-run/internal-tab-breaks-repro.log`；专项 `/tmp/mdtui3-goal-run/internal-tab-breaks-targeted.log`；Setext 回归 `/tmp/mdtui3-goal-run/internal-tab-breaks-setext.log`；完整验收 `/tmp/mdtui3-goal-run/internal-tab-breaks-validation.log`；复跑脚本 `/tmp/mdtui3-goal-run/internal-tab-breaks-validate.sh`。
+
+## 2026-11-03 容器段落末尾空白交付
+
+- [x] **逻辑段落关闭与方言**：已识别引用、列表（含任务项）及嵌套容器普通段落在 EOF、空行、兄弟/作用域变化或新块关闭时，隐藏原始 space/tab 尾部；显式和 lazy 续行沿用内部软硬换行。物理叶块封口不提前裁剪开放尾部，末尾 LF/CRLF 的 LF 保留且无换行语义标记。源码、块/对象身份及映射不变；代码块、实体生成空白和已闭合行内内容保持，Setext 首叶提升后仍走专属裁剪。
+- [x] **端点复用与表头移交**：关闭时以逻辑首叶类型区分普通段落与多行 Setext，复用 `Inline::paragraph_tail` 的原始端点；早/晚表头沿用已有 `HeaderCandidate::paragraph_tail` 保存前一段尾部，成功时提交，失败时保持普通续行规则。容器表头移交后不把新表头区间误作旧段尾隐藏。没有新增持久状态、尾部逆扫、旧正文/叶块/祖先回访，累计 O(n log n)、空间 O(n)、零运行时依赖与禁止 unsafe 保持。
+- [x] **六项专项回归**：新增 `tests/container_tail.rs`；修复前 5 项失败/1 项通过，修复后 6 项通过。覆盖 **1512 组** space/tab 组合 × 引用/列表/混合嵌套 × EOF/LF/CRLF 模型、UTF-8 全切点与逐前缀快照、显式/lazy/部分 tab 续行、任务项、空行与兄弟、Setext、早/晚表头成功/失败及首单元格可见内容。另验证块/链接/数学对象稳定、旧 tile key 和游标失效、原始映射、跨 tile 读取、零预算不移动及 6 bytes / 1 query / 1 object 推进。千层容器的百万字尾部后 1000 次逐字追加恰好增加 1000 `inline_bytes`，分类/容器/树计数不增长；EOF 不重新消费正文或前缀，4096 个兄弟段落关闭满足计数上界。
+- [x] **准确更新旧观察与剩余范围**：GFM 任务投影敏感性、顶层段尾和内部 tab 测试各一处旧容器尾空白显示断言随新方言更新，内部空白和实体生成尾空格的敏感性保留。官方样例输入、期望、分类与评分投影逻辑未改；README/TODO 已记录范围。tab/混合缩进、不透明失败候选的完整内部回退、完整容器匹配/缩进以及宽泛标准覆盖继续待办。
+
+修复前日志 `/tmp/mdtui3-goal-run/container-tail-repro.log`；专项日志 `/tmp/mdtui3-goal-run/container-tail-targeted.log`；首次全量 debug 记录 `/tmp/mdtui3-goal-run/container-tail-debug-initial.log`（948 通过，3 处上述旧观察待更新）；复跑脚本 `/tmp/mdtui3-goal-run/container-tail-validate.sh`。
+
+项目 devShell 最终验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **951 项**、`cargo test --workspace --doc` **72 项（69 + 3）**、Paragraphs / Hard line breaks / Soft line breaks / ATX / Setext 五组官方夹具 `--check` 及 `git diff --check`。完整验收日志 `/tmp/mdtui3-goal-run/container-tail-validation.log`。
+
+## 2026-11-03 CommonMark Textual content 标准样例评分交付
+
+- [x] **完整章节与独立来源**：固定 CommonMark 0.31.2 Textual content 650–652 全部 3 例；`tests/fixtures/commonmark_textual_content.rs` 逐字保留官方 Markdown/HTML、规范行号、John MacFarlane / CC BY-SA 4.0 归属及完整来源 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20`。`scripts/generate_commonmark_textual_content.py` 从本地来源校验摘要与章节成员后生成或 `--check`，保留原始 Unicode，构建/测试不联网、零新增依赖；重新下载来源逐字重建、篡改来源拒绝及生成器语法检查通过。
+- [x] **真实评分与适用边界**：**3 支持、0 刻意差异、0 未支持**，覆盖普通标点（含未配对美元符）、希腊文和五个连续空格。只评分这三例，不代表完整 Unicode、非法 UTF-8、容器、长输入或预算边界全部符合标准。官方期望不使用本库输出生成；宽泛标准覆盖和完整语法 TODO 保持未完成。
+- [x] **五项流式及语义测试**：全部 **48 个合法 UTF-8 切点 / 45 个逐字符前缀**及 `Utf8Document` 的 **53 个字节切点 / 50 个逐字节前缀**，比较块身份/范围、显示映射/样式和 pending。字节前缀另核对未完成标量的缓冲区和已解码源码；EOF 同时对照官方期望、原始文本借用映射及无替代内容/隐藏/软硬换行标记。投影仅依赖公开段落/显示语义，保留空白与 Unicode 标量，不 trim、不重解析 Markdown、不按编号调整输出；敏感性验证组合字符、实体、连续空格、软硬换行及结构边界，范围外块/样式明确拒绝。
+
+复跑：`nix develop -c cargo nextest run --workspace --test commonmark_textual_content --no-fail-fast --success-output immediate`；夹具复核：`python3 scripts/generate_commonmark_textual_content.py /path/to/spec.json --check`。README/TODO 已记录交付与剩余范围，本单元不修改解析核心、运行时依赖、追加复杂度或预算契约。
+
+项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **956 项**、`cargo test --workspace --doc` **72 项（69 + 3）**、官方夹具 `--check` 及 `git diff --check`。专项日志 `/tmp/mdtui3-goal-run/textual-content-targeted.log`；来源核验 `/tmp/mdtui3-goal-run/textual-content-fixture-check.log`；完整验收 `/tmp/mdtui3-goal-run/textual-content-validation.log`；复跑脚本 `/tmp/mdtui3-goal-run/textual-content-validate.sh`。
+
+## 2026-11-03 CommonMark Blank lines 标准样例评分交付
+
+- [x] **完整章节与独立来源**：固定 CommonMark 0.31.2 Blank lines 全部 1 例（227）；`tests/fixtures/commonmark_blank_lines.rs` 逐字保存官方 Markdown/HTML、规范行号、John MacFarlane / CC BY-SA 4.0 归属及完整来源 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20`。`scripts/generate_commonmark_blank_lines.py` 校验本地来源摘要与章节成员后生成或 `--check`，不以解析器输出作为标准期望，构建和测试不联网。
+- [x] **真实评分及边界**：**1 支持、0 刻意差异、0 未支持**；只覆盖样例中的文首、段落与 ATX 标题之间、文末的空行及仅空格行。列表松紧、容器空行、代码内空行、tab/CRLF/Unicode 空白及长输入不计入本次标准评分，宽泛标准覆盖和完整语法待办不勾选。
+- [x] **四项测试**：独立评分、全部 **23 个切点 / 22 个逐字符前缀**、投影敏感性和范围外拒绝。流式快照复用既有测试辅助，比较源码、块/标题身份及范围、显示映射/样式和 pending；完成后另核对官方期望及逐 run 原始借用映射。投影仅使用公开块、标题索引与显示语义，跳过结构空白块和段落/标题末尾一个物理 LF，不 trim、不重解析 Markdown、不按编号改写输出。敏感性验证正文连续空格、内部 tab、实体空格、空标题、块顺序及软硬换行。
+
+复跑：`nix develop -c cargo nextest run --workspace --test commonmark_blank_lines --no-fail-fast --success-output immediate`；夹具复核：`python3 scripts/generate_commonmark_blank_lines.py /path/to/spec.json --check`。README/TODO 已记录实际交付与剩余范围；解析核心、运行时依赖、追加复杂度及共享预算契约未改。
+
+项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **960 项**、`cargo test --workspace --doc` **72 项（69 + 3）**、官方夹具 `--check` 和 `git diff --check`。重新下载来源逐字重建、篡改来源拒绝及生成器语法检查通过。专项日志 `/tmp/mdtui3-goal-run/blank-lines-targeted.log`；来源日志 `/tmp/mdtui3-goal-run/blank-lines-fixture-check.log`；完整验收 `/tmp/mdtui3-goal-run/blank-lines-validation.log`；复跑脚本 `/tmp/mdtui3-goal-run/blank-lines-validate.sh`。
+
+## 2026-11-03 CommonMark Thematic breaks 标准样例评分交付
+
+- [x] **完整章节与独立来源**：固定 CommonMark 0.31.2 Thematic breaks 43–61 全部 19 例；`tests/fixtures/commonmark_thematic_breaks.rs` 逐字保存官方 Markdown/HTML、规范行号、John MacFarlane / CC BY-SA 4.0 归属和来源 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20`。`scripts/generate_commonmark_thematic_breaks.py` 校验本地固定来源和章节成员，提供生成及 `--check`；重新下载来源逐字重建、篡改来源拒绝和脚本语法检查通过，构建/测试不联网。
+- [x] **初次评分与剩余范围**：**17 支持、1 刻意差异、1 未支持**（此处记录评分单元的历史结果；后续[容器内分隔线交付](#2026-11-03-容器内分隔线交付)修复 61，当前为 18/1/0）。覆盖分隔线字符、数量、间隔/尾空格、缩进、失败候选、Setext 与列表边界优先级。49 属既有缩进代码中断段落方言；61 的容器内分隔线未识别，重复 bullet 前缀形成嵌套列表。两例当前观察与官方期望分开保存，变化要求复核分类；完整容器/缩进、长候选与其它章节仍待办，不勾选宽泛标准覆盖总项。
+- [x] **四项流式及投影验收**：官方评分、全部 **290 个切点 / 271 个逐字符前缀**、投影敏感性和范围外拒绝。复用公开快照辅助，比较源码、块/标题/容器身份及范围、显示映射/样式和 pending，完成后另核对逐 run 原始借用映射。投影只依赖公开块、容器路径、标题索引及显示语义；保留代码空白/LF、正文空白、强调、软硬换行、嵌套与列表分界，不 trim、不重解析 Markdown、不按编号改写输出。仅接纳 tight bullet 列表及每项单个直接物理叶块，引用、有序/任务/loose 列表、多叶块项、容器标题和未评分行内样式明确拒绝。
+
+复跑：`nix develop -c cargo nextest run --workspace --test commonmark_thematic_breaks --no-fail-fast --success-output immediate`；夹具复核：`python3 scripts/generate_commonmark_thematic_breaks.py /path/to/spec.json --check`。README/TODO 已准确记录交付与剩余范围；本单元只新增评分测试、夹具和生成器，解析核心、零运行时依赖、禁止 unsafe、累计追加 O(n log n)、空间 O(n) 与共享预算契约不变。
+
+项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **964 项**、`cargo test --workspace --doc` **72 项（69 + 3）**、官方夹具 `--check` 和 `git diff --check`。专项日志 `/tmp/mdtui3-goal-run/thematic-breaks-targeted.log`；来源日志 `/tmp/mdtui3-goal-run/thematic-breaks-fixture-check.log`；完整验收 `/tmp/mdtui3-goal-run/thematic-breaks-validation.log`；复跑脚本 `/tmp/mdtui3-goal-run/thematic-breaks-validate.sh`。
+
+
+## 2026-11-03 容器内分隔线交付
+
+- [x] **可闭环方言**：既有显式 Quote/Item 的有界完整行内，正文前三个以内 ASCII 空格、至少三个同种 `*`/`-`/`_`、间隔及末尾 space/tab 识别为 `ThematicBreak`。在容器匹配时优先于同层兄弟和新嵌套列表，保留确切容器与整物理行源码；显示隐藏容器前缀，分隔线保持顶层原文约定。普通段落的 Setext、管道表格分隔行、围栏和四空格代码优先级保留；前一逻辑段落正常关闭并裁剪原始尾空白。
+- [x] **算法与边界**：完整行的同种标记后缀只反向扫描一次，保存首标记和倒数第三标记两个位置，各层复用位置判断，不反复探测增长中的剩余行。新增扫描计入 `container_bytes`，无持久状态、旧正文/叶块回访或逐祖先更新；零运行时依赖、禁止 unsafe、累计 O(n log n)/空间 O(n) 和共享预算契约保持。含前缀的 1024 字节分类窗口不放宽：短尾等 LF/CRLF/EOF，未完成长行按既有方言提交后不重试。完整 tab/混合缩进、容器匹配、超长分隔线和单次 append 硬时延仍未交付。
+- [x] **七项回归**：`tests/container_rules.rs` 覆盖 648 组标记/间隔/失败模型，列表/引用作用域与嵌套、Setext/表格/代码优先级、UTF-8 全切点/逐前缀、EOF 与分类窗口前后边界、旧对象及缓存失效、逐 run 原始借用映射、零预算暂停及 6 字节共享预算前进。400 层引用/列表及失败链、百万字候选后千次追加无分类/容器回扫、4096 条分隔线工作量验证通过。修复前已有 5 项失败，记录于 `/tmp/mdtui3-goal-run/container-rules-repro.log`。
+- [x] **标准评分**：CommonMark 0.31.2 Thematic breaks 61 的公开结构投影已匹配官方 HTML；章节当前 **18 支持、1 刻意差异、0 未支持**，49 仍是既有缩进代码中断段落方言。官方输入/期望及投影算法未改，删除失效的 61 差异观察并更新分类；全部 **290 个切点 / 271 个逐字符前缀**和源码映射通过。README/TODO 已同步支持与剩余范围，完整容器和宽泛标准覆盖保持未勾选。
+
+项目 devShell 验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **971 项**、`cargo test --workspace --doc` **72 项（69 + 3）**、固定官方来源的夹具 `--check`/逐字重建/篡改拒绝和 `git diff --check`。专项（11 项）日志 `/tmp/mdtui3-goal-run/container-rules-targeted.log`；完整验收 `/tmp/mdtui3-goal-run/container-rules-validation.log`；复跑脚本 `/tmp/mdtui3-goal-run/container-rules-validate.sh`。初次全量 debug 970 项通过后补充第七项窗口边界回归，最终 debug/release 均为 971 项。
+
+## 2026-11-03 CommonMark Indented code blocks 标准样例评分交付
+
+- [x] **完整章节与独立来源**：固定 CommonMark 0.31.2 Indented code blocks 107–118 全部 12 例；`tests/fixtures/commonmark_indented_code.rs` 逐字保存官方 Markdown/HTML、规范行号、John MacFarlane / CC BY-SA 4.0 归属和完整来源 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20`。`scripts/generate_commonmark_indented_code.py` 校验本地来源摘要与章节成员后生成或 `--check`，不使用解析器输出生成标准期望；重新下载官方来源逐字重建、篡改来源拒绝和脚本语法检查通过，构建/测试不联网。
+- [x] **真实评分与既有方言**：**8 支持、4 刻意差异、0 未支持**。107–109、114–118 匹配标准，涵盖额外缩进、代码字面内容、列表优先级及嵌套松紧、标题/分隔线边界和尾空格；110–112 因空行终止缩进代码而分块，113 因缩进代码可中断段落而分块。四例差异均对应 README 已有方言，当前观察与官方期望分开保存，改善或回退均要求复核分类。完整空行/缩进、tab/混合缩进和标准覆盖总项继续待办。
+- [x] **四项流式及投影验收**：独立评分、全部 **309 个切点 / 297 个逐字符前缀**、投影敏感性和范围外拒绝。公开快照比较源码、块/标题/容器身份和范围、显示映射/样式及 pending；完成后核对逐 run 原始借用映射。投影仅依赖公开块、容器路径及 tight/loose 元数据、标题索引和显示语义，不 trim、不重解析 Markdown、不按编号改写输出；保留代码字面标记、缩进余量、尾空格、tab/LF、列表嵌套、正文空白及软硬换行。仅接纳该章节所需列表（有序条目编号限 1），引用、任务、容器标题/代码/分隔线、带 info 的代码块及范围外行内样式明确拒绝。
+
+复跑：`nix develop -c cargo nextest run --workspace --test commonmark_indented_code --no-fail-fast --success-output immediate`；夹具核验：`python3 scripts/generate_commonmark_indented_code.py /path/to/spec.json --check`。README/TODO 已记录交付与剩余范围；本单元只新增评分测试、夹具、生成器和文档，解析核心、零运行时依赖、禁止 unsafe、累计追加 O(n log n)、空间 O(n) 和共享预算契约不变。短样例的流式验证不代替长输入或预算性能证明。
+
+项目 devShell 最终验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **975 项**、`cargo test --workspace --doc` **72 项（69 + 3）**、官方夹具 `--check` 及 `git diff --check`。专项日志 `/tmp/mdtui3-goal-run/indented-code-targeted.log`；来源核验 `/tmp/mdtui3-goal-run/indented-code-fixture-check.log`；完整验收 `/tmp/mdtui3-goal-run/indented-code-validation.log`；复跑脚本 `/tmp/mdtui3-goal-run/indented-code-validate.sh`。首次 Clippy 检查发现投影中的可合并嵌套 if，修正后全部复跑通过，初次日志保留于 `/tmp/mdtui3-goal-run/indented-code-clippy-initial.log`。
+
+## 2026-11-03 CommonMark Code spans 标准样例评分交付
+
+- [x] **完整章节与独立来源**：固定 CommonMark 0.31.2 Code spans 328–349 全部 22 例；`tests/fixtures/commonmark_code_spans.rs` 逐字保存官方 Markdown/HTML、规范行号、John MacFarlane / CC BY-SA 4.0 归属和完整来源 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20`。`scripts/generate_commonmark_code_spans.py` 校验本地来源摘要和章节成员，提供生成及 `--check`，不使用解析器输出生成标准期望，构建/测试不联网。
+- [x] **真实评分与剩余范围**：**20 支持、1 刻意差异、1 未支持**。349 的未闭合代码候选不重新解析内部反引号，符合 README 既有失败回退方言；344 为需求范围外的原始 HTML。官方期望与当前差异观察分开保存，改善或回退均要求显式复核分类。346 的 URI 反引号只在测试输出层编码为 `%60`，另验证核心原始目标和标签，不声明通用 URL 编码。完整代码回退、长定界符/长输入、容器边界与宽泛标准覆盖继续待办，HTML 需求范围不变。
+- [x] **四项流式及投影验收**：独立评分、全部 **299 个合法 UTF-8 切点 / 277 个逐字符前缀**、投影敏感性和范围外拒绝。公开快照比较源码、块/对象身份和范围、样式/显示映射及 pending；完成后核对逐 run 源码覆盖、UTF-8 边界、原始借用文本或代码空白替代映射。投影只读取公开段落、显示样式和 URI 自动链接，不 trim、不重解析 Markdown、不按编号改写输出；保留代码样式、连续空格、NBSP、tab、内部换行规范化、代码内字面语法和软硬换行。范围外块/样式、图片、引用、普通及 email 链接明确拒绝。
+
+复跑：`nix develop -c cargo nextest run --workspace --test commonmark_code_spans --no-fail-fast --success-output immediate`；夹具核验：`python3 scripts/generate_commonmark_code_spans.py /path/to/spec.json --check`。README/TODO 已记录实际交付与剩余范围；本单元只新增评分测试、夹具、生成器与文档，解析核心、零运行时依赖、禁止 unsafe、累计追加 O(n log n)、空间 O(n) 及共享预算契约不变。短样例的流式验证不代替长输入或预算性能证明。
+
+项目 devShell 最终验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **979 项**、`cargo test --workspace --doc` **72 项（69 + 3）**、官方夹具 `--check` 和 `git diff --check`。重新下载来源逐字重建、篡改来源拒绝及生成器语法检查通过；核对本单元开始时的文件摘要，前序解析核心与测试改动均保持。专项日志 `/tmp/mdtui3-goal-run/code-spans-targeted.log`；来源核验 `/tmp/mdtui3-goal-run/code-spans-fixture-check.log`；完整验收 `/tmp/mdtui3-goal-run/code-spans-validation.log`；复跑脚本 `/tmp/mdtui3-goal-run/code-spans-validate.sh`。
+
+
+## 2026-11-03 未闭合代码候选有界回退交付
+
+- [x] **最小方言与复杂度验证**：不尝试重放完整 Markdown。保留外层优先与开放时字面显示，扫描时最多保存 32 个异长反引号串及其后正文的全空白、语义尾空白和原始端点摘要；失败收尾按第一个后续同长度串配对，跳过已配对内容，找不到则继续下一个串。超过 32 串时整个失败候选保持原方言，成功外层不受上限影响；代码串长/正文长不受此上限限制。至多 496 次摘要比较、16 对提交，比较记入 `delimiter_steps`；新增候选空间 O(1)，无旧正文/物理叶块/祖先回扫，累计解析 O(n log n)、空间 O(n) 保持。
+- [x] **边界及显示语义**：EOF、段落/容器/标题/单元格关闭时才提交内部配对，沿用代码空白规范化、源码映射、区间更新及过期游标拒绝。早表头在旧段落关闭时提交；晚表头保存 O(1) 的旧行摘要边界，成功仅提交旧段落配对并独立解析表头，失败恢复原候选。跨表头配对与表头内溢出不能污染旧段落。部分 tab 的尾空白改由代码摘要直接记录，避免延迟提交受到后续 tab 映射干扰。其它语法、反斜线转义与代码外软硬换行不重放；完整回退和超过 32 串的情况继续待办。
+- [x] **八项新增回归**：7 项 `tests/code_fallback.rs` 加 1 项内部存储验收，覆盖 255 组独立配对模型、31/32/33/1000 串边界、外层成功及状态清理、Unicode/CRLF、全切点/逐前缀、容器/标题/表格、晚表头成功/失败/跨界/溢出、部分 tab 与空格模型、跨 tile 源码映射和 6 字节预算推进。千层容器百万字候选后千次追加只增加 1000 个行内字节访问，EOF 不重读正文；32 个互不匹配串精确计 496 次比较；4096 候选线性计数、2000 串仍只保留 32 份摘要且复用容量。修复前 4 项失败日志 `/tmp/mdtui3-goal-run/code-fallback-repro.log`；部分 tab 边界失败日志 `/tmp/mdtui3-goal-run/code-fallback-tabs-repro.log`。
+- [x] **评分与剩余范围**：CommonMark 0.31.2 Code spans 349 已符合官方期望；章节现为 **21 支持、0 刻意差异、1 未支持**，344 的原始 HTML 仍在需求范围外。官方 Markdown/HTML 夹具和评分投影算法未改，仅删除 349 的旧差异观察、更新分类及计数；299 切点/277 前缀和源码映射继续通过。README/TODO 同步实际方言，上方历史评分记录保留当时结果，完整代码回退与宽泛标准覆盖未勾选。
+
+项目 devShell 最终验收全部通过：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **987 项**、`cargo test --workspace --doc` **72 项（69 + 3）**、固定官方来源夹具 `--check`/逐字重建/篡改拒绝及 `git diff --check`。核心/部分 tab/标准评分专项 **22 项**通过，日志 `/tmp/mdtui3-goal-run/code-fallback-targeted.log`；最终完整验收 `/tmp/mdtui3-goal-run/code-fallback-validation.log`，脚本 `/tmp/mdtui3-goal-run/code-fallback-validate.sh`。前序工作区改动保留；本次仅新增有界代码回退及必要的尾空白摘要、计数说明、回归、评分和文档。
+
+
+## 2026-11-03 CommonMark Fenced code blocks 标准样例评分交付
+
+本单元推进 TODO「继续扩充标准语法样例覆盖」，固定 CommonMark 0.31.2 **Fenced code blocks 完整章节 119–147，共 29 例**，评分为 **26 支持、3 刻意差异、0 未支持**。131–133 是已记录的围栏正文不按 opener 缩进去缩进方言；保留官方期望和独立当前观察，不将方言输出改作标准期望。
+
+- 新增 `scripts/generate_commonmark_fenced_code.py` 和离线 `tests/fixtures/commonmark_fenced_code.rs`：校验完整 `spec.json` SHA-256 与连续章节成员，逐字复制官方 Markdown/HTML，保留规范行号、作者 John MacFarlane、来源与 CC BY-SA 4.0 归属。构建/测试无需联网；新下载来源重建逐字一致，篡改来源被拒绝。
+- 新增 `tests/commonmark_fenced_code.rs` 的 4 项测试：独立逐例评分、全部 **585 个合法 UTF-8 切点 / 556 个逐字符前缀**、投影敏感性、范围外结构/样式拒绝。快照与 pending 核验流式一致性；逐 run 核对连续源码覆盖、原始借用字节及行内代码空白替代映射。
+- 测试投影只消费公开块/引用路径/标题索引/info/显示语义，保留空代码、空行、缩进余量、尾空格、tab、LF、字面 Markdown、软硬换行、行内代码和块顺序；不 trim、不重解析 Markdown、不根据样例编号调整输出。代码 language class 仅在测试输出层取原始 info 首词并转义属性，另核对完整 info 原始区间。列表、容器正文/标题、表格、范围外行内样式和需实体/反斜线解码的 info 明确拒绝。
+
+本单元未修改任何已有核心/测试文件、运行时依赖、追加复杂度或预算实现。额外敏感性输入覆盖 Unicode、嵌套引用和无换行 EOF，但不计入标准章节评分；正文去缩进、完整 tab/容器规则、opener/分类长度上限、info 解码和其它标准章节仍待办，未勾选宽泛标准覆盖条目。README/TODO 已同步实际交付与剩余范围。
+
+验收通过：`nix develop -c bash /tmp/mdtui3-goal-run/fenced-code-validate.sh` 完成 workspace all-targets check、clippy `-D warnings`、fmt 检查、debug/release nextest 各 **991 项**、doc **72 项**、夹具复核及 `git diff --check`。完整日志 `/tmp/mdtui3-goal-run/fenced-code-validation.log`；4 项专项日志 `/tmp/mdtui3-goal-run/fenced-code-targeted.log`；官方来源重建/篡改拒绝日志 `/tmp/mdtui3-goal-run/fenced-code-fixture-check.log`。
+
+
+## 2026-11-03 围栏正文有界空格去缩进交付
+
+本单元选择前序 Fenced code blocks 评分暴露的正文去缩进子项，修复 CommonMark 0.31.2 **131–133**；该章节现为 **29 支持、0 刻意差异、0 未支持**。官方 Markdown/HTML 夹具与评分投影算法保持，只删除旧差异观察、更新报告及一处投影敏感性测试的期望。此前评分记录保留当时结果，宽泛标准覆盖仍未完成。
+
+- 活动反引号/波浪线围栏记录 0–3 列 opener 缩进，正文在既有容器匹配后先扣除前缀 tab 虚拟余量，再隐藏剩余额度内的 ASCII 空格。遇到原始正文 tab/非空格即停止，保留余下空白、字面语法和原始 info；空行/EOF/失败 closer 同样处理。closer 使用未去缩进的列数判定；独立数学块、四空格代码、容器退出及分类窗口方言保持。
+- 只增加两个固定大小的缩进字段。1015 层容器前缀可能使正文缩进跨过 1 KiB 分类窗口，最多三列余量随新增字节逐次消费；新增实际检查计入 `Work.classified_bytes`，不回读正文、不再匹配祖先、不枚举历史块。隐藏使用既有区间标记和失效通知，累计解析 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 及共享预算契约保持。
+- 新增 `tests/fence_indent.rs` **7 项回归**：840 组根/引用/列表/嵌套作用域独立空格模型，反引号/波浪线、空行、LF/CRLF/EOF、UTF-8 全切点/逐前缀及逐前缀 EOF、部分 tab、原始 tab 停止规则、分类边界、源码/tile/6 字节预算映射、旧缓存/游标/测量拒绝与折叠身份。千层百万字后追加 1000 字节不增加分类/行内/容器/树访问；4096 历史块后新块只做局部工作。修复前 6 项失败，证据 `/tmp/mdtui3-goal-run/fence-indent-repro.log`。
+- 两项既有部分 tab 测试更新：数学仍保留虚拟空格，代码按 opener 扣除；映射/搜索/摘要用一列 opener 验证剩余一列仍指向原 tab。README 的旧输出示例和 `examples/leaf_tabs.rs` 同步修正，release 示例通过（13 帧、199 计费字节）。正文原始 tab 去缩进、完整容器/叶块规则、opener/分类长度上限和 info 解码在 TODO 单独保留，未扩展 UI。
+
+验收通过：专项 **25 项**（7 新回归 + 4 评分 + 14 部分 tab）及官方 **585 切点/556 前缀**；workspace debug/release nextest 各 **998 项**；文档 **72 项（69 + 3）**；all-targets check、clippy `-D warnings`、fmt、官方夹具校验/逐字重建/篡改拒绝和 `git diff --check`。完整运行日志 `/tmp/mdtui3-goal-run/fence-indent-validation.log`；首次文档测试揭示旧示例输出，修正后文档/夹具/fmt/diff 验收见 `/tmp/mdtui3-goal-run/fence-indent-doc-final.log`，all-targets check/clippy/fmt 和示例实跑见 `/tmp/mdtui3-goal-run/fence-indent-example-final.log`。专项 `/tmp/mdtui3-goal-run/fence-indent-targeted.log`；来源 `/tmp/mdtui3-goal-run/fence-indent-fixture-check.log`；可复跑完整脚本 `/tmp/mdtui3-goal-run/fence-indent-validate.sh`。前序工作区成果保留。
+
+## 2026-11-03 CommonMark Backslash escapes 标准样例评分交付
+
+本单元推进 TODO「继续扩充标准语法样例覆盖」，固定 CommonMark 0.31.2 **Backslash escapes 完整章节 12–24，共 13 例**，评分为 **8 支持、4 刻意差异、1 未支持**。14 对应既有未闭合代码候选不重放其它行内语法，22–23 对应链接目标/title 保留原始转义，24 对应围栏 info 保留原始转义；21 为需求范围外原始 HTML。官方期望与独立当前观察分开保存，行为改善或回退均要求复核分类。
+
+- 新增 `scripts/generate_commonmark_backslash_escapes.py` 及离线 `tests/fixtures/commonmark_backslash_escapes.rs`：校验完整来源 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20` 与章节成员，逐字复制官方 Markdown/HTML，保留规范行号、作者 John MacFarlane、来源和 CC BY-SA 4.0 归属。新下载官方来源重建逐字一致，篡改来源拒绝，生成器语法检查通过；构建及测试不联网。
+- 新增 `tests/commonmark_backslash_escapes.rs` **4 项测试**：独立逐例评分、全部 **448 个合法 UTF-8 切点 / 435 个逐字符前缀**、投影敏感性与范围外拒绝。公开快照与 pending 验证源码、块/对象身份和范围、样式/显示映射的流式一致性；完成后逐 run 核对连续源码覆盖、原始借用文本和代码空白替代映射。
+- 投影只消费公开块/显示片段/链接目标/title/info，保留空白、字面代码、强调、软硬换行、块顺序和原始转义，不 trim、不重解析 Markdown、不按编号改写输出。URL 中的反斜线仅在输出层编码 `%5C`，另核验核心原始地址和标签；直接/引用目标与 title、完整 info 亦独立核对，不在适配器中补做语法解码。未评分容器/标题/表格、嵌套样式、图片/email、未解析引用及额外 URL 编码明确拒绝。
+
+README/TODO 已同步评分与剩余范围；完整代码回退、目标/title/info 解码及宽泛标准覆盖保持待办。未修改已有解析核心、测试、夹具、脚本或运行时依赖；基线 SHA-256 复核保留前序改动。累计追加 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 与共享预算契约不变，短样例不代替长输入或预算性能证明。
+
+复跑：`nix develop -c cargo nextest run --workspace --test commonmark_backslash_escapes --no-fail-fast --success-output immediate`；夹具核验：`python3 scripts/generate_commonmark_backslash_escapes.py /path/to/spec.json --check`。专项日志 `/tmp/mdtui3-goal-run/backslash-targeted.log`；来源重建/篡改拒绝 `/tmp/mdtui3-goal-run/backslash-fixture-check.log`；初始评分发现 14 的差异与独立观察见 `/tmp/mdtui3-goal-run/backslash-initial.log`、`/tmp/mdtui3-goal-run/backslash-observations.log`。
+
+完整验收通过：`nix develop -c bash /tmp/mdtui3-goal-run/backslash-validate.sh` 执行 workspace all-targets check、clippy `-D warnings`、fmt 检查、debug/release nextest 各 **1002 项**、doc **72 项（69 + 3）**、官方夹具复核及 `git diff --check`。完整日志 `/tmp/mdtui3-goal-run/backslash-validation.log`；既有文件摘要和新增文件范围核对通过，本单元仅新增三个文件并更新 README/TODO/DONE。
+
+## 2026-11-03 CommonMark Entity and numeric character references 标准样例评分交付
+
+本单元推进 TODO「继续扩充标准语法样例覆盖」，固定 CommonMark 0.31.2 **Entity and numeric character references 完整章节 25–41，共 17 例**：**12 支持、4 刻意差异、1 未支持**。32–33 的链接目标/title 与 34 的围栏 info 保留原始实体拼写；41 的失败后缀保留既有 shortcut 引用，隐藏方括号且没有目标；31 为需求范围外原始 HTML。官方期望与独立当前观察分开保存，改善或回退均要求复核分类。
+
+- 新增 `scripts/generate_commonmark_entities.py` 与离线 `tests/fixtures/commonmark_entities.rs`，校验完整来源 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20` 及章节成员，逐字复制官方 Markdown/HTML，保留规范行号、作者 John MacFarlane、来源及 CC BY-SA 4.0 归属。构建与测试不联网。
+- 新增 `tests/commonmark_entities.rs` **5 项测试**：评分、全部 **524 个合法 UTF-8 切点 / 507 个逐字符前缀**、投影敏感性、范围外拒绝、逐字符切片及 6 字节共享预算恢复。快照核对源码、块/容器/对象身份与范围、显示映射/样式和 pending；实体的原始区间与解码值另用固定独立映射核验，包含双标量实体、替代字符及 tab/LF，切片不得重复输出替换文本。
+- 投影只消费公开块、顶层 tight bullet 列表、显示片段及原始链接/info 元数据，不 trim、不重解析、不按编号改写输出。只删除来自原文的物理段末 LF，实体产生的 LF（包括段末）保留；空白、字面代码、强调、软硬换行、块顺序和真实/实体生成的结构标记可区分。未解析引用按核心公开显示结果保留，不补回方括号；目标/title/info 不解码，完整元数据与失败链接对象独立核验。未覆盖容器/嵌套或 loose 列表、多叶块条目、标题/表格/数学、嵌套行内样式、图片/email 与额外 URL 编码明确拒绝。
+
+README/TODO 已记录实际评分与剩余范围；目标/title/info 实体解码、完整失败链接回退和宽泛标准覆盖保持待办。未改变既有解析核心、测试、脚本或运行时依赖；累计追加 O(n log n)、空间 O(n)、禁止 unsafe 和共享预算契约保持，短样例不代替长输入性能证明。
+
+复跑：`nix develop -c cargo nextest run --workspace --test commonmark_entities --no-fail-fast --success-output immediate`；夹具核验：`python3 scripts/generate_commonmark_entities.py /path/to/spec.json --check`。专项日志 `/tmp/mdtui3-goal-run/entities-targeted.log`；初始观察与方括号差异见 `/tmp/mdtui3-goal-run/entities-observations.log`、`/tmp/mdtui3-goal-run/entities-initial.log`。
+
+完整验收通过：`nix develop -c bash /tmp/mdtui3-goal-run/entities-validate.sh` 执行 workspace all-targets check、clippy `-D warnings`、fmt 检查、debug/release nextest 各 **1007 项**、doc **72 项（69 + 3）**、官方夹具复核及 `git diff --check`。新下载官方来源逐字重建、篡改来源拒绝与生成器语法检查通过，日志 `/tmp/mdtui3-goal-run/entities-fixture-check.log`；全量日志 `/tmp/mdtui3-goal-run/entities-validation.log`。基线 SHA-256 与新增文件集合核对通过：仅新增三个评分文件并更新 README/TODO/DONE，前序工作区成果保持。
+
+
+## 2026-11-03 CommonMark Tabs 标准样例评分交付
+
+本单元推进 TODO「继续扩充标准语法样例覆盖」，固定 CommonMark 0.31.2 **Tabs 完整章节 1–11，共 11 例**，初次评分为 **4 支持、7 刻意差异、0 未支持**。3、4、10、11 匹配官方输出；1、2、8 是叶块 tab/混合缩进代码差异，5 是空行后部分 tab 加叶块 tab，6 是新引用首行部分 tab，7 是新列表标记消费全部水平空白，9 是部分 tab 路径的新嵌套列表保持 lazy 正文。差异依据 README 既有容器/叶块方言单独分类，没有把当前输出写成标准期望。
+
+- 新增 `scripts/generate_commonmark_tabs.py` 及离线 `tests/fixtures/commonmark_tabs.rs`：校验完整来源 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20` 与完整章节成员，逐字复制官方 Markdown/HTML，保留规范行号、John MacFarlane、来源及 CC BY-SA 4.0 归属。构建和测试不联网。
+- 新增 `tests/commonmark_tabs.rs` **5 项测试**：独立逐例评分，全部 **148 个合法 UTF-8 切点 / 137 个逐字符前缀**，投影敏感性，范围外拒绝，逐字符切片与 6 字节共享预算读取。快照及 pending 核对流式源码、块/容器/对象身份与范围、样式和显示映射；逐 run 独立验证连续源码覆盖、UTF-8 边界及借用原文，包括内部 tab、希腊文字和隐藏前缀。零预算停步、耗尽与恢复也通过同一读取测试验收。
+- 投影只读取公开块/容器/标题和显示片段，保留嵌套列表、tight/loose、引用、字面代码、tab/连续空格和软硬换行；不展开 tab、不 trim、不重解析、不按编号改写输出。范围外的行内样式/对象、表格、容器代码/标题/分隔线和带 info 的代码块明确拒绝，后续支持这些结构时须复核投影和分类。当前观察改变会失败，不自动把改善或回退分类为通过。
+
+README/TODO 已记录实际评分和具体剩余范围，宽泛标准覆盖与完整容器/叶块 tab 规则保持待办。仅新增评分/夹具/生成器和更新三份文档，既有核心、测试与脚本保持；累计追加 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 与共享预算契约不变。短样例评分不替代长输入复杂度证明。
+
+复跑：`nix develop -c cargo nextest run --workspace --test commonmark_tabs --no-fail-fast --success-output immediate`；夹具核验：`python3 scripts/generate_commonmark_tabs.py /path/to/spec.json --check`。初始观察 `/tmp/mdtui3-goal-run/tabs-observe.log`；专项 `/tmp/mdtui3-goal-run/tabs-targeted.log`；新下载官方来源逐字重建与篡改拒绝 `/tmp/mdtui3-goal-run/tabs-fixture-check.log`。
+
+完整验收通过：`nix develop -c bash /tmp/mdtui3-goal-run/tabs-validate.sh` 执行 workspace all-targets check、clippy `-D warnings`、fmt 检查、debug/release nextest 各 **1012 项**、doc **72 项（69 + 3）**、官方夹具复核、生成器语法检查及 `git diff --check`。全量日志 `/tmp/mdtui3-goal-run/tabs-validation.log`；新下载官方来源逐字重建及篡改拒绝见上述来源日志。基线 SHA-256 与新增文件集合核对通过：既有 crates/scripts 内容保持，仅新增三个评分文件；README/TODO/DONE 为追加记录，前序工作区成果保留。
+
+
+## 2026-11-03 顶层 tab 缩进代码交付
+
+本单元从 TODO 的 tab 缩进余项选择顶层一般叶块分类：行首 0–3 个 ASCII 空格加 tab 按四列缩进打开或续接代码块，隐藏原始前缀，余下 tab/空格、标记、实体保持字面。CommonMark 0.31.2 Tabs 的 **1、2、8 已修复，当前 7 支持、4 刻意差异、0 未支持**。5 的空行后路径仍关闭条目，根段落改为根代码，第二个 tab 仍是字面，因此仍与官方条目内代码不同；6、7、9 的容器差异保持。官方 Markdown/HTML、夹具及评分投影算法未改，只调整分类、差异观察和汇总。
+
+- 方言与边界：同作用域相邻代码合并；LF/EOF/分类窗口前的短输入暂定原文，确认后失效旧缓存/显示游标。空行立即终止代码、代码可中断段落的方言保持；完整纯空白短行是 Blank，超过分类窗口仍未完成的长空白行沿用既有一次分类规则。已匹配容器/lazy、围栏/数学、脚注续行和表头分隔行优先级保持，失败容器路径回到根时采用新分类。Setext 下划线不再提升前一 tab 缩进代码。
+- 核心只修改 `block::classify`：原分类为 Text 后额外检查最多四个前缀字节，容器叶块仍用原 `classify_indented`；lazy 探测原来就接受 Text/Indented 两者，资格不变。复用字面代码/隐藏区间，没有新增持久状态、替换文本、运行时依赖或 unsafe。分类输入计入既有 Work；无旧正文/历史块/祖先回扫，累计追加 O(n log n)、空间 O(n)、共享查询预算契约保持。
+- 新增 `tests/root_tab_code.rs` **5 项回归**：360 组独立四空格模型（缩进余量、内部 tab、UTF-8、代码字面标记、LF/CRLF/EOF），代码合并/空行/容器/表格/围栏边界，合法 UTF-8 全切点与逐前缀快照及 pending、分类窗口与缓存失效，逐 run 原始借用/连续映射、逐字符切片/tile 与 6 字节预算停步恢复，百万字后千次逐字追加及 4096 代码行计数。后续逐字追加不增加分类、行内、容器或树访问，代码保持同一块。
+- 既有 paragraph_indent、math_tabs、partial_tabs 与 setext_whitespace 的受影响观察按新规则更新；容器退出和 Setext 用例同时检查块类型及字面结果。其余前序工作区成果保留，宽泛标准覆盖、完整容器叶块/tab 和空行规则继续待办。
+
+验收证据：修复前新增 5 项均失败，日志 `/tmp/mdtui3-goal-run/root-tabs-repro.log`；修复后专项日志 `/tmp/mdtui3-goal-run/root-tabs-targeted.log`，官方 **148 切点 / 137 前缀**、源码映射与小预算检查通过。固定来源逐字重建 Tabs 夹具、篡改来源拒绝及 Indented/Fenced code 两章夹具核对通过，日志 `/tmp/mdtui3-goal-run/root-tabs-fixture-check.log`。首轮全套识别三处旧方言断言，记录于 `/tmp/mdtui3-goal-run/root-tabs-first-full.log`。
+
+复跑：`nix develop -c cargo nextest run --workspace --test root_tab_code --test commonmark_tabs --no-fail-fast --success-output immediate`。
+
+完整验收通过：workspace all-targets check、clippy `-D warnings`、fmt 检查、debug/release nextest 各 **1017 项**、doc **72 项（69 + 3）**，日志 `/tmp/mdtui3-goal-run/root-tabs-validation.log`；`git diff --check` 通过。对照执行前 SHA-256，只有 `block.rs`、五个受影响旧测试、README/TODO/DONE 发生修改，新增 `root_tab_code.rs`；官方夹具/生成器和其余前序工作区成果保持。
+
+
+## 2026-11-03 引用内 tab 缩进代码交付
+
+本单元从 TODO 的 tab 缩进余项选择显式引用内代码：新 Quote 或已匹配路径最后一个 Quote 后的可选一列空白及四列代码缩进按四列 tab stop 消费，允许部分 tab；未消费的完整 tab 保留字面，最后被部分消费的 tab 复用显示映射输出剩余 1–3 格。CommonMark 0.31.2 Tabs **6 修复，当前 8 支持、3 刻意差异、0 未支持**；5、7、9 的差异观察保持，官方输入/期望、夹具和生成器未修改。
+
+- 方言先限定为显式引用代码，不足缩进、短完整空白、新引用非代码叶块、列表叶块 tab 及缺前缀/lazy 路径沿用既有规则。外层匹配不放宽；已有围栏/数学保持优先，代码中断同作用域段落/表格，连续代码合并。LF/EOF/1024 字节分类窗口前原文暂定，窗口之后不重试分类；完整空行终止代码、缩进代码中断段落仍是既有方言。
+- `Prefix::quote_code` 用固定大小游标原子探测，只读当前有界引用/空白前缀，失败不改位置及虚拟列，实际字节检查计入 Work。`ContainerLine` 仅传递本行代码分类标记；不新增持久解析状态，不复制祖先或读取旧正文，显示映射按已有记录存储。累计 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 和共享预算契约保持。
+- 新增 `tests/quote_tab_code.rs` 5 项回归：504 组独立列宽模型及其中 336 组显式续接，UTF-8/CRLF/EOF、嵌套引用与列表外层、字面 Markdown/实体、合并及失败/lazy/围栏/数学/表格边界；全合法切点与逐前缀、分类窗口和缓存失效；原始单字节替换、tile 边界、逐字符切片、零预算停步与六字节恢复；千层引用百万字后千次追加、4096 行线性计数。
+- Tabs 投影放行 Quote 内无 info 代码，仅读取公开块/容器与显示输出，不自行展开 tab；增加字面空白敏感性检查，条目代码和其它范围外结构仍拒绝。映射检查允许核心发布的 tab 替换，其余内容仍核验借用原文。原有根 tab 测试中 `>\t\tfoo` 的旧非代码断言由本项精确代码及映射回归接替，其余旧测试保持。
+
+验收：官方 148 个合法 UTF-8 切点 / 137 个逐字符前缀、映射/切片/六字节预算继续通过。专项日志 `/tmp/mdtui3-goal-run/quote-tabs-targeted.log`；修复前新增测试失败记录 `/tmp/mdtui3-goal-run/quote-tabs-repro.log`。README/TODO 已同步实际范围，宽泛标准覆盖及完整容器 tab 规则仍未勾选。
+
+完整验收通过：workspace all-targets check、clippy `-D warnings`、fmt、release nextest **1022 项**、doc **72 项（69 + 3）**，日志 `/tmp/mdtui3-goal-run/quote-tabs-validation.log`；debug 全套 **1022 项**见 `/tmp/mdtui3-goal-run/quote-tabs-first-full.log`，加强续接模型后的 debug 专项 **15 项**见上述专项日志。Tabs 夹具逐字重建与篡改来源拒绝见 `/tmp/mdtui3-goal-run/quote-tabs-fixture-check.log`；Indented/Fenced code 两章夹具核验及 `git diff --check` 通过。对照执行前 SHA-256，只改两个核心文件、两项既有测试和 README/TODO/DONE，新增 `quote_tab_code.rs`，其余前序成果保持。
+
+
+## 2026-11-03 列表续行部分 tab 缩进代码交付
+
+本单元从 TODO 的 tab 缩进余项选择已有列表的部分 tab 代码续行：完整已有路径以 Item 结束、路径消费部分 tab、普通段落续行未启用时，原子扣除四列代码缩进，最后 tab 的余量映射到原单字节，后续完整 tab 保留字面。CommonMark 0.31.2 Tabs **5 修复，当前 9 支持、2 刻意差异、0 未支持**；7、9 差异保持，官方输入/期望、夹具和生成器未改。
+
+- 方言限定为现有路径的代码叶块；空行后内容、相邻代码续行和阻止普通续行的表头候选适用。普通段落/lazy、失败路径、围栏/数学保持原规则；新列表首行、非部分 tab 路径、新嵌套列表、完整容器及空行规则仍待办。代码同作用域合并，空行终止代码；短未完成行暂定原文，1024 字节窗口后不重试分类。
+- `Containers::partial_prefix` 复用固定大小游标和缓存空白末端，在成功后传递已有 `ContainerLine.indented`；失败不改变位置或余量，检查计入 Work。`Document` 沿用已有代码分支的 tab 替换映射，只将局部变量更名以覆盖 Quote/Item。没有新增持久状态、旧正文/历史块/无输入支撑的祖先回扫、运行时依赖或 unsafe；累计追加 O(n log n)、空间 O(n) 与共享预算契约保持。
+- 新增 `tests/item_tab_code.rs` **6 项回归**：396 组独立列宽模型，其中 264 组另验续接；有序/嵌套列表、UTF-8/CRLF/EOF、字面语法、松紧和身份、空行/兄弟/失败/lazy/围栏/数学/表格边界；全切点与逐前缀、分类窗口及缓存失效；tile 边界单字节替换、连续源码覆盖、逐字符切片及零预算/六字节恢复。998 层容器百万字后千次追加不增加分类/行内/容器/树访问，4096 行保留同一代码块。
+- Tabs 评分投影接纳 Item 内无 info 代码，直接消费公开结构和核心显示映射；加入 ASCII 与 tab 代码的结构/空白敏感性检查，不展开 tab、不 trim、不重解析。官方 **148 切点 / 137 前缀**、映射/切片/六字节预算继续通过。根代码回退测试改用确实缺少引用前缀的输入，原样例 5 的旧断言由新测试替代；其余前序成果保持。README/TODO 同步实际交付和剩余范围，宽泛标准覆盖保持未勾选。
+
+复现日志 `/tmp/mdtui3-goal-run/item-tabs-repro.log` 证明修复前样例 5 退出条目；专项 `/tmp/mdtui3-goal-run/item-tabs-targeted.log`；首轮 debug 全套 `/tmp/mdtui3-goal-run/item-tabs-first-full.log` 定位上述旧回退断言。复跑：`nix develop -c cargo nextest run --workspace --test item_tab_code --test commonmark_tabs --no-fail-fast --success-output immediate`。
+
+完整验收通过：workspace all-targets check、clippy `-D warnings`、fmt、debug/release nextest 各 **1028 项**、doc **72 项（69 + 3）**，以及 Tabs/Indented/Fenced code 夹具核验和 `git diff --check`；日志 `/tmp/mdtui3-goal-run/item-tabs-validation.log`。Tabs 夹具逐字重建与篡改来源拒绝见 `/tmp/mdtui3-goal-run/item-tabs-fixture-check.log`。对照执行前 SHA-256，仅修改两个核心文件、两个既有测试、README/TODO/DONE，新增 `item_tab_code.rs`；其它前序工作区成果保持。
+
+
+## 2026-11-03 列表首行 tab 缩进代码交付
+
+本单元从 TODO 的 tab 缩进余项选择新列表及兄弟条目的代码首行：标记后的空白含 tab 且至少五列时，消费一列分隔加四列代码缩进，条目续行宽度按标记加一列保存；最后 tab 的余量映射原单字节，未消费的 tab/空格保留字面。CommonMark 0.31.2 Tabs **7 修复，当前 10 支持、1 刻意差异、0 未支持**；9 的部分 tab 新嵌套列表仍待办，官方输入/期望、夹具与生成器保持。
+
+- 方言限定为当前分类窗口可识别的含 tab 首行；新列表、兄弟条目及显式嵌套适用。纯空格、少于五列、完整空白行、失败/lazy 路径、已打开围栏/数学正文保持原规则；代码里的任务标记、标题、实体和围栏均保留字面。短输入等 LF/CRLF/EOF，1024 字节窗口后不重试分类；完整空行仍终止代码，完整容器和纯空格首行规则继续待办。
+- `Prefix::marker` 复用扫描过的空白末端，仅额外推进最多五字节；临时 Marker 携带可选余量，既有代码分支消费原始映射。兄弟代码先关闭旧条目及子层，停止继续匹配旧子层；代码不再走任务标记解析。没有新增持久状态、旧正文/历史块/无输入支撑祖先回扫、运行时依赖或 unsafe；累计追加 O(n log n)、空间 O(n) 与共享预算契约保持。
+- 新增 `tests/list_start_tab_code.rs` **6 项回归**，包含 **2268 组独立列宽模型（1512 组另验续接）**；有序/嵌套/兄弟/任务字面、列表身份及松紧、UTF-8/CRLF/EOF、全切点与逐字符前缀、分类窗口和缓存失效；tile 边界单字节替换、连续源码覆盖、逐字符切片、零预算停步及六字节恢复。1000 层容器百万字后千次追加不增加分类/行内/容器/树访问，4096 兄弟代码条目的容器工作保持线性。
+- Tabs 投影仅补充紧凑条目以代码块开头时的 HTML 换行，并新增格式/余量敏感性检查；直接消费公开结构和核心映射，不展开 tab、不 trim、不重解析。官方 **148 切点 / 137 前缀**、映射/切片与六字节预算通过。既有列表续行测试的一处旧首行观察同步；旧围栏列宽模型的 13 种首行现在为字面代码，单独断言代码，剩余 2240 组围栏续行模型继续验证，首行代码由新增模型覆盖。
+
+修复前 6 项新增测试中 4 项失败，日志 `/tmp/mdtui3-goal-run/list-start-tabs-repro.log`；专项 23 项通过见 `/tmp/mdtui3-goal-run/list-start-tabs-targeted.log`。首轮全套定位旧围栏假设见 `/tmp/mdtui3-goal-run/list-start-tabs-first-full.log`。Tabs 夹具逐字重建及篡改来源拒绝通过，日志 `/tmp/mdtui3-goal-run/list-start-tabs-fixture-check.log`。复跑：`nix develop -c bash /tmp/mdtui3-goal-run/list-start-tabs-validate.sh`。
+
+完整验收通过：workspace all-targets check、clippy `-D warnings`、fmt、debug/release nextest 各 **1034 项**、doc **72 项（69 + 3）**，以及 Tabs/Indented/Fenced code 夹具核验和 `git diff --check`；日志 `/tmp/mdtui3-goal-run/list-start-tabs-validation.log`。对照执行前 SHA-256，仅修改一个核心文件、三项既有测试与 README/TODO/DONE，新增 `list_start_tab_code.rs`；其它前序工作区成果保持，范围核对见 `/tmp/mdtui3-goal-run/list-start-tabs-scope-check.log`。
+
+## 2026-11-03 部分 tab 路径新嵌套列表交付
+
+- 方言：已有路径完整匹配且确实部分消费 tab 后，剩余 0–3 列缩进可建立新 List/Item。按整条物理行四列 tab stop 计算，多层条目共享 tab；余量作为标记缩进消费，原始前缀隐藏且字节映射保留。祖先 ID 不变，任务、有序、连续嵌套、首行代码和正常容器通知/松紧复用既有流程。官方 Tabs 9 修复，当前完整章节 11 支持、0 刻意差异、0 未支持；官方 Markdown/HTML、来源生成器和评分投影算法保持。
+- 边界：失败路径、lazy、分隔线、Setext、表头分隔行、围栏/数学及分类窗口规则保持；短尾在 LF/CRLF/EOF 前暂定。部分 tab 才能匹配的兄弟条目、新引用、不完整路径、纯空格首行及完整容器/空行规则仍待办。README/TODO 已同步当前评分及剩余范围，未勾选宽泛标准覆盖。
+- 复杂度：复用既有部分 tab 探测筛出新列表候选，仅对候选额外检查当前有界前缀与结构优先级；固定大小游标共享空白末端，每层消耗正列数，不走未匹配祖先后缀。无新增持久状态、旧正文或历史块回扫；累计 O(n log n)、空间 O(n)、零运行时依赖和共享预算保持。初版对普通行增加额外检查的做法已移除，既有工作量上界断言保持。
+- 验证：新增 `tests/nested_tabs.rs` 6 项测试，1695 组独立列宽展开模型；嵌套/有序/任务/引用外层、UTF-8/CRLF/EOF、祖先身份与通知、列表松紧和续接、失败/优先级、全切点与逐字符前缀、分类窗口与读取游标失效。源码连续覆盖/借用、tile 边界、逐字符切片、零预算停步和六字节恢复通过。1000 层容器百万字后千次追加不增加分类/容器工作，4096 组根兄弟与部分 tab 新子列表保持线性前缀工作。
+- 验收命令：`nix develop -c bash /tmp/mdtui3-goal-run/nested-tabs-validate.sh`，包含 workspace check、clippy `-D warnings`、fmt、debug/release nextest、doc tests、Tabs/Indented code/Fenced code 官方夹具核验及 `git diff --check`。结果：debug/release 各 1040 项通过，doc 共 72 项通过，check/clippy/fmt/三组夹具核验和 diff 检查通过。日志 `/tmp/mdtui3-goal-run/nested-tabs-validation.log`；专项 `/tmp/mdtui3-goal-run/nested-tabs-targeted-final.log`，修复前失败 `/tmp/mdtui3-goal-run/nested-tabs-repro.log`。
+
+## 2026-11-03 部分 tab 路径兄弟条目交付
+
+- 方言：祖先前缀完整匹配并部分消费 tab 后，允许在已有列表原缩进位置识别同类标记兄弟；bullet 字符或有序分隔符须相同，数字可变。保留祖先与 List ID，仅关闭旧 Item 及后代并新增 Item；复用任务、标题、嵌套标记、首行代码、松紧与通知。标记前虚拟列隐藏，首行代码余量另按原规则映射到原 tab 字节。
+- 边界：分隔线优先；兄弟改变作用域，不受旧 Item 的 Setext/表头分隔行优先级约束。失败、异类标记、错位缩进、缺失引用、已开启围栏/数学及分类窗口方言保持。部分 tab 表格续行、新引用、一般不完整路径、纯空格首行、完整容器/空行和宽泛标准覆盖继续待办，README/TODO 准确记录范围。
+- 复杂度：只读探测在兄弟层停止，不匹配旧 Item 正文缩进及后代；结构分类确认后提交祖先游标，复用正常兄弟变更流程。固定大小游标缓存空白末端，每个成功祖先消费正列数，一个 tab 至多四列；候选增加固定次数有界前缀扫描，关闭后代各弹出一次。无新增持久状态、旧正文/历史块回扫、运行时依赖或 unsafe；累计追加 O(n log n)、空间 O(n) 和共享预算保持。
+- 验证：新增 `tests/sibling_tabs.rs` 六项回归，15,660 组独立列宽展开模型；祖先/List 身份、后代关闭、松紧/通知、失败与结构优先级、UTF-8/CRLF/EOF、全切点和逐字符前缀、分类窗口与读取游标失效；tile 边界、源码连续覆盖/借用、逐字符切片、零预算停步与六字节恢复。千层容器百万字后千次追加不增加分类/容器访问，4096 个部分 tab 兄弟条目保持有界前缀工作。官方 Tabs 保持 11 支持、0 刻意差异、0 未支持，官方夹具和评分投影未改。
+
+修复前最小复现失败见 `/tmp/mdtui3-goal-run/sibling-tabs-repro.log`；专项六项通过见 `/tmp/mdtui3-goal-run/sibling-tabs-targeted-final.log`。debug 全套 1046 项通过见 `/tmp/mdtui3-goal-run/sibling-tabs-first-full.log`；其后仅补充两条专项断言并通过 debug 专项复验，核心只调整说明注释。其余验收命令：`nix develop -c bash /tmp/mdtui3-goal-run/sibling-tabs-validate.sh`。
+
+最终验收通过：workspace all-targets check、clippy `-D warnings`、fmt、release nextest 1046 项、doc 72 项（69 + 3）、Tabs/Indented code/Fenced code 三组官方夹具核验和 `git diff --check`；日志 `/tmp/mdtui3-goal-run/sibling-tabs-validation.log`。结合上述 debug 全套与最终专项，所有验收完成。执行前 SHA-256 范围核对确认仅修改一个核心文件及 README/TODO/DONE，新增 `sibling_tabs.rs`；其它前序成果逐字保持，见 `/tmp/mdtui3-goal-run/sibling-tabs-scope-check.log`。
+
+
+## 2026-11-03 列表首行纯空格缩进代码交付
+
+- 方言：已识别新列表及兄弟条目标记后至少五个 ASCII 空格，消费一格分隔加四格代码缩进，剩余空格及正文保持字面；条目续行宽度仅含前置缩进、标记及一格分隔。复用有序/嵌套/部分 tab 祖先路径，保留 List ID、松紧、关闭及新增通知，代码中的任务标记、强调、实体、围栏和容器标记不激活语法。
+- 边界：1–4 格、完整空白行、失败/lazy、围栏/数学正文和空行终止方言保持。短尾等到 LF/CRLF/EOF；只在当前分类窗口识别，超长行按既有窗口规则提交，不回扫重分类。完整容器/空行、异类或错位兄弟、新引用、不完整路径及宽泛标准覆盖继续待办，README/TODO 同步实际范围。
+- 复杂度：移除既有首行代码探测的“必须含 tab”限制，复用扫描后的空白末端和固定大小 Prefix，额外消费至多五字节（纯空格命中常量时间快路径）。没有新增持久状态、旧正文/历史块或无输入支撑的祖先回扫；累计追加 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 与共享预算契约保持。
+- 验证：新增 `tests/list_start_space_code.rs` 六项回归，2268 组独立空格模型（1512 组另验续接）；列表身份/子层关闭、部分 tab 祖先、松紧/通知、字面代码、空白/不足边界、UTF-8/CRLF/EOF、全切点与逐字符前缀、分类窗口、源码连续覆盖/借用、逐字符切片/tile、零预算停步及六字节恢复、缓存失效。1000 层容器百万字后千次逐字追加不增加分类/行内/容器/树访问，4096 个兄弟代码条目符合前缀工作上界。
+
+修复前六项中四项失败，见 `/tmp/mdtui3-goal-run/space-start-repro.log`；修复后六项专项通过，见 `/tmp/mdtui3-goal-run/space-start-targeted-final.log`。全套中一条旧 `container_code` 断言按新方言更新：`-     text` 从首行开启代码，十空格续行保留四格正文；没有修改官方夹具或评分投影。
+
+最终验收：`nix develop -c bash /tmp/mdtui3-goal-run/space-start-validate.sh` 通过；workspace all-targets check、clippy `-D warnings`、fmt、debug/release nextest 各 **1052 项**、doc **72 项（69 + 3）**、Tabs/Indented code/Fenced code 三组官方夹具核验及 `git diff --check` 均通过。完整日志 `/tmp/mdtui3-goal-run/space-start-validation.log`。SHA-256 范围核对仅修改 `containers.rs`、一条既有 `container_code` 测试及 README/TODO/DONE，新增 `list_start_space_code.rs`；其它前序成果逐字保持，核对记录 `/tmp/mdtui3-goal-run/space-start-scope-check.log`。
+
+
+## 2026-11-03 部分 tab 路径新引用交付
+
+- 方言：完整匹配已有容器路径并部分消费 tab 后，剩余 0–3 列允许开启显式 Quote；多个祖先可共用 tab，原字节前缀隐藏且祖先 ID 保持。新引用内标题、列表/任务、表格、定义、围栏/数学及代码复用原规则，范围、松紧、通知与行内作用域正常更新。官方 Tabs 保持 11 支持、0 刻意差异、0 未支持，官方夹具、生成器和评分投影均未改。
+- 边界：新标记自身的 tab 分隔不另行扩展；不完整路径、缺失引用、异类/错位兄弟、超额缩进和已有围栏/数学正文保持。短尾等待 LF/CRLF/EOF，窗口外标记不回扫追认。完整容器/空行、其余叶块部分 tab 与宽泛标准覆盖继续待办，README/TODO 已同步。
+- 复杂度：将 `>` 候选纳入既有部分 tab 结构探测和提交路径，内部路由字段由列表专用名称改为容器名称。固定大小 Prefix 缓存空白末端，每个成功帧消费正列数，不扫描未匹配祖先后缀；无新增持久状态、旧正文/历史块回扫、运行时依赖或 unsafe，累计 O(n log n)、空间 O(n) 和共享预算契约保持。
+- 验证：新增 `tests/nested_quotes.rs` 六项回归，3051 组独立列宽模型；列表及引用祖先身份、松紧/通知、内层叶块、旧行内候选隔离、失败路径、UTF-8/CRLF/EOF、全切点与逐字符前缀及分类窗口。源码连续覆盖/借用、逐字符切片/tile、代码余量映射、零预算停步与六字节恢复、读取游标失效通过。999 层容器百万字后千次追加不增加分类/容器访问，4096 组根兄弟及新引用符合前缀工作上界。
+
+修复前最小复现失败见 `/tmp/mdtui3-goal-run/nested-quotes-repro.log`；两处旧 leaf/prose tab 测试观察按新引用语义更新，保留其余失败边界。验收命令：`nix develop -c bash /tmp/mdtui3-goal-run/nested-quotes-validate.sh`。
+
+最终验收全部通过：workspace all-targets check、clippy `-D warnings`、fmt、debug/release nextest 各 **1058 项**、doc **72 项（69 + 3）**、Tabs/Indented code/Fenced code 三组官方夹具核验及 `git diff --check`。完整日志 `/tmp/mdtui3-goal-run/nested-quotes-validation.log`。SHA-256 范围核对仅修改两个核心文件、两处既有测试及 README/TODO/DONE，新增 `nested_quotes.rs`；其它前序成果逐字保持，记录 `/tmp/mdtui3-goal-run/nested-quotes-scope-check.log`。
+
+
+## 2026-11-03 列表完整边界续行 tab 缩进代码交付
+
+- 方言：已有路径完整匹配且最内层为 Item，在普通正文续接未启用时，完整字节边界也接受四列 tab/混合代码缩进。沿物理行 tab stop 消费，代码缩进末端的部分 tab 余量映射原字节，其后完整空白/语法保留字面；保留原 Item/List 身份、Loose 确认和相邻代码合并。
+- 边界：普通正文/lazy、不完整路径、完整纯空白、围栏和数学正文维持原行为；空行终止代码，短尾等待 LF/CRLF/EOF，分类窗口之后不重试。完整容器/空行及宽泛标准覆盖未勾选，README/TODO 已同步。
+- 复杂度：移除代码探测的“路径已经部分消费 tab”前提，成功代码探测可独立提交；仍先要求有界前缀含 tab。固定大小 Prefix 复用空白末端，额外消费至多四列，没有新增持久状态、旧正文/历史块或无输入支撑的祖先回扫。累计追加 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 和共享预算保持。
+- 验证：新增 `tests/full_item_tab_code.rs` 五项回归，414 组独立列宽模型（276 组另验续接），嵌套/有序/引用路径、身份/松紧、失败边界、UTF-8/CRLF/EOF 全切点及逐字符前缀、分类窗口与缓存失效。源码连续覆盖/借用、tile 边界单字节替换、逐字符切片、零预算停步及六字节恢复通过；500 层容器百万字后千次追加不增加分类/行内/容器/树访问，4096 行代码合并并符合工作上界。
+
+修复前专项五项中四项失败见 `/tmp/mdtui3-goal-run/full-item-repro.log`；其中映射用例随后收窄到完整字节边界路径。验收命令：`nix develop -c bash /tmp/mdtui3-goal-run/full-item-validate.sh`。
+
+
+最终验收通过：workspace all-targets check、clippy `-D warnings`、fmt、release nextest **1063 项**、doc **72 项（69 + 3）**、Tabs/Indented code/Fenced code 三组官方夹具核验及 `git diff --check`，日志 `/tmp/mdtui3-goal-run/full-item-validation.log`。debug 全套 **1063 项**通过见 `/tmp/mdtui3-goal-run/full-item-first-full.log`；随后仅收窄两个分块测试输入、固定模型数量断言及调整核心注释，最终 debug 专项 **5 项**再次通过（同最终验收日志）。官方夹具/生成器/评分投影和既有测试均未修改。
+
+SHA-256 范围核对仅修改 `containers.rs` 与 README/TODO/DONE，新增 `full_item_tab_code.rs`；其余前序成果逐字保持，记录 `/tmp/mdtui3-goal-run/full-item-scope-check.log`。
+
+
+## 2026-11-03 围栏正文 tab 列宽去缩进交付
+
+- 方言：已开启反引号/波浪线围栏的正文先消费已有容器部分 tab 虚拟列，再按 opener 的剩余 0–3 列额度消费 ASCII space/tab。tab 沿物理行四列对齐，部分消费后的余量显示为空格、映射原单字节；其余 tab 与代码语法保留字面，源文与 info 借用不变。
+- 边界：零缩进 opener、数学块、缺失路径、开闭定界与分类窗口保持原方言；closer 在去缩进前判断，原始 tab 开头的候选仍作为正文。未完成短行等 LF/CRLF/EOF 或分类窗口提交，既有身份、通知与缓存失效保持。完整围栏/容器规则、长度上限、info 解码和宽泛标准覆盖未勾选。
+- 复杂度：活动围栏新增一个列模四字节。需要正文去缩进时，当前有界分类前缀做一次字节列位置计算，后续追加只携带剩余额度和列位置；最多消费三列，没有历史正文/块/祖先节点回扫或续传前缀重读。实际检查计入 classified_bytes，部分 tab 复用显示映射与预算接口；累计追加 O(n log n)、空间 O(n)、零运行时依赖与禁止 unsafe 保持。
+- 验证：新增 `tests/fence_tabs.rs` 五项回归，1008 组独立列宽模型，部分 tab 祖先与作用域、失败 closer/数学/空白、UTF-8/CRLF/EOF 全切点/逐前缀、缓存失效、连续源码映射、tile 边界替换/逐字符切片及六字节预算恢复。1015 层分类窗口续传、百万字后千次追加与 4096 行代码通过；百万字后新增输入不增加分类/行内/容器/树访问。修复前五项均失败，见 `/tmp/mdtui3-goal-run/fence-tabs-repro.log`；窗口用例的预期随后按物理列宽修正为剩余两列。
+
+旧 `fence_indent.rs` 一条 tab 字面观察按新方言更新；官方夹具、生成器及评分投影不变。验收命令：`nix develop -c bash /tmp/mdtui3-goal-run/fence-tabs-validate.sh`。
+
+最终验收全部通过：workspace all-targets check、clippy `-D warnings`、fmt、debug/release nextest 各 **1068 项**、doc **72 项（69 + 3）**、Tabs/Indented code/Fenced code 三组官方夹具核验及 `git diff --check`。debug 全套日志 `/tmp/mdtui3-goal-run/fence-tabs-first-full.log`；最终专项 16 项与其余验收日志 `/tmp/mdtui3-goal-run/fence-tabs-validation.log`。
+
+SHA-256 范围核对仅修改 `lib.rs`、`block.rs`、既有 `fence_indent.rs` 与 README/TODO/DONE，新增 `fence_tabs.rs`；其它前序文件逐字保持，记录 `/tmp/mdtui3-goal-run/fence-tabs-scope-check.log`。
+
+
+## 2026-11-03 分类窗口内的长围栏交付
+
+- 方言：反引号/波浪线 opener 从 3..32 扩展为 3..1023，必须在原 1024 字节分类窗口内看到定界串结束（非同字符或完整行末）；容器前缀与缩进占用同一窗口。窗口末端仍在串内时保持普通行内消费，也避免深容器中的短串被提前截断确认。短尾等待 LF/CRLF/EOF，已确认围栏在 EOF 保留代码。
+- 边界：同字符且不短于 opener 的 closer 仍须连同行末在窗口内完整出现，短串/异字符/非空白后缀/四格缩进及超窗口 closer 保留字面。原始 info、部分 tab 正文映射、容器作用域退出和长 info 隐藏方言保持；窗口外定界识别、info 解码及完整容器/tab 规则仍待办，不勾选宽泛标准覆盖。
+- 复杂度：只调整 `MAX_FENCE_LENGTH` 和一次切片长度比较，仍单次扫描当前有界前缀；Fence 已用 usize 保存长度，无新增持久状态、额外窗口、旧正文/祖先回扫、运行时依赖或 unsafe。累计 O(n log n)、空间 O(n) 及共享预算保持。
+- 验证：新增 `tests/long_fences.rs` 五项回归，504 组独立长度/缩进/容器/行末模型，33/63/255/1000/1023 边界、失败 closer、原始 info、UTF-8/CRLF/EOF 全切点与逐字符前缀、完整源码覆盖/借用、部分 tab 替换/切片及零预算停步与六字节恢复。成功和失败路径在千层容器、百万字正文后千次追加不增加分类/容器计数，代码路径不增加行内计数，普通回退按新增字节消费。
+
+修复前 33 字符 opener 模型失败见 `/tmp/mdtui3-goal-run/long-fences-repro.log`；专项验收见 `/tmp/mdtui3-goal-run/long-fences-targeted.log`。完整验收命令：`nix develop -c bash /tmp/mdtui3-goal-run/long-fences-validate.sh`。
+
+
+全套首次验收指出 `container_code.rs` 原有“33 个波浪线无效”断言已不适用；仅将该输入换成超过 `MAX_FENCE_LENGTH` 的串，继续验证超长失败，33 字符成功由新模型覆盖。首次日志 `/tmp/mdtui3-goal-run/long-fences-first-full.log`；修改范围核对 `/tmp/mdtui3-goal-run/long-fences-scope-check.log`，其它前序文件 SHA-256 保持；核心及既有测试撤去本单元精确改动后亦与前序摘要一致。
+
+最终验收通过：workspace all-targets check、clippy `-D warnings`、fmt、debug/release nextest 各 **1073 项**、doc **72 项（69 + 3）**、Tabs/Indented code/Fenced code 三组官方夹具逐字核验及 `git diff --check`。完整日志 `/tmp/mdtui3-goal-run/long-fences-validation.log`。官方输入/期望、生成器和评分投影未修改。
+
+
+## 2026-11-04 围栏 closer 的 tab 缩进交付
+
+- 方言：完整匹配已有容器路径后，反引号/波浪线 closer 前的 space/tab 沿物理行四列制表位计量，含部分 tab 虚拟余量不超过三列才闭合。关闭判断先于正文去缩进，复用相同字符、至少 opener 长度及既有 ASCII 空白后缀规则；容器和代码块身份保持。
+- 边界：短行等待 LF/CRLF/EOF；超过分类窗口的候选维持字面代码，不追认后续串尾。超过三列、短串、异字符、非空白后缀仍为正文；数学块、opener、缺失路径和兄弟切换规则保持。完整容器/opener、窗口外识别、info 解码及宽泛标准覆盖仍未勾选。
+- 复杂度：当前有界窗口内读取一次已匹配前缀的字节取得列模四，计入 `Work.classified_bytes`，并复用于正文去缩进。只检查当前输入提供的前缀，不遍历祖先节点，不增持久状态，不重读旧正文或在续传时重算前缀。缩进超过三列即失败，累计追加 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 和共享预算保持。
+- 验证：新增 `tests/fence_closer_tabs.rs` 五项回归，1920 组独立列宽/长度/行尾模型，根/引用/列表/部分 tab、UTF-8 全切点/逐前缀/EOF、作用域/数学/失败/窗口边界、稳定身份/缓存失效、tile 边界源码连续覆盖/逐字符切片及六字节预算停步恢复。千层容器百万字正文、长失败 closer 后千次追加不增加分类/行内/容器/树访问；4096 次围栏开闭验证工作计数上界。
+
+README/TODO 已同步。原有测试、官方夹具、生成器与评分投影均保持；范围核对见 `/tmp/mdtui3-goal-run/closer-tabs-scope-check.log`。首轮专项只修正新测试夹具的一个字节位置，使 tab 恰在 tile 边界；随后 debug 全套 1078 项通过，日志 `/tmp/mdtui3-goal-run/closer-tabs-first-full.log`。独立副本使用单元开始前核心运行新测试，日志 `/tmp/mdtui3-goal-run/closer-tabs-repro.log`。
+
+最终验收通过：workspace all-targets check、clippy `-D warnings`、fmt、debug/release nextest 各 **1078 项**、doc **72 项（69 + 3）**、Tabs/Indented code/Fenced code 三组官方夹具逐字核验及 `git diff --check`。静态检查仅要求将新测试的一处等价边界表达式简化，核心自首次全套验收后未再改变。release/静态/文档与夹具日志 `/tmp/mdtui3-goal-run/closer-tabs-validation.log`；最终 debug 专项 `/tmp/mdtui3-goal-run/closer-tabs-targeted-final.log`。单元开始前核心在独立副本和独立构建目录中运行新增测试，**5 项全部失败**，确认回归能检出缺失行为；当前实现五项全部通过。
+
+
+## 2026-11-04 围栏 opener 的 tab 缩进交付
+
+- 方言：已识别容器前缀之后，反引号/波浪线 opener 前的 space/tab 按物理行四列制表位计量，含部分 tab 虚拟余量至多三列；该列数用于既有正文去缩进。开启行隐藏，原始 info、容器身份、源码字节与通知契约保持。
+- 边界：现有匹配器确定前缀边界，新引用标记自身的 tab 分隔不在本项内。顶层 tab/超过三列、短串、反引号 info 内反引号、缺失路径、数学及其它叶块维持原规则；短行在 LF/CRLF/EOF 确认，分类窗口和定界长度上限保持，超窗串不追认，长 info 仍截在窗口内。完整容器/其它叶块、窗口外识别、info 解码及宽泛标准覆盖仍未勾选。
+- 复杂度：原始 tab 缩进候选与活动代码围栏从当前有界前缀取得列模四，并计入 `Work.classified_bytes`；部分 tab 探测复用现成列位置。普通无 tab 叶块不额外扫描前缀；缩进探测至多四字节，无新增持久状态、旧正文或祖先节点回扫。累计追加 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 和共享预算保持。
+- 验证：新增 `tests/fence_opener_tabs.rs` 五项回归，720 组独立列宽/定界/行尾模型、UTF-8 全切点/逐前缀/EOF、失败/数学/作用域/窗口边界、原始 info 与晚确认身份/缓存失效、tile 边界连续源码映射/逐字符切片及六字节预算停步恢复。千层容器百万字后千次追加保持分类/行内/容器/树访问不变，超窗失败 opener 无重新分类，4096 次开闭符合计数上界。
+
+修复前的模型测试检出 `> \t``` rs` 未识别，日志 `/tmp/mdtui3-goal-run/opener-tabs-repro.log`。一条旧容器代码测试将相同输入的失败观察改为成功断言；官方夹具、生成器及评分投影均未改。首次全套发现普通深层续行多扫前缀超出已有计数门槛，随后将扫描限制到 tab 候选；该测试及新专项合计 19 项通过，日志 `/tmp/mdtui3-goal-run/opener-tabs-targeted-final.log`。README/TODO 已同步，宽泛条目保持未完成。
+
+最终验收通过：workspace all-targets check、clippy `-D warnings`、fmt、debug/release nextest 各 **1083 项**、doc **72 项（69 + 3）**、Tabs/Indented code/Fenced code 三组官方夹具逐字核验及 `git diff --check`。日志 `/tmp/mdtui3-goal-run/opener-tabs-validation.log`；范围核对 `/tmp/mdtui3-goal-run/opener-tabs-scope-check.log`，除本单元三处核心、一处旧断言、新测试及 README/TODO/DONE 外，其余 265 个基线文件 SHA-256 保持。
+
+
+## 2026-11-04 ATX 标题的 tab 缩进交付
+
+- 方言：已识别容器前缀后，ATX 井号前 space/tab 按物理行四列制表位计量，含部分 tab 余量至多三列即可识别；`> \t# title` 和 `>\t# title` 分别使用两列、三列叶块缩进。标题身份/作用域、1–6 级、原始源码、关闭井号及既有行内语义保持。
+- 边界：不修改引用标记自身可选一列分隔；顶层 tab/超过三列、七个井号、缺少分隔和不完整路径保留原分类，围栏/数学字面正文保持。短尾在 LF/CRLF/EOF 确认，井号串/必要分隔受既有共享窗口限制，截断串不追认；完整容器/其它叶块和宽泛标准覆盖保持未完成。
+- 复杂度：直接复用围栏分类已取得的列位置与至多四字节缩进结果，无额外前缀扫描、持久状态或旧正文/祖先回扫；累计追加 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 及共享预算不变。
+- 验证：新增 `tests/atx_tabs.rs` 六项回归，1848 组独立列宽/级别/行尾模型，UTF-8 全切点及逐前缀/EOF、失败/窗口/作用域、晚确认身份/章节与游标失效、tile 边界连续源码映射/逐字符切片/六字节预算；搜索、slug、折叠消费及通知增量；千层百万字标题后千次追加不增加分类/容器工作，仅处理新增行内字节，超长失败串不重新分类，4096 个标题符合计数上界。
+
+修改前五项专项全失败，日志 `/tmp/mdtui3-goal-run/atx-tabs-repro.log`。首次全套发现四条旧测试仍期待 `>\t#` 为普通文字，现与围栏 opener 测试的一条旧 ATX 观察一起准确更新；不修改官方输入/期望、生成器或评分投影。README/TODO 同步记录实际交付和剩余范围。
+
+最终验收：workspace all-targets check、clippy `-D warnings`、fmt，debug/release nextest 各 **1089 项**，doc **72 项（69 + 3）**，ATX/Tabs/Indented code/Fenced code 四组官方夹具逐字核验及 `git diff --check` 全部通过。日志 `/tmp/mdtui3-goal-run/atx-tabs-validation.log`；范围核对 `/tmp/mdtui3-goal-run/atx-tabs-scope-check.log`，除本单元一处核心、五处旧测试、新测试及 README/TODO/DONE 外，其余 264 个基线文件 SHA-256 保持。
+
+
+## 2026-11-04 分隔线的 tab 缩进交付
+
+- 方言：已识别容器前缀后的 space/tab 按物理行四列制表位计量，含部分 tab 余量至多三列时识别至少三个同类 `*`/`-`/`_` 的分隔线；标记间/末尾允许 space/tab。完整匹配路径保留 ContainerId，分隔线先于嵌套列表；既有 ASCII-space Setext 优先级保留，原始 tab Setext 未扩展。隐藏容器前缀，叶块内原始缩进和标记保持既有字面显示语义，部分 tab 前缀余量不产生可见替换。
+- 失败/流式：超额缩进、少于三个标记、异类/非空白后缀、缺失路径及围栏/数学正文沿用原规则；短行等待 LF/CRLF/EOF，整行须在共享分类窗口内完成，超窗候选不回扫追认。完整容器、新引用自身分隔、其它叶块、窗口外识别与宽泛标准覆盖继续待办。
+- 实现与复杂度：`block.rs` 复用围栏/ATX 的有界列宽结果；`containers.rs` 的原子部分 tab 探测接纳 Rule，结构优先级使用已有后缀摘要和缓存列宽，删除 ASCII-only 限制。无新增持久状态，不回扫旧正文、历史块或无输入支撑的祖先；累计追加 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 及共享预算契约保持。
+- 专项：`tests/rule_tabs.rs` 新增 5 项回归，2376 组独立列宽模型覆盖三种标记、计数、混合缩进、完整/部分边界和 LF/CRLF/EOF；验证作用域/身份、优先级/失败/窗口、全部 UTF-8 切点/逐前缀/EOF 快照、源码连续覆盖/借用/切片/tile、零预算停步和六字节恢复。千层引用中的百万字失败候选后千次追加不增加分类字节、容器字节/步数；4096 行验证线性计数。
+- 验收：`nix develop -c cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`；devShell 内 nextest debug/release 各 **1094 项通过**，`cargo test --doc` **72 项通过**。CommonMark Thematic breaks/Tabs/Setext/Fenced code 四组固定来源夹具校验通过；官方输入/期望、生成器和评分投影未改。首次全套仅一条旧部分 tab 分隔线回退观察不符，`nested_tabs.rs` 现断言原条目内分隔线显示（新专项另验结构）；最终全套通过。
+- 证据：修复前模型/优先级缺口见 `/tmp/mdtui3-goal-run/rule-tabs-repro.log`；最终专项 `/tmp/mdtui3-goal-run/rule-tabs-targeted-final.log`；全套 `/tmp/mdtui3-goal-run/rule-tabs-validation.log`；范围核对 `/tmp/mdtui3-goal-run/rule-tabs-scope-check.log`。README/TODO 同步更新，宽泛待办未勾选。
+
+## 2026-11-04 Setext 下划线的 tab 缩进交付
+
+- 方言：已有同作用域段落或待确认表头之后，完整匹配容器前缀，按物理行四列制表位计量下划线前的 space/tab；含部分 tab 余量至多三列时，连续 `=` / `-` 提升原段落为一级/二级标题。保留 BlockId、ContainerId、跨行内容、索引及通知，整条下划线隐藏且原始源码/字节映射保持；优先于分隔线及空嵌套列表。
+- 边界：无同作用域段落、空行隔断、缺失路径、兄弟条目、超额缩进、失败标记/后缀和已开启围栏/数学保持原规则。短尾等待 LF/CRLF/EOF，下划线整行须在包含容器前缀的共享分类窗口内完成，超窗候选不回扫追认。完整容器、其它叶块、窗口外识别及宽泛标准覆盖保持待办。
+- 实现与复杂度：`block.rs` 将 Setext 判定接到已有有界列宽结果，`containers.rs` 的部分 tab 探测接纳 Setext，`lib.rs` 传入同作用域段落资格。只读当前有界前缀，不新增持久状态或回扫旧正文/历史叶块/无输入支撑的祖先；保留累计追加 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 及共享预算。
+- 专项：新增 `tests/setext_tabs.rs` 六项测试，1728 组独立列宽/标记/行尾模型，UTF-8 全切点、逐字符前缀及 EOF 快照，优先级/失败/分类窗口，标题身份与折叠增量，原始源码及切片/tile 显示映射，零预算停步和六字节显示/搜索/slug 恢复。998 层引用中的百万字标题晚确认不增加旧正文行内读取；百万字失败候选追加不重新分类。
+- 验收：devShell 内 all-targets check、clippy `-D warnings`、fmt；debug/release nextest 各 **1100 项通过**，doc **72 项（69 + 3）通过**。CommonMark Setext/Tabs/Thematic breaks/Fenced code 四组官方夹具逐字核验通过，官方输入/期望、生成器、评分投影未改。首轮全套发现三项旧回退预期，`leaf_tabs`、`nested_tabs`、`rule_tabs` 已准确更新，最终全套通过；README/TODO 同步实际交付及剩余范围。
+- 证据：修改前专项的列宽模型、优先级及标题晚确认复现缺口，见 `/tmp/mdtui3-goal-run/setext-tabs-repro.log`；最终相关专项 **31 项通过**，见 `/tmp/mdtui3-goal-run/setext-tabs-targeted-final.log`；全套 `/tmp/mdtui3-goal-run/setext-tabs-validation.log`；范围核对 `/tmp/mdtui3-goal-run/setext-tabs-scope-check.log`。除三处核心、三处旧测试、新测试及 README/TODO/DONE 外，其余 266 个基线文件 SHA-256 保持，`git diff --check` 通过。
+
+
+## 2026-11-04 引用链接定义的 tab 缩进交付
+
+- 方言：已识别容器前缀后的 space/tab 按物理四列制表位计量，含部分 tab 虚拟余量至多三列时识别完整有界引用链接定义；保留 ContainerId、原始目标/title 借用区间、全局首定义优先及引用失效，整条定义行隐藏且源码字节保持。
+- 边界：短行等待 LF/CRLF/EOF，定义整行必须在共享分类窗口内完成；超额缩进、非法候选、缺失路径、围栏/数学与脚注定义沿用原方言。已有段落/表格可被定义中断；不宣称完整标准引用定义规则，元数据解码、脚注/其它叶块、完整容器与窗口外识别继续待办。
+- 实现与复杂度：`block.rs` 的定义判定复用现有有界列宽结果，`containers.rs` 的部分 tab 原子探测接纳 Definition；现有符号更新和显示消费无需改动。无新增持久状态、旧正文/历史块/历史链接回扫；累计追加 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 与共享预算保持。
+- 专项：新增 `tests/definition_tabs.rs` 五项测试，864 组独立列宽/目标/行尾模型，全 UTF-8 切点、逐字符前缀及 EOF 快照，失败/窗口/表格优先级、原始元数据/作用域/首定义优先/通知，连续源码及 tile/逐字符显示映射，零预算停步和六字节恢复。998 层引用中百万字后千次追加及晚定义不回读旧行内正文；超窗百万字失败候选不重新分类；两万旧链接的晚定义不枚举旧对象，4096 个定义符合工作计数上界。
+- 修复前五项专项中四项失败，分块一致性一项通过，见 `/tmp/mdtui3-goal-run/definition-tabs-repro.log`。首轮全套发现 `leaf_tabs` 一条旧观察仍要求引用定义失败，现改为原条目内定义及原始目标断言，脚注/表头失败观察保留。新窗口测试补入物理 tab 占四列的拒绝条件；核心实现自首轮专项后未改变。官方夹具、生成器和评分投影未改，README/TODO 已同步实际交付与剩余范围。
+- 验收：devShell 内 `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check` 通过；debug/release nextest 各 **1105 项通过**，doc **72 项（69 + 3）通过**，日志 `/tmp/mdtui3-goal-run/definition-tabs-validation.log`。Tabs/Backslash escapes/Entities/Fenced code 四组固定来源夹具逐字核验通过，日志 `/tmp/mdtui3-goal-run/definition-tabs-fixture-check.log`。范围核对 `/tmp/mdtui3-goal-run/definition-tabs-scope-check.log` 确认仅两处核心、一处旧测试、一个新增测试及三份文档发生本单元改动，其余前序文件保持；`git diff --check` 通过。
+
+## 2026-11-04 脚注定义起始行的 tab 缩进交付
+
+- [x] **方言与边界**：已识别容器前缀后的 space/tab 按物理行四列制表位计量，连同部分 tab 余量至多三列时识别合法 `[^label]:`。标记必须落在共享分类窗口内，正文可跨窗口流式增长；短尾等待 LF/CRLF/EOF，失败/未完成/窗口外候选不追认。保留原始正文、作用域、全局首定义优先、稳定编号及间接引用；定义可中断普通段落、待定表头和已确认表格。同路径四个 ASCII 空格续行及空白分段保持，未扩展 tab/lazy 续行、正文解析或实际脚注区排版。
+- [x] **实现与复杂度**：`block.rs` 将原有脚注起始标记识别移到共享列宽扫描之后；`containers.rs` 的部分 tab 原子探测接纳脚注定义。复用已有消费/隐藏/通知路径，无新增持久状态、旧正文回扫或历史引用遍历，累计 O(n log n)、空间 O(n)、零运行时依赖和禁止 unsafe 保持。
+- [x] **专项验收**：新增 `tests/footnote_tabs.rs` 的 5 项回归；864 组独立物理列宽模型覆盖根、引用、列表、多层及部分 tab，验证作用域、空正文、原始实体/标记和 CRLF/EOF。全 UTF-8 切点、逐字符前缀及前缀 EOF 快照一致；失败/窗口、四空格续行、代码/数学边界、晚定义与重复定义、稳定身份、源码覆盖、脚注 payload 和显示读取的六字节预算恢复通过。998 层百万字脚注后的 1000 次追加不增加分类/行内/容器扫描；两万旧引用晚定义与 4096 后续定义的工作计数通过。
+- [x] **验证结果**：修改前新增专项 4 失败/1 通过（`/tmp/mdtui3-goal-run/footnote-tabs-repro.log`），修复后 5 项通过。首轮全套仅有两处旧脚注失败预期，已更新为新定义成功及作用域/正文断言；最终 `nix develop -c` 中 check/clippy（`-D warnings`）/fmt、debug/release nextest 各 1110 项、doc 72 项和 `git diff --check` 均通过，日志 `/tmp/mdtui3-goal-run/footnote-tabs-validation.log`。其余 270 个前序文件 SHA-256 保持，包括官方夹具、生成器和评分投影；范围记录 `/tmp/mdtui3-goal-run/footnote-tabs-scope-check.log`。
+
+README/TODO 已记录实际交付和剩余范围；脚注正文解析/tab 续行、其它叶块、完整容器与宽泛标准覆盖仍未勾选。
+
+
+## 2026-11-04 独立数学块定界行的 tab 缩进交付
+
+- [x] **方言与边界**：已识别/完整匹配容器前缀之后，独占行 `$$` opener/closer 的 space/tab 按物理行四列制表位计量，含前缀部分 tab 余量至多三列。整条定界行必须在共享分类窗口内完成，后缀仅 space/tab；短尾等待 LF/CRLF/EOF，超窗候选不在后续追加中追认。失败、四列缩进、额外美元符号、孤立 CR、缺失路径和代码围栏保持既有边界。开栏缩进不从数学正文扣除，完整正文 tab 保持字面；原始源码、BlockId、ContainerId、折叠和通知保持。
+- [x] **实现与复杂度**：`block.rs` 的数学 opener 移到既有叶块列宽扫描之后，closer 使用既有围栏 tab 列宽计算；`lib.rs` 在数学行含原始 tab 缩进时计算当前有界前缀列模四，计入分类工作。部分 tab 原子探测和数学消费/隐藏路径复用，无新增持久状态、旧正文或祖先节点回扫；无 tab 的数学正文不增加前缀扫描，累计 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 与共享预算保持。
+- [x] **专项验收**：新增 `tests/math_delimiter_tabs.rs` 六项测试，576 组独立物理列宽模型覆盖 opener/closer、根/引用/列表/部分 tab 和 CRLF/EOF；全 UTF-8 切点、逐字符前缀及前缀 EOF 快照一致。失败路径/分类窗口、稳定身份、折叠意愿、增量合并与过期读取拒绝、原始/去前缀 payload 源码映射及六字节预算通过。998 层百万字正文与超窗失败 closer 后各千次追加不增加分类/容器/行内扫描，4096 次开闭符合计数上界。
+- [x] **修复证据**：修改前专项 5 失败/1 通过，见 `/tmp/mdtui3-goal-run/math-delimiter-repro.log`；修复后 6 项通过，见 `/tmp/mdtui3-goal-run/math-delimiter-targeted.log`。首轮全套 1114 通过/2 失败，仅两处围栏旧测试仍要求数学 tab 定界失败，已更新为成功及显示隐藏断言；核心自专项通过后未再修改。首轮记录 `/tmp/mdtui3-goal-run/math-delimiter-first-full.log`。
+
+- [x] **最终验证**：devShell 内 `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、debug/release nextest 各 **1116 项**、doc **72 项（69 + 3）** 和 `git diff --check` 均通过；日志 `/tmp/mdtui3-goal-run/math-delimiter-validation.log`。范围核对 `/tmp/mdtui3-goal-run/math-delimiter-scope-check.log` 确认其余 271 个前序文件 SHA-256 保持，包括官方夹具、生成器和评分投影。
+
+README/TODO 已同步实际交付；新引用自身分隔、完整容器、额外数学方言/实际排版、其它叶块和宽泛标准覆盖继续待办。
+
+
+## 2026-11-04 脚注续行的完整 tab 边界交付
+
+- [x] **方言与边界**：已有定义完整匹配确切容器路径后，space/tab 按物理行四列制表位计量；四列终点落在完整字节边界时消费缩进并延续同一 BlockId。多余空白/正文保持字面，原始包络、首定义优先、稳定编号、隐藏和范围通知保持。完整空白分段同样消费可匹配的四列；超窗空白已有合法缩进时流式增长。部分 tab 容器路径/四列终点、lazy 省略仍拒绝，不扩展正文 Markdown 解析或脚注区排版。
+- [x] **实现与复杂度**：`containers.rs` 抽出只读路径游标，原表格分隔行探测仍返回原字节偏移；脚注探测复用游标列位置、空白末端和完整边界缩进消费，额外扫描计入 `Work.container_bytes`。`footnotes.rs` 复用现有隐藏间隙与定义增长，不新增持久状态，不回扫旧正文/历史引用/无输入支撑的祖先，保持累计 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 和共享预算。
+- [x] **专项验收**：新增 `tests/footnote_continuation_tabs.rs` 五项回归，1701 组独立列宽模型覆盖根、引用、列表和原始 tab 容器前缀，验证 UTF-8/CRLF/EOF、身份与原始字面正文；全切点、逐前缀及前缀 EOF 快照一致。空白/失败/重复定义、原文读取及六字节映射预算通过。991 层百万字续行后千次追加不增加分类/容器/行内扫描；两万旧引用与 4096 次续行的通知和操作计数通过。
+- [x] **修复证据**：实现前专项四项失败、一项分块一致性通过，见 `/tmp/mdtui3-goal-run/footnote-continuation-repro.log`。原脚注测试中两项包含旧 tab 拒绝/空白保留预期，已按新方言更新成功、正文和长行断言；其余拒绝及完整空格行为保持。最终 debug 全套 1121 项通过，见 `/tmp/mdtui3-goal-run/footnote-continuation-debug.log`。
+
+README/TODO 已同步；只勾选本子项，部分 tab/lazy 续行、完整容器、正文解析/实际排版及宽泛标准覆盖仍待办。
+
+- [x] **最终验证**：devShell 内 `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、debug/release nextest 各 **1121 项**、doc **72 项（69 + 3）** 及 `git diff --check` 均通过；日志 `/tmp/mdtui3-goal-run/footnote-continuation-validation.log`。范围核对 `/tmp/mdtui3-goal-run/footnote-continuation-scope-check.log` 确认其余 273 个仓库文件 SHA-256 保持，包括官方夹具、生成器和评分投影。
+
+
+## 2026-11-04 脚注续行的部分 tab 容器路径交付
+
+- [x] **方言与边界**：已有脚注完整匹配原容器路径时，允许多层 Item 共享 tab 和 Quote 可选分隔消费一列；路径余量参与四列续行缩进，终点必须落在字节边界。成功后保持 BlockId、容器身份、原始包络、字面正文、稳定编号和首定义优先；失败原子回退到原完整边界/空白方言，不生成虚拟正文。短尾等待 LF/CRLF/EOF，分类窗口与长正文流式消费保持。四列终点的部分 tab、lazy/完整容器、正文 Markdown 解析与实际排版仍待办。
+- [x] **实现与复杂度**：仅扩展 `containers.rs` 的只读脚注路径探测；表格分隔路径保持原规则。固定大小游标复用列位置和空白末端，仅消费过部分 tab 的失败路径才重试原拼写；至多两次路径匹配仅检查当前有界前缀，全部计入容器工作。无新增持久状态、旧正文/历史引用回扫，累计 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 与共享预算保持。
+- [x] **专项验收**：新增 `tests/footnote_partial_paths.rs` 五项回归，1512 组独立物理列宽/行尾模型涵盖多层共享 tab、引用/列表交错、余量及既有引用失败回退；UTF-8 全切点、逐字符前缀及前缀 EOF 快照一致。失败/空白/窗口/重复定义、原文包络与连续六字节预算映射通过。982 层容器百万字后千次追加无分类/容器/行内回扫，512 条深层续行及两万旧引用后的 4096 次增长保持身份、通知和工作计数。
+- [x] **修复证据**：修改前新增专项四项失败、一项分块一致性通过，见 `/tmp/mdtui3-goal-run/footnote-partial-repro.log`。首次全套发现两处普通失败路径重复探测增加工作计数，已修复且保留原性能断言；一条既有脚注测试的部分 tab 拒绝预期按新增支持更新。相关专项最终 38 项全部通过，见 `/tmp/mdtui3-goal-run/footnote-partial-targeted-final.log`。
+
+README/TODO 已同步实际交付与剩余范围，宽泛待办保持未完成。
+
+- [x] **最终验证**：devShell 内 `cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、debug/release nextest 各 **1126 项**、doc **72 项（69 + 3）** 和 `git diff --check` 均通过；日志 `/tmp/mdtui3-goal-run/footnote-partial-validation.log`。范围核对 `/tmp/mdtui3-goal-run/footnote-partial-scope-check.log` 确认其余 275 个前序文件 SHA-256 保持，包括官方夹具、生成器和评分投影。
+
+
+## 2026-11-04 脚注续行的部分 tab 终点交付
+
+- [x] **方言与边界**：完整匹配已有容器路径后消费恰好四列续行缩进，终点可落在 tab 内，余下 1..3 列映射到末尾 tab 的单字节源码；原始读取、后续完整 tab、字面正文、空白分段、首定义优先、稳定身份与通知保持。不足缩进/缺失路径沿用原子回退，短尾与分类窗口规则保持；lazy/完整容器、正文 Markdown 解析与实际排版仍待办。
+- [x] **实现与复杂度**：复用只读前缀游标的部分 tab 缩进消费；每个获胜续行前缀增加固定 `u8` 余量（含平台结构对齐开销），重复定义不保存映射，同物理行增长不增加记录。读取器把隐藏前缀与末尾 tab 分开返回，tab 映射为静态空格，原子收取 `max(source.len(), text.len())` bytes、1 query、1 object，预算不足不推进也不扣费。无正文复制或旧引用/祖先回扫，记录空间 O(续行数)，累计解析 O(n log n)、空间 O(n)、零运行时依赖及禁止 unsafe 保持。
+- [x] **专项验收**：新增 `tests/footnote_endpoint_tabs.rs` 五项回归，1701 组独立列宽模型、UTF-8 全切点/逐前缀/前缀 EOF、1..3 列映射、零/不足/六字节预算、原文与失败/空白/重复定义通过。982 层容器百万字正文后千次追加无分类/容器/行内回扫，512 条深层续行及两万旧引用后的 4096 次增长符合计数边界。内部新增测试验证前缀记录只随获胜续行增长，不随同物理行正文或重复定义增长。
+- [x] **修复证据**：新增专项在实现前四项失败、一项分块一致性通过，见 `/tmp/mdtui3-goal-run/footnote-endpoint-repro.log`。首轮全套仅两组旧脚注测试中的六项失败，原因是旧预算/直接借用断言及完整终点模型不再适用；按新方言更新两组模型、映射计费及两条拒绝预期，相关 17 项最终通过，见 `/tmp/mdtui3-goal-run/footnote-endpoint-targeted-final.log`。
+
+README/TODO 已同步实际交付与剩余范围，宽泛待办保持未完成。
+
+- [x] **最终验证**：devShell 内 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、debug/release nextest 各 **1132 项**、doc **72 项（69 + 3）**、`cargo fmt --all -- --check` 及 `git diff --check` 全部通过；日志 `/tmp/mdtui3-goal-run/footnote-endpoint-validation.log`。范围核对 `/tmp/mdtui3-goal-run/footnote-endpoint-scope-check.log` 确认其它 274 个前序文件 SHA-256 保持，包括官方夹具、生成器和评分投影；本单元独立差异保存于 `/tmp/mdtui3-goal-run/footnote-endpoint-unit.patch`。
+
+## 2026-11-04 围栏 info 反斜线解码读取交付
+
+- 从围栏代码及 Backslash escapes 剩余范围中交付 info 的 ASCII 标点反斜线解码读取。新增 `Document::code_info(BlockId)`、`CodeInfo` 和 `CodeInfoChunk`；原始 `BlockKind::Code { info }` 区间、借用读取、块身份及解析行为保持。非标点、Unicode、实体和末尾反斜线保留字面，输出不递归解析、不额外 trim 或选择语言词。
+- 游标固定四个机器字、零分配；构造 O(1)，读取 O(info 字节数)。每步一个字符，消费一次 query/object 与实际源码字节数；两字节转义对原子消费，UTF-8 最多四字节，预算不足不推进也不计费。借用防止读取期间修改文档；无新增持久解析状态、正文复制、历史块或祖先回扫。已有分类窗口和长 info 截断方言保持，窗口末尾反斜线不会吞掉窗口外字符。
+- 新增 `tests/code_info.rs` 六项回归：3024 组独立 ASCII/连续反斜线/容器模型；UTF-8 全切点与逐字符前缀/EOF；原始范围和借用指针、跨 tile 转义映射；零预算、共享预算及六字节分帧恢复；失败 opener、缺失 info、代码正文和未解码实体；990 层百万字正文、4096 历史代码块及千次追加工作计数。超长隐藏 opener 原有注释树更新按有界操作数验收，不宣称零树操作。
+- CommonMark 0.31.2 Backslash escapes 例 24 改为消费核心 `code_info` 输出，章节现为 **9 支持、3 刻意差异、1 未支持**。评分投影不自行解码，官方输入/期望与生成器保持原样；448 个切点和 435 个逐字符前缀及投影敏感性/拒绝测试通过。原始 info 借用仍单独断言；其它评分投影未改。
+- 验收通过：`cargo check --workspace --all-targets`；`cargo nextest run --workspace --no-fail-fast` 和 `--release` 各 **1138 项**；`cargo test --workspace --doc` **73 项**；`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、官方 Backslash escapes 夹具核验及 `git diff --check`。均在项目 `nix develop` 环境执行 Cargo 命令。
+- 日志：`/tmp/mdtui3-goal-run/info-escapes-debug.log`、`/tmp/mdtui3-goal-run/info-escapes-validation.log`；范围核对 `/tmp/mdtui3-goal-run/info-escapes-scope-check.log`，独立差异 `/tmp/mdtui3-goal-run/info-escapes-unit.patch`。README/TODO 已同步；info 实体、直接/引用链接目标/title 解码、完整围栏/容器及宽泛标准覆盖继续待办。
+
+## 2026-11-04 围栏 info 实体解码读取交付
+
+- 在既有 `Document::code_info` 中交付分号终止的命名/数字实体解码：复用固定 2125 项命名表，数字规则与行内实体一致；反斜线优先，未知/不完整/超长候选按字面继续，解码结果不递归进入语法。原始 info、代码正文、分类窗口截断、块身份及追加路径保持；官方例 34 已通过核心接口支持。
+- 游标增加固定探测状态和 8 字节缓冲，无堆分配。每个未转义 `&` 探测收一次 query，至多 33 个源码字节逐字节收费；固定表查找/数字校验包含在该 query 中，结果只缓存一次。成功输出另收一次 query/object 和输出 UTF-8 字节，失败探测的字面输出按普通字符收费。六字节、单 query/object 帧可持续恢复，未输出时 source_position 不变但探测预算可能已消费；输出保持原子性与完整源码映射。读取累计 O(info 字节数)，不访问正文、历史块或祖先。
+- `CodeInfoChunk.text` 现在借用当前游标步骤：普通文本仍来自源码，实体来自固定缓冲，需要跨步骤保留时由调用方复制。既有原始借用接口不变。内部实体解码拆出零分配 `decode_into`，原行内调用仍取得原有 String，未增加持久解析状态、运行时依赖或 unsafe。
+- 新增 `tests/info_entities.rs` 六项回归：408 组独立有效/失败/容器/行尾模型、全部 2125 命名项及 3588 组数字模型；UTF-8 全切点/逐前缀/EOF、跨 tile 映射、零预算与共享六字节恢复、双标量原子输出、窗口末尾未完成实体、980 层百万字正文/4096 历史块后千次追加计数。修改前五项回归有 3 失败、2 通过，见 `/tmp/mdtui3-goal-run/info-entities-repro.log`；完整表模型在实现后补充。
+- 实体章节评分投影改为读取核心 `code_info`，保留原始 info 单独断言，未在投影中实现解码；当前 **13 支持、3 刻意差异、1 未支持**。官方输入、HTML 期望和生成器未改。专项首轮只有一条旧 info 文本期望失败，按新增语义更新；原转义测试仅更新实体预期、失败探测计费和游标固定大小上界。
+- 验收通过：项目 `nix develop` 内 `cargo check --workspace --all-targets`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **1144 项**、`cargo test --workspace --doc` **73 项**、clippy `-D warnings`、fmt check；两个官方章节夹具核验和 `git diff --check` 通过。日志：`/tmp/mdtui3-goal-run/info-entities-debug.log`、`/tmp/mdtui3-goal-run/info-entities-validation.log`；范围核对与独立差异见同目录 `info-entities-scope-check.log`、`info-entities-unit.patch`。
+- README/TODO 已同步。链接目标/title 解码、完整围栏/容器、失败链接回退及宽泛标准覆盖继续待办，未将这些宽泛条目标为完成。
+
+
+## 2026-11-04 链接及图片 title 解码读取交付
+
+- 从 Backslash escapes / Entity 剩余范围中交付 `Document::decoded_link_title(LinkId)`、`LinkTitle` 和 `LinkTitleChunk`。直接链接/图片和晚定义引用共用 ASCII 标点转义及命名/数字实体解码，反斜线优先、不递归、不 trim；未知/未完成候选保留字面。原始 title、目标 URL、身份及首定义优先保持，引用输出映射到获胜定义，空 title 与缺失 title 区分。
+- 构造 O(1)，固定大小零分配游标复用 info 解码器；普通字符/转义按源码字节和 query/object 收费，实体探测按扫描字节及 query 收费，成功输出按输出字节及 query/object 收费。探测可分帧，输出原子；六字节、单 query/object 帧保证继续。没有新增持久解析状态、正文复制或历史使用点/祖先回扫，累计解析 O(n log n)、空间 O(n)、零运行时依赖及禁止 unsafe 保持。
+- 新增 `tests/link_title.rs` 七项回归：1440 组独立实体/转义/容器/直接与引用/图片/行尾模型，753 组 ASCII/连续反斜线模型；UTF-8 全切点/逐字符前缀/前缀 EOF；晚定义/首定义优先/无 title 定义获胜、原文借用与目标 URL、空/缺失/失败 title、跨 tile 映射、零/不足/共享六字节预算、4096 字节和引用分类窗口边界；980 层百万字后千次追加及两万旧引用晚定义计数。
+- 首次专项 6 项通过、1 项因测试错误假设 SymbolId 为 0 失败，已改为从已有 LinkTarget 取得符号身份。补充短行测试后首次全套 1150 通过/1 失败：测试在行末确认前要求读取 title，现按既有 LF/CRLF/EOF 分类时机断言。修正后 7 项专项通过；日志 `/tmp/mdtui3-goal-run/link-title-targeted.log`、`link-title-first-full.log`、`link-title-targeted-final.log`。未改解析行为或已有测试预期。
+- README/TODO 同步实际范围；目标解码、URL 编码、多行 title、失败候选回退与宽泛标准覆盖继续待办。官方章节评分仍消费原始链接元数据，本项没有提升兼容率，官方夹具/生成器/评分投影保持。
+- 最终验收通过：项目 `nix develop` 内 `cargo check --workspace --all-targets`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **1151 项**、`cargo test --workspace --doc` **74 项（71 + 3）**、clippy `-D warnings`、fmt check 和 `git diff --check`。完整日志 `/tmp/mdtui3-goal-run/link-title-validation.log`；范围核对 `link-title-scope-check.log` 确认仅 7 个预期文件变化，其余 280 个前序文件逐字节及 SHA-256 保持，独立差异 `link-title-unit.patch`。
+
+## 2026-11-04 链接及图片目标解码读取交付
+
+- 交付 `Document::decoded_link_destination(LinkId)`、`LinkDestination` 和 `LinkDestinationChunk`。已提交的直接/引用链接及图片目标解码 ASCII 标点转义与分号终止命名/数字实体；反斜线优先、不递归、不 trim。URI/email 自动链接保持字面，email 不添加隐含 `mailto:`；不执行 URL 编码/过滤。引用输出映射到全局首个获胜定义，空目标与未解析引用区分；原始 `link_destination`、`link_url`、title、身份及解析方言保持。
+- 构造 O(1)，固定大小零分配游标复用 info 解码器，增加一个游标内字面模式标记；直接目标与标签区间相等即可识别自动链接，不增加解析持久状态。普通字符/转义、实体探测和输出分别按既有源码/输出字节及 query/object 计费，自动链接逐字符计费；共享六字节、单 query/object 帧可恢复，输出原子。总读取 O(目标字节数)，不访问历史引用、正文或祖先；追加 O(n log n)、空间 O(n)、零运行时依赖和禁止 unsafe 保持。
+- 新增 `tests/link_destination.rs` 七项回归：1440 组独立实体/转义/容器/直接与引用/图片/行尾模型及 750 组 ASCII 模型；自动链接字面语义与借用指针、裸/尖括号目标、非递归、原始 URL、空目标/缺失引用、晚定义/首定义优先/身份；UTF-8 全切点与逐前缀/EOF、跨 tile 映射、零/不足/共享六字节预算、4096 字节和引用分类窗口边界；980 层百万字后千次追加与两万旧引用晚定义计数。新增及相关既有专项 26 项首次全部通过，没有修改旧测试预期。
+- 验收通过：项目 `nix develop` 内 `cargo check --workspace --all-targets`；debug/release `cargo nextest run --workspace --no-fail-fast` 各 **1158 项**；`cargo test --workspace --doc` **75 项（72 + 3）**；`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check` 和 `git diff --check`。日志 `/tmp/mdtui3-goal-run/destination-validation.log`，分项日志同目录 `destination-{check,targeted,debug,release,final-checks}.log`。
+- README/TODO 已同步；多行目标/title、完整失败回退、URL 编码与宽泛标准覆盖继续待办。官方夹具、生成器及评分投影未改，当前章节统计未接入目标/title 解码游标。范围核对 `/tmp/mdtui3-goal-run/destination-scope-check.log`，独立差异 `destination-unit.patch`；除 7 个本单元文件外，其余 282 个前序文件保持原 SHA-256。
+
+
+## 2026-11-04 标准样例评分接入链接元数据解码交付
+
+- 从 TODO「继续扩充标准语法样例覆盖」选择既有链接元数据预算接口的评分接入。CommonMark 0.31.2 Backslash escapes / Entity 两章改为消费 `decoded_link_destination`、`decoded_link_title`，官方 22–23、32–33 与原始 HTML 期望一致；章节分别为 **11 支持/1 刻意差异/1 未支持**及 **15 支持/1 刻意差异/1 未支持**。移除这四例的旧差异观察，其余差异保持，官方 Markdown/HTML、生成器和来源摘要未改。
+- 共用 `tests/support/link_metadata.rs` 仅读取核心游标并进行输出层 HTML 转义及 UTF-8/反斜线百分号编码；已有百分号序列保持，不自行解码 Markdown、不递归、不 trim。ASCII 空白/控制字符及其它未评分 URL 编码仍拒绝；自动链接保留核心字面语义，空目标及空/缺失 title 可区分，原始借用接口断言保留。完整 URL 编码、过滤及实际链接交互未交付。
+- 目标/title 在每帧六字节、一次 query/object 的预算间共享，耗尽后保留游标及实体探测状态，换预算恢复；连续源码覆盖、源码边界、有限步数及与无限预算的输出对照均有断言。两章全部 **972 个 UTF-8 切点、942 个逐字符前缀**继续通过；新增两项回归覆盖直接/引用、自动链接、非递归、空元数据、原有百分号、中文/emoji、双标量及长命名实体、title 空白保留，补充 Unicode 输入全切点通过。实现前两项新测试均失败，见 `/tmp/mdtui3-goal-run/metadata-score-repro.log`；实现后专项 **11 项**通过，见 `metadata-score-targeted.log`。
+- 项目 devShell 验收通过：`cargo check --workspace --all-targets`，debug/release `cargo nextest run --workspace --no-fail-fast` 各 **1160 项**，`cargo test --workspace --doc` **75 项（72 + 3）**，`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、两组固定来源夹具 `--check` 和 `git diff --check`。汇总 `/tmp/mdtui3-goal-run/metadata-score-validation.log`，check/debug/release 分项日志同目录 `metadata-score-{check,debug,release}.log`。
+- README/TODO 更新当前统计和剩余范围，DONE 既有交付历史保持。核心解析、预算接口、追加 O(n log n)、空间 O(n)、零运行时依赖及禁止 unsafe 均保持；完整失败回退、多行目标/title、通用 URL 输出和宽泛标准覆盖仍待办。本单元仅修改两个评分测试、增加一个共用测试适配器及同步三份文档，范围核对 `metadata-score-scope-check.log`、独立差异 `metadata-score-unit.patch` 均在上述临时目录。
+
+
+## 2026-11-04 新引用 tab 分隔后的代码围栏交付
+
+- 从 TODO「围栏代码剩余规则」交付新 Quote 自身 tab 分隔的有界代码围栏子项：`>` 后直接 tab 先消费一列分隔，剩余列参与 opener 至多三列缩进，反引号/波浪线围栏确认成功才采用；正文按该列数去缩进，保留原始 info、容器/块身份和源码映射。失败、数学、其它叶块、短尾与窗口外候选保持既有方言。已有路径、closer 和预算读取接口复用原实现。
+- 新增固定大小游标原子探测，无持久状态或正文复制；仅在自身 tab 后的有效缩进以围栏字符开头时分类当前有界后缀，工作计入容器/分类字节。不会对每层祖先扫描后续正文，不回访旧块或历史正文，累计追加 O(n log n)、空间 O(n)、零运行时依赖及禁止 unsafe 保持。
+- 新增 `tests/quote_fence_tabs.rs` 五项回归：576 组物理列宽/定界/行尾模型，正文去缩进与原始 info；失败/其它叶块/共享窗口/作用域边界；UTF-8 全切点和逐字符前缀；连续借用源码映射/逐字符切片/tile、零预算停步和六字节恢复；989 层容器百万字后千次追加不增加分类、容器、行内或树访问。实现前专项 3 失败/2 通过，见 `/tmp/mdtui3-goal-run/quote-fence-repro.log`；初版深度测试的 tab 恰好整字节边界，后改为 989 层以覆盖实际部分 tab 路径。实现后专项 5 项全部通过，见 `quote-fence-targeted.log`。
+- 项目 devShell 验收通过：`cargo check --all-targets`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **1165 项**、`cargo test --workspace --doc` **75 项（72 + 3）**、clippy `-D warnings`、fmt check 和 `git diff --check`。日志 `/tmp/mdtui3-goal-run/quote-fence-debug.log`、`quote-fence-validation.log`；没有修改旧测试预期。范围核对 `quote-fence-scope-check.log` 确认仅 5 个文件改动，其余 286 个前序文件 SHA-256 保持，包括官方夹具/生成器/评分投影；独立差异 `quote-fence-unit.patch` 位于同目录。
+- README/TODO 已同步。完整容器、新引用其它叶块/分隔规则及超过分类窗口的围栏识别继续待办，未将宽泛条目标为完成。
+
+## 2026-11-04 新引用 tab 分隔后的 ATX 标题交付
+
+- 从完整容器/叶块 tab 缩进待办中交付一个子项：新 Quote 的 `>` 后直接 tab 消费一列分隔，剩余列按物理四列制表位计入至多三列 ATX 缩进。`>\t # title` 确认为引用内标题；仅窗口内确认成功的 1–6 级 ATX 采用，失败候选原子回退。短行等待 LF/CRLF/EOF，截断标记与必要分隔不在窗口外追认；既有尾缀裁剪、行内语义、稳定身份、作用域和源码映射保持。
+- 将已有 `quote_fence` 原子探测扩展为围栏/ATX 共用的 `quote_leaf`，只增加有效缩进后的 `#` 候选和标题成功分支；固定大小游标与工作计数复用，无新增持久状态、旧正文/历史块/祖先回扫。长标题正文和尾缀沿用单遍消费，累计追加 O(n log n)、空间 O(n)、零运行时依赖与禁止 unsafe 保持。
+- 新增 `tests/quote_atx_tabs.rs` 六项回归：1344 组列宽/级别/行尾独立模型、失败及窗口边界、UTF-8 全切点/逐字符前缀、连续源码映射/逐字符切片/tile、零预算停步与六字节恢复、搜索/slug/折叠；989 层百万字标题后千次追加不增加分类/容器工作，失败长井号串与 4096 组新引用标题保持有界计数。修改前专项 5 失败/1 通过，见 `/tmp/mdtui3-goal-run/quote-atx-repro.log`；实现后 6 项通过，见 `quote-atx-targeted.log`。
+- 首轮全套 1169 通过/2 失败，原因是旧 ATX 列宽模型及叶块测试仍把 `>\t # ...` 当作超额缩进；更新为一列分隔后的三列缩进，并将叶块旧拒绝断言改为明确成功断言。围栏测试的一条旧标题回退预期同样更新。相关专项 31 项全部通过，见 `quote-atx-targeted-final.log`；首轮全套见 `quote-atx-debug.log`。
+- README/TODO 已同步。完整容器、新引用其它叶块及超过分类窗口的识别继续待办，未将宽泛条目标为完成。
+- 项目 devShell 最终验收通过：`cargo check --all-targets`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **1171 项**、`cargo test --workspace --doc` **75 项（72 + 3）**、clippy `-D warnings`、fmt check 和 `git diff --check`，见 `/tmp/mdtui3-goal-run/quote-atx-validation.log`。范围核对 `quote-atx-scope-check.log` 确认仅 8 个预期文件变化，其余 284 个前序文件 SHA-256 保持，包括官方夹具/生成器/评分投影；独立差异 `quote-atx-unit.patch` 位于同目录。
+
+
+## 2026-11-04 新引用 tab 分隔后的分隔线交付
+
+- 从完整容器/叶块 tab 缩进待办交付新 Quote 的有界分隔线子项：`>` 后直接 tab 消费一列分隔，余量按物理四列制表位计入至多三列缩进；至少三个同种 `*` / `-` / `_`，仅完整行确认成功采用。分隔线优先于新列表，已有作用域 Setext 优先级保持；失败、普通正文、数学及围栏规则原子回退。隐藏作为容器分隔消费的 tab，实际后缀空白和标记按原字节显示；身份及源码映射保持。
+- `quote_leaf` 复用已有单次反向分隔线后缀摘要和缓存列宽，只增加常数判断，无新增后缀分类扫描、持久状态、旧正文/历史块/祖先回扫。累计追加 O(n log n)、空间 O(n)、零运行时依赖和禁止 unsafe 保持；共享预算接口复用原实现。
+- 新增 `tests/quote_rule_tabs.rs` 五项回归：1728 组列宽/标记数/行尾独立模型，优先级、部分 tab 祖先、失败和分类窗口；UTF-8 全切点/逐前缀/EOF；连续源码映射/逐字符切片/tile、零预算停步和六字节恢复；989 层百万字后千次追加不增加分类/容器工作，以及 4096 组新引用分隔线的有界计数。修改前 4 失败/1 通过，见 `/tmp/mdtui3-goal-run/quote-rule-repro.log`。初版窗口测试把无 LF 的恰好 1024 字节 EOF 误认为可追认，已按既有窗口规则修正；相关专项 21 项全部通过，见 `quote-rule-targeted-final.log`。
+- 首轮 debug 全套 1175 通过/1 失败；唯一旧列宽模型仍拒绝 `>\t ***`，已按新引用分隔消费一列更新预期，未放宽其它断言。首轮日志 `quote-rule-debug.log`。最终项目 devShell 内 `cargo check --workspace --all-targets`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **1176 项**、`cargo test --workspace --doc` **75 项（72 + 3）**、clippy `-D warnings`、fmt check 与 `git diff --check` 全部通过，日志 `/tmp/mdtui3-goal-run/quote-rule-validation.log`。
+- README/TODO 已同步，完整容器、新引用其它叶块、窗口外识别及宽泛标准覆盖继续待办，未将宽泛条目标为完成。范围核对 `quote-rule-scope-check.log` 确认仅 6 个预期文件变化，其余 287 个前序文件 SHA-256 保持，包括官方夹具/生成器/评分投影；独立差异 `quote-rule-unit.patch` 位于上述临时目录。
+
+
+## 2026-11-04 新引用 tab 分隔后的独立数学块交付
+
+- 从容器/叶块及数学后续待办中交付新 Quote 自身 tab 分隔的数学 opener：`>` 后直接 tab 消费一列可选分隔，余量按物理四列制表位计入至多三列缩进；只有完整有界的独占行 `$$`（可带尾部 space/tab）确认成功时采用。失败候选原子回退，短尾等待 LF/CRLF/EOF，窗口外候选不追认。已有路径、closer、作用域退出及未闭合 EOF 复用既有规则；数学正文保持字面，不按 opener 缩进去缩进。
+- 实现仅将 `$` 加入 `quote_leaf` 候选集合，复用固定大小游标和既有数学分类/消费路径；候选的有界后缀扫描计入分类工作，不对每层祖先重扫正文，无新增持久状态、正文复制或旧块回访。累计追加 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 与共享 Budget 保持。
+- 新增 `tests/quote_math_tabs.rs` 六项回归：384 组独立列宽/行尾/后缀模型，完整及部分 tab 祖先路径、失败/分类窗口，UTF-8 全切点/逐前缀/EOF，稳定身份/折叠/读取失效，原始与正文源码映射、连续显示覆盖/tile、零预算停步与六字节恢复；989 层百万字正文及超长失败 closer 后千次追加无分类/容器/行内回扫，4096 组数学块保持计数边界。修改前专项 5 失败/1 通过，见 `/tmp/mdtui3-goal-run/quote-math-repro.log`；实现后专项 6 项通过，见 `quote-math-targeted.log`。
+- 首轮 debug 全套 1179 通过/3 失败；三条旧新引用测试仍预期 `>\t $$` 显示普通文本，已更新为数学定界隐藏，其余断言保持。首轮日志 `/tmp/mdtui3-goal-run/quote-math-debug.log`。README/TODO 已同步，完整容器、其它新引用叶块、窗口外识别与数学实际排版继续待办，未将宽泛条目标为完成。
+- 最终项目 devShell 验收通过：`cargo check --workspace --all-targets`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **1182 项**、`cargo test --workspace --doc` **75 项（72 + 3）**、clippy `-D warnings`、fmt check 和 `git diff --check`，见 `/tmp/mdtui3-goal-run/quote-math-validation.log`。范围核对 `quote-math-scope-check.log` 确认仅 7 个已有文件及 1 个新增测试变化，其余 286 个前序文件 SHA-256 保持，包括官方夹具/生成器/评分投影；独立差异 `quote-math-unit.patch` 位于上述临时目录。
+
+
+## 2026-11-04 新引用 tab 分隔后的引用链接定义交付
+
+- 从容器/叶块 tab 缩进待办交付新 Quote 自身 tab 分隔的引用链接定义：`>` 后直接 tab 消费一列可选分隔，余量按物理四列制表位计入至多三列缩进，仅完整有界且标签有效的定义采用。失败候选、纯空白/过长标签和脚注原子回退；短尾等待 LF/CRLF/EOF，分类窗口外不追认。保持原始目标/title、确切作用域、首定义优先、稳定链接身份和引用范围通知。
+- `quote_leaf` 复用固定大小游标与既有定义分类/消费路径，增加 `[` 候选和无分配标签有效性检查；有界后缀分类及标签探测均计费。无新增持久状态、正文复制或历史引用/正文/祖先回扫，累计追加 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 与共享预算保持。
+- 新增 `tests/quote_definition_tabs.rs` 五项回归：576 组独立列宽/目标/行尾模型，失败/分类窗口及完整/部分 tab 祖先路径，UTF-8 全切点/逐前缀/EOF，首定义优先与引用通知，连续源码映射/逐字符切片/tile、零预算停步与六字节恢复。989 层百万字正文后新开第 990 层引用定义、超长失败定义后千次追加、两万旧引用以及 4096 个后续新引用定义验证有界计数。修改前 4 失败/1 通过见 `/tmp/mdtui3-goal-run/quote-definition-repro.log`；初次实现后 5 项通过见 `quote-definition-targeted.log`，补充映射/新引用分块和容器计数检查后全套通过。
+- 项目 devShell 验收通过：`cargo check --workspace --all-targets`，debug/release `cargo nextest run --workspace --no-fail-fast` 各 **1187 项**，`cargo test --workspace --doc` **75 项（72 + 3）**，`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check` 及 `git diff --check`。日志 `/tmp/mdtui3-goal-run/quote-definition-debug.log`、`quote-definition-validation.log`；旧测试无需修改。
+- README/TODO 已同步，仅追加准确子项，完整容器、新引用其它叶块、多行定义及窗口外识别继续待办。范围核对 `quote-definition-scope-check.log` 确认仅 4 个已有文件及 1 个新增测试变化，其余 290 个基线文件 SHA-256 保持，包括官方夹具/生成器/评分投影及旧测试；独立差异 `quote-definition-unit.patch` 位于上述临时目录。
+
+
+## 2026-11-04 新引用 tab 分隔后的脚注定义起始行交付
+
+- 从容器/叶块 tab 缩进待办交付新 Quote 自身 tab 分隔的脚注起始行：`>` 后直接 tab 消费一列可选分隔，余量按物理四列制表位计入至多三列缩进；合法 `[^label]:` 才采用部分 tab 前缀，失败原子回退。标签和冒号必须在分类窗口内，正文可跨窗口单遍增长；保留既有标签规则、全局首定义优先、首次引用编号、稳定身份、源码映射和四列续行。
+- 核心仅将分类器已验证的 `FootnoteDefinition` 加入 `quote_leaf` 成功分支，复用固定大小游标和已有脚注消费路径；有界后缀及标签验证计入分类工作。无新增持久状态、正文复制或旧正文/引用/祖先回扫，累计追加 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 与共享预算保持。
+- 新增 `tests/quote_footnote_tabs.rs` 五项回归：576 组列宽/正文/行尾独立模型，完整及部分 tab 祖先、失败/标签上限/分类窗口、四列续行，UTF-8 全切点/逐前缀/EOF，稳定身份/编号与首定义优先，原始与正文映射、零预算停步及六字节恢复；989 层百万字脚注后千次追加、两万旧引用和 4096 个后续新引用定义验证计数。修改前专项 4 失败/1 通过，见 `/tmp/mdtui3-goal-run/quote-footnote-repro.log`。首次实现后专项 4 通过/1 失败：历史定义压力输入仍在同一脚注续行内，现用空行退出并创建独立 Quote，再验证 4096 组新引用定义。
+- 首轮 debug 全套 1191 通过/1 失败；旧引用定义测试将合法脚注起始行列为失败输入，现改用缺少冒号的脚注候选继续验证原子回退，其余断言保持。日志 `/tmp/mdtui3-goal-run/quote-footnote-debug.log`。
+- 最终项目 devShell 验收通过：`cargo check --workspace --all-targets`、debug/release `cargo nextest run --workspace --no-fail-fast` 各 **1192 项**、`cargo test --workspace --doc` **75 项（72 + 3）**、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check` 和 `git diff --check`，见 `/tmp/mdtui3-goal-run/quote-footnote-validation.log`。
+- README/TODO 已同步，完整容器、新引用普通正文、窗口外识别及脚注正文解析/实际排版继续待办。范围核对 `quote-footnote-scope-check.log` 确认仅 5 个已有文件及 1 个新增测试变化，其余 290 个基线文件 SHA-256 保持，包括官方夹具/生成器/评分投影；独立差异 `quote-footnote-unit.patch` 位于上述临时目录。
+
+
+## 2026-11-04 新引用 tab 分隔后的嵌套引用交付
+
+- 从容器后续语义的新容器首行/tab 待办交付新 Quote 自身 tab 分隔后的嵌套引用：`>` 后直接 tab 消费一列可选分隔，余量与后续空白按物理四列制表位合计至多三列，下一个显式 `>` 必须在分类窗口内。修复 `>\t > text` 少识别一层引用的问题；保留父子身份、既有叶块/续行、源码与显示映射及开闭通知。超过三列、无嵌套标记、围栏/数学正文和窗口外识别保持既有方言。
+- `quote_leaf` 复用固定大小游标及缓存空白终点，只检查下一引用标记，不在每一层扫描剩余后缀；新增读取计入容器工作。无新增持久状态、正文复制或旧正文/祖先回扫；累计追加 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 与共享预算保持。
+- 新增 `tests/quote_nested_tabs.rs` 五项回归：1152 组独立列宽/叶块/行尾模型，完整及部分 tab 祖先、失败/窗口、UTF-8 全切点/逐前缀/EOF；稳定父子身份和开闭通知、原始源码读取、隐藏前缀映射、零预算停步与六字节恢复；连续 330 段 tab 引用链及 990 层百万字正文后千次追加检查计数。修改前 4 失败/1 通过见 `/tmp/mdtui3-goal-run/quote-nested-repro.log`；最初模型中的任务标记源码偏移不宜跨不同长度输入直接比较，已改用普通列表模型，任务输入仍纳入分块快照检查。
+- README/TODO 已同步；完整容器、新引用普通正文、其它首行规则及窗口外识别继续待办，未勾选宽泛 TODO。
+- 补充分类窗口外首字节的反例后，首轮 release 产物在该断言失败（`quote-nested-release-first.log`）；显式要求内层标记位置小于窗口末端，避免提前采用外层 tab 分隔。最终 debug 全套 **1197 项**通过，见 `/tmp/mdtui3-goal-run/quote-nested-debug-final.log`。
+- 最终项目 devShell 验收通过：`cargo check --workspace --all-targets`、release `cargo nextest run --workspace --release --no-fail-fast` **1197 项**、`cargo test --workspace --doc` **75 项（72 + 3）**、clippy `-D warnings`、fmt check 和 `git diff --check`；日志 `/tmp/mdtui3-goal-run/quote-nested-validation.log`。范围核对 `quote-nested-scope-check.log` 确认仅 4 个已有文件及 1 个新增测试变化，其余 292 个基线文件 SHA-256 保持，包括官方夹具/生成器/评分投影及旧测试；独立差异 `quote-nested-unit.patch` 位于同目录。
+
+## 2026-11-04 新引用 tab 分隔后的嵌套列表交付
+
+- 从容器首行/tab 后续待办交付新 Quote 自身 tab 分隔后的嵌套列表：`>` 后直接 tab 消费一列可选分隔，余量加后续空白至多三列时，允许开启有效无序/有序列表；列表标记必须在分类窗口内确认。修复 `>\t - item` 漏识别列表以及 `>\t- item` 列表缩进多算一列的问题。失败原子回退，分隔线优先级、首行代码、任务/编号、父子身份、显式续行/兄弟条目及共享预算保持。
+- 核心只扩展 `quote_leaf` 成功分支，复用固定大小游标和既有 `marker` 探测；扫描至多九位数字、定界及随后的有界空白，成功后下一循环消费同一标记，每段只增加常数次访问并计入 `container_bytes`。无新增持久状态、正文复制或旧正文/历史容器/祖先回扫，保持累计追加 O(n log n)、空间 O(n)、零运行时依赖和禁止 unsafe。
+- 新增 `tests/quote_list_tabs.rs` 五项回归：4608 组独立列宽/标记/正文/行尾模型；失败/分隔线优先级/分类窗口，完整及部分 tab 祖先；17 组输入的 365 个合法 UTF-8 切点及 348 个字符前缀/EOF；稳定身份、续行与兄弟通知、原始源码及隐藏前缀映射、零预算停步和六字节恢复；128 组连续 Quote/List/Item、991 层百万字正文后千次追加检查计数。
+- 修改前专项 4 失败/1 通过，见 `/tmp/mdtui3-goal-run/quote-list-repro.log`。初次专项中，跨不同长度输入的任务标记源码偏移改由分块快照验证，列宽模型使用普通文本；连续嵌套与兄弟输入的空格按物理列宽校正。最终专项 5 项通过，见 `quote-list-targeted-final.log`；debug 全套 **1202 项**通过，见 `quote-list-debug.log`。
+- README/TODO 已同步，仅勾选准确子项；完整容器、新引用普通正文、其它首行规则和窗口外识别继续待办。
+- 最终项目 devShell 验收通过：`cargo check --workspace --all-targets`、release `cargo nextest run --workspace --release --no-fail-fast` **1202 项**、`cargo test --workspace --doc` **75 项（72 + 3）**、clippy `-D warnings`、fmt check 和 `git diff --check`；日志 `/tmp/mdtui3-goal-run/quote-list-validation.log`。范围核对 `quote-list-scope-check.log` 确认仅 4 个已有文件及 1 个新增测试变化，其余 293 个基线文件 SHA-256 保持，包括官方夹具/生成器/评分投影及旧测试；独立差异 `quote-list-unit.patch` 位于同目录。
+
+
+## 2026-11-04 新引用 tab 分隔后的普通正文交付
+
+- 完成 TODO 容器剩余语义中的新引用普通正文子项：直接 tab 消费一列引用分隔，其余至多三列按物理四列制表位映射回原单字节；行内语义、源码读取、父子身份与显式续行保持。失败标记若被分类为普通文本亦适用；完整容器及其它首行规则继续待办。
+- 保留容器正文前导空白的既有方言，不在本轮承诺完整 CommonMark 缩进。空白引用行、无有效标签的定义、窗口外起始与四列代码优先级保持；分类窗口内起始的长正文继续即时单遍追加。
+- 表头候选增加固定大小的虚拟余量，沿用单遍摘要、源码区间和显示映射；早/晚管道确认时裁剪单元格前导空白，失败或 EOF 只消费尚未解析部分，余量不丢失、不重放。没有新增依赖、unsafe、正文复制或旧正文/祖先回扫，累计解析 O(n log n)、空间 O(n) 与共享预算契约保持。
+- 新增 `quote_prose_tabs` 六项回归：1536 组输入、短输入全切点/逐前缀/EOF、48 组长表头的全切点/流式检查点、源码/逐字符/tile 映射、零预算停步和六字节恢复；989 层百万字及后续千次单字追加检查分类/容器计数不再增长。修改前专项 3 失败/2 通过；首轮全套五处旧 tab 显示预期按本轮新语义更新，官方夹具/生成器/评分投影保持。
+- 验收：`nix develop -c bash /tmp/mdtui3-goal-run/quote-prose-validate.sh` 通过；debug/release 各 1208 项、doc 75 项及 check/clippy/fmt/diff 通过。日志 `/tmp/mdtui3-goal-run/quote-prose-validation.log`，完整测试分别见 `quote-prose-debug.log` / `quote-prose-release.log`；专项及范围核对见同目录 `quote-prose-targeted.log` / `quote-prose-scope-check.log`，独立差异 `quote-prose-unit.patch`。
+
+## 2026-11-04 完整已有部分 tab 路径的普通新段落交付
+
+- 从容器后续语义的新段落待办交付完整已有部分 tab 路径上的普通新段落：窗口内非空正文、余量与后续空白合计至多三列时，允许空行/标题/围栏/定义后继续使用原容器。`- seed\n\n\t*text*` 保留 Item 并显示两个空格和斜体文字；源码仍是原 tab，列表 Loose 由原观察路径确认。空白/失败路径、四列代码、分类窗口和待确认表头的前缀规则保持，部分路径普通正文仍不作为表头候选。
+- 核心只放宽原子路径探测的普通文本条件；区分无前序段落的新正文与待确认表头，复用原列宽、身份、行内消费及显示映射。无新增状态、依赖、unsafe、扫描或旧正文/历史容器/祖先回扫，累计追加 O(n log n)、空间 O(n) 与共享预算保持。
+- `tests/new_paragraph_tabs.rs` 六项回归覆盖 1536 组独立列宽模型，UTF-8 全切点/逐前缀/EOF、表头限制/Setext/代码/失败路径/窗口边界、身份/列表松紧、原始/逐字符/tile 映射、零预算停步及六字节恢复；982 层百万字后千次追加无分类/容器回扫，6 组长管道正文全切点和预算消费验证单遍增长。
+- 修改前专项 5 项失败，见 `/tmp/mdtui3-goal-run/new-paragraph-repro.log`；其中两处新增测试的引用空行/分隔列预期随后校正。首轮全套 1210 通过/4 失败：两处旧预期按新段落显示/身份/松紧语义更新，另两处暴露待确认表头边界扩大，收窄新段落条件后相关 36 项通过，见 `new-paragraph-targeted-final.log`。README/TODO 已同步；部分路径表头、其它首行/空白/不完整路径和完整容器规则继续待办，未勾选宽泛 TODO。
+- 最终验收：`nix develop -c bash /tmp/mdtui3-goal-run/new-paragraph-validate.sh` 通过；debug/release 各 **1214 项**、doc **75 项（72 + 3）**及 check/clippy/fmt/diff 通过。日志 `/tmp/mdtui3-goal-run/new-paragraph-validation.log`；全套见 `new-paragraph-debug-final.log` / `new-paragraph-release.log`，范围核对 `new-paragraph-scope-check.log` 确认仅 6 个已有文件及 1 个新增测试变化，其余 293 个基线文件 SHA-256 保持，包括官方夹具/生成器/评分投影；独立差异 `new-paragraph-unit.patch`（均在同目录）。
+
+## 2026-11-04 CommonMark Block quotes 标准样例评分交付
+
+从标准样例覆盖待办拆出完整 Block quotes 章节，固定 CommonMark 0.31.2 的 228–252 共 25 例；新增离线夹具生成器、固定 SHA-256/章节成员校验及 `--check`。官方 Markdown/HTML 不经过核心解析器，逐字保留。只新增测试评分基础设施，核心解析状态、运行时依赖及追加/预算算法保持。
+
+独立评分为 18 支持、2 刻意差异、5 未支持。238、252 保留容器正文前导空白，属于现有方言；239–241、244、249 暴露空引用行发布为正文叶块的缺口，已单独写入 TODO。观察值与官方期望分离，差异消失或变化时测试要求复核分类。投影只使用公开结构/显示语义，保留空正文叶块及原始空白，不重解析 Markdown、不接收编号；越出投影范围的对象/样式显式拒绝。
+
+六项新增回归覆盖完整章节报告、409 个合法切点、384 个逐字符前缀、EOF 收尾、源码及隐藏前缀连续映射、逐字符切片、零预算与六字节共享预算恢复；独立验证标题级别、容器层级/关闭、显式/lazy 换行、代码字面空白和投影拒绝边界。短章评分不代表完整容器兼容或深层/长输入复杂度证明；既有性能与预算回归继续作为验收门槛。
+
+验收：debug/release 各 1220 项、doc 75 项，以及 `cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、fmt、夹具 `--check` 与 `git diff --check` 全部通过；修改过的上游字节被 SHA-256 校验拒绝。总日志 `/tmp/mdtui3-goal-run/block-quotes-validation.log`，专项报告 `block-quotes-targeted.log`，来源校验 `block-quotes-provenance.log`。范围核对 `block-quotes-scope-check.log` 确认只追加 README/TODO/DONE，新增本章测试/夹具/生成器，其余 297 个前序文件 SHA-256 保持；独立差异 `block-quotes-unit.patch`（均在同目录）。
+
+## 2026-11-04 有界空白引用叶块交付
+
+- 完成 TODO 中 Block quotes 239–241、244、249 暴露的空白叶块缺口：完整有界空引用/空白引用行发布为 `Blank`，保留物理叶块、容器身份、原始源码与剩余空白映射。已有段落终止、显式续行、缺失引用退出和列表尾部空白传播路径保持；marker-only 列表、部分/缺失路径、代码/数学正文及窗口外长空白不扩展。
+- 核心只扩展既有 `Line::Container` 空白分支的叶块类型选择，无新增状态、扫描、依赖、unsafe 或旧正文/引用/祖先回扫；累计解析 O(n log n)、空间 O(n) 和共享预算契约保持。显示中的剩余空白保留原字节，不能将 `Blank` 理解为删除源码或 trim 文本。
+- CommonMark 0.31.2 Block quotes 评分更新为 **23 支持、2 刻意差异、0 未支持**；238、252 继续保留前导空白方言。官方夹具、生成器与投影函数逐字保持，只更新独立分类和相应断言。完整容器和宽泛标准覆盖仍待办。
+- 新增 `tests/quote_blanks.rs` 六项回归：1152 组空白/嵌套/行尾组合，UTF-8 全切点/逐前缀/EOF，段落、行内、lazy、Setext、列表松紧、代码/数学/表头边界，原始/切片映射与零预算停步、六字节恢复；980 层中百万字正文后 100 个空白行按新增前缀计费，后续百万字长行及千次追加不回扫。官方全章仍覆盖 409 切点与 384 前缀。修改前专项 5 失败/1 通过，修改后相关 12 项全部通过，未调整其它旧测试。
+- 验收通过：debug/release 各 **1226 项**、doc **75 项（72 + 3）**，check/clippy/fmt、官方夹具 `--check` 和 diff 检查通过。日志 `/tmp/mdtui3-goal-run/quote-blank-validation.log`；debug 全套见 `quote-blank-debug.log`，专项及修复前证据见 `quote-blank-targeted.log` / `quote-blank-repro.log`。范围核对 `quote-blank-scope-check.log` 确认仅 5 个已有文件及 1 个新增测试变化，其余 298 个基线文件 SHA-256 保持；独立差异 `quote-blank-unit.patch`（均在同目录）。
+
+
+## 2026-11-04 有界空列表条目叶块交付
+
+- 完成容器剩余语义中的有界无任务空列表叶块分类：现有分类器已确认为空白的 ListItem 发布为 `Blank`，列表标记、有序编号和父子身份仍从容器 arena 读取；物理叶块、源码和前缀隐藏保持。空首行不直接使列表 Loose，后续正文和兄弟条目的间距继续沿用原观察路径。
+- 任务条目即使没有正文仍发布带 `TaskMarker` 的 `ListItem`；非空正文、代码/数学、部分或缺失路径匹配、窗口外空白和 EOF 不追认规则保持。仅扩展类型选择，不增加扫描、持久状态、依赖或 unsafe，不回访旧正文或祖先，累计解析 O(n log n)、空间 O(n) 与共享预算契约不变。完整列表/容器和宽泛标准覆盖仍待办。
+- 新增 `tests/empty_items.rs` 六项回归：1728 组标记/编号/缩进/作用域/行尾模型，UTF-8 全切点/逐前缀/EOF，段落/行内/Setext/表头/任务/代码/窗口边界，原始与逐字符映射、零预算停步和六字节恢复；980 层引用中的百万字正文后连续 100 个空条目按新增前缀计费，后续百万字长行及千次单字追加不重分类或回扫。修改前 5 失败/1 通过，修复后 6 项通过；仅同步一条既有引用空白测试的空列表预期。官方夹具、生成器和评分投影保持。
+- 验收：debug/release 各 **1232 项**、doc **75 项（72 + 3）**全部通过；check/clippy/fmt、Block quotes 官方夹具复核与 diff 检查通过。命令 `nix develop -c cargo nextest run --workspace --no-fail-fast` 和 `nix develop -c bash /tmp/mdtui3-goal-run/empty-item-validate.sh`；日志 `/tmp/mdtui3-goal-run/empty-item-validation.log`、`empty-item-debug.log`、`empty-item-release.log`，修复前与专项见 `empty-item-repro.log` / `empty-item-targeted.log`。范围核对 `empty-item-scope-check.log` 确认仅 5 个已有文件及 1 个新测试变化，其余 299 个基线文件 SHA-256 保持；README/TODO/DONE 仅追加，独立差异 `empty-item-unit.patch`（均在同目录）。
+
+
+## 2026-11-04 CommonMark Lists 标准样例评分交付
+
+- 从标准样例覆盖待办拆出完整 CommonMark 0.31.2 Lists 章节（301–326，共 26 例）；新增离线生成器、固定 SHA-256/章节成员检查和 `--check`，官方 Markdown/HTML 逐字保留。评分为 **17 支持、3 刻意差异、6 未支持**，未把完整列表/容器或宽泛标准覆盖勾选完成。
+- 304 沿用任意有序编号可中断段落的方言；308/309 的 HTML 注释保持普通文字。310–313 的变缩进列表分组、318 的容器围栏无前缀空行及 320 的引用末尾空白传播缺口已写入 TODO，312 还保留 lazy 前导空白差异。本单元交付评分基础设施，不改这些解析行为。
+- 投影从公开容器 ID/父子关系、首 Item 编号、确切父 List 的 Tight/Loose、叶块与显示片段产生测试 HTML；不接收样例编号、不重解析、不 trim、不合并独立 List、不补代码内容。独立观察与官方期望分开，差异变化要求复核。空条目与隐藏定义验证核心叶块分类；未评分结构和样式显式拒绝。只供短测试，未宣称投影本身满足窗口级复杂度或祖先预算。
+- 新增六项回归：完整章节报告、730 切点、704 逐字符前缀及各前缀 EOF，连续原始/显示/逐字符切片映射、零预算停步与六字节共享预算恢复，独立编号/标记分组/嵌套松紧/空条目/隐藏定义/代码空白和拒绝边界。核心解析及既有测试未修改，无新增运行时依赖、unsafe 或解析状态；累计追加 O(n log n)、空间 O(n) 与预算契约保持。
+- 最终项目 devShell 验收通过：debug/release 各 **1238 项**、doc **75 项（72 + 3）**，`cargo check --workspace --all-targets`、clippy `-D warnings`、fmt、夹具 `--check` 与 `git diff --check` 全部通过。命令 `nix develop -c bash /tmp/mdtui3-goal-run/lists-validate.sh`；总日志 `/tmp/mdtui3-goal-run/lists-validation.log`，全套见 `lists-debug.log` / `lists-release.log`，专项评分见 `lists-targeted.log`，来源校验见 `lists-provenance.log`。范围核对 `lists-scope-check.log` 确认只追加三份文档并新增本章测试/夹具/生成器，其余 302 个前序文件 SHA-256 保持；独立差异 `lists-unit.patch`（均在同目录）。
+
+
+## 2026-11-04 引用末尾空白的列表间距边界交付
+
+- 完成 TODO 中 Lists 320 的容器缺口：Quote 关闭时截断引用内部末尾空白，包括引用内嵌套列表的尾部；引用外的兄弟条目或直接块不再因此使父列表 Loose。引用外部的真实空行、未跨 Quote 的嵌套列表尾部仍按既有规则确认 Loose，EOF 关闭本身不确认。
+- 核心仅在已有 Quote 出栈分支清除 `trailing_blank`，无新增扫描、持久状态、运行时依赖或 unsafe。每个容器仍只关闭一次，无旧正文、历史条目或保留祖先回扫，累计解析 O(n log n)、空间 O(n) 与共享预算契约保持。源码、叶块/容器身份、编号、显示映射、折叠意愿及实际 Loose 通知保持。
+- 官方 Lists 320 对照原始 HTML 通过，全章为 **18 支持、3 刻意差异、5 未支持**；夹具、生成器和评分投影不改，只更新独立分类及计数。310–313 不同缩进、318 围栏无前缀空行、完整容器及宽泛标准覆盖继续待办。README/TODO 更新当前规则与剩余范围，历史 DONE 记录保持。
+- 新增 `tests/quote_tail.rs` 六项回归：640 组标记/引用层数/空白/行尾/后继模型，跨引用的嵌套列表和引用外空行反例，UTF-8 全切点/逐前缀/EOF，原始及显示映射、零预算停步与六字节恢复，身份/关闭/Loose 通知与折叠意愿，980 层引用、百万字正文及千次长行追加工作量。修改前 5 失败/1 通过，修复后专项 6 项通过；官方全章继续验证 730 切点、704 前缀及预算。
+- 首轮全套 1241 通过/3 失败，均为旧的跨 Quote 空白传播预期；更新脚注及列表尾部测试，并同步既有引用空白测试的一条预期。相关 44 项通过。示例 `list_tail_blanks` 补上引用外的真实空白行，以保留父列表 Loose 的演示。修复前日志 `quote-tail-repro.log`，专项 `quote-tail-targeted-final.log`，首轮全套 `quote-tail-debug-initial.log`（均在 `/tmp/mdtui3-goal-run/`）。
+- 最终验收通过：debug/release 各 **1244 项**、doc **75 项（72 + 3）**，check/clippy `-D warnings`/fmt、官方夹具 `--check`、diff 检查及 release 示例运行全部通过。命令 `nix develop -c bash /tmp/mdtui3-goal-run/quote-tail-validate.sh`；总日志 `/tmp/mdtui3-goal-run/quote-tail-validation.log`。范围核对 `quote-tail-scope-check.log` 确认仅 10 个预期文件变化、其余 299 个前序文件 SHA-256 保持，官方夹具/生成器/评分投影和历史 DONE 不变；独立差异 `quote-tail-unit.patch`（均在同目录）。
+
+
+## 2026-11-04 列表内代码围栏跨省略缩进空行交付
+
+本轮交付 TODO 中 Lists 318 暴露的围栏空行缺口。已开启的反引号/波浪线围栏，在完整分类窗口内接受省略全部或部分列表缩进的 space/tab 空行，所有已有引用标记仍须匹配。不足缩进全部隐藏，换行作为同一代码块的字面正文保留，不登记列表分隔；足够缩进和多余空白沿用原有部分 tab 映射及 opener 去缩进。保持 BlockId、容器身份、源码包络、CODE 样式、折叠与通知；缺失引用/非空路径、兄弟、数学、缩进代码及分类窗口方言保持。
+
+实现只给既有容器选项传入代码围栏标志，在空白保留分支复用引用深度索引和缓存空白终点提前返回；不新增持久状态、依赖、unsafe 或旧正文/历史容器/保留祖先回扫。匹配成本按实际前缀和关闭节点计费，无前缀深列表空行不逐层遍历；累计 O(n log n)、空间 O(n) 与共享预算契约保持。
+
+`tests/fence_blanks.rs` 六项新回归覆盖 1440 组独立物理列宽模型、同一代码块的字面正文、缺失引用/非空/控制空白/数学/外部间距反例、UTF-8 全切点/逐前缀/EOF、源码映射/零预算/六字节恢复、稳定身份与折叠通知。480 层列表（960 个容器）的千次空行保持 arena 容量且无祖先线性扫描，百万字正文与千次单字追加无容器/行内回扫。修复前 4 项失败、2 项通过；初始测试编译中的视图类型名按实际 FoldView API 修正。首轮全套仅两条旧关闭/Loose 预期失败，按新语义更新后相关 35 项与最终全套通过。
+
+官方 CommonMark 0.31.2 Lists 318 对照原始 HTML 通过，全章为 **19 支持、3 刻意差异、4 未支持**。官方 Markdown/HTML 夹具、生成器与评分投影不改，仅更新独立观察分类和计数；原全章 730 切点/704 前缀及预算验收继续通过。310–313 不同标记缩进、完整容器和宽泛标准覆盖仍未完成；README/TODO 已同步，不勾选宽泛待办。
+
+验收：`nix develop -c cargo check --all-targets`、`cargo nextest run --no-fail-fast`（1250 项）、release 同命令（1250 项）、`cargo test --doc`（75 项）、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、Lists 离线夹具校验及 `git diff --check` 全部通过。命令在项目 devShell 内执行，汇总日志 `/tmp/mdtui3-goal-run/fence-blank-validation.log`，首轮复现 `fence-blank-repro.log`，专项 `fence-blank-targeted-final.log`，最终全套 `fence-blank-debug-final.log` / `fence-blank-release.log`，范围校验及独立差异见同目录 `fence-blank-scope-check.log` / `fence-blank-unit.patch`。
+
+
+## 2026-11-04 同型兄弟列表标记的不同缩进交付
+
+本轮闭环 TODO 的 Lists 310–313 列表拆分缺口。已有列表祖先匹配后，新标记缩进至多三列且不足旧 Item 正文缩进时，同型 bullet / 有序分隔符开启兄弟 Item，保留 List ID 和松紧；达到正文缩进则按嵌套处理。每个新 Item 更新正文缩进及叶块标记缩进，部分 tab 路径采用相同规则；任务、编号、后代关闭、空白传播和一次 Loose 通知保持。不同标记、分隔线/Setext、缺失引用、四列代码及分类窗口仍遵守原有边界。
+
+实现只替换三个匹配路径的常数条件并更新叶块缩进，移除不再使用的活动列表标记缩进字段；复用缓存列宽和已有正文缩进，无新增扫描、持久状态、运行时依赖、unsafe 或旧正文/历史容器/保留祖先回扫。累计追加 O(n log n)、空间 O(n) 和共享预算契约保持。
+
+官方 CommonMark 0.31.2 Lists 310、311、313 对照原始 HTML 通过；312 列表结构已修复，仅保留既有 lazy 前导空白刻意差异。完整章节现为 **22 支持、4 刻意差异、0 未支持**；官方夹具、生成器和评分投影不改，只复核独立分类/观察及计数。README/TODO 已同步；仅关闭本章已识别缺口的窄子项，完整容器和宽泛标准覆盖仍未完成。
+
+新增 `tests/marker_indent.rs` 六项回归，覆盖 1920 组标记/缩进/作用域/空白/行尾模型，部分 tab、嵌套/分隔线/四列代码边界，UTF-8 全切点/逐前缀/EOF、连续源码映射、零预算和六字节恢复，条目身份与关闭/Loose 通知。480 层列表、千个兄弟条目、百万字正文及千次单字追加的计数检查通过；官方全章 730 切点/704 前缀及预算检查继续通过。修复前 5 项失败/1 项通过；专项中引用空行补上显式前缀、引用 tab 恰好达到正文缩进的预期按独立列宽修正后，12 项专项通过。首轮全套 1254 通过/2 失败，均为旧的不同缩进部分 tab 字面预期；更新这两条断言后最终全套通过。
+
+验收：项目 devShell 内 `cargo check --all-targets`、debug/release `cargo nextest run --no-fail-fast` 各 **1256 项**、`cargo test --doc` **75 项（72 + 3）**、clippy `--all-targets -- -D warnings`、fmt、官方夹具 `--check` 及 diff 检查全部通过。复跑脚本 `/tmp/mdtui3-goal-run/marker-indent-validate.sh`；汇总 `marker-indent-validation.log`、修复前 `marker-indent-repro.log`、最终全套 `marker-indent-debug-final.log` / `marker-indent-release.log` 均在同目录。范围校验 `marker-indent-scope-check.log` 确认仅 7 个已有文件和 1 个新增测试变化，其余 303 个基线文件 SHA-256 保持，包括官方夹具、生成器和评分投影；独立差异 `marker-indent-unit.patch`。
+
+
+## 2026-11-04 CommonMark List items 标准样例评分交付
+
+从标准语法覆盖待办拆出 CommonMark 0.31.2 完整 List items 章节（253–300，共 48 例）。新增离线生成器及官方 Markdown/HTML 夹具，固定原始 JSON 的 SHA-256 和完整章节成员；`--check` 检查生成结果，独立 JSON/夹具对照确认全部原文相同，追加空白后的来源也被摘要校验拒绝。既有官方夹具与生成器全部复核通过。
+
+评分为 **41 支持、3 刻意差异、4 未支持**。264/289 保留空行终止缩进代码的既有方言，291 保留 lazy 前导空白。278/279 的空条目续行缩进、280 的空条目跨空行、285 的空标记中断段落是尚未实现的完整容器规则，已独立写入 TODO；本单元交付可复查的评分，不改解析行为，不勾选完整容器或宽泛标准覆盖总项。
+
+测试投影按公开容器身份/父子关系、首条目编号、父 List 松紧、叶块、标题索引和显示片段输出本章的窄范围 HTML；标题校验 BlockId、级别、源码和作用域。投影不接收样例编号，不重解析、不 trim、不合并独立列表或补代码空行；当前差异观察与官方期望分离，未评分的任务、样式和对象显式拒绝。只用于短样例测试，不将祖先遍历投影视为窗口级排版接口。
+
+新增六项回归：完整章节报告、1541 个切点、1493 个逐字符前缀及各前缀 EOF、连续原始/显示/逐字符映射、零预算停步和共享六字节预算恢复，以及编号、分组、嵌套松紧、空条目、隐藏定义、标题级别、代码空白的敏感性和拒绝边界。所有官方输入均为短 ASCII，长输入/深容器及 Unicode 仍由各自专项覆盖。本单元没有修改核心、已有测试或持久状态，没有新增运行时依赖或 unsafe，累计追加 O(n log n)、空间 O(n) 和共享预算契约保持。
+
+项目 devShell 验收全部通过：debug/release 各 **1262 项**、doc **75 项（72 + 3）**，`cargo check --workspace --all-targets`、clippy `--workspace --all-targets -- -D warnings`、fmt、夹具 `--check` 和 `git diff --check`。专项六项首次正式验收全部通过。复跑脚本 `/tmp/mdtui3-goal-run/list-items-validate.sh`；汇总日志 `list-items-validation.log`，专项 `list-items-targeted.log`，全套 `list-items-debug.log` / `list-items-release.log`，独立来源校验 `list-items-provenance.log`（均在同目录）。范围校验 `list-items-scope-check.log` 确认仅追加 README/TODO/DONE 并新增本章测试/夹具/生成器，其余 308 个基线文件 SHA-256 保持；独立差异 `list-items-unit.patch`。
+
+
+## 2026-11-04 有界空列表标记的段落中断规则交付
+
+本轮从 TODO 的 List items 空条目缺口拆出 285：完整分类窗口内，列表标记之后只有 space/tab 或行尾时，不能中断同作用域段落。根、显式容器、部分 tab 路径与缺失前缀的 lazy 续行保持原段落和容器身份；同 List 的兄弟空条目、新 Quote、段落已结束后的空条目仍可创建。Setext/分隔线优先，任务标记视为非空候选；任意编号的非空条目中断及窗口外不追认方言保持。源码、前导/末尾空白、CRLF 显示及列表松紧/通知沿用既有规则。
+
+实现仅传递根段落的临时布尔选项，在新列表创建和 lazy 探测处复用已有标记空白终点。没有新增扫描、持久状态、依赖或 unsafe，不回扫旧正文、历史容器或祖先；新增工作为 O(1) 条件，累计解析 O(n log n)、空间 O(n) 与共享预算契约保持。
+
+新增 `tests/empty_interrupt.rs` 六项回归：1440 组标记/作用域/缩进/尾空白/行尾模型，lazy 与部分 tab、兄弟/新作用域/任务/Setext/分隔线/表头/窗口边界，UTF-8 全切点/逐字符前缀/EOF，原始与切片映射、零预算停步和六字节恢复，身份与关闭/Loose 通知。980 层引用中百万字正文后的 100 个空标记按新输入计费，后续百万字长行及千次追加不重分类或回扫容器。
+
+官方 CommonMark 0.31.2 List items 285 对照原始 HTML 通过，完整章节为 **42 支持、3 刻意差异、3 未支持**。官方夹具、生成器和评分投影不改，只更新独立分类及计数；全章 1541 切点、1493 前缀与逐前缀 EOF/映射/预算继续验收。278/279 空条目续行缩进、280 空条目跨空行、完整容器与宽泛标准覆盖仍未完成；README/TODO 已同步，历史 DONE 记录不改。
+
+修复前专项 5 失败/1 通过；新测试的 CRLF、终止尾空白/根缩进和 tab 列宽预期按既有规则校正后通过。首轮全套 1266 通过/2 失败，一条为上述尚未校正的模型期望，另一条是旧 lazy 测试把空 `+` 当作中断；该中断输入改为 `+ next`，空标记由新增测试独立覆盖。日志 `empty-interrupt-repro.log`、`empty-interrupt-debug.log` 和 `empty-interrupt-targeted-final.log` 均在 `/tmp/mdtui3-goal-run/`。
+
+最终项目 devShell 验收全部通过：debug/release 各 **1268 项**、doc **75 项（72 + 3）**，`cargo check --workspace --all-targets`、clippy `--workspace --all-targets -- -D warnings`、fmt、官方夹具 `--check` 和 `git diff --check`。专项 26 项通过。复跑命令 `nix develop -c bash /tmp/mdtui3-goal-run/empty-interrupt-validate.sh`，总日志 `empty-interrupt-validation.log`，全套 `empty-interrupt-debug-final.log` / `empty-interrupt-release.log`。范围校验 `empty-interrupt-scope-check.log` 确认只改 7 个已有文件并新增 1 个测试，其余 307 个基线文件 SHA-256 保持，包括官方夹具/生成器；评分投影及历史 DONE 保持。独立差异 `empty-interrupt-unit.patch`（日志及补丁均在 `/tmp/mdtui3-goal-run/`）。
+
+
+## 2026-11-04 有界空列表标记的续行缩进归一交付
+
+本轮只完成 List items 278/279 暴露的有界空标记续行缩进，不完成空条目跨空行规则、完整容器或宽泛标准覆盖。
+
+- 方言：完整分类窗口内，合法标记之后仅 space/tab 或行尾，续行缩进统一为标记前缩进 + 标记宽度 + 一列分隔；无尾空白补隐含分隔列，任意尾空白不增加正文缩进。新条目、兄弟、引用及部分 tab 祖先路径共用该规则，首行保持 Blank 与完整源码、编号/身份。
+- 实现：仅修改 `Prefix::marker` 两个完整空标记返回分支，复用已有空白扫描终点；窗口外候选不追认，未完成输入和 EOF 沿用有界分类。非空正文/任务、Setext/分隔线优先级、空标记不能中断段落、列表松紧和通知保持。没有新增扫描、持久状态、旧正文/历史容器/祖先回扫、依赖或 unsafe，累计追加 O(n log n)、空间 O(n) 与共享预算契约保持。
+- 验证：`tests/empty_indent.rs` 六项回归，1536 组标记/缩进/作用域/尾空白/行尾模型及各自不足一列反例；代码围栏/缩进代码、部分 tab 映射、新引用/已有路径、任务与关闭/Loose 通知、窗口边界、UTF-8 全切点/逐前缀/逐前缀 EOF、原始/显示源码映射、零预算停步与六字节恢复；980 层引用、百万字历史正文、100 个空兄弟及百万字正文后的千次追加计数。
+- 标准评分：CommonMark 0.31.2 List items 278/279 通过原始官方 HTML，全章 44 支持、3 刻意差异、1 未支持；280 仍保留空条目跨空行缺口，独立观察仅去掉先前错误多留的一列空格。官方夹具、离线生成器、评分投影不变；原有 1541 切点/1493 前缀及预算回归通过。
+- 回归处理：专项修复前 5 失败/1 通过。新测试最初将 `Code` 当作有 `fenced` 字段，编译后修正为现有公开类型；部分 tab 的嵌套测试起始正文改为标题，以避开已有 Setext/段落中断优先级。首轮全套 1272 通过/2 失败，两个旧测试各补足空标记要求的一列续行缩进，保持原来的作用域/松紧检查目的；相关 36 项通过。最终 debug/release 各 1274 项通过。
+- 剩余：280 空条目跨空行终止、264/289 缩进代码空行兼容扩展、291 lazy 前导空白、完整容器及宽泛标准覆盖保持 TODO；README/TODO 已同步当前评分与范围。
+- 验收命令：项目 devShell 中 `cargo check --all-targets`、`cargo nextest run --no-fail-fast`、`cargo nextest run --release --no-fail-fast`、`cargo test --doc`（75 项）、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check` 全通过；离线 48 例夹具校验和 `git diff --check` 通过。完整摘要见 `/tmp/mdtui3-goal-run/empty-indent-validation.log`，首次复现、最终专项及 debug/release 原始日志同目录。
+
+
+## 2026-11-04 有界空列表条目的空行终止交付
+
+本轮只完成 List items 280 暴露的空条目跨空行缺口：完整有界的无任务空条目，后续遇到完整有界空行后不再吸收第一段正文。同型兄弟按既有缩进规则保留 List 并一次确认 Loose，其余退出 Item/List 后按父作用域重新分类；空行仍暂归旧条目，EOF 关闭不确认 Loose。任务、已有正文/定义/子容器、缺失引用与分类窗口外不追认的方言保持。部分 tab 祖先原子匹配，剩余列参与父作用域的正文/代码分类和映射。
+
+实现复用活动条目的 `has_content` / `pending_blank`、延迟空行深度与任务属性，在三个既有匹配路径消费条目缩进之前作常数判断；部分 tab 结构探测增加“空条目结束”的成功路径。没有新增持久状态、扫描、运行时依赖或 unsafe，不回扫历史正文/容器/保留祖先；每层匹配仍按新输入前缀、关闭按一次出栈计费，累计追加 O(n log n)、空间 O(n) 和共享预算保持。
+
+新增 `tests/empty_blank.rs` 六项回归：1536 组作用域/标记/缩进/空白模型、父作用域重新分类、兄弟身份与关闭/Loose 通知、任务/已有子容器/窗口边界/EOF、部分 tab、UTF-8 全切点/逐字符前缀及各前缀 EOF、连续原始/显示源码映射、零预算停步与六字节恢复。980 层引用下的百万字历史正文、千次空行、深层空条目退出、百万字长行和千次追加计数通过。相关 30 项专项通过；官方章原有 1541 切点/1493 前缀和预算回归继续通过。
+
+官方 CommonMark 0.31.2 List items 280 匹配原始 HTML，全章为 **45 支持、3 刻意差异、0 未支持**。官方夹具、生成器及评分投影不变，仅更新独立分类/计数并移除不再使用的 Unsupported 分支；17 份 CommonMark 夹具离线校验通过。README/TODO 已同步；只勾选本章列明的 278/279、280、285 空条目缺口，264/289 缩进代码空行、291 lazy 前导空白、完整容器和宽泛标准覆盖仍待办。
+
+修复前专项 4 失败/1 通过，实施后全部通过，再补第六项边界测试通过。首轮全套 1278 通过/1 失败，旧空行模型仍预期空条目范围包含后续正文；保留输入及松紧检查，更新该模板的列表结束位置。前序 empty_indent 的同一缺口断言同步为根作用域，其余旧测试不变。
+
+最终项目 devShell 验收通过：debug/release 各 **1280 项**、doc **75 项（72 + 3）**，`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、官方夹具 `--check` 和 `git diff --check`。复跑脚本 `/tmp/mdtui3-goal-run/empty-blank-validate.sh`；汇总 `empty-blank-validation.log`，首次复现 `empty-blank-repro.log`，最终专项 `empty-blank-targeted-final.log`，全套 `empty-blank-debug-final.log` / `empty-blank-release.log`，夹具 `empty-blank-fixtures.log`（均在同目录）。范围核对 `empty-blank-scope-check.log` 确认仅 7 个已有文件及 1 个新测试变化，其余 309 个基线文件 SHA-256 保持；官方夹具/生成器、评分投影与历史 DONE 内容保持。独立差异 `empty-blank-unit.patch`。
+
+
+## 2026-11-04 CommonMark Link reference definitions 标准样例评分交付
+
+本轮只完成 TODO 的标准样例覆盖子项：固定 [CommonMark 0.31.2 Link reference definitions](https://spec.commonmark.org/0.31.2/#link-reference-definitions) 完整章节 192–218，共 27 例。新增离线生成器、原始夹具和六项评分回归，核心解析及前序测试保持；无新增运行时依赖、unsafe 或解析状态，累计追加 O(n log n)、空间 O(n) 与共享预算契约不变。
+
+- 来源：官方 Markdown/HTML 逐字保留，夹具注明作者、CC BY-SA 4.0 与来源。`scripts/generate_commonmark_reference_definitions.py` 固定整个 spec.json 的 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20` 和本章成员，支持离线 `--check`。独立 HTTPS 下载、独立提取的 27 组编号/输入/HTML 全等及篡改来源拒绝通过，见 `/tmp/mdtui3-goal-run/reference-definitions-provenance.log`。
+- 分类：**13 支持、7 刻意差异、7 未支持**。支持 192、200、202–207、210、214–216、218；197/199/201/209/211/212 保留未定义引用隐藏方括号方言，213 保留定义可中断段落方言；193/195/196/198/208/217 缺多行定义，194 缺定义标签转义 `]` 处理。差异观察与官方期望独立保存，变化时强制审查，README/TODO 已记录缺口，宽泛标准覆盖及完整引用定义未勾选。
+- 投影：只读公开块/标题索引、根引用容器、显示片段和引用链接，按核心游标解码目标/title 后做 URI/HTML 输出编码。未定义链接保留公开显示标签；不重解析、不 trim、不补括号或修复定义。保留代码字面空白与内部换行，非代码块只省略一个物理终止 LF，Setext 下划线之前的正文 LF 也按此规则处理；实体 LF 保留。结构范围有断言，不作为通用 HTML 渲染器。
+- 验证：833 个 UTF-8 切点、806 个逐字符前缀及逐前缀 EOF 对照完整语义快照；原始/显示/切片源码覆盖，零预算停步、六字节显示恢复，链接元数据六字节/无限预算一致。额外验证晚定义前后链接身份/标签范围、首定义优先、原始元数据不被解码覆盖，以及空白/标题/代码/实体 LF/空引用容器的投影敏感性与未评分结构拒绝。专项六项全部通过，见 `/tmp/mdtui3-goal-run/reference-definitions-targeted.log`。
+
+最终项目 devShell 验收全部通过：debug/release 各 **1286 项**、doc **75 项（72 + 3）**，`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、固定夹具 `--check` 和 `git diff --check`。复跑命令 `nix develop -c bash /tmp/mdtui3-goal-run/reference-definitions-validate.sh`，汇总日志 `reference-definitions-validation.log`，全套原始日志 `reference-definitions-debug.log` / `reference-definitions-release.log` / `reference-definitions-doc.log`。范围核对 `reference-definitions-scope-check.log` 确认仅向 README/TODO/DONE 追加内容并新增本章测试、夹具及生成器，其余 **314 个**前序文件 SHA-256 保持；独立补丁 `reference-definitions-unit.patch`（上述日志及补丁均在 `/tmp/mdtui3-goal-run/`）。
+
+
+## 2026-11-04 有界引用定义标签内的转义右括号交付
+
+本轮只修复 Link reference definitions 194 的定义标签扫描：完整分类窗口内的单物理行定义按反斜线奇偶寻找首个未转义 `]`，奇数个反斜线使其留在标签，偶数个使其关闭标签。原始标签拼写继续作为大小写/空白归一的输入，不解码、不改变符号匹配；保留全局首定义优先、晚定义通知、稳定链接/图片身份和目标/title 原始源码区间。
+
+实现仅替换 `block::definition` 的既有有界扫描，增加局部转义布尔值；没有新增持久状态、第二次扫描、运行时依赖或 unsafe，不回扫旧正文、引用或祖先。扫描最多消耗现有分类窗口，仍计入既有分类工作；追加累计 O(n log n)、空间 O(n) 及共享预算契约保持。失败目标/title、缺失冒号、未完成行等待、脚注排除、标签字节上限和分类窗口方言不变。
+
+新增 `tests/escaped_definition_labels.rs` 六项回归：1536 组独立转义奇偶/根与容器/行尾模型，全 UTF-8 切点、逐前缀及 EOF 对照，待定/失败/不透明代码与数学/窗口边界，shortcut/collapsed/图片共享引用、晚定义身份/失效与首定义优先，原始/显示/切片源码映射和零预算停步/六字节恢复，元数据六字节与无限预算对照。980 层引用下百万字历史正文、百万字失败长行的千次追加，以及两万旧引用的晚定义工作量通过；没有随旧正文或引用数增长的重扫。
+
+官方 CommonMark 194 使用未修改的 Markdown/HTML 通过，本章变为 **14 支持、7 刻意差异、6 未支持**。仅更新独立分类与汇总，官方夹具、生成器和公开语义评分投影保持；该章原有 833 切点/806 前缀及 EOF、映射与预算回归通过。README/TODO 已同步；跨行定义、完整失败回退及宽泛兼容性仍待办。本轮额外确认 full 引用第二个标签中的转义仍不受支持，例如 `[text][r\]]` 在首个 `]` 截断后缀，未扩展此路径，已有结果纳入回归并记入 TODO。
+
+专项修复前 5 失败/1 通过；修复后官方 194 的旧“未支持”断言主动失败，审查后改为支持。新测试对 full 引用后缀和实体分片映射的预期按既有契约校正，最终相关 22 项全部通过。原始复现 `escaped-definition-repro.log`，首次修复验证 `escaped-definition-targeted-initial.log`，最终专项 `escaped-definition-targeted-final.log`（均在 `/tmp/mdtui3-goal-run/`）。
+
+最终项目 devShell 验收全部通过：debug/release 各 **1292 项**、doc **75 项（72 + 3）**，`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、固定章节夹具 `--check` 和 `git diff --check`。复跑脚本 `/tmp/mdtui3-goal-run/escaped-definition-validate.sh`，汇总 `escaped-definition-validation.log`，全套 `escaped-definition-debug.log` / `escaped-definition-release.log` / `escaped-definition-doc.log`。范围核对 `escaped-definition-scope-check.log` 确认仅 5 个已有文件及 1 个新增测试变化，其余 **315 个**基线文件 SHA-256 保持，官方夹具/生成器、评分投影和历史 DONE 内容不变；独立差异 `escaped-definition-unit.patch`（均在同目录）。
+
+
+## 2026-11-04 有界 full 引用第二标签的转义括号交付
+
+本轮只完成 TODO 已列明的 full 引用后缀转义缺口：`[text][r\]]` 和 `![alt][r\[]` 可匹配原始 `r\]`、`r\[` 标签。第二标签按反斜线奇偶识别首个未转义 `]`，允许转义 `[`，未转义 `[` 仍拒绝候选。单物理行、999 源码字节、原始标签大小写/空白归一、首定义优先和已有失败/未完成回退保持；完整字面回退、多行后缀/定义、字符计数上限和宽泛兼容性继续待办。
+
+`inline::Tail::Label` 仅新增一个候选布尔值，随输入字节更新；闭合时沿用原有有界符号归一，没有新缓冲、重放或旧正文/引用/祖先回扫。语法字符仍取消继承旧标签的晚管道表头探测，保留原取消/恢复顺序，不扩展有语法后缀的表头隔离能力。每个输入字节处理常数次，归一受既有字节上限约束，累计解析 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 及共享预算契约保持。
+
+新增 `tests/full_reference_escapes.rs` 八项回归：768 组独立转义奇偶/根与容器/链接与图片/行尾模型，UTF-8 全切点/逐前缀/EOF，窗口之外实时逐字追加与同一 LinkId 从 Provisional 到 Sealed，失败/未完成/长度上限及 shortcut/collapsed 边界，晚定义身份/范围通知与首定义优先，原始/显示/切片映射、零预算停步与六字节显示/元数据预算对照。另有 32 组长表头全切点（含同引用作用域的合法分隔行和无转义控制组）、普通新表头引用，以及 980 层百万字失败候选后的千次追加、两万历史引用的晚定义工作量。
+
+最初新增七项修复前 6 失败/1 通过；修复后全部通过，随后补第八项真实流式状态检查。旧 `escaped_definition_labels` 仅更新原先明确保留 full 后缀缺口的目标/title 断言，输入、身份和其它检查保持。官方引用定义章仍为 14 支持/7 刻意差异/6 未支持，夹具、生成器和评分投影不改；README/TODO 已准确更新支持范围，不宣称完成 Links/Images 整章评分。首次编译修正新测试误用的预算枚举名，未改产品接口。原始复现 `full-reference-repro.log`，专项首次/最终日志 `full-reference-targeted-initial.log` / `full-reference-targeted-final.log`（均在 `/tmp/mdtui3-goal-run/`）。
+
+最终项目 devShell 验收全部通过：debug/release 各 **1300 项**、doc **75 项（72 + 3）**，`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、固定引用定义夹具 `--check` 和 `git diff --check`。表头测试补足同作用域合法分隔行及普通后缀控制组后，release 全套和 debug 专项 20 项均通过。复跑脚本 `/tmp/mdtui3-goal-run/full-reference-validate.sh`，汇总 `full-reference-validation.log`，全套日志 `full-reference-debug.log` / `full-reference-release.log` / `full-reference-doc.log`。范围核对 `full-reference-scope-check.log` 确认仅 5 个已有文件及 1 个新增测试变化，其余 **316 个**基线文件 SHA-256 保持，官方夹具/生成器、评分投影、依赖及历史 DONE 内容不变；独立差异 `full-reference-unit.patch`（均在同目录）。
+
+
+## 2026-11-04 CommonMark Images 标准样例评分交付
+
+本轮只完成 TODO 的标准覆盖方向中 Images 章节评分：固定 [CommonMark 0.31.2 Images](https://spec.commonmark.org/0.31.2/#images) 完整 572–593 共 22 例，独立报告 **19 支持、1 刻意差异、2 未支持**。官方 Markdown/HTML 逐字保留，离线生成器校验固定 SHA-256 和完整章节成员；重新下载来源后的独立三元组比对、夹具 `--check` 及篡改来源拒绝均通过。
+
+公开语义投影按 `LinkInfo.kind/label/source` 输出图片或链接，空 alt 图片由对象范围保留；alt 取已解码可见标签文字，不输出样式标签，内部空白/换行保持。目标和 title 通过公共解码游标共享六字节预算，保留连续原始源码映射，结果与无限预算一致。标签之外的对象语法必须为 HIDDEN，投影不补括号、不重解析 Markdown、不合成外层图片；对章节外块、样式组合和通用 URI 编码主动拒绝。
+
+新增六项测试覆盖全部官方输入的 **723 个切点、701 个逐字符前缀及逐前缀 EOF**、公开结构/显示/对象快照、原始/显示/切片映射、零预算和六字节恢复，以及 UTF-8/实体/转义、空 alt/空与缺失 title、inline/full/collapsed/shortcut、晚定义稳定身份与首定义优先、属性变化敏感性及拒绝边界。首轮专项 5 通过/1 失败是测试错误假定三连强调必然产生嵌套样式，移除该不属于本章的输入假定后六项通过；未修改核心或既有测试来满足评分。随后加强元数据成功步及结束时的预算上界断言，最终 debug 专项六项再次通过。
+
+574/575 中内嵌图片或链接替换外层图片候选，尚未支持规范要求的外层对象；590 保留未定义引用隐藏方括号方言。README/TODO 仅追加评分范围及具体待办，完整图片/引用失败回退、嵌套候选模型、通用 URI 输出和宽泛标准覆盖仍未完成。本轮未改核心解析、依赖、unsafe 约束或累计 O(n log n)/空间 O(n) 与共享预算契约。
+
+最终项目 devShell 验收全部通过：debug/release 各 **1306 项**、doc **75 项（72 + 3）**，`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、固定 Images 夹具 `--check` 和 `git diff --check`。最终预算断言由 debug 专项及 release 全套覆盖。复跑脚本 `/tmp/mdtui3-goal-run/images-validate.sh`，汇总 `images-validation.log`，专项 `images-targeted-final.log`，来源 `images-provenance.log`，全套 `images-debug.log` / `images-release.log` / `images-doc.log`。范围核对 `images-scope-check.log` 确认仅追加 README/TODO/DONE 并新增本章测试、夹具、生成器，其余 **319 个**基线文件 SHA-256 保持，核心、依赖、既有测试/夹具/生成器和历史 DONE 均不变；独立差异 `images-unit.patch`（均在同目录）。
+
+## 2026-11-04 CommonMark Inlines 标准样例评分交付
+
+本轮只完成 TODO 标准覆盖方向的 [CommonMark 0.31.2 Inlines](https://spec.commonmark.org/0.31.2/#inlines) 本节评分：唯一的样例 327 为 **1 支持、0 刻意差异、0 未支持**。Inlines 的 Code spans、Emphasis、Links 等子章节不计入本项，完整行内兼容及宽泛标准覆盖仍未完成。官方 Markdown/HTML 逐字固定，生成器校验 SHA-256 和本节成员；重新下载官方来源后的独立原文比对、夹具 `--check`、篡改来源拒绝均通过。
+
+只读投影由公开段落类型和显示片段生成 HTML，保留代码样式、普通尾文及未匹配反引号；仅省略原始借用片段的物理段末 LF，不裁剪内部空白，不把实体换行当段末，不重解析源码。未评分的块、对象和其它样式主动拒绝；样例编号与输入字符串不控制投影。没有核心修改、运行时依赖或 unsafe，累计解析 O(n log n)、空间 O(n) 及共享预算契约不变。
+
+新增五项回归全部通过：官方输入 **9 个切点、8 个逐字符前缀及逐前缀 EOF**，公开结构/显示快照、pending、连续源码/切片映射、零预算停步与六字节可恢复显示消费；另有 UTF-8、追加后闭合、段落边界、内部空白/换行、实体换行、代码空白规范化、投影属性敏感性及拒绝边界。首轮专项即全部通过，未改既有测试或核心行为来满足评分；完整未闭合代码重放、更完整强调/链接和其它标准章节继续保留原待办。
+
+最终项目 devShell 验收全部通过：debug/release 各 **1311 项**、doc **75 项（72 + 3）**，`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、固定 Inlines 夹具 `--check` 和 `git diff --check`。复跑脚本 `/tmp/mdtui3-goal-run/inlines-validate.sh`，汇总 `inlines-validation.log`，专项 `inlines-targeted.log`，来源 `inlines-provenance.log`，全套 `inlines-debug.log` / `inlines-release.log` / `inlines-doc.log`。范围核对 `inlines-scope-check.log` 确认仅追加 README/TODO/DONE 并新增本节测试、夹具、生成器，其余 **322 个**基线文件 SHA-256 保持；独立差异 `inlines-unit.patch`（均在同目录）。
+
+## 2026-11-04 CommonMark Autolinks 官方 HTML 评分交付
+
+本轮只补齐 TODO 标准覆盖方向的 [CommonMark 0.31.2 Autolinks](https://spec.commonmark.org/0.31.2/#autolinks) 官方 HTML 评分：594–612 完整 19 例为 **18 支持、1 刻意差异、0 未支持**。新增官方原文夹具及固定 SHA-256/章节成员的离线生成器，保留旧归一化目标语义夹具及测试。重新下载官方来源的独立 Markdown/HTML 三元组比对、生成器 `--check`、来源篡改拒绝和全部已有章节夹具校验通过。
+
+投影只读公开段落/显示/链接对象，URI/email 的目标与标签同源，email 的 `mailto:` 使用核心 URL 接口；输出层做 HTML 转义及本章需要的反斜线/方括号编码，另验证 UTF-8 与已有百分号序列。它不接受样例编号，不重解析源码、解码地址中的实体或补尖括号，主动拒绝未评分的对象、块、样式及其它 URI 编码。606 保留既有失败候选不重放反斜线转义的方言，独立当前观察与官方期望分离；完整失败回退、通用 URI 输出和宽泛标准覆盖保持待办。
+
+新增六项回归首轮即全部通过：全部 **421 个切点、402 个逐字符前缀及逐前缀 EOF**、公开结构/显示/对象快照与 pending、连续源码及逐字符切片、零预算停步/六字节显示消费、显示与目标游标共用六字节和一次 query/object 的预算。补充 URI/email 原始语义、UTF-8、实体字面、空 URI 目标、未完成/失败候选、相邻自动链接、内部空白/实体换行、投影敏感性及拒绝边界。没有核心修改或新增运行时依赖/unsafe；累计追加 O(n log n)、空间 O(n) 和共享预算契约保持。
+
+最终项目 devShell 验收全部通过：debug/release 各 **1317 项**、doc **75 项（72 + 3）**，`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、全部固定来源夹具 `--check` 和 `git diff --check`。复跑脚本 `/tmp/mdtui3-goal-run/autolinks-validate.sh`，汇总 `autolinks-validation.log`，专项 `autolinks-targeted.log`，来源 `autolinks-provenance.log`，全套 `autolinks-debug.log` / `autolinks-release.log`。范围核对 `autolinks-scope-check.log` 确认仅追加 README/TODO/DONE 并新增本章测试、官方夹具、生成器，其余 **325 个**基线文件 SHA-256 保持；独立差异 `autolinks-unit.patch`（均在同目录）。
+
+## 2026-11-04 CommonMark 行内链接目标与 title 子集评分交付
+
+本轮只完成 TODO 标准覆盖方向的 [CommonMark 0.31.2 Links](https://spec.commonmark.org/0.31.2/#links) **482–511 共 30 例**，范围为行内链接目标、title 与分隔规则，报告 **21 支持、6 刻意差异、3 未支持**。Links 的 512–571（标签、嵌套与引用组合）尚未纳入本项；这不是完整章节评分或完整链接兼容性完成。官方 Markdown/HTML 逐字保留；离线生成器校验固定 SHA-256 和子集成员，重新下载官方来源后独立解析夹具三元组比对、篡改拒绝及全部 22 份 CommonMark 生成器 `--check` 通过。
+
+投影仅使用公开块、显示片段、`LinkInfo.kind/label/source` 和目标/title 解码游标；按对象范围输出空标签链接，语法包络内标签以外必须为 HIDDEN，未定义引用沿用核心公开显示结果。元数据共享六字节预算并检查连续源码映射，输出层仅补足本子集所需的空格、双引号、反斜线和 UTF-8 URI 编码，保留既有百分号序列；不把 NBSP 当成 title 分隔符。投影不接收样例编号、不补括号、不重解析或恢复失败候选，主动拒绝未评分结构、样式、图片、已解析引用、自动链接和其它 URI 编码。
+
+六项新测试覆盖全部 **722 个合法 UTF-8 切点、692 个逐字符前缀及逐前缀 EOF**、结构/显示/对象快照与 pending、连续原始/显示/逐字符切片映射、零预算停步、六字节显示消费与有界恢复。另有显示/目标/title 三个游标共用一帧六字节及一次 query/object 的完整消费链、原始 URL/title 源码与解码结果、空标签/目标、空与缺失 title、UTF-8/实体/转义和已有百分号、后续追加不改变旧对象身份、属性变化敏感性与拒绝边界。首次编译修正新增测试的目标枚举名及读取借用结束时点后，六项专项全部通过；未修改核心或旧测试。
+
+488/490/493/497/508/511 保留既有未定义 shortcut 隐藏方括号的方言，493 还保留失败候选不重放转义；491/494 的原始 HTML 不在核心需求范围，并伴随回退差异；510 跨物理行目标/title 后缀尚未支持。独立观察与官方期望分离，结果改变时必须复核分类。README/TODO 仅追加准确范围及剩余任务；跨行后缀需先验证候选/撤销、容器边界及复杂度，完整字面回退、Links 余下评分与宽泛标准覆盖继续待办。本轮没有核心解析、运行时依赖或 unsafe 变化，累计追加 O(n log n)、空间 O(n) 和共享预算契约保持。
+
+最终项目 devShell 验收全部通过：debug/release 各 **1323 项**、doc **75 项（72 + 3）**，`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、固定来源夹具校验和 `git diff --check`。复跑命令 `nix develop -c bash /tmp/mdtui3-goal-run/inline-links-validate.sh`；汇总 `inline-links-validation.log`，专项 `inline-links-targeted.log`，来源 `inline-links-provenance.log`，全套 `inline-links-debug.log` / `inline-links-release.log` / `inline-links-doc.log`。范围核对 `inline-links-scope-check.log` 确认仅追加 README/TODO/DONE 并新增子集测试、夹具、生成器，其余 **328 个**基线文件 SHA-256 保持；独立差异 `inline-links-unit.patch`（均在 `/tmp/mdtui3-goal-run/`）。
+
+
+## 2026-11-04 CommonMark 引用标签匹配子集评分交付
+
+本轮只交付 TODO Links 剩余评分中的 [CommonMark 0.31.2 样例 539–552](https://spec.commonmark.org/0.31.2/#example-539)，引用标签匹配、分隔与定义有效性共 **14 例：6 支持、6 刻意差异、2 未支持**。官方 Markdown/HTML 逐字保存；离线生成器固定 SHA-256 与章节成员。独立重新下载、夹具编号/Markdown/HTML 比对、来源篡改拒绝及全部 **23 份**已有和新增 CommonMark 生成器 `--check` 通过。
+
+539/544/549–552 支持；540 按既有 Unicode 小写规则处理，不做完整 case folding；542/543/545/547/548 保留隐藏引用括号、原始标签拼写和单候选嵌套方言。541 跨物理行定义标签未支持；546 暴露定义标签错误接受未转义 `[`，导致无效定义被隐藏。当前观察与官方期望分离，结果改变时强制复核分类。README/TODO 仅追加本次交付及所暴露缺口；512–538、553–571 仍未评分，完整 Links、多行定义、嵌套图片和完整字面回退继续待办。
+
+投影不接收样例编号，只使用公开块、显示片段、对象包络和目标/title 解码游标；定义块必须确为隐藏，未定义引用按核心显示语义输出。输出层仅做 HTML/URI 编码，不重解析标签、补括号、合成定义或丢弃可见语法。主动拒绝未评分块、样式、图片与自动链接。新增七项测试覆盖 **396 个合法 UTF-8 切点、382 个逐字符前缀及逐前缀 EOF**、结构/显示/对象快照与 pending、连续原始/显示/逐字符切片映射、零预算停步，以及显示/目标/title 三游标共用六字节及一次 query/object 的消费链。
+
+额外状态测试逐字符追加晚定义，验证 Unicode 小写与空白折叠、原始转义拼写、相同归一标签共享符号、不同拼写独立符号、稳定 LinkId/LinkInfo、目标映射到获胜定义源码、首次定义后重复定义不覆盖元数据或修订。初始六项专项通过；补充状态测试时修正新增测试对源码长度接口的调用后，最终七项全部通过。核心、已有测试、运行时依赖及 unsafe 均未变；累计追加 O(n log n)、空间 O(n) 与共享预算契约保持，短样例评分不冒充新的长输入复杂度验证。
+
+最终项目 devShell 验收全部通过：debug/release 各 **1330 项**、doc **75 项（72 + 3）**，`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、固定来源夹具校验和 `git diff --check`。复跑命令 `nix develop -c bash /tmp/mdtui3-goal-run/reference-labels-validate.sh`；汇总 `reference-labels-validation.log`，专项 `reference-labels-targeted-final.log`，来源 `reference-labels-provenance.log`，全套 `reference-labels-debug.log` / `reference-labels-release.log` / `reference-labels-doc.log`。范围核对 `reference-labels-scope-check.log` 确认只追加三份文档及新增测试/夹具/生成器，其余 **331 个**基线文件 SHA-256 保持；独立差异 `reference-labels-unit.patch`（均在 `/tmp/mdtui3-goal-run/`）。
+
+
+## 2026-11-04 有界引用定义标签的未转义左括号交付
+
+本轮只完成引用标签匹配待办中的未转义 `[` 拒绝规则：完整分类窗口内的单物理行定义跳过初始 opener，沿用原有转义布尔值扫描首个未转义括号；遇到 `[` 即拒绝定义，只有 `]` 才进入原冒号/目标/title 路径。原始标签拼写、转义左右括号与反斜线奇偶、999 字节上限、首定义优先、稳定对象和源码映射保持。目标/title 中的 `[`、脚注、代码/数学、有界分类与多行规则不扩大。
+
+CommonMark 546 的无效定义现在保留正文，官方输入/HTML 与公开语义投影不变；该例仍因未定义引用隐藏部分括号而与官方不同，复核为刻意差异。539–552 子集目前 **6 支持、7 刻意差异、1 未支持**，原评分 6/6/2 留在历史记录。541 跨行定义、540 完整 case folding、完整字面回退/嵌套及宽泛标准覆盖继续待办，README/TODO 同步实际范围。
+
+新增 `definition_openers.rs` 七项回归：768 组容器/缩进、0–7 条反斜线、UTF-8/转义括号及 LF/CRLF/EOF 组合；无效定义正文回退及不解析符号、未完成输入、全部合法切点与逐字符前缀/EOF、表格失败候选、窗口/标签长度和字面上下文；晚定义/首定义、稳定 LinkId/LinkInfo、目标/title 原始映射、零预算停步及六字节显示/元数据消费。已有官方评分继续覆盖显示/目标/title 三游标的共享预算。初始五项修复前 **4 失败/1 通过**，修复后全部通过；补齐映射与复杂度两项后，相关四个测试文件 **28 项通过**。评分两条旧观察随 546 真实变化更新，未改官方 oracle 或投影。
+
+核心仅替换已有有界扫描的终止条件，复用局部布尔值；无新增持久状态、额外扫描或旧正文/引用/祖先回访。980 层/百万字后续千次追加不重复分类或遍历容器；深层有效/无效定义的分类与容器操作计数有界；窗口外百万字失败候选单遍续传；两万旧引用的晚定义更新无旧正文重解析，通知及树访问受限。零运行时依赖、禁止 unsafe、累计追加 O(n log n)、空间 O(n) 与共享预算契约保持。
+
+项目 devShell 最终验收全部通过：debug/release 各 **1337 项**、doc **75 项（72 + 3）**、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、23 份 CommonMark 夹具校验和 `git diff --check`。复跑命令 `nix develop -c bash /tmp/mdtui3-goal-run/definition-opener-validate.sh`。汇总 `definition-opener-validation.log`，修复前 `definition-opener-repro.log`，专项 `definition-opener-targeted-final.log`，全套 `definition-opener-debug.log` / `definition-opener-release.log` / `definition-opener-doc.log`，夹具 `definition-opener-fixtures.log`。范围核对 `definition-opener-scope-check.log` 确认仅 5 个已有文件和 1 个新测试变化，其余 **332 个**基线文件 SHA-256 保持，官方夹具/生成器、评分投影及历史 DONE 不变；独立差异 `definition-opener-unit.patch`（均在 `/tmp/mdtui3-goal-run/`）。
+
+
+## 2026-11-04 CommonMark collapsed 与 shortcut 引用子集评分交付
+
+本轮只交付 TODO Links 剩余评分中的 [CommonMark 0.31.2 样例 553–571](https://spec.commonmark.org/0.31.2/#example-553)：collapsed/shortcut 引用及后缀优先级共 **19 例，16 支持、2 刻意差异、1 未支持**。官方 Markdown/HTML 逐字保存；离线生成器固定 SHA-256 与 Links 章节成员，重新下载后独立核对编号和两份原文、篡改拒绝及全部 **24 份** CommonMark 夹具 `--check` 通过。
+
+553–563、565–568、570 匹配官方 HTML；564 的强调跨 shortcut 标签边界列为未支持；569/571 保留未定义 full 引用消费后缀、隐藏括号且不重新解析后缀的既有方言。官方期望与冻结观察相互独立，输出变化强制复核分类。投影只读公开块、对象包络、显示样式和核心解码游标，不重解析、不补括号、不移动链接标签；未评分结构及叠加样式主动拒绝。README/TODO 仅追加本次交付和缺口，512–538、完整强调/链接、失败回退及宽泛标准覆盖继续待办。
+
+新增七项测试覆盖 **610 个合法切点、591 个逐字符前缀及逐前缀 EOF**、结构/显示/对象快照与 pending、连续源码及逐字符切片映射、零预算停步、显示/目标/title 共用六字节及一次 query/object 的恢复消费。额外验证空目标、标签样式与元数据变化、URI 输出编码、相同归一标签共享符号、晚定义仍解析原 full 引用对象、目标映射到获胜定义、稳定 LinkId/LinkInfo 和首定义优先。首轮六项通过，一项新增拒绝用例误假定三连星号一定产生叠加样式；改为明确的内外强调组合后七项全部通过。
+
+本单元仅新增评分设施；核心、既有测试、运行时依赖和 unsafe 均未改，累计追加 O(n log n)、空间 O(n) 与共享预算契约保持。短样例不替代既有深层/百万字复杂度验收。项目 devShell 最终通过 debug/release 各 **1344 项**、doc **75 项（72 + 3）**、`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、24 份夹具校验与 `git diff --check`。
+
+专项命令 `nix develop -c cargo nextest run --test commonmark_reference_forms`；汇总 `reference-forms-validation.log`，专项 `reference-forms-targeted-final.log`，来源 `reference-forms-provenance.log`，全套 `reference-forms-debug.log` / `reference-forms-release.log` / `reference-forms-doc.log`。范围核对 `reference-forms-scope-check.log` 确认只追加三份文档并新增测试/夹具/生成器，其余 **335 个**基线文件 SHA-256 保持；独立差异 `reference-forms-unit.patch`（均在 `/tmp/mdtui3-goal-run/`）。
+
+
+## 2026-11-04 CommonMark 链接标签与嵌套组合子集评分交付
+
+本单元落实 TODO 的 Links 剩余评分中 **512–538** 标签与嵌套组合子集，新增 `commonmark_link_labels.rs`、同名官方夹具与 `scripts/generate_commonmark_link_labels.py`。27 例独立评分为 **15 支持 / 4 刻意差异 / 8 未支持**。四个已交付子集覆盖 Links 482–571 全部 90 个官方样例，但完整标准兼容性仍未完成；本次不改变核心解析、运行时依赖或既有测试。
+
+来源为 [CommonMark 0.31.2](https://spec.commonmark.org/0.31.2/#example-512)（John MacFarlane，CC BY-SA 4.0）的官方 `spec.json`，固定 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20`。Markdown/HTML 逐字保留；生成器只提取章节成员，无解析器依赖。独立重新下载、编号/成员与原文比对、篡改拒绝和全部 25 份 CommonMark 夹具校验通过。
+
+| 分类 | 样例 | 观察与边界 |
+| --- | --- | --- |
+| 支持 | 514–516、518–519、522、525–527、529–530、532–533、537–538 | 标签转义/嵌套样式、内层链接优先、代码/自动链接屏蔽和 full 引用与官方相符 |
+| 刻意差异 | 513、523 | 未定义引用隐藏括号，保留当前字面回退方言 |
+| 刻意差异 | 524、536 | 原始 HTML 字面处理，不屏蔽其中的引用识别；HTML 不在需求范围 |
+| 未支持 | 512、528 | 新的未转义括号覆盖外层候选，丢失应有的外层链接 |
+| 未支持 | 517、520、531 | 图片/链接内层候选覆盖外层对象，完整嵌套模型尚未实现 |
+| 未支持 | 521、534、535 | 强调跨越直接/full 引用标签边界，链接优先级尚未实现 |
+
+评分投影不接收样例编号或预期结果，只消费公开块、LinkInfo/目标、显示样式与目标/title 解码游标。覆盖对象完整源码包络（含隐藏语法）的样式才可包住整个对象，故 519/533 不因拆分强调标签产生伪差异；标签内 em 包住 strong/code 按状态转换保留。其它歧义/反向样式嵌套及未评分结构明确拒绝。投影不重解析 Markdown、不补括号、移动定界符、trim 空白或构造不存在的外层图片/链接；HTML/URI 转义只是输出编码。独立观察单独冻结，后续改变必须审查分类，不能修改官方期望迁就实现。
+
+七项新测试覆盖：
+
+- 全部 27 例及 **814 个切点、787 个逐字符前缀/逐前缀 EOF**，校验结构/显示/对象快照、pending 与元数据；每次完成解析按独立三类结果验收。
+- 源码全覆盖、逐字符切片映射、零预算停步、六字节显示读取，以及显示/目标/title 三游标共享六字节预算与可前进性；额外覆盖 UTF-8、实体、转义、空标签/空目标/title、换行和未完成后缀。
+- 晚定义逐字追加保留对象/标签/目标身份；首定义优先，定义源码映射正确；528 内层未定义引用后续可独立解析，但不重新构造丢失外层链接。
+- 强调包住链接/图片与标签内强调的区别、目标/title/对象种类/内容变化敏感性及投影拒绝边界。首轮新拒绝用例错误假定三连星号产生叠加样式，改用直接歧义状态断言后七项通过，官方评分无变化。
+
+实现只增加离线测试及生成器，不增加核心状态、扫描或旧正文/引用/祖先回访，累计追加 O(n log n)、核心空间 O(n)、零运行时依赖、禁止 unsafe 与共享预算契约保持。本次短样例不替代已有深层/百万字和操作计数回归。嵌套候选与强调作用域修复、跨行后缀/定义、完整失败回退、通用输出渲染及宽泛兼容性继续待办。
+
+验收（项目 devShell）：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check` 全通过；debug/release `cargo nextest run --no-fail-fast` **各 1351 项**通过，`cargo test --doc` **75 项**通过（72 普通 + 3 compile-fail）。专项七项、25 份夹具和独立来源校验通过；四份 Links 夹具编号并集精确覆盖 482–571，无重叠或缺号。README/TODO/DONE 仅追加，本次仅新增三份评分文件，其余基线文件保持；范围和差异检查见 `/tmp/mdtui3-goal-run/link-labels-scope-check.log`、独立差异 `link-labels-unit.patch`，专项 `link-labels-targeted-final.log`，来源 `link-labels-provenance.log`，汇总 `link-labels-validation.log`（均在同目录）。
+
+
+## 2026-11-04 CommonMark 基础单分隔符强调子集评分交付
+
+本单元落实 TODO 的强调兼容性与固定标准样例评分，范围仅为 **Emphasis and strong emphasis 350–373**，新增 `commonmark_emphasis_single.rs` 测试/夹具和 `scripts/generate_commonmark_emphasis_single.py`。24 例为 **14 支持 / 8 刻意差异 / 2 未支持**；374–481、完整单分隔符规则与加粗/强调兼容性仍待办。
+
+来源为 [CommonMark 0.31.2](https://spec.commonmark.org/0.31.2/#example-350)（John MacFarlane，CC BY-SA 4.0）的官方 `spec.json`，固定 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20`。官方 Markdown/HTML（含 NBSP、Unicode 及换行）逐字保留；独立重新下载并使用独立夹具读取器核对编号/章节成员与原文，篡改输入拒绝及全部 26 份 CommonMark 夹具校验通过。
+
+| 分类 | 样例 | 当前语义与边界 |
+| --- | --- | --- |
+| 支持 | 350–351、355–358、360–361、364–367、370–371 | 基础配对、ASCII 词内下划线限制、空白和不匹配分隔符与官方相符 |
+| 刻意差异 | 352、359、363、368、372 | 简化 flanking 不执行完整的标点邻接规则 |
+| 刻意差异 | 353、354、362 | ASCII 空白/字母数字判定，非 ASCII 空白和符号视作普通字节；354 同时保留美元数学候选的优先级 |
+| 未支持 | 369、373 | 贪心配对只强调两侧括号，内层 `foo` 未获强调；公开样式位也不表示同类嵌套深度 |
+
+独立观察冻结当前实际输出，改变后必须审查分类；投影不接收样例编号或期望，只读公开块和显示样式，不重解析 Markdown、不推导分隔符树、不补标记或 trim。它仅投影公开的单层强调位，不能用于声称任意同类嵌套结构；其它块、对象和未评分样式主动拒绝。段末借用源码 LF 为结构，其余空白和实体产生的 LF 保留，硬换行按公开样式输出。
+
+六项新测试覆盖全部样例及 **286 切点、262 逐字符前缀/逐前缀 EOF**，比较结构/显示快照、pending、源码与逐字符切片映射；六字节显示游标的文本/样式与无限预算对照，零预算和共享预算耗尽不推进另一游标；另验证 UTF-8、空白/实体、跨行与空行边界、失败/未完成分隔符、分类窗口外晚闭合前后块身份及投影敏感性/拒绝范围。初次编译中的 Block 身份访问改为公开 `block_at` 后六项通过；未修改核心或既有测试预期。
+
+本单元只增加离线评分设施与文档，不增加核心状态、扫描或历史正文/引用/祖先回访；零运行时依赖、禁止 unsafe、累计追加 O(n log n)、核心空间 O(n) 和共享预算契约保持。短样例评分不替代已有深层/百万字与操作计数回归。同类嵌套、Unicode/标点 flanking、部分 run 消耗、链接强调边界、通用渲染和宽泛兼容性继续待办。
+
+验收（项目 devShell）：`cargo check --all-targets`、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check` 通过；debug/release `cargo nextest run --no-fail-fast` **各 1357 项**通过，`cargo test --doc` **75 项**通过（72 普通 + 3 compile-fail）。来源记录 `emphasis-provenance.log`，专项 `emphasis-targeted.log`，全套 `emphasis-debug.log` / `emphasis-release.log` / `emphasis-doc.log`，汇总 `emphasis-validation.log`；最终共享预算样式断言由 debug/release 全套覆盖。README/TODO/DONE 仅追加，范围核对和独立差异见 `emphasis-scope-check.log`、`emphasis-unit.patch`（均在 `/tmp/mdtui3-goal-run/`）。
+
+## 2026-11-04 CommonMark 单下划线收尾与基础加粗子集评分交付
+
+本单元交付 CommonMark 0.31.2 Emphasis and strong emphasis 的 **374–389 共 16 例**评分：374–377 为单下划线收尾，378–389 为基础加粗；独立报告 **11 支持、4 刻意差异、1 未支持**。350–373 的已有评分保持，两者合计覆盖 350–389；390–481、完整强调与宽泛标准覆盖继续保留 TODO。
+
+新增 `scripts/generate_commonmark_emphasis_strong.py`、`tests/fixtures/commonmark_emphasis_strong.rs` 和 `tests/commonmark_emphasis_strong.rs`。官方输入/HTML 来自 <https://spec.commonmark.org/0.31.2/spec.json>，固定 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20`，保留 John MacFarlane / CC BY-SA 4.0 归属、原章节及行号。重新下载独立比对编号、Markdown/HTML 和摘要，篡改拒绝与全部 27 份夹具离线检查通过。
+
+评分投影只读公开段落/显示片段及 EMPHASIS/STRONG 位，按样式变化输出标签；不接收样例编号或预期、不扫描 Markdown 定界符、不补标记、不合成嵌套树，混合强调/加粗嵌套明确拒绝。375/388 保留 ASCII 字母数字词内判断，380/385 保留简化标点边界。389 全部正文已有加粗，但 API 没有同类嵌套深度，无法输出官方双层 strong，归未支持。首轮对 389 的独立观察误估为内层无样式，导致两项新测试失败；核对分隔符开闭与实际公开显示后修正观察及原因，官方夹具与投影未为此改动。核心修复及完整嵌套语义另行设计。
+
+六项新测试全部通过：230 个合法 UTF-8 切点、214 个逐字符前缀及逐前缀 EOF 的快照/pending 等价；源码连续覆盖与逐字符切片；六字节共享预算的显示及逐字符样式与无限预算对照、零预算和第二游标停步、前进至 Complete；超过分类窗口后的 `**`/`__` 晚闭合保持块身份；未闭合 EOF、实体、空白、换行、可见标记、输出敏感性与越界拒绝。运行 `nix develop -c cargo nextest run --test commonmark_emphasis_strong --no-fail-fast`；夹具使用 `python3 scripts/generate_commonmark_emphasis_strong.py /path/to/spec.json --check`。
+
+没有核心、运行时依赖、旧测试或已有夹具改动；累计追加 O(n log n)、空间 O(n)、每字节扫描及每个 opener 出入栈的既有契约保持。本轮短样例评分不单独证明长输入复杂度，全套仍覆盖既有大输入回归。README/TODO/DONE 只追加实际交付及剩余范围，不勾选宽泛强调或标准兼容性任务。
+
+最终验收：`cargo check --all-targets`、debug/release `cargo nextest run --no-fail-fast` 各 **1363 项**、`cargo test --doc` **75 项**、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、27 份官方夹具及 `git diff --check` 均通过（Cargo 命令在本项目 `nix develop` 中执行）。汇总 `/tmp/mdtui3-goal-run/strong-validation.log`；专项 `strong-targeted-final.log`，首次失败 `strong-targeted.log`，来源 `strong-provenance.log`，全套 `strong-debug.log` / `strong-release.log` / `strong-doc.log`，范围核对 `strong-scope-check.log` 和独立差异 `strong-unit.patch` 均位于同一目录。
+
+## 2026-11-04 CommonMark 加粗收尾与混合强调子集评分交付
+
+本单元完成 TODO 中尚未评分的 CommonMark 0.31.2 Emphasis and strong emphasis **390–405 共 16 例**，新增 `scripts/generate_commonmark_emphasis_strong_close.py`、`tests/fixtures/commonmark_emphasis_strong_close.rs` 和 `tests/commonmark_emphasis_strong_close.rs`。评分为 **13 支持、3 刻意差异、0 未支持**：392/398 的标点边界和 401 的非 ASCII 词内下划线沿用已声明方言；其余与官方 HTML 相符。三份强调夹具编号并集恰为 350–405，406–481、同类嵌套深度、完整强调和宽泛标准覆盖继续待办。
+
+来源为 [CommonMark 0.31.2 官方数据](https://spec.commonmark.org/0.31.2/spec.json)（John MacFarlane，CC BY-SA 4.0），固定 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20`。Markdown/HTML（含空白、换行、Unicode）逐字保留，记录来源行号。重新下载后与既有来源比对，并通过独立夹具读取器核对编号/章节/原文；篡改源输入拒绝，全部 28 份 CommonMark 夹具校验通过。
+
+评分不接收样例编号或预期，不扫描源码分隔符、不补标记或裁剪正文；仅依据公开样式变化确定先出现的外层样式，支持本子集两种可辨混合嵌套顺序，同时开启多个样式和交叉结束主动拒绝。直接链接要求完整对象范围具有统一强调样式、标签外语法隐藏、非空标签且对象位于同一段；目标/title 复用公开解码游标，输出层借用已有元数据适配器。图片、引用链接、链接内部样式变化及其它未评分结构不纳入投影。已有同类嵌套深度缺口不因本子集匹配而关闭。
+
+七项回归覆盖 297 个合法 UTF-8 切点、281 个逐字符前缀及每个前缀 EOF 的快照/pending 等价；源码连续覆盖、逐字符切片、六字节显示读取的文本和样式与无限预算对照、零预算与第二游标共享耗尽；超过分类窗口后加粗晚闭合保持块身份，混合嵌套两种顺序下外层晚闭合保持块/链接身份及目标，显示与目标共用六字节预算。还检查实体、空白/换行、未闭合 EOF、可见标记、投影敏感性与歧义拒绝。初次编译的 Style 位或改为读取公开混合样式；首轮新测试三项失败源于直接链接保留暂存引用符号，改为检查实际 LinkTarget 后通过，官方夹具和独立分类未更改。
+
+本次只增加离线评分设施及文档，没有核心、运行时依赖或旧测试改动；累计追加 O(n log n)、核心空间 O(n)、零运行时依赖、禁止 unsafe 及共享预算契约保持。短样例不单独证明大输入复杂度，全套回归保留既有深层/百万字验收。README/TODO/DONE 只追加本轮交付及剩余范围。
+
+最终验收（项目 devShell）：`cargo check --all-targets`、debug/release `cargo nextest run --no-fail-fast` **各 1370 项**、`cargo test --doc` **75 项**（72 普通 + 3 compile-fail）、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check` 以及 28 份夹具与 `git diff --check` 均通过。Clippy 指出的新测试 `Copy` 值多余 `clone` 已删除，最终两配置各七项专项及 check/clippy/fmt 复验通过；该处无行为变化，未重复全套。其余 347 个基线文件 SHA-256 保持，三份文档仅追加。汇总 `/tmp/mdtui3-goal-run/strong-close-validation.log`；专项 `strong-close-targeted-final.log` / `strong-close-targeted-release.log`，来源 `strong-close-provenance.log`，全套 `strong-close-debug.log` / `strong-close-release.log` / `strong-close-doc.log`，范围核对 `strong-close-scope-check.log` 和独立差异 `strong-close-unit.patch` 位于同目录。
+
+
+## 2026-11-04 CommonMark 嵌套强调与分隔符部分消耗子集评分交付
+
+本单元完成 TODO 中尚未评分的 CommonMark 0.31.2 Emphasis and strong emphasis **406–416 共 11 例**，新增 `scripts/generate_commonmark_emphasis_nesting.py`、`tests/fixtures/commonmark_emphasis_nesting.rs` 和 `tests/commonmark_emphasis_nesting.rs`。评分为 **4 支持、0 刻意差异、7 未支持**：406/410/411/412 匹配官方；407 的同类嵌套在公开样式中丢失深度；408/409 要求双连分隔符部分消耗；413–416 要求三连分隔符混合开闭。后七例记为兼容性缺口，不能以既有字面输出冒充支持。417–481、完整强调与宽泛标准覆盖继续待办。
+
+来源为 [CommonMark 0.31.2 官方数据](https://spec.commonmark.org/0.31.2/spec.json)（John MacFarlane，CC BY-SA 4.0），固定 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20`。Markdown/HTML（含空白与换行）逐字保留并记录来源行号；生成器只提取固定章节/编号，不运行核心解析器。投影独立读取公开段落/显示片段与样式先后变化，不接收样例编号或预期，不扫描 Markdown 分隔符、补标记、推导同类嵌套树；同时开启多个样式和交叉结束、链接及其它未评分结构主动拒绝。
+
+六项新回归覆盖 171 个合法切点、160 个逐字符前缀及每个前缀 EOF 的快照/pending 等价；源码连续覆盖、逐字符切片和样式一致性、六字节共享预算及零预算停步/第二游标耗尽；超过分类窗口的 Unicode 长正文晚闭合保持块身份，四种混合/同类/未配对组合逐字符追加与整段输入一致；另验证 407 的嵌套与扁平输入公开输出相同但不能匹配官方双层 em，以及实体、空白/换行、可见标记、输出敏感性和歧义拒绝。专项命令 `nix develop -c cargo nextest run --test commonmark_emphasis_nesting --no-fail-fast`；夹具命令 `python3 scripts/generate_commonmark_emphasis_nesting.py /path/to/spec.json --check`。
+
+核心、运行时依赖、旧测试和已有夹具均保持。新增离线测试不改变累计追加 O(n log n)、空间 O(n) 或共享预算契约；短样例评分不单独证明长输入复杂度，全套仍运行既有大输入回归。README/TODO/DONE 仅追加实际交付和剩余范围。
+
+最终验收：`cargo check --all-targets`、debug/release `cargo nextest run --no-fail-fast` 各 **1376 项**、`cargo test --doc` **75 项**、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、29 份官方夹具校验及 `git diff --check` 全部通过（Cargo 命令在项目 `nix develop` 中执行）。独立夹具读取器核对四份强调夹具编号并集恰为 350–416，官方原文逐字一致；新下载匹配固定哈希，篡改来源被拒绝。范围核对确认其余 350 个基线文件 SHA-256 保持，三份已有文档仅追加。汇总 `/tmp/mdtui3-goal-run/emphasis-nesting-validation.log`；同目录保留 `emphasis-nesting-targeted.log`、`emphasis-nesting-provenance.log`、`emphasis-nesting-debug.log` / `emphasis-nesting-release.log` / `emphasis-nesting-doc.log`、`emphasis-nesting-scope-check.log` 与独立差异 `emphasis-nesting-unit.patch`。
+
+
+## 2026-11-04 CommonMark 长分隔符与嵌套加粗子集评分交付
+
+本单元完成 TODO 中尚未评分的 CommonMark 0.31.2 Emphasis and strong emphasis **417–430 共 14 例**，新增 `scripts/generate_commonmark_emphasis_runs.py`、`tests/fixtures/commonmark_emphasis_runs.rs` 和 `tests/commonmark_emphasis_runs.rs`。评分为 **7 支持、0 刻意差异、7 未支持**：420–424、428/429 匹配官方；417/426/427/430 缺少长分隔符部分消耗，418/425 缺少公开同类嵌套深度，419 的链接正文丢失强调而隐藏包络保留外层强调。431–481、完整强调与宽泛标准兼容性继续待办。
+
+来源为 [CommonMark 0.31.2 官方数据](https://spec.commonmark.org/0.31.2/spec.json)（John MacFarlane，CC BY-SA 4.0），固定 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20`。Markdown/HTML（含空白与换行）逐字保留并附来源行号；生成器只提取固定章节/编号，不运行核心解析器。重新下载、独立夹具读取器和篡改拒绝验证来源；五份强调夹具编号并集恰为 350–430，共 81 例。
+
+投影只读取公开段落、显示样式变化和链接元数据，不接收样例编号/预期，不扫描分隔符、补标记、移动样式边界或合成嵌套树。直接链接要求完整对象范围具有统一样式。419 保留拒绝投影，单独断言可见文本、样式、源码范围、链接身份/目标及隐藏包络样式，按未支持计数；不把任意 panic 本身当作缺口证据。425 的嵌套与扁平正文呈现相同公开 strong 位，独立验证不能因此生成第二层 strong。其它结构、同时开启多个样式及交叉结束继续拒绝。
+
+七项新回归覆盖 302 个合法切点、288 个逐字符前缀及每个前缀 EOF 的快照/pending 等价；源码连续覆盖、逐字符切片和逐字符样式一致性、六字节显示预算及零预算/第二游标共享耗尽；超过分类窗口的 Unicode 长正文混合/同类/未配对组合逐字符晚闭合保持块身份，混合强调外层晚闭合保持块/链接身份和目标，显示与目标共用六字节预算。另覆盖实体、空白/换行、可见标记、投影敏感性与歧义拒绝。专项命令 `nix develop -c cargo nextest run --test commonmark_emphasis_runs --no-fail-fast`；夹具命令 `python3 scripts/generate_commonmark_emphasis_runs.py /path/to/spec.json --check`。
+
+核心、运行时依赖、旧测试和已有夹具保持；累计追加 O(n log n)、空间 O(n)、禁止 unsafe 和共享预算契约不变。短样例不单独证明大输入复杂度，全套回归保留既有深层/百万字验收。README/TODO/DONE 仅追加本轮交付及剩余范围。
+
+最终验收（项目 devShell）：`cargo check --all-targets`、debug/release `cargo nextest run` 各 **1383 项**、`cargo test --doc` **75 项**（72 普通 + 3 compile-fail）、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、30 份官方夹具校验及 `git diff --check` 全部通过。七项专项首次验收通过；观察阶段确认 419 的非统一链接样式后采用明确拒绝及精确公开语义断言，官方原文与投影未为该样例放宽。范围核对确认其余 353 个基线文件 SHA-256 保持，三份已有文档仅追加。汇总 `/tmp/mdtui3-goal-run/emphasis-runs-validation.log`；同目录保留 `emphasis-runs-targeted.log`、`emphasis-runs-provenance.log`、`emphasis-runs-debug.log` / `emphasis-runs-release.log` / `emphasis-runs-doc.log`、`emphasis-runs-scope-check.log` 与独立差异 `emphasis-runs-unit.patch`。
+
+
+## 2026-11-04 CommonMark 混合强调收尾与字面分隔符子集评分交付
+
+本单元完成 TODO 中尚未评分的 CommonMark 0.31.2 Emphasis and strong emphasis **431–444 共 14 例**，新增 `scripts/generate_commonmark_emphasis_partial.py`、`tests/fixtures/commonmark_emphasis_partial.rs` 和 `tests/commonmark_emphasis_partial.rs`。评分为 **9 支持、0 刻意差异、5 未支持**：433–441 匹配官方；431 的三连 closer、442–444 的不等长分隔符需要部分消耗，432 的公开 strong 位未保留重复嵌套深度。445–481、完整强调及宽泛标准兼容性继续待办。
+
+来源为 [CommonMark 0.31.2 官方数据](https://spec.commonmark.org/0.31.2/spec.json)（John MacFarlane，CC BY-SA 4.0），固定 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20`。官方 Markdown/HTML 与空白逐字保留，生成器只提取固定章节和编号，不运行解析器。重新下载、独立夹具读取器、篡改拒绝及六份强调夹具编号并集 350–444 共 95 例核对通过。
+
+投影只读取公开段落、对象范围、显示样式变化和链接元数据。链接前后隐藏包络须有一致外层样式，标签正文不能丢失外层样式，标签内部样式置于 anchor 内部，退出链接时先关闭内部样式。433 的核心语义已足以表达官方 HTML；旧投影的统一标签样式限制在本单元独立评分器中放宽，已有评分器与测试保持。432 的嵌套和扁平输入得到相同公开样式，独立测试明确不能据此生成第二层 strong；同时开始的歧义样式、交叉结束、419 的链接外层样式丢失及其它未评分结构继续拒绝。投影不接收样例编号/预期、不扫描源码分隔符、不补标记或重建嵌套树。
+
+七项新回归覆盖 224 个字符切点、210 个逐字符前缀及每个前缀 EOF 的快照/pending 等价；源码连续覆盖、逐字符切片和样式一致性、六字节共享显示预算及零预算/第二游标停步；超过分类窗口的 Unicode 长正文混合/同类/不等长分隔符组合晚闭合保持块身份。两种混合样式外层晚闭合前后保留块/链接身份、目标与标签内部强调，显示和目标共用六字节预算。另覆盖实体、空白/换行、可见标记、投影输出敏感性与拒绝边界。专项命令 `nix develop -c cargo nextest run --test commonmark_emphasis_partial --no-fail-fast`；夹具命令 `python3 scripts/generate_commonmark_emphasis_partial.py /path/to/spec.json --check`。
+
+核心、依赖、旧测试与已有夹具保持，三份文档仅追加；累计追加 O(n log n)、空间 O(n)、禁止 unsafe 和共享预算契约不变。短样例评分不独立证明长输入复杂度，全套仍运行既有大输入回归。
+
+最终验收（项目 devShell）：`cargo check --all-targets`、debug/release `cargo nextest run --no-fail-fast` 各 **1390 项**、`cargo test --doc` **75 项**（72 普通 + 3 compile-fail）、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、31 份官方夹具校验及 `git diff --check` 全部通过。专项七项两次通过；第二次补充不等长分隔符长正文与链接内部样式的晚闭合/共享预算断言，随后全套覆盖最终代码。观察阶段发现 433 是旧投影限制而非核心缺口，按公开范围扩展本单元投影后判为支持；官方预期未改。范围核对确认其余 356 个基线文件 SHA-256 保持，三份文档仅追加。汇总 `/tmp/mdtui3-goal-run/emphasis-partial-validation.log`；同目录保留 `emphasis-partial-targeted-final.log`、`emphasis-partial-provenance.log`、`emphasis-partial-debug.log` / `emphasis-partial-release.log` / `emphasis-partial-doc.log`、`emphasis-partial-scope-check.log` 和独立差异 `emphasis-partial-unit.patch`。
+
+
+## 2026-11-04 CommonMark 不等长强调与转义分隔符子集评分交付
+
+本单元完成 TODO 中尚未评分的 CommonMark 0.31.2 Emphasis and strong emphasis **445–459 共 15 例**，新增 `scripts/generate_commonmark_emphasis_unequal.py`、`tests/fixtures/commonmark_emphasis_unequal.rs` 和 `tests/commonmark_emphasis_unequal.rs`。评分为 **6 支持、0 刻意差异、9 未支持**：448–453 的字面下划线串、转义下划线及强调中的字面星号匹配官方；445–447 和 454–459 保留整串字面输出，需要 opener/closer 部分消耗，明确作为未支持。460–481、完整强调与宽泛标准兼容性继续待办。
+
+来源为 [CommonMark 0.31.2 官方数据](https://spec.commonmark.org/0.31.2/spec.json)（John MacFarlane，CC BY-SA 4.0），固定 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20`。官方 Markdown/HTML 和空白逐字保留并记录来源行号，生成器只提取固定章节与编号。重新下载后以独立读取器核对七份强调夹具并集 350–459 共 110 例，篡改来源拒绝，全部 32 份官方夹具校验通过。
+
+投影只读取公开段落、显示片段和样式变化；不接收样例编号/预期，不扫描源码分隔符、补标记或推导同类嵌套树。混合样式顺序只由公开先后变化决定，同时开始和交叉结束、链接及其它未评分结构主动拒绝。独立观察和原因与官方预期分离，不用字面输出冒充兼容。
+
+六项新回归覆盖 148 个合法切点、133 个逐字符前缀及每个前缀 EOF 的快照/pending 一致性；源码连续覆盖、逐字符切片与样式、六字节共享预算、零预算/第二游标停步和完成状态；449/452 直接验证转义 payload 原始位置、样式及反斜线和强调语法隐藏，450/453 验证强调中的字面星号，另验证被转义 closer 的 EOF 回退。超过分类窗口的 Unicode 正文对九种不等长组合及两种转义晚闭合逐字符追加，保留块身份并与整段输入比较。还覆盖实体、空白/换行、可见标记、投影敏感性和拒绝边界。专项命令 `nix develop -c cargo nextest run --test commonmark_emphasis_unequal --no-fail-fast`；夹具命令 `python3 scripts/generate_commonmark_emphasis_unequal.py /path/to/spec.json --check`。
+
+核心、依赖、旧测试和已有夹具保持；README/TODO/DONE 仅追加。累计追加 O(n log n)、空间 O(n)、禁止 unsafe 和共享预算契约不变；本次短样例评分不独立证明长输入复杂度，全套仍覆盖既有大输入回归。
+
+最终验收（项目 devShell）：`cargo check --all-targets`、debug/release `cargo nextest run --no-fail-fast` 各 **1396 项**、`cargo test --doc` **75 项**（72 普通 + 3 compile-fail）、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、32 份官方夹具校验及 `git diff --check` 全部通过。专项六项首次通过；其余 359 个基线文件 SHA-256 保持，三份文档仅追加。汇总 `/tmp/mdtui3-goal-run/emphasis-unequal-validation.log`；同目录保留 `emphasis-unequal-targeted.log`、`emphasis-unequal-provenance.log`、`emphasis-unequal-debug.log` / `emphasis-unequal-release.log` / `emphasis-unequal-doc.log`、`emphasis-unequal-scope-check.log` 和独立差异 `emphasis-unequal-unit.patch`。
+
+
+## 2026-11-04 CommonMark 嵌套强调收尾与行内优先级子集评分交付
+
+本单元完成 TODO 中尚未评分的 CommonMark 0.31.2 Emphasis and strong emphasis **460–481 共 22 例**，新增 `scripts/generate_commonmark_emphasis_final.py`、`tests/fixtures/commonmark_emphasis_final.rs` 和 `tests/commonmark_emphasis_final.rs`。评分为 **10 支持、0 刻意差异、12 未支持**：460/462、469–472、478–481 匹配官方；461/463 缺少同类嵌套的公开深度，464–468 缺少分隔符部分消耗，473/474 强调跨越链接标签，475–477 的原始 HTML 在需求范围外。八份强调夹具现精确覆盖 350–481 全部 132 例，合计 **74 支持、15 刻意差异、43 未支持**；此前的剩余样例评分范围在此补齐，完整强调和宽泛标准兼容性仍未完成。
+
+来源为 [CommonMark 0.31.2 官方数据](https://spec.commonmark.org/0.31.2/spec.json)（John MacFarlane，CC BY-SA 4.0），固定 SHA-256 `d431b29d97b6f73e69d547109cf5081578fac931e72afe95639ebe766c1b2a20`。官方 Markdown/HTML 和空白原样保留，生成器只提取固定章节与编号，不运行解析器。重新下载后用独立夹具读取器逐字核对本子集，检查八份夹具编号并集恰为 350–481，来源篡改拒绝且全部 33 份官方夹具校验通过。
+
+投影仅消费公开段落、显示样式、链接对象范围和预算元数据；代码样式加入同一有序样式转换，先有外层强调、后有代码的 478/479 可直接表达。链接前后隐藏包络须一致、可见标签不能丢失外层样式；473/474 明确拒绝投影，并单独锁定全部显示片段、样式、源码/标签/目标区间与直接链接元数据，计为未支持，不合成修复后的 HTML。同时开启多个样式、交叉结束、代码内链接和其它未评分结构主动拒绝；不扫描源码分隔符、补标记、移动强调边界或重建同类嵌套。
+
+六项新回归覆盖 356 个合法切点、334 个逐字符前缀及逐前缀 EOF 的快照/pending 一致性；源码连续覆盖、逐字符切片、样式与链接 ID 映射、六字节共享显示预算、零预算/第二游标停步及完成状态；链接目标/title 通过已有预算解码器与无限预算结果对照。478/479 精确检查代码中的字面星号/下划线与源码样式，480/481 检查自动链接标签/目标中原始分隔符和隐藏尖括号。超过分类窗口的 Unicode 长正文逐字符晚闭合代码、自动链接、三连和同类嵌套，保持块/链接身份。投影另有实体、空白/换行、可见标记敏感性和拒绝边界验证。专项命令 `nix develop -c cargo nextest run --test commonmark_emphasis_final`；夹具命令 `python3 scripts/generate_commonmark_emphasis_final.py /path/to/spec.json --check`。
+
+核心、依赖、旧测试与已有夹具保持，README/TODO/DONE 仅追加；累计追加 O(n log n)、空间 O(n)、禁止 unsafe 和共享预算契约不变。本次评分不单独证明长输入复杂度，全套继续覆盖既有大输入回归。
+
+最终验收（项目 devShell）：`cargo check --all-targets`、debug/release `cargo nextest run --all-targets` 各 **1402 项**、`cargo test --doc` **75 项**（72 普通 + 3 compile-fail）、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、33 份官方夹具校验及 `git diff --check` 全部通过。首次编译将新测试错误使用的 Style 位或改为公开 `union` API 后，六项专项及全套通过，官方预期和核心未改。范围核对确认其余 362 个基线文件 SHA-256 保持，三份文档仅追加。汇总 `/tmp/mdtui3-goal-run/emphasis-final-validation.log`；同目录保留 `emphasis-final-targeted-final.log`、`emphasis-final-provenance.log`、`emphasis-final-debug.log` / `emphasis-final-release.log` / `emphasis-final-doc.log`、`emphasis-final-scope-check.log` 和独立差异 `emphasis-final-unit.patch`。
+
+## 2026-11-04 GFM 删除线章节评分交付
+
+本单元推进 TODO「继续扩充标准语法样例覆盖」，完成 GFM 0.29-gfm Strikethrough (extension) **491–493 完整章节三例**，新增 `scripts/generate_gfm_strikethrough.py`、`tests/fixtures/gfm_strikethrough.rs` 和 `tests/gfm_strikethrough.rs`。评分 **2 支持、1 刻意差异、0 未支持**：492 的空行切断候选和 493 的三连波浪号字面行为匹配官方；491 双波浪号已支持，单波浪号按既有仅 `~~` 方言保留字面，整例计为刻意差异。更完整的删除线和宽泛标准兼容性继续待办。
+
+来源为 [GFM 0.29-gfm 官方规范 HTML](https://github.github.com/gfm/#strikethrough-extension-)（GitHub，基于 John MacFarlane 的 CommonMark；CC BY-SA 4.0），完整来源 SHA-256 `b153d814fdfc8624bb6da7449162c1cd707a637f7d1c1b636eb44b9cf63fa220`，与既有表格/任务列表夹具一致。生成器只读取固定章节并解码网页代码块展示标记，逐字保留 Markdown/HTML 与空白，记录 HTML 行号和锚点，不调用核心解析器。重新下载官方来源、独立正则读取器逐字比较 Rust 夹具、章节编号核对与篡改拒绝均通过。
+
+投影仅消费公开段落、显示文本及 STRIKE 位；只省略借用源码的物理段落末尾 LF，保留实体产生的换行与内部空白，按样式变化输出 del，不扫描源码分隔符、补标记或推导同类嵌套。其它块、对象、强调/加粗/代码/数学主动拒绝。独立敏感性测试验证正文、空白、标记变化不会被投影吞掉。
+
+六项新回归覆盖 91 个合法切点、88 个逐字符前缀及逐前缀 EOF 的完整快照/pending 等价；源码连续覆盖、逐字切片与样式映射、六字节显示预算、零预算/第二游标共享耗尽与完成状态；转义波浪号的可见 payload 和隐藏标记原始位置；超过分类窗口的 Unicode 正文在单/双/三连、长度失配及转义组合下逐字符晚闭合，保持块身份。官方三例均为 ASCII；Unicode 和其它变体仅用于专项验证，不混入官方评分。专项命令 `nix develop -c cargo nextest run --test gfm_strikethrough --no-fail-fast`；离线夹具核验命令 `python3 scripts/generate_gfm_strikethrough.py /path/to/gfm.html --check`。
+
+核心、依赖、既有测试/夹具保持，README/TODO/DONE 仅追加。累计追加 O(n log n)、空间 O(n)、禁止 unsafe 和共享预算契约不变；本组三例不单独证明大输入复杂度，全套继续覆盖既有深层/百万字回归。
+
+最终验收（项目 devShell）：`cargo check --all-targets`、debug/release `cargo nextest run --all-targets --no-fail-fast` 各 **1408 项**、`cargo test --doc` **75 项**（72 普通 + 3 compile-fail）、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、36 份 CommonMark/GFM 官方夹具校验及 `git diff --check` 全部通过。六项专项首次通过。范围核对确认其余 365 个基线文件 SHA-256 保持，三份既有文档仅追加。汇总 `/tmp/mdtui3-goal-run/strike-validation.log`；同目录保留 `strike-targeted.log`、`strike-provenance.log`、`strike-debug.log` / `strike-release.log` / `strike-doc.log`、`strike-scope-check.log` 与独立差异 `strike-unit.patch`。
+
+## 2026-11-04 GFM 裸自动链接扩展章节评分交付
+
+本单元推进 TODO「继续扩充标准语法样例覆盖」，完成 GFM 0.29-gfm Autolinks (extension) **622–635 完整章节 14 例**离线评分，新增 `scripts/generate_gfm_autolinks_extension.py`、`tests/fixtures/gfm_autolinks_extension.rs` 和 `tests/gfm_autolinks_extension.rs`。评分为 **0 支持、14 刻意差异、0 未支持**：所有样例沿用已有「不处理 GFM 裸 URL 自动链接」方言，不生成裸地址链接对象。`www.`、HTTP(S)、email、`mailto:`/`xmpp:` 以及地址末尾标点、括号、实体边界都未实现 GFM 扩展规则；「刻意差异」只记录已明确的范围选择，不等同功能支持。尖括号自动链接章节保持独立，宽泛标准覆盖仍待办。
+
+来源为 [GFM 0.29-gfm 官方规范 HTML](https://github.github.com/gfm/#autolinks-extension-)（GitHub，基于 John MacFarlane 的 CommonMark；CC BY-SA 4.0）。完整来源 SHA-256 `b153d814fdfc8624bb6da7449162c1cd707a637f7d1c1b636eb44b9cf63fa220` 与既有 GFM 夹具一致；离线生成器只解码网页代码块展示标记，保留每个 Markdown/HTML 字符、空白、HTML 行号和锚点。重新下载官方来源，独立正则读取器与 Rust 夹具逐字比较、章节成员和篡改拒绝核验通过。
+
+测试将当前方言的 HTML 观察作为独立常量保存，与官方 HTML 分离；投影不接收编号或预期，只读取公开段落、显示文本和样式，执行 HTML 输出转义，仅省略借用源码的物理段落终止 LF。不会识别地址、合成链接、trim、解码 Markdown 或改写官方结果。实际链接、容器、其它块与强调/代码/数学等样式主动拒绝；附加敏感性测试保留 Unicode、空格/tab、实体换行和反斜线显示语义。
+
+六项回归覆盖 **945 个合法切点、931 个逐字符前缀及逐前缀 EOF** 的完整快照/pending 等价；源码连续覆盖、逐字切片/样式映射、六字节显示预算、零预算与第二游标共享耗尽、免费完成状态；长 Unicode 裸地址超过分类窗口后的逐字符追加及稳定块身份；裸地址与尖括号 URI/email 的独立对照，核对原始标签范围、显示映射和目标。官方输入均为 ASCII，Unicode 和其它变体只作附加回归，不混入官方评分。专项命令 `nix develop -c cargo nextest run --test gfm_autolinks_extension --no-fail-fast`；来源核验命令 `python3 scripts/generate_gfm_autolinks_extension.py /path/to/gfm.html --check`。
+
+核心、依赖、已有测试/夹具保持，README/TODO/DONE 仅追加；累计追加 O(n log n)、空间 O(n)、禁止 unsafe 与共享预算契约保持。评分测试自身不证明大输入复杂度，全套继续覆盖既有深层/百万字回归。
+
+最终验收（项目 devShell）：`cargo check --all-targets`、debug/release `cargo nextest run --all-targets --no-fail-fast` 各 **1414 项**、`cargo test --doc` **75 项**（72 普通 + 3 compile-fail）、`cargo clippy --all-targets -- -D warnings`、`cargo fmt --all -- --check`、37 份 CommonMark/GFM 夹具核验及 `git diff --check` 全部通过。六项专项首次通过。范围核对确认其余 **368 个基线文件 SHA-256 保持**，三份既有文档仅追加。汇总 `/tmp/mdtui3-goal-run/bare-autolinks-validation.log`；同目录保留 `bare-autolinks-targeted.log`、`bare-autolinks-provenance.log`、`bare-autolinks-debug.log` / `bare-autolinks-release.log` / `bare-autolinks-doc.log`、`bare-autolinks-scope-check.log` 和独立差异 `bare-autolinks-unit.patch`。
+
+## 2026-11-04 部分 tab 路径异类标记兄弟列表交付
+
+本轮实现有界分类窗口内、部分 tab 完整祖先路径之后的非空异类标记兄弟列表。标记缩进至多三列且低于旧 Item 正文缩进时，bullet 字符、bullet/ordered 类型或 ordered 分隔符变化会关闭旧 List/Item 及后代，并创建同父新 List/Item；祖先、已发布块及链接身份不变。同类标记继续保留旧 List，达到正文缩进仍走嵌套规则。完整短行上的异类空标记及不完整路径保持原方言，完整容器规则、分类窗口扩展与宽泛标准兼容性仍未完成。
+
+两处只读探测复用已缓存的缩进和 marker 末端，将候选交还既有结构分类器；没有新增持久状态或扫描。匹配消耗显式前缀/正列数，实际关闭按节点数计费，不回访旧正文或保留祖先；累计追加 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 和共享预算契约保持。源码 tab/标记前缀隐藏，任务/正文继续保留原始映射；松紧和关闭/新增通知沿用现有路径。
+
+验收：
+
+- 新增 `crates/mdstream-core/tests/mixed_sibling_tabs.rs` 六项回归，15,660 组独立列宽展开模型覆盖不同标记、缩进、祖先、正文和 LF/CRLF/EOF；另有空行/后代模型、空标记/分隔线/缺失路径/围栏/数学优先级反例。
+- 全 UTF-8 切点、逐前缀及每个前缀 EOF、分类窗口边界、祖先/旧块/链接 ID、精确后代关闭与新列表范围、任务/编号/松紧通知通过；原 `sibling_tabs` 仅更新一条本次扩展的异类标记预期，其余断言保持。
+- tile 边界、连续源码覆盖、逐字符切片、零预算停步、共享六字节预算耗尽和游标过期通过；千层百万字正文后千次追加不增加分类/容器工作，4096 次列表类型切换的累计操作数受限。
+- 专项 12 项、debug/release 各 1420 项、doc 75 项，以及 `cargo check --workspace --all-targets`、clippy `-D warnings`、fmt、37 份官方夹具生成器 `--check`、diff 检查通过。官方夹具、生成器、评分投影和统计未改。
+
+证据保存在 `/tmp/mdtui3-goal-run/mixed-sibling-*`：修复前 `repro.log` 复现异类标记留在正文，`targeted-final.log` 记录专项通过，`debug.log` / `release.log` / `doc.log` 记录全套结果。首轮扩展模型暴露异类空标记边界，收窄为非空准入后通过；身份测试中祖先开放状态的预期改用实际公开契约 `Growing`。`scope-check.log` 与 `unit.patch` 对照本单元开始时基线，三份文档仅追加；完整兼容性待办保持。
+
+## 2026-11-04 部分 tab 路径异类空标记交付
+
+本轮补齐部分 tab 完整祖先路径后的异类空标记。候选缩进至多三列且低于旧 Item 正文缩进时，不再要求异类标记具有非空正文；完整短行交给已有结构分类器，保持空标记不中断段落的方言。已有正文时允许 lazy 续行并保留旧 List/Item，空行后则可关闭旧列表并开启同父空列表，首定义/编号/任务及松紧逻辑没有新增分支。缺失引用、不完整祖先、超出分类窗口的候选和完整容器兼容性继续保留。
+
+修复前 `- parent\n    - first\n\t+\n` 的末行显示原始 tab，与等列宽空格输入不同。去掉两处只读探测的非空限制，并在 lazy 回退保留剩余虚拟列后，末行显示两个空格和 `+`，虚拟空格映射到原始单字节 tab。扩展模型进一步发现已匹配引用祖先的块类型丢失，已用现有局部引用深度恢复。没有新增持久状态、扫描或历史回访；各次路径匹配消费正列数或显式前缀，关闭按实际节点计费，累计追加 O(n log n)、空间 O(n)、零运行时依赖及禁止 unsafe 保持。
+
+新增 `empty_mixed_sibling_tabs.rs` 七项回归：
+
+- 25,056 组独立列宽模型覆盖混合标记、祖先/引用/缩进、空白后缀、空行与 LF/CRLF/EOF；另有 75 组直接复现和后代/优先级边界。
+- UTF-8 全切点、逐字符前缀及逐前缀 EOF、窗口边界、游标过期；旧块/链接/祖先 ID、空列表新增和精确关闭范围、编号与 Tight 元数据。
+- tab 剩余列、连续源码覆盖、逐字符切片、tile 边界、零预算停步和两个游标共享六字节预算；千层百万字正文追加不回扫历史，4096 次异类空列表切换受操作计数上界约束。
+
+原 `mixed_sibling_tabs` 仅更新两条被本项扩展的空标记回退观察和相邻说明。首轮专项模型发现引用块类型问题并修复；引用祖先模型的空行改为带显式引用前缀，以保证对照双方测试同一完整祖先路径，不把缺失引用后的字面 tab 当作已消费缩进。修复前与中间失败日志保留，官方夹具/生成器/评分统计不变。
+
+最终验收（项目 devShell）：专项 19 项通过；`cargo check --workspace --all-targets`、debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1427 项**、`cargo test --doc --workspace` **75 项**、clippy `-D warnings`、fmt、37 份官方夹具 `--check` 和 `git diff --check` 全部通过。范围核验确认 **370 个基线文件 SHA-256 保持**，仅 5 个已有文件和 1 个新测试变化，README/TODO/DONE 仅追加。日志与独立差异保存为 `/tmp/mdtui3-goal-run/empty-mixed-*`：`repro.log`、`targeted-final.log`、`check.log`、`debug.log`、`release.log`、`doc.log`、`clippy.log`、`fmt.log`、`fixtures.log`、`scope-check.log`、`unit.patch`，汇总为 `validation.log`。
+
+## 2026-11-04 完整部分 tab 路径表头与表格正文行交付
+
+完成 TODO 中容器新叶块剩余类型的表头窄子项，并接通同作用域表格正文行：已有完整容器路径消费部分 tab 后，只要现有叶块分类为非 lazy 正文，就沿用普通路径的表头/行识别。确认单元格时裁掉前导空白；失败、未确认 EOF 保留原 tab 的剩余列映射。早管道、长行单遍摘要及可隔离的旧数学/代码/强调/链接候选沿用已有确认/恢复模型，原始源码、容器和已发布对象身份保持。
+
+核心仅修改 `lib.rs` 的一处 `table_text` 准入条件；不增字段、扫描、依赖或 unsafe，也不重扫历史正文、表格行或保留祖先。表头每字节仍只做一次摘要，确认最多按既有规则消费当前单元格，失败一次恢复；追加累计 O(n log n)、空间 O(n)，查询与显示读取继续共享预算。候选确认和 EOF 仍只承诺累计复杂度，不提供单次硬时延。
+
+新增 `tests/partial_table_tabs.rs` 七项回归：1,536 组物理列宽与空格路径对照（含成功、失败和非部分 tab 对照）、短样例全部 UTF-8 切点/逐前缀及 EOF、五种继承候选长表头的成功/失败/EOF 全切点、原始切片/tile 映射与双游标共享六字节预算、稳定 LinkId/TableId/BlockId 与列宽通知。980 层引用加列表的百万字表头/行追加证明正文增长不增加分类或容器遍历，4,096 行历史后只计新增行。七份既有测试仅更新本子项取代的排除断言及关联语义，lazy、不透明候选、Setext、缩进代码等其它边界继续断言。
+
+专项复跑：`nix develop -c cargo nextest run --test partial_table_tabs --test closed_link_headers --test closed_math_headers --test link_suffix_headers --test math_tabs --no-fail-fast`，54 项通过。首次全套发现四处旧的部分 tab 表头排除断言，审查后更新并增加长候选模型验证；新模型还区分了失败分隔行成为待定表头的既有回退，不把该边界扩入本次实现。
+
+剩余：分隔行自身的部分 tab 准入、待定表头下一行的探测、缺失祖先/不完整路径、分类窗口扩展及完整容器/表格兼容性继续待办。失败分隔行若成为新表头，其下一条部分 tab 行仍可能保留原始 tab；四列代码及其它叶块优先级保持。本项不把宽泛标准支持标为完成。
+
+最终验收：debug/release 各 **1,434 项通过**，文档测试 **75 项通过**；`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check` 全通过。33 份 CommonMark 夹具离线来源校验通过，GFM 夹具/生成器保持基线哈希不变。证据在 `/tmp/mdtui3-goal-run/partial-table-{validation,debug,release,doc,fixtures,scope-check}.log`，本轮独立差异 `partial-table-unit.patch`；README/TODO/DONE 仅追加，11 个已有文件与 1 个新测试变化，其余 365 个基线文件 SHA-256 保持。
+
+
+## 2026-11-04 待定表头后部分 tab 普通文本交付
+
+- 范围：已有容器路径完整匹配、剩余缩进至多三列且分类为非空普通文本时，待定表头下一行使用现有部分 tab 路径。短 `-|-`、`:-|-:`、`|-|-|` 可按列数确认；非分隔文本或列数不符回退，保留单字节 tab 的虚拟空格映射，失败行含管道时可继续成为新表头。普通新段落、已确认表格正文和此前叶块规则保持。
+- 实现：仅删除 `Containers::partial_prefix` 普通文本分支对待定表头的准入排除，复用现有路径匹配、分隔行确认、候选回退和显示映射。没有新增扫描/状态或旧正文、旧行、保留祖先回访，累计追加和空间上界不变。最初尝试调整调用处的文本资格会干扰四列代码优先级，回归检出后改为上述局部分支；旧代码优先级测试原样通过。
+- 验证：新增 `pending_table_tabs.rs` 六项测试，1,152 组独立物理列展开模型（引用/列表混合、六层列表、四种列偏移、成功/失败及不同列数），逐 UTF-8 切点、实时前缀和逐前缀 EOF；确认/回退/空白 EOF 的源码、单字符切片、tile 和共享六字节预算；失败行成为新表头后的对齐、旧链接/容器/表格块身份及通知；980 层引用加列表的百万字表头逐字追加不再增加路径/分类工作，后续短分隔确认保持对象身份。修复前六项中四项失败，最终六项及相关旧测试共 37 项通过。
+- 边界：只有普通文本分隔行在此扩展；带新容器标记的 `- | -`、超出分类窗口的部分 tab 长分隔行探测、不完整路径/lazy、空白及其它叶块优先级不在本项扩大。纯 tab 空行仍保留原始拼写；待定表头中尚未发布的短行内对象仍延迟发布。完整容器/表格与宽泛标准兼容性继续待办。
+- 四份旧测试仅更新由本项取代的分隔行排除和回退显示断言；运行日志、基线范围核对及本轮独立补丁保存在 `/tmp/mdtui3-goal-run/pending-table-*`。
+
+最终验收：debug/release 各 **1,440 项通过**，文档测试 **75 项通过**；`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check` 和 `git diff --check` 通过。8 个已有文件和 1 个新测试变化，README/TODO/DONE 仅追加，其余 369 个基线文件 SHA-256 保持（包含所有官方夹具及生成器）。日志 `pending-table-validation.log`，独立差异 `pending-table-unit.patch`，范围 `pending-table-scope-check.log`，修复前 `pending-table-repro.log`，专项 `pending-table-targeted-final.log`，全套 `pending-table-debug.log` / `pending-table-release.log` / `pending-table-doc.log`，均在 `/tmp/mdtui3-goal-run/`。
+
+
+## 2026-11-04 部分 tab 路径标记形态短表格分隔行交付
+
+- 范围：完整已有容器路径后的部分 tab 剩余缩进至多三列，短行 `- | -`、`- | -:`、`- | :-` 可在待定表头的确切作用域确认表格，优先于新嵌套列表。无效或列数不符的标记仍沿用结构分类回退；兄弟条目改变 Item 身份，不能确认旧表头。分隔语法及缩进隐藏，已发布的块/容器/链接身份保持。
+- 实现：删除 `Containers::line` 部分路径探测中对合法表格分隔行的提前排除，复用下游已有的确切作用域表格优先级与确认路径。无新字段、依赖、unsafe 或扫描；减少一次有界分隔行探测，保留每行新前缀消费和开闭计费，不回访旧正文、旧行或保留祖先。累计追加 O(n log n)、空间 O(n)，不宣称单次 append 或 EOF 的硬时延。
+- 验证：新增 `marker_delimiter_tabs.rs` 六项回归；1,536 组物理列展开模型包含混合引用/有序/无序列表、六层列表、四种缩进偏移、合法对齐和无效/列数不符标记。短样例 UTF-8 全切点、逐前缀与 EOF，CRLF 和无换行确认；失败表头成为新表头后的稳定 BlockId/LinkId/容器和通知；原始源码连续覆盖、逐字符切片/tile、零预算停步与双游标共享六字节预算；980 层引用加列表的百万字表头逐字增长不增加容器/分类工作，晚确认计数只受新前缀长度约束。
+- 修复前六项中四项失败、两项通过；修复后六项通过，补充边界后与 pending_table_tabs/sibling_tabs 共 18 项通过。旧测试只更新一条被本扩展取代的排除断言，官方夹具、生成器与评分保持。
+- 剩余：超出分类窗口的部分 tab 长分隔行、缺失祖先/lazy、空白及其它尚未接通的容器路径继续待办；四列代码和 Setext/兄弟优先级保持。完整容器/表格与宽泛标准兼容性未标完成。
+
+流式专项共 13 个样例、241 个 UTF-8 合法切点、228 个逐前缀及 EOF 对照。首次全套的测试均通过，clippy 指出删除条件后留下的可合并 if；合并等价条件后重新验收，保留首次 clippy 日志 `marker-delimiter-clippy-first.log`。
+
+最终验收（项目 devShell）：`cargo check --workspace --all-targets`、debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1,446 项通过**、`cargo test --doc --workspace` **75 项通过**、clippy `-D warnings`、fmt 和 `git diff --check` 全部通过。5 个已有文件与 1 个新测试变化，其余 **373 个基线文件 SHA-256 保持**，README/TODO/DONE 仅追加。全部官方夹具和生成器保持不变。汇总 `/tmp/mdtui3-goal-run/marker-delimiter-validation.log`，本轮独立补丁 `marker-delimiter-unit.patch`，范围核对 `marker-delimiter-scope-check.log`，修复前 `marker-delimiter-repro.log`，专项 `marker-delimiter-targeted-final.log`，最终全套 `marker-delimiter-debug.log` / `marker-delimiter-release.log` / `marker-delimiter-doc.log`。
+
+
+## 2026-11-04 完整部分 tab 路径长表格分隔行交付
+
+- 范围：补齐最近短分隔行单元保留的长分隔行探测。原字节边界路径匹配失败后，允许完整已有容器路径消费部分 tab；剩余缩进至多三列，必须保持表头确切作用域。确认支持很长的首列、尾列、对齐冒号和可选外侧管道；四列缩进、缺失祖先、兄弟或新嵌套容器保持排除。原字节边界探测的既有空白方言优先保留，不把这次规则外推到所有缩进形式。
+- 实现：只改 `Containers::delimiter_prefix`，追加一次可分割 tab 的只读全路径匹配，检查剩余列并计入既有容器字节/步骤计数。两个路径都只读取当前有界物理前缀；失败可沿原分类回退，不突变活动栈。沿用 `DelimiterCandidate` 的单遍长尾消费、成功确认及失败有界前缀回放/一次尾部消费，拒绝后不重新探测同一行。无新增持久状态、依赖、unsafe 或历史正文/表格行回扫；累计追加 O(n log n)、空间 O(n)，append/finish 仍是摊还界限。
+- 验证：新增 `long_delimiter_tabs.rs` 六项测试。960 组独立物理列展开对照包括引用/有序/无序列表、六层列表、四种起始偏移、长首列/尾列/双列、非法字符和列数不符；UTF-8 全切点、逐字符实时前缀，分类窗口附近及尾部 EOF；确认/迟失败/无换行 EOF 的块与容器身份、链接目标、通知和后续表格恢复。源码连续覆盖、逐字符切片/tile、tab 单字节映射、零预算不前进与双游标共享六字节预算全部覆盖。
+- 复杂度：980 层引用加列表的百万字候选分 1000 次追加，每次只增加新增候选字节，分类、行内、容器和标题工作计数不变；成功不再走祖先，失败仅回退原前缀并消费延迟正文一次。另验收失败后的 1000 次追加不再增加候选/分类/容器工作。
+- 修复前六项中四项失败、两项通过。实现后新测试一项将表头换行预期漏写，经核对改为保留换行；最终六项及相关专项共 43 项通过。三份旧测试只更新被本项取代的长分隔行排除断言和相关命名；官方夹具、生成器及评分统计保持。
+- 剩余：缺失祖先/lazy、一般空白及其它分类窗口/容器规则仍按原 TODO 推进；完整容器/表格和宽泛标准兼容性未标完成。
+
+流式专项五个长样例覆盖 5,235 个 UTF-8 合法切点和 5,230 个实时前缀；EOF 对照选择分类窗口两侧及各样例尾部，不宣称逐前缀 EOF 全覆盖。范围核验确认其余 372 个基线文件 SHA-256 保持，7 个已有文件与 1 个新测试变化，README/TODO/DONE 仅追加。
+
+最终验收（项目 devShell）：`cargo check --workspace --all-targets`、debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1,452 项通过**、`cargo test --doc --workspace` **75 项通过**、clippy `-D warnings`、fmt 和 `git diff --check` 全部通过。日志汇总 `/tmp/mdtui3-goal-run/long-tab-validation.log`，独立差异 `long-tab-unit.patch`，范围核对 `long-tab-scope-check.log`，修复前 `long-tab-repro.log`，专项 `long-tab-targeted-final.log`（43 项通过），全套 `long-tab-debug.log` / `long-tab-release.log` / `long-tab-doc.log`。
+
+
+## 2026-11-04 完整部分 tab 路径短空白行交付
+
+- 范围：补齐完整部分 tab 路径上的有界完整空白叶块。例如 `- > a\n\t> \n\t> b\n` 中间行现在是相同引用作用域的 Blank，而非 lazy 普通段落；保留原容器/块/链接身份。全部祖先匹配后才准入，尚未收尾/超出分类窗口空白、缺失祖先和活动围栏仍沿用原路径。
+- 实现：`Containers::partial_prefix` 的已有分类结果允许 `Line::Blank`，复用原有 `observe_payload`、块分类、表头回退和源码映射。引用内部空行不直接使外层列表变松；直接 Item 空行只在后续正文确认分隔时发出一次 loosen 通知。未增加扫描、持久状态或历史正文/祖先回访，累计追加 O(n log n)、空间 O(n) 和预算约束不变。
+- 验收：`tests/partial_blank_tabs.rs` 七项新回归，1,728 组独立物理列模型覆盖引用前缀、有序/无序多层列表、内层引用/条目和尾部空格；比较显示、块种类/作用域、容器身份/父链/深度及列表松紧。九个样例覆盖 UTF-8 全切点、逐字符实时前缀及每个前缀 EOF，包括 CRLF、未完成空白、缺失引用、空条目和代码/数学围栏。
+- 映射与预算：源码连续覆盖、逐字符切片、跨 tile 显示一致；部分 tab 的两列替换归属一个原始源码字节。零预算不前进，双游标共享六字节预算，输出与完整显示相同。
+- 复杂度：970 层外部引用加 List/Item/内层 Quote 保留空行作用域；后续百万字分 1000 次追加，容器/分类工作计数不增加，行内消费恰好增加新增字节数。4,096 轮空行/正文后再追加空行只消耗固定容器工作，不遍历历史叶块。原复现测试修复前失败（Paragraph 与 Blank 不符），修复后六项专项首次全部通过。
+- 剩余：缺失祖先/lazy、尚未收尾/长空白及其它分类窗口/容器规则继续按原 TODO 推进；完整容器、表格和宽泛标准兼容性未标完成。依赖、官方夹具/生成器保持；九份旧测试只更新被本项取代的空白 tab 映射断言，引用空白读取器对替换仍核验原 tab 单字节归属和独立物理列数。
+
+补充边界测试锁定：未收尾短空白仍在 pending 中、finish 后才准入；缺失引用关闭原 Quote；首次新建引用保留原空白规则；超出分类窗口的长空白不重新解释为 Blank。九个短样例合计 145 个切点、136 个实时前缀及逐前缀 EOF。首次 debug 全套 11 项失败均为本扩展替代的原始空白映射断言，逐条更新后相关 79 项通过，补充边界后新专项 7 项通过；补充测试首次误把 pending Span 当字符串比较，改为公开 text(span) 后编译通过。首次日志保留为 `partial-blank-debug-first.log`。
+
+最终验收（项目 devShell）：`cargo check --all-targets`、debug/release `cargo nextest run --no-fail-fast` 各 **1,459 项通过**、`cargo test --doc` **75 项通过**、clippy `-D warnings`、fmt 和 `git diff --check` 全部通过。13 个已有文件与 1 个新测试变化，其余 **367 个基线文件 SHA-256 保持**，README/TODO/DONE 仅追加。汇总日志 `/tmp/mdtui3-goal-run/partial-blank-validation.log`，独立差异 `partial-blank-unit.patch`，范围核对 `partial-blank-scope-check.log`，修复前 `partial-blank-repro.log`，专项 `partial-blank-targeted.log` / `partial-blank-targeted-final.log`。
+
+
+## 2026-11-04 新引用 tab 分隔短空白行交付
+
+- 范围：新引用标记自身的 tab 分隔现在支持完整短空白行。`>\t\n` 从原始 tab 显示改为两个空格加换行，保留原 Quote/Blank 结构；只消费一列分隔，其余列归属于同一 tab 源码字节。尾部其它 space/tab 保持原始显示，空白内容不受三列叶块缩进上限限制。
+- 实现：`Prefix::quote_leaf` 使用既有 `spaces()` 缓存的空白末端，完整且余下全为空白时接受部分 tab；后续 Blank 分类、通知、列表松紧及显示映射均沿用原路径。无新增状态、扫描、依赖或 unsafe，不回访历史正文/祖先，累计追加 O(n log n)、空间 O(n) 和共享预算保持。
+- 验收：新 `new_quote_blank_tabs.rs` 七项测试，包括 1,344 组独立物理列模型、UTF-8 全切点/逐字符前缀及逐前缀 EOF、稳定块/链接/容器身份、列表松紧和待定表头边界；源码完整覆盖、单字符切片/tile 显示一致、原始 tab 单字节替换、零预算不前进及双游标共享六字节预算。深层与百万字后续追加验证不重访容器路径，4,096 轮历史后新空行只做固定工作。
+- 边界：未收尾短行仍为 pending，EOF 可确认；分类窗口外长空白和活动代码/数学围栏沿用原规则。不完整路径、其它新叶块/窗口扩展及完整容器/表格和宽泛兼容性继续待办。
+- 修复前专项 4 失败/3 通过，修复后七项通过。首次编译把 `block_at` 返回的 BlockId 当成带 id 字段的对象，已纠正为直接比较公开 ID；未改核心接口。
+
+补充验证：10 个流式样例覆盖 120 个合法切点与 110 个逐字符前缀/EOF；连续 1–100 层 `>\t` 新引用验证线性工作计数，968 层外引用加最终新引用的样例实际消费部分 tab。首次全套 3 项旧方言断言失败，审查后只更新 `partial_blank_tabs`、`quote_prose_tabs`、`quote_tab_code` 的对应预期，相关专项共 31 项通过。其余标准样例、官方原文和评分不变。
+
+最终验收（项目 devShell）：`cargo check --workspace --all-targets`、debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1,466 项通过**、`cargo test --doc --workspace` **75 项通过**、clippy `-D warnings`、fmt 和 `git diff --check` 全部通过。7 个已有文件与 1 个新测试变化，其余 **374 个基线文件 SHA-256 保持**，README/TODO/DONE 仅追加。汇总 `/tmp/mdtui3-goal-run/new-quote-blank-validation.log`，独立差异 `new-quote-blank-unit.patch`，范围核对 `new-quote-blank-scope-check.log`，修复前 `new-quote-blank-repro.log`，专项 `new-quote-blank-targeted-final.log`（31 项通过），首次全套 `new-quote-blank-debug-first.log` 与最终 debug/release/doc 日志均在同目录。
+
+
+## 2026-11-04 有序列表段落中断编号交付
+
+- 范围：同段落、同确切作用域的新有序列表只有数值 1 可以中断。`text\n14. body` 保留编号为正文；顶层、显式引用/条目及完整部分 tab 路径一致。前导零按数值处理；合法编号仍限 1–9 位。空标记中断规则保持。
+- 边界：同类兄弟条目已先替换 Item，不受新列表限制；新 Quote/Item、新段落、空行或标题之后仍可从任意合法编号开始。缺失祖先的 lazy 中断行为保持，例如 `> text\n14. body` 仍会退出引用并创建列表。其它分类窗口和完整容器匹配规则继续待办。
+- 实现：仅扩展 `Containers::line` 的已有段落中断门槛，使用 `Marker.number` 与现有段落/容器身份。每个已解析标记增加常量比较，无新增扫描、持久状态、依赖或 unsafe，不回访旧正文或祖先；累计追加 O(n log n)、空间 O(n)，append/finish 保持摊还界限。
+- 验证：新增 `ordered_interrupt.rs` 六项测试，756 组编号/点号或右括号/空格与 tab/换行与 EOF/作用域模型；逐切点、逐字符实时前缀及前缀 EOF 对照；保留块/容器/链接身份、跨行强调、待定表头失败回退；源码完整覆盖、逐字符切片/tile、tab 单字节映射、零预算不前进及双游标共享六字节预算。970 层引用中百万字分 1000 次追加不增加分类/容器工作，行内消费恰为新增字节；4096 行历史后新行容器工作保持固定。
+- 评分：CommonMark 304 匹配官方结果，Lists 301–326 更新为 23 支持、3 刻意差异、0 未支持。只更新独立分类与统计，官方输入/HTML、生成器和投影不变；固定 SHA-256 来源的夹具校验通过。原空标记专项的一条任意编号中断断言随本项修正。
+- 修复前专项 2 通过/4 失败，修复后六项全部通过。原有宽泛 TODO 保持未完成。
+
+补充验收：10 个流式样例共 186 个 UTF-8 合法切点、176 个实时前缀及逐前缀 EOF。首次 debug 全套 3 项失败来自被本规则取代的嵌套起始假设；缩进模型增加“非 1 嵌套标记保留为正文”的分支，两项兄弟替换测试以 `1)` 建立待替换的子列表，仍验证旧块/链接/父容器身份和关闭范围。相关专项 37 项全部通过。首次全套日志 `ordered-interrupt-debug-first.log` / `ordered-interrupt-release-first.log` 保留；修正测试时一次辅助读取漏传 Span 参数，补齐后编译和专项通过。
+
+最终验收（项目 devShell）：`cargo check --workspace --all-targets`、debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1,472 项通过**、`cargo test --doc --workspace` **75 项通过**、clippy `-D warnings`、fmt、固定 Lists 夹具校验及 `git diff --check` 全部通过。9 个已有文件与 1 个新测试变化，其余 **373 个基线文件 SHA-256 保持**，README/TODO/DONE 仅追加。汇总 `/tmp/mdtui3-goal-run/ordered-interrupt-validation.log`，独立差异 `ordered-interrupt-unit.patch`，范围核对 `ordered-interrupt-scope-check.log`，修复前 `ordered-interrupt-repro.log`，专项 `ordered-interrupt-targeted-final.log`（37 项通过），最终全套 `ordered-interrupt-debug.log` / `ordered-interrupt-release.log` / `ordered-interrupt-doc.log`。
+
+
+## 2026-11-04 lazy 有序标记段落续行交付
+
+- 范围：已有最内层非空段落发生祖先前缀失配时，合法非 1 有序标记不再中断 lazy 续行；编号、分隔符及正文保持原作用域并参与原行内解析。例如 `> text\n14. body` 保留引用，`> > text\n> 2) body` 保留内层引用，`> - text\n14. body` 在省略外层引用时保留原条目。
+- 实现与复杂度：`Prefix::lazy_text` 复用 `marker()` 返回的编号，仅增加常量比较。相同类型兄弟已在匹配活动路径时处理；异类兄弟候选用一个当前行布尔值传递给 lazy 判定，保持原切换优先级；编号 1、无序标记、空行与非段落块边界保持。无新增扫描、持久状态、依赖或 unsafe，不重访旧正文或保留祖先；累计追加 O(n log n)、空间 O(n) 和共享读取预算保持。
+- 验收：新增 `lazy_ordered_interrupt.rs` 七项回归；756 组缺失或部分祖先路径、编号/分隔符/空格或 tab/换行或 EOF 模型；UTF-8 全切点、逐字符实时前缀及逐前缀 EOF；稳定块/容器/链接身份、跨行强调、表头失败回退；源码覆盖、逐字符切片/tile、原始 tab 映射、零预算不前进与双游标共享六字节预算。窗口外长空白在编号确定后不重新判定；1/100/970 层引用各 1000 条短 lazy 行验证工作量不随缺失祖先深度增长；970 层百万字分 1000 次追加不增加分类或容器工作，4096 行历史后新行工作固定。
+- 边界：规则仅在已有 lazy 段落资格成立时应用，不给空引用、标题、围栏、定义、已确认表格或空行后的内容增加资格。完整路径沿用上一项实现；不完整 tab 路径仍显示原始 tab，未扩展虚拟列表示。合法编号仍最多九位，前导零按数值判断；空标记与分类窗口方言保持。完整列表/容器及宽泛标准兼容性仍待办。
+- 修复前六项测试 5 失败/1 通过。修复后审查新测试的 tab 映射预期：不完整路径沿用原始 tab，而非完整路径的虚拟列替换；修正该断言后新增七项与相关原测试共 27 项通过。旧 `ordered_interrupt` 的缺失引用断言改为保留原作用域，`container_lazy` 的中断样例从 `2.` 改用仍会中断的 `1.`。首次全套 6 项失败暴露异类兄弟切换被错误当成 lazy 的范围问题；补充当前行兄弟标志后，这六项原断言及官方样例保持不变，相关专项 64 项全部通过。
+
+补充分块验收：12 个流式样例覆盖 246 个 UTF-8 合法切点、234 个实时前缀及逐前缀 EOF。首次全套日志保存在 `lazy-ordered-debug-first.log` / `lazy-ordered-release-first.log`，最终验收重新运行于修正后的实现。
+
+最终验收（项目 devShell）：`cargo check --workspace --all-targets`、debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1,479 项通过**、`cargo test --doc --workspace` **75 项通过**、clippy `-D warnings`、fmt、固定 Lists 夹具校验和 `git diff --check` 全部通过。6 个已有文件与 1 个新测试变化，其余 **377 个基线文件 SHA-256 保持**，README/TODO/DONE 仅追加；核心依赖、官方夹具和评分保持。汇总 `/tmp/mdtui3-goal-run/lazy-ordered-validation.log`，独立差异 `lazy-ordered-unit.patch`，范围核对 `lazy-ordered-scope-check.log`，修复前 `lazy-ordered-repro.log`，专项 `lazy-ordered-targeted-final.log`（64 项通过），最终全套 `lazy-ordered-debug.log` / `lazy-ordered-release.log` / `lazy-ordered-doc.log`。
+
+
+## 2026-11-04 缺失引用前缀的部分 tab 正文映射交付
+
+- 范围：`> > first\n>\ttext` 和 `- > first\n\ttext` 的部分 tab 已匹配前缀不再因后续缺失引用而丢弃；显示剩余两个空格，保持原最内层容器、块/链接身份和跨行强调、代码、链接标签语义。支持不同 tab stop、混合列表/引用、非 1 有序标记、LF/CRLF 与 EOF。
+- 实现：`Containers::partial_prefix` 在首次缺失引用处复用既有 `Prefix::lazy_text`，仅已有非空正文且此前确实拆分过 tab 时接受；返回 lazy 标志和已消费前缀的虚拟列，后续使用已有行内/显示映射。额外判定只扫描当前有界剩余正文，不访问省略的祖先或历史正文；无新增持久状态、依赖或 unsafe，累计追加 O(n log n)、空间 O(n) 与共享预算保持。
+- 边界：缺失列表缩进、待定表头、非段落、空白及 lazy 判定拒绝的标题/围栏/定义/中断标记等继续走原分类器，保留其原有结构与显示方言；lazy 正文不会启动表格。短行未收尾时仍 pending，长行按原分类窗口消费。完整容器/表格及其它分类窗口规则仍待办。
+- 验收：新增 `lazy_quote_tabs.rs` 七项回归，1,440 组独立物理列空格模型；UTF-8 全切点、逐字符实时前缀及逐前缀 EOF；稳定身份/通知、跨行行内语义和表格排除；原源码覆盖、单字符切片/tile 与原 tab 单字节替换、零预算不前进及双游标共享六字节预算。1/100/970 层缺失引用各 1000 条短行只计两帧路径工作；各百万字后续追加不增加分类/容器工作；4096 行历史后新行仍只计两帧。
+- 修复前七项 5 失败/2 通过，其中一项新反例误以为 tab 后标题会退出引用，独立读取基线后修正为锁定原方言；其余失败复现映射及路径工作缺口。修复后七项通过，旧 `prose_tabs` 与 `lazy_ordered_interrupt` 中被本项替代的原始 tab 显示断言按新映射更新。
+
+补充分块与回归验收：13 个流式样例覆盖 250 个 UTF-8 合法切点、237 个实时前缀及逐前缀 EOF。首次全套 1,482 通过/4 失败，均为本项取代的原始 tab 预期；审查后仅更新 `empty_interrupt`、`item_tab_code`、`math_tabs` 与 `new_paragraph_tabs` 的相应映射断言。行内数学额外锁定原始内容保留 tab、语义 payload 返回两空格；额外未消费的 tab 仍原样保留。相关专项共 55 项通过，首次日志 `lazy-tab-debug-first.log` 与修复前 `lazy-tab-repro.log` 保留。
+
+最终验收（项目 devShell）：`cargo check --workspace --all-targets`、debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1,486 项通过**、`cargo test --doc --workspace` **75 项通过**、clippy `-D warnings`、fmt、固定 Tabs 夹具及 `git diff --check` 全部通过。10 个已有文件与 1 个新测试变化，其余 **374 个基线文件 SHA-256 保持**，README/TODO/DONE 仅追加；依赖、官方夹具和评分不变。汇总 `/tmp/mdtui3-goal-run/lazy-tab-validation.log`，独立差异 `lazy-tab-unit.patch`，范围核对 `lazy-tab-scope-check.log`，专项 `lazy-tab-targeted-final.log`（55 项通过），最终全套 `lazy-tab-debug.log` / `lazy-tab-release.log` / `lazy-tab-doc.log`。
+
+
+## 2026-11-04 缺失列表缩进的部分 tab 正文映射交付
+
+- 范围：已有非空段落的部分 tab 前缀可在首次缺失列表缩进处作为 lazy 正文提交；`-  - first\n\ttext` 保留一个虚拟空格，`>  - first\n>\ttext` 保留两个，`- - - first\n\ttext` 中已消费完的 tab 隐藏。原最内层身份、跨行强调/代码/链接/数学与原始源码读取保持，未消费的后续 tab 不改写。
+- 实现与复杂度：`Containers::partial_prefix` 移除仅允许缺失 Quote 的限制，复用当前有界剩余正文的 `Prefix::lazy_text`。同类/异类兄弟标记已在前面的分支交给结构分类器；空行后结束的空条目沿用既有分支。探测在首次失配处停止，不访问省略祖先或历史正文，无新持久状态、依赖或 unsafe；累计追加 O(n log n)、空间 O(n) 与共享读取预算保持，不承诺单次 append/finish 硬时延。
+- 边界：待定表头、非段落、空白和被现有 lazy 判定拒绝的候选走原分类器，保留其既有身份与显示方言；这不意味着这些候选一定关闭旧容器。lazy 行不启动表格。短行等待完整换行或 EOF，长行沿用分类窗口；完整容器/表格和其它分类窗口规则仍待办。
+- 验收：新增 `lazy_item_tabs.rs` 七项回归；1,728 组独立物理列展开模型覆盖祖先引用、不同外层列表缩进、不同省略深度、Unicode/行内标记和 LF/CRLF/EOF。13 个流式样例覆盖 262 个 UTF-8 切点、249 个实时前缀及逐前缀 EOF。稳定块/容器/链接身份和通知、跨行行内语义与表格排除；源码完整覆盖、单字符切片/tile、原 tab 单字节替换、零预算不前进及双游标共享六字节预算均通过。1/100/480 层缺失列表（最深 962 个 List/Item 容器）各 1000 条短行只计两帧；各百万字后续追加不增加分类/容器工作；4,096 行历史后新行仍只计两帧。
+- 修复前复验：定稿七项在原实现上 5 失败/2 通过，失败复现显示映射和路径工作缺口；边界与分块测试通过。初版新测试对待定表头及 tab 后标题的退出身份假设不准确，按原分类器改为锁定不新增替换映射；定稿已在修复前实现上复核。修复后七项全部通过。日志 `lazy-item-repro-final.log`、`lazy-item-targeted-final.log` 保存在 `/tmp/mdtui3-goal-run/`。
+
+全套回归审查：首轮最终为 1,488 通过/5 失败，均为新范围替代的旧显示或工作量断言。仅更新 `lazy_quote_tabs` 的缺失 Item 映射、`mixed_sibling_tabs` / `empty_mixed_sibling_tabs` / `sibling_tabs` 的畸形标记正文映射，以及 `prose_tabs` 的路径计数（每行两次匹配加首次失配，共三帧，不再重复回退遍历）。相关 38 项回归通过；第二轮仍有一项遗漏的 `sibling_tabs` 原始 tab 断言，补齐后再做最终全套验收。首次和第二次日志分别为 `lazy-item-debug-first.log` / `lazy-item-debug-second.log`；没有修改其它结构优先级或官方样例评分。
+
+最终验收（项目 devShell）：`cargo check --workspace --all-targets`、debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1,493 项通过**、`cargo test --doc --workspace` **75 项通过**、clippy `-D warnings`、fmt、固定 Tabs 夹具与 `git diff --check` 全部通过。9 个已有文件与 1 个新测试变化，其余 **376 个基线文件 SHA-256 保持**；README/TODO/DONE 仅追加，依赖、官方夹具和评分保持。汇总 `/tmp/mdtui3-goal-run/lazy-item-validation.log`，独立差异 `lazy-item-unit.patch`，范围核对 `lazy-item-scope-check.log`，最终全套 `lazy-item-debug.log` / `lazy-item-release.log` / `lazy-item-doc.log`。
+
+
+## 2026-11-04 待定表头失败后的部分 tab lazy 映射交付
+
+- 范围：待定表头之后，部分 tab 已消费前缀在首次缺失引用或列表缩进处可按既有 lazy 条件保留；`- > a|b\n\ttext` 的续行显示两个空格，`-  - a|b\n\ttext` 显示一个空格，原字节读取、最内层容器、块/链接身份及跨行强调保持。候选表头只回退一次，lazy 行既不能确认表格也不能开启新表头。
+- 实现与复杂度：`Containers::partial_prefix` 使用既有同作用域 `paragraph` 资格接纳待定表头，复用 `Prefix::lazy_text` 和显示映射；仅修改一处布尔条件，不改变完整路径上的代码准入。匹配在首次失配处停止，不遍历省略祖先，不新增扫描、持久状态、依赖或 unsafe；累计追加 O(n log n)、空间 O(n) 与共享读取预算保持，单次 append/finish 仍无硬时延承诺。
+- 边界：同类/异类兄弟及编号标记优先级保持；完整路径仍可确认表格，四列缩进仍开启代码。空白、无活动段落及 lazy 判定拒绝的标题/围栏/定义等候选保持原分类器方言。未收尾短行等待换行或 EOF，长行沿用分类窗口；完整容器/表格兼容性继续待办。
+- 验收：新增 `header_lazy_tabs.rs` 六项回归；2,160 组独立物理列模型覆盖引用祖先、列表缩进、缺失 Quote/Item/混合后缀、Unicode 和 LF/CRLF/EOF；12 个流式样例覆盖 206 个 UTF-8 切点、194 个实时前缀及逐前缀 EOF。块/容器/链接身份、通知与跨行强调、表格拒绝、原 tab 单字节映射、源码完整覆盖、单字符切片/tile、零预算不前进和双游标共享六字节预算通过。1/100/480 层缺失列表的首次探测只计两帧；百万字后续追加不增加分类/容器工作；4,096 轮表头失败历史后新行仍只计两帧。
+- 失败复现：修复前六项 5 失败/1 通过，失败覆盖显示映射和额外路径工作；初版新测试误把非 1 有序兄弟标记当作 lazy 正文，按既有兄弟优先级改为正文样本，并在边界测试保留该编号的兄弟身份断言。修复前日志 `header-lazy-repro.log` 和修复后专项 `header-lazy-targeted-final.log` 保存在 `/tmp/mdtui3-goal-run/`。
+
+全套回归审查：首轮 1,497 通过/2 失败，仅 `lazy_item_tabs` 与 `lazy_quote_tabs` 原先排除待定表头映射的断言被本项替代；将这两例更新为明确的虚拟空格预期，保留其它非段落边界断言。相关专项 26 项全部通过，首次全套日志 `header-lazy-debug-first.log` 与专项 `header-lazy-related.log` 保留。
+
+最终验收（项目 devShell）：`cargo check --workspace --all-targets`、debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1,499 项通过**、`cargo test --doc --workspace` **75 项通过**、clippy `-D warnings`、fmt、固定 Tabs 夹具与 `git diff --check` 全部通过。6 个已有文件与 1 个新测试变化，其余 **380 个基线文件 SHA-256 保持**；README/TODO/DONE 仅追加，依赖、官方夹具和评分保持。汇总 `/tmp/mdtui3-goal-run/header-lazy-validation.log`，独立差异 `header-lazy-unit.patch`，范围核对 `header-lazy-scope-check.log`，最终全套 `header-lazy-debug.log` / `header-lazy-release.log` / `header-lazy-doc.log`。
+
+
+## 2026-11-04 引用链接定义段落边界交付
+
+完成 TODO 中引用定义段落中断缺口的同作用域子项。`block::classify_indented` 复用已有段落资格，只有非段落位置才能分类成引用链接定义；连续正文及待定表头中的候选按现有行内规则消费。首行、空行后、新容器/兄弟条目、连续定义及已确认表格仍可建立定义；缺失祖先/lazy 与脚注中断方言保持。无新增扫描或持久状态，不访问旧正文、旧引用或祖先；原累计追加 O(n log n)、空间 O(n) 和预算契约不变。
+
+新增 `tests/definition_interrupt.rs` 六项回归：576 组独立作用域/空行/缩进/行尾模型，216 个 UTF-8 切点、206 个逐字符前缀及每个前缀 EOF，原始/显示/标量切片/tile 映射、零预算与共享六字节恢复，待定表头、部分 tab、晚闭合强调与晚定义通知/身份，970 层引用及百万字追加、4096 行历史的工作计数。段落折叠旧测试增加定义形态正文的开放增长/空行封闭断言；旧定义测试按新资格补齐段落边界，保留原元数据、全局首定义、预算及工作量约束。
+
+CommonMark 213 已不再建立定义，但未定义引用隐藏括号，继续归刻意差异；217 的跨行 title 未支持回退为段落，后续 `baz` 定义也因新边界规则不生效，继续归未支持。两项独立观察与说明已审查，官方夹具、生成器和评分投影保持；章节仍为 14 支持/7 刻意差异/6 未支持。更完整定义、缺失祖先/lazy、字面回退及完整容器/宽泛兼容性不标完成。
+
+验收记录：修复前新六项 5 失败/1 通过；实现后新六项通过。首次全套的 21 项失败定位为旧中断假设，逐项更新测试边界/断言；相关测试随后暴露 217 的连带观察变化，审查后专项 59 项通过。最终全套结果与命令见 `/tmp/mdtui3-goal-run/definition-interrupt-validation.log`；首次全套、相关测试和最终专项日志同目录保留，前缀为 `definition-interrupt-`。
+
+最终验收通过：debug/release 各 1505 项、doc 75 项、`container_links` release 示例及 check/clippy/fmt/引用定义官方夹具/diff 检查。README 旧可执行示例与对应 example 补一个空行边界；README 除此一行修正外仅追加，TODO/DONE 仅追加。首次 doc 74 通过/1 失败的记录保留于 `definition-interrupt-doc-first.log`，修正后全部通过。独立差异 `definition-interrupt-unit.patch` 与范围校验 `definition-interrupt-scope-check.log` 同在 `/tmp/mdtui3-goal-run/`：18 个已有文件和 1 个新回归文件变化，其余 369 个基线文件 SHA-256 保持。

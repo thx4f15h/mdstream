@@ -43,9 +43,10 @@ fn a_quote_consumes_a_tab_separator_only_when_it_is_one_column() {
     assert_eq!(doc.container_count(), 1);
     assert_eq!(doc.headings().entries().len(), 1);
     assert_eq!(visible(&doc), "title\ntext\n");
-    let doc = parse(">\t# literal\n");
-    assert!(doc.headings().entries().is_empty());
-    assert_eq!(visible(&doc), "\t# literal\n");
+    // The quote still leaves this tab to the leaf; ATX now accepts its three columns.
+    let doc = parse(">\t# title\n");
+    assert_eq!(doc.headings().entries().len(), 1);
+    assert_eq!(visible(&doc), "title\n");
 }
 
 #[test]
@@ -64,7 +65,7 @@ fn partial_tabs_classify_atx_leaves_and_extend_existing_code_fences() {
 
 #[test]
 fn ordered_siblings_tasks_and_empty_items_keep_their_own_column_widths() {
-    let source = "1.\t[x]\tfirst\n\t# one\n123.\t[ ]\tsecond\n\t\t# two\n9.\n  # empty\n";
+    let source = "1.\t[x]\tfirst\n\t# one\n123.\t[ ]\tsecond\n\t\t# two\n9.\n   # empty\n";
     let doc = parse(source);
     assert_eq!(doc.container_count(), 4);
     assert_eq!(doc.headings().entries().len(), 3);
@@ -151,7 +152,7 @@ fn long_table_delimiters_share_the_column_matcher_and_failed_probes_keep_source(
         }
     }
     let doc = parse(&format!("- h|h\n\t{}|-\n", "-".repeat(4096)));
-    assert!(doc.tables().is_empty()); // Partial tab cannot match this exact scope.
+    assert_eq!(doc.tables().len(), 1); // Complete partial-tab paths now probe too.
 }
 
 // An independent oracle expands whitespace prefixes, then finds the byte that
@@ -167,11 +168,22 @@ fn column(text: &str, mut at: usize) -> usize {
 #[test]
 fn whitespace_combinations_match_independent_column_and_range_model() {
     let mut cases = 0;
+    let mut code_openers = 0;
     for parent in ["", "> "] {
         for marker in ["-", "1.", "123.", "123456789."] {
             for gap in [" ", "\t", " \t", "\t ", "  \t", " \t  "] {
                 let open = format!("{parent}{marker}{gap}```\n");
                 let target = column(&format!("{parent}{marker}{gap}"), 0);
+                if gap.contains('\t') && target - parent.len() - marker.len() >= 5 {
+                    // These now open literal indented code, not a fence.
+                    // list_start_tab_code independently models their columns,
+                    // continuation widths, mapping, and streaming behavior.
+                    let doc = parse(&open);
+                    assert!(visible(&doc).ends_with("```\n"));
+                    assert_eq!(doc.blocks()[0].kind, BlockKind::Code { info: None });
+                    code_openers += 1;
+                    continue;
+                }
                 for bits in 0..64 {
                     let space: String = (0..6)
                         .map(|n| if bits & (1 << n) == 0 { ' ' } else { '\t' })
@@ -208,7 +220,8 @@ fn whitespace_combinations_match_independent_column_and_range_model() {
             }
         }
     }
-    assert_eq!(cases, 3072);
+    assert_eq!(code_openers, 13);
+    assert_eq!(cases, 2240);
 }
 
 #[test]

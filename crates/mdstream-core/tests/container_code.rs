@@ -144,13 +144,13 @@ fn indented_code_merges_only_within_exact_scope_and_blank_seals() {
         doc.block(ids[5]).unwrap().container,
         doc.block(ids[6]).unwrap().container
     );
-    // Marker whitespace remains part of the established item prefix; code
-    // indentation is relative to it on subsequent explicit continuation lines.
+    // Five marker spaces start code; only one belongs to the item prefix,
+    // so the continuation preserves its four extra spaces in the same block.
     let doc = parse("-     text\n          code\n> \ttext\n");
     assert_eq!(codes(&doc).len(), 1);
     assert_eq!(
         visible(&doc, doc.block(codes(&doc)[0]).unwrap().source),
-        "code\n"
+        "text\n    code\n"
     );
 }
 
@@ -217,11 +217,12 @@ fn failed_and_overlong_candidates_never_reclassify_old_input() {
     for source in [
         "> ``short\n",
         "> ```bad`info\n",
-        "> ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n",
-        "> \t```\n",
+        &format!("> {}\n", "~".repeat(MAX_FENCE_LENGTH + 1)),
     ] {
         assert!(codes(&parse(source)).is_empty(), "{source:?}");
     }
+    // Two columns of raw tab indentation now open a scoped code fence.
+    assert_eq!(codes(&parse("> \t```\n")), [BlockId(0)]);
     let prefix = ">".repeat(BLOCK_LOOKAHEAD - 4);
     let doc = parse(&format!("{prefix}```\n{prefix}```\n"));
     assert_eq!(codes(&doc).len(), 1);

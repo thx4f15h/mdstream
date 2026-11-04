@@ -115,8 +115,6 @@ fn indentation_blank_paragraphs_and_raw_spelling_have_explicit_semantics() {
     for tail in [
         "no indent\n",
         "   three\n",
-        "\ttab\n",
-        " \t mixed\n",
         "# heading\n",
         "---\n",
         "> child\n",
@@ -130,8 +128,14 @@ fn indentation_blank_paragraphs_and_raw_spelling_have_explicit_semantics() {
             "[^n]: first\n".len()
         );
     }
+    for (tail, expected) in [("\ttab\n", "first\ntab"), (" \t mixed\n", "first\n mixed")] {
+        assert_eq!(
+            read(&parse(&format!("[^n]: first\n{tail}")), 0, true),
+            expected
+        );
+    }
     let doc = parse("[^n]:\n\n    second\n\t\n    third\n\n\n");
-    assert_eq!(read(&doc, 0, true), "\n\nsecond\n\t\nthird\n\n");
+    assert_eq!(read(&doc, 0, true), "\n\nsecond\n\nthird\n\n");
     assert_eq!(visible(&doc), "");
 }
 
@@ -178,7 +182,7 @@ fn internal_blanks_and_trailing_list_separators_are_distinct() {
         ("- [^n]: first\n  \n  tail\n", ListTightness::Loose),
         ("- [^n]: first\n  \n- next\n", ListTightness::Loose),
         ("- [^n]: first\n  \n", ListTightness::Tight),
-        ("- > [^n]: first\n  >\n- next\n", ListTightness::Loose),
+        ("- > [^n]: first\n  >\n- next\n", ListTightness::Tight),
     ] {
         let doc = parse(source);
         assert_eq!(
@@ -282,13 +286,16 @@ fn bounded_failed_candidates_and_existing_block_precedence_remain_explicit() {
                 .all(|n| n.definition.is_none())
         );
     }
-    // Tabs do not replace the required four spaces; an overlong blank tab line
-    // reaches the ordinary bounded classifier and seals the definition.
+    // A tab supplies four columns; the rest of an overlong whitespace line
+    // streams as literal body without waiting for its end or rescanning it.
     let doc = parse(&format!(
         "[^n]: first\n{}\n    after\n",
         "\t".repeat(BLOCK_LOOKAHEAD + 5)
     ));
-    assert_eq!(read(&doc, 0, true), "first");
+    assert_eq!(
+        read(&doc, 0, true),
+        format!("first\n{}\nafter", "\t".repeat(BLOCK_LOOKAHEAD + 4))
+    );
 }
 
 #[test]

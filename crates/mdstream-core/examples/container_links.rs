@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let id = LinkId(0);
     let info = *doc.link_info(id).unwrap();
     assert_eq!(doc.link_destination(id), None);
-    let mut update = doc.append(">   [中 &amp; 🙂]: /image '说明'\n")?;
+    let mut update = doc.append(">\n>   [中 &amp; 🙂]: /image '说明'\n")?;
     update.merge(doc.finish())?;
     view.apply(&doc, &update)?;
     assert_eq!(doc.blocks()[0], first);

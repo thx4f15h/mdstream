@@ -353,7 +353,7 @@ fn task_projection_preserves_state_nesting_text_and_styles() {
         assert_ne!(nested, project(&parse(different)), "{different:?}");
     }
     assert!(project(&parse("- [x] a  b\tc\n")).contains(" a  b\tc</li>"));
-    assert!(project(&parse("- [x] a  \n")).contains(" a  </li>"));
+    assert!(project(&parse("- [x] a  \n")).contains(" a</li>"));
     assert!(project(&parse("- [x] &#32;a&#32;\n")).contains("  a </li>"));
     assert!(project(&parse("- [x] & < \\\"\n")).contains(" &amp; &lt; &quot;</li>"));
     assert!(project(&parse("- [x] *`a`*\n")).contains(" <em><code>a</code></em></li>"));

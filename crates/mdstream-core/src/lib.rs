@@ -23,6 +23,7 @@ mod block;
 mod budget;
 mod cache;
 mod checkpoints;
+mod code_info;
 mod containers;
 mod destination;
 mod display;
@@ -42,6 +43,8 @@ mod history;
 mod index_boundaries;
 mod inline;
 mod layout;
+mod link_destination;
+mod link_title;
 mod math;
 mod model;
 mod navigation;
@@ -64,6 +67,7 @@ pub use cache::{CacheValidity, DependencyKey, SourceSnapshot};
 pub use checkpoints::{
     CheckpointCompaction, CheckpointCompactionStats, CheckpointIndex, CheckpointToken,
 };
+pub use code_info::{CodeInfo, CodeInfoChunk};
 pub use containers::{
     Container, ContainerAncestors, ContainerId, ContainerKind, ListMarker, ListTightness,
 };
@@ -92,6 +96,8 @@ pub use layout::{
     Anchor, HeightIndex, HeightState, LayoutError, Measurement, ViewportCursor, ViewportPage,
     VisibleTile,
 };
+pub use link_destination::{LinkDestination, LinkDestinationChunk};
+pub use link_title::{LinkTitle, LinkTitleChunk};
 pub use math::{Math, MathChunk, MathContent, MathId, MathKind, MathObjects};
 pub use model::*;
 pub use navigation::{NavAction, Navigator, ScrollTarget};
@@ -384,20 +390,26 @@ impl Document {
     }
 
     pub fn link_destination(&self, id: LinkId) -> Option<&str> {
-        let span = match self.links.get(id.0)? {
+        self.text(self.link_destination_span(id)?)
+    }
+
+    fn link_destination_span(&self, id: LinkId) -> Option<Span> {
+        Some(match self.links.get(id.0)? {
             LinkTarget::Direct(span) | LinkTarget::Email(span) => *span,
             LinkTarget::Reference(symbol) => self.references.entries.get(symbol.0)?.destination?,
-        };
-        self.text(span)
+        })
     }
 
     /// Resolve inline or late-defined reference titles without copying text.
     pub fn link_title(&self, id: LinkId) -> Option<&str> {
-        let span = match self.links.get(id.0)? {
-            LinkTarget::Direct(_) | LinkTarget::Email(_) => self.link_info.get(id.0)?.title?,
-            LinkTarget::Reference(symbol) => self.references.entries.get(symbol.0)?.title?,
-        };
-        self.text(span)
+        self.text(self.link_title_span(id)?)
+    }
+
+    fn link_title_span(&self, id: LinkId) -> Option<Span> {
+        match self.links.get(id.0)? {
+            LinkTarget::Direct(_) | LinkTarget::Email(_) => self.link_info.get(id.0)?.title,
+            LinkTarget::Reference(symbol) => self.references.entries.get(symbol.0)?.title,
+        }
     }
 
     /// URI targets borrow source; email autolinks allocate only the mailto: URL.
@@ -752,7 +764,31 @@ impl Document {
         self.effects(update).mark(span, style, None);
     }
 
-    fn feed(&mut self, span: Span, update: &mut Update) {
+    fn feed(&mut self, mut span: Span, update: &mut Update) {
+        // Strip only the bounded ASCII indentation of classified root prose.
+        // A physical line enters here once, including deferred/failed table
+        // headers; streaming suffixes never revisit its prefix. Containers,
+        // code blocks, tabs and the four-space interruption dialect are separate.
+        if self.current.is_some_and(|id| {
+            self.blocks[id.0].kind == BlockKind::Paragraph && self.blocks[id.0].container.is_none()
+        }) && (span.start == 0 || self.source.as_bytes()[span.start - 1] == b'\n')
+        {
+            let spaces = self.source.as_bytes()[span.range()]
+                .iter()
+                .take(3)
+                .take_while(|&&byte| byte == b' ')
+                .count();
+            // Mixed space/tab indentation retains the existing tab dialect.
+            if self.source.as_bytes().get(span.start + spaces) != Some(&b'\t') {
+                self.work.inline_bytes += spaces as u64;
+                self.mark(
+                    Span::new(span.start, span.start + spaces),
+                    Style::HIDDEN,
+                    update,
+                );
+                span.start += spaces;
+            }
+        }
         let mut inline = std::mem::take(&mut self.inline);
         inline.feed(span, &mut self.effects(update));
         self.inline = inline;
@@ -764,7 +800,29 @@ impl Document {
         self.inline = inline;
     }
 
+    fn current_paragraph_tail(&self) -> Option<Span> {
+        let id = self.current?;
+        // Container leaves can be sealed while their logical paragraph stays
+        // open. Its first leaf also detects a multi-line Setext promotion.
+        let first = if self.blocks[id.0].container.is_some() {
+            self.container_title?.0
+        } else {
+            id
+        };
+        if !matches!(
+            self.blocks[first.0].kind,
+            BlockKind::Paragraph | BlockKind::Quote { .. } | BlockKind::ListItem { .. }
+        ) {
+            return None;
+        }
+        self.inline
+            .paragraph_tail(block::body_end(&self.source, self.blocks[id.0].source))
+    }
+
     fn close_current(&mut self, update: &mut Update) {
+        if let Some(tail) = self.current_paragraph_tail() {
+            self.mark(tail, Style::HIDDEN, update);
+        }
         if let Some(id) = self.current {
             self.close_container_paragraph(self.blocks[id.0].source.end);
         }
@@ -949,12 +1007,15 @@ impl Document {
         let mut container_line = None;
         let mut container_blank = false;
         let mut virtual_spaces = 0;
+        let mut fence_column = 0;
         let mut partial_leaf = false;
+        let mut container_code = false;
         let mut lazy = false;
         let mut table_text = matches!(classification, Line::Text);
         if self.fence.is_none() || fence_scope.is_some() {
             // Root fences remain opaque. Scoped fences first match their
-            // explicit path; a missing prefix or sibling seals the old block.
+            // explicit path, allowing code blanks to omit list indentation.
+            // Other missing prefixes or siblings seal the old block.
             let root_markers = matches!(
                 classification,
                 Line::Indented { .. } | Line::Text | Line::Blank
@@ -964,8 +1025,14 @@ impl Document {
             let loosened_start = update.loosened_lists.len();
             let fence_line = self.fence.and_then(|_| {
                 fence_scope.and_then(|_| {
-                    self.containers
-                        .partial_prefix(&self.source, span, None, false, &mut self.work)
+                    self.containers.partial_prefix(
+                        &self.source,
+                        span,
+                        None,
+                        false,
+                        false,
+                        &mut self.work,
+                    )
                 })
             });
             let partial_line = if self.fence.is_none() && self.containers.inner().is_some() {
@@ -974,23 +1041,31 @@ impl Document {
                     span,
                     Some(complete),
                     header.is_none() && self.container_inline == self.containers.inner(),
+                    previous_title.is_some_and(|(id, _)| {
+                        self.blocks[id.0].container == self.containers.inner()
+                    }),
                     &mut self.work,
                 )
             } else {
                 None
             };
+            let partial_container = partial_line.as_ref().is_some_and(|line| line.new_container);
+            let partial_line = partial_line.filter(|line| !line.new_container);
             let partial = partial_line.is_some();
             let line = fence_line.or(partial_line).or_else(|| {
                 self.containers.line(
                     &self.source,
                     span,
                     containers::ContainerOptions {
+                        partial_container,
                         complete,
                         root_markers,
+                        root_paragraph: paragraph,
                         paragraph: previous_title.and_then(|(id, _)| self.blocks[id.0].container),
                         lazy_paragraph: self.container_inline,
                         table_header: header.as_ref().map(|h| (h.container.unwrap(), h.columns)),
                         fence: fence_scope,
+                        code_fence: self.fence.is_some_and(|fence| fence.byte != b'$'),
                     },
                     &mut self.work,
                     update,
@@ -1008,25 +1083,63 @@ impl Document {
             }
             if let Some(line) = line {
                 lazy = line.lazy;
+                container_code = line.indented;
                 virtual_spaces = line.virtual_spaces;
                 let same_scope = previous_title
                     .is_some_and(|(id, _)| self.blocks[id.0].container == self.containers.inner());
                 let inner = Span::new(line.prefix, span.end);
                 content = inner;
-                let inner_classification = if lazy {
+                let inner_classification = if line.indented {
+                    Line::Indented {
+                        prefix: line.prefix,
+                    }
+                } else if lazy {
                     Line::Text
                 } else {
                     self.work.classified_bytes += inner.len() as u64;
-                    block::classify_indented(
-                        &self.source,
-                        inner,
-                        complete,
-                        self.fence,
-                        same_scope,
-                        virtual_spaces,
-                    )
+                    // Plain leaves do not need physical columns. A possible
+                    // tab-indented delimiter inspects at most four leading bytes;
+                    // active code fences also need the column for body indent.
+                    let tab_indent = self.source.as_bytes()[inner.range()]
+                        .iter()
+                        .take(4)
+                        .take_while(|&&b| matches!(b, b' ' | b'\t'))
+                        .any(|&b| b == b'\t');
+                    if self.fence.is_some_and(|fence| fence.byte != b'$') || tab_indent {
+                        // Only this bounded physical prefix, never old text or
+                        // ancestor nodes. Reuse the result for body de-indent.
+                        for &byte in &self.source.as_bytes()[span.start..inner.start] {
+                            self.work.classified_bytes += 1;
+                            fence_column = if byte == b'\t' {
+                                0
+                            } else {
+                                (fence_column + 1) % 4
+                            };
+                        }
+                    }
+                    if let Some(fence) = self.fence {
+                        block::classify_fenced(
+                            &self.source,
+                            inner,
+                            complete,
+                            fence,
+                            virtual_spaces,
+                            fence_column,
+                        )
+                    } else {
+                        block::classify_indented(
+                            &self.source,
+                            inner,
+                            complete,
+                            None,
+                            same_scope,
+                            virtual_spaces,
+                            fence_column,
+                        )
+                    }
                 };
-                partial_leaf = partial && !matches!(inner_classification, Line::Text);
+                partial_leaf =
+                    line.indented || (partial && !matches!(inner_classification, Line::Text));
                 container_blank = matches!(inner_classification, Line::Blank);
                 self.containers.observe_payload(
                     container_blank,
@@ -1034,7 +1147,10 @@ impl Document {
                     &mut self.work,
                     update,
                 );
-                table_text = !lazy && !partial && matches!(inner_classification, Line::Text);
+                // A complete partial-tab path has the same table eligibility
+                // as a byte-aligned path. Header fallback already preserves its
+                // virtual spaces; confirmed cells trim leading whitespace.
+                table_text = !lazy && matches!(inner_classification, Line::Text);
                 classification = match inner_classification {
                     leaf @ (Line::Heading { .. }
                     | Line::Setext(_)
@@ -1042,6 +1158,7 @@ impl Document {
                     | Line::FenceClose
                     | Line::Code
                     | Line::Indented { .. }
+                    | Line::Rule
                     | Line::Definition { .. }
                     | Line::FootnoteDefinition { .. }) => leaf,
                     _ => Line::Container {
@@ -1102,6 +1219,15 @@ impl Document {
             && !summary.pipe
             && (!inherited || self.inline.can_isolate_line());
         if eager || (summary.pipe && (!complete || summary.columns().is_some())) {
+            // An eager header moves the inline state into its first cell on
+            // confirmation. Save the old paragraph's raw tail before replacing
+            // its container leaf or consuming header bytes. Early container
+            // headers also replace the leaf; failure leaves the tail provisional.
+            let paragraph_tail = if inherited {
+                self.current_paragraph_tail()
+            } else {
+                None
+            };
             let leading_break = if eager && inherited {
                 self.inline.isolate_line()
             } else {
@@ -1126,6 +1252,14 @@ impl Document {
             } else {
                 None
             };
+            // Keep a split quote separator in the candidate's source envelope.
+            // Table confirmation trims it as leading cell whitespace; paragraph
+            // fallback must instead consume its semantic columns exactly once.
+            if virtual_spaces > 0 {
+                content.start -= 1;
+                self.display
+                    .spaces(Span::new(content.start, content.start + 1), virtual_spaces);
+            }
             let header = table::HeaderCandidate {
                 block,
                 source: span,
@@ -1135,6 +1269,8 @@ impl Document {
                 parsed_end: if eager { content.end } else { content.start },
                 leading_break,
                 paragraph_end,
+                paragraph_tail,
+                virtual_spaces,
             };
             self.mark(span, Style::default(), update);
             self.mark(Span::new(span.start, content.start), Style::HIDDEN, update);
@@ -1146,7 +1282,7 @@ impl Document {
                 self.mark(Span::new(end, end + 1), Style::HIDDEN, update);
             }
             if eager {
-                self.feed(content, update);
+                self.feed_header_content(content, virtual_spaces, update);
             }
             if self.inline.header_crossed() {
                 self.reject_streaming_header(header, update);
@@ -1313,11 +1449,16 @@ impl Document {
             }
             Line::Code => {
                 inline = false;
-                payload.start = content.start;
+                let fence = self.fence.as_mut().unwrap();
+                fence.remaining_indent = fence.indent;
+                // Carry the classification column through streaming suffixes;
+                // never revisit the prefix or ancestors after the window fills.
+                fence.indent_column = fence_column;
+                payload.start = self.strip_fence_indent(content, &mut virtual_spaces);
                 if virtual_spaces > 0 {
                     payload.start -= 1;
                     self.display
-                        .spaces(Span::new(payload.start, content.start), virtual_spaces);
+                        .spaces(Span::new(payload.start, payload.start + 1), virtual_spaces);
                 }
                 let id = self.current.unwrap();
                 self.blocks[id.0].source.end = span.end;
@@ -1333,6 +1474,11 @@ impl Document {
             Line::Indented { prefix } => {
                 inline = false;
                 payload.start = prefix;
+                if container_code && virtual_spaces > 0 {
+                    payload.start -= 1;
+                    self.display
+                        .spaces(Span::new(payload.start, prefix), virtual_spaces);
+                }
                 virtual_spaces = 0;
                 if let Some(id) = self.current
                     && matches!(self.blocks[id.0].kind, BlockKind::Code { .. })
@@ -1363,7 +1509,16 @@ impl Document {
                 inline = !blank;
                 container_text = !blank;
                 standalone = blank;
-                let kind = if blank && kind == BlockKind::Paragraph {
+                // Empty container leaves keep their scope and physical source.
+                // Task items still publish their interactive marker on the leaf;
+                // plain item numbers and markers remain in the container arena.
+                let kind = if blank
+                    && matches!(
+                        kind,
+                        BlockKind::Paragraph
+                            | BlockKind::Quote { .. }
+                            | BlockKind::ListItem { task: None, .. }
+                    ) {
                     BlockKind::Blank
                 } else {
                     kind
@@ -1377,6 +1532,7 @@ impl Document {
             Line::Rule => {
                 standalone = true;
                 inline = false;
+                payload.start = content.start;
                 self.new_block(span, BlockKind::ThematicBreak, update)
             }
             Line::Definition { .. } | Line::FootnoteDefinition { .. } => unreachable!(),
@@ -1446,7 +1602,44 @@ impl Document {
         }
     }
 
+    /// Consume only this line's outstanding indent, never old body or prefixes.
+    /// Split only tabs needed for indentation; later tabs remain literal.
+    fn strip_fence_indent(&mut self, span: Span, virtual_spaces: &mut u8) -> usize {
+        let fence = self.fence.as_mut().unwrap();
+        let removed = (*virtual_spaces).min(fence.remaining_indent);
+        *virtual_spaces -= removed;
+        fence.remaining_indent -= removed;
+        let mut start = span.start;
+        while fence.remaining_indent > 0 && start < span.end {
+            self.work.classified_bytes += 1;
+            let width = match self.source.as_bytes()[start] {
+                b' ' => 1,
+                b'\t' => 4 - fence.indent_column,
+                _ => {
+                    fence.remaining_indent = 0;
+                    break;
+                }
+            };
+            start += 1;
+            fence.indent_column = (fence.indent_column + width) % 4;
+            let removed = width.min(fence.remaining_indent);
+            fence.remaining_indent -= removed;
+            *virtual_spaces = width - removed;
+        }
+        start
+    }
+
     fn extend_line(&mut self, line: StreamingLine, span: Span, update: &mut Update) {
+        if !line.hidden && self.fence.is_some_and(|fence| fence.remaining_indent > 0) {
+            let mut virtual_spaces = 0;
+            let mut start = self.strip_fence_indent(span, &mut virtual_spaces);
+            if virtual_spaces > 0 {
+                start -= 1;
+                self.display
+                    .spaces(Span::new(start, start + 1), virtual_spaces);
+            }
+            self.mark(Span::new(span.start, start), Style::HIDDEN, update);
+        }
         self.containers.end = span.end;
         self.headings.parsed_end = span.end;
         self.blocks[line.block.0].source.end = span.end;
@@ -1621,10 +1814,28 @@ impl Document {
             self.blocks[self.current.unwrap().0].source.end = header.source.end;
         }
         self.mark(header.source, Style::default(), update);
-        self.feed(Span::new(header.parsed_end, header.content.end), update);
+        self.feed_header_content(
+            Span::new(header.parsed_end, header.content.end),
+            if header.parsed_end == header.content.start {
+                header.virtual_spaces
+            } else {
+                0
+            },
+            update,
+        );
         if header.container.is_some() {
             self.end_container_text(header.block.unwrap());
         }
+    }
+
+    fn feed_header_content(&mut self, mut content: Span, spaces: u8, update: &mut Update) {
+        if spaces > 0 {
+            let mut parser = std::mem::take(&mut self.inline);
+            parser.virtual_spaces(content.start, spaces, &mut self.effects(update));
+            self.inline = parser;
+            content.start += 1;
+        }
+        self.feed(content, update);
     }
 
     fn confirm_table(
@@ -1648,6 +1859,9 @@ impl Document {
         };
         if let Some(end) = header.paragraph_end {
             self.blocks[self.current.unwrap().0].source.end = end;
+        }
+        if let Some(tail) = header.paragraph_tail {
+            self.mark(tail, Style::HIDDEN, update);
         }
         let block = header
             .block

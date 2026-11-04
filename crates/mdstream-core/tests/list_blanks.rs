@@ -127,13 +127,8 @@ fn marker_task_and_empty_item_variants_confirm_only_real_separation() {
 }
 
 #[test]
-fn detached_blanks_end_leaf_sequences_but_full_payload_blanks_remain_opaque() {
-    for first in [
-        "- ```\n  raw\n",
-        "- $$\n  raw\n",
-        "- a\n      code\n",
-        "- [^n]: raw\n",
-    ] {
+fn detached_blanks_end_non_code_sequences_but_fence_blanks_remain_opaque() {
+    for first in ["- $$\n  raw\n", "- a\n      code\n", "- [^n]: raw\n"] {
         let source = format!("{first}\n  next\n");
         let doc = parse(&source);
         assert_eq!(lists(&doc), [ListTightness::Loose], "{source:?}");
@@ -143,6 +138,8 @@ fn detached_blanks_end_leaf_sequences_but_full_payload_blanks_remain_opaque() {
         assert_eq!(doc.blocks().last().unwrap().kind, BlockKind::Paragraph);
     }
     for source in [
+        "- ```\n  raw\n\n  next\n",
+        "- ```\n\n  raw\n  ```\n- next\n",
         "- ```\n  \n  raw\n  ```\n- next\n",
         "- $$\n  \n  raw\n  $$\n- next\n",
         "- [^n]: raw\n  \n      more\n- next\n",
@@ -260,11 +257,14 @@ fn classification_limit_and_partial_tabs_do_not_retry_or_retain_failed_paths() {
         let source = format!("- a\n\n{tail}");
         assert_eq!(lists(&parse(&source)), [ListTightness::Loose], "{source:?}");
     }
-    // General new prose with a partial tab still follows the documented
-    // fallback. A previous blank does not grant a new leaf classification.
+    // New prose accepts a complete partial-tab path and confirms the prior
+    // blank as a separator within the same item.
     let doc = parse("- a\n\n\ttext\n");
-    assert_eq!(doc.blocks().last().unwrap().container, None);
-    assert_eq!(lists(&doc), [ListTightness::Tight]);
+    assert_eq!(
+        doc.blocks().last().unwrap().container,
+        doc.blocks()[0].container
+    );
+    assert_eq!(lists(&doc), [ListTightness::Loose]);
 }
 
 #[test]
@@ -392,7 +392,7 @@ fn generated_groups_match_independent_spacing_identity_and_range_model() {
         ("- a\n\n- b\n", vec![ListTightness::Loose], 3),
         ("- a\n\n  b\n", vec![ListTightness::Loose], 2),
         ("- a\n\n", vec![ListTightness::Tight], 2),
-        ("-\n\n b\n", vec![ListTightness::Tight], 2),
+        ("-\n\n  b\n", vec![ListTightness::Tight], 2),
         (
             "- - a\n\n    b\n",
             vec![ListTightness::Tight, ListTightness::Loose],
@@ -432,10 +432,22 @@ fn generated_groups_match_independent_spacing_identity_and_range_model() {
         expected.extend_from_slice(spacing);
         assert_eq!(lists(&doc), expected);
         assert_eq!(doc.container_count() - first, depth + count);
+        let list_end = if *text == "-\n\n  b\n" {
+            start + prefix.len() * 2 + 3
+        } else {
+            start + group.len()
+        };
         for i in first..first + depth + 1 {
             assert_eq!(
                 doc.container(ContainerId(i)).unwrap().source,
-                Span::new(start, start + group.len())
+                Span::new(
+                    start,
+                    if i == first + depth {
+                        list_end
+                    } else {
+                        start + group.len()
+                    }
+                )
             );
         }
         let update = doc.append("# exit\n").unwrap();
@@ -445,7 +457,7 @@ fn generated_groups_match_independent_spacing_identity_and_range_model() {
                 .unwrap()
                 .source
                 .end,
-            start + group.len()
+            list_end
         );
     }
     doc.finish();

@@ -108,7 +108,7 @@ fn boundaries_reset_sequences_and_underline_requires_explicit_exact_scope() {
         ">\n",
         "> # atx\n",
         ">     code\n",
-        "> [r]: /u\n",
+        ">\n> [r]: /u\n",
         "> [^n]: raw\n",
         "> ```\n> raw\n> ```\n",
         "> > # nested\n",

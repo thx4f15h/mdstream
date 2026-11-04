@@ -86,29 +86,35 @@ fn late_code_closure_overlays_spaces_and_trims_one_virtual_column() {
 }
 
 #[test]
-fn failed_paths_and_blanks_keep_original_dialect_while_selected_leaves_interrupt() {
+fn failed_paths_keep_dialect_while_complete_blanks_and_selected_leaves_use_columns() {
     for (source, expected) in [
-        ("- > first\n\ttail\n", "first\n\ttail\n"),
+        ("- > first\n\ttail\n", "first\n  tail\n"),
         ("- first\n\t# title\n", "first\ntitle\n"),
-        ("- first\n\t- nested\n", "first\n\t- nested\n"),
-        ("- first\n\t> nested\n", "first\n\t> nested\n"),
+        ("- first\n\t- nested\n", "first\nnested\n"),
+        ("- first\n\t> nested\n", "first\nnested\n"),
         ("- first\n\t  tail\n", "first\ntail\n"),
-        ("- first\n\t\n", "first\n\t\n"),
-        ("- first\n\t", "first\n\t"),
+        ("- first\n\t\n", "first\n  \n"),
+        ("- first\n\t", "first\n  "),
         ("- first\n- sibling\n", "first\nsibling\n"),
     ] {
         let doc = parse(source);
         assert_eq!(visible(&doc), expected, "{source:?}");
-        assert!(
-            doc.display_runs_in(Span::new(0, source.len()))
-                .unwrap()
-                .all(|r| r.replacement.is_none())
-        );
+        let replacements: Vec<_> = doc
+            .display_runs_in(Span::new(0, source.len()))
+            .unwrap()
+            .filter_map(|r| r.replacement)
+            .collect();
+        if source == "- first\n\t\n" || source == "- first\n\t" || source == "- > first\n\ttail\n" {
+            let tab = source.find('\t').unwrap();
+            assert_eq!(replacements, [Span::new(tab, tab + 1)]);
+        } else {
+            assert!(replacements.is_empty());
+        }
     }
-    // Partial text is not a new table candidate. Fully matched Setext may
-    // subsequently promote the complete existing paragraph without replay.
+    // Fully matched partial-tab text can now become a table candidate.
+    // Setext still promotes the existing paragraph without replay.
     let doc = parse("- first\n\ta | b\n  - | -\n");
-    assert!(doc.tables().is_empty());
+    assert_eq!(doc.tables().len(), 1);
     let doc = parse("- *first\n\tsecond*\n  ===\n");
     assert_eq!(doc.headings().entries().len(), 1);
     assert_eq!(visible(&doc), "first\n  second\n");
@@ -386,7 +392,8 @@ fn deep_partial_paths_only_visit_the_supplied_frames_and_history_is_not_revisite
     for _ in 0..200 {
         doc.append("\tlazy\n").unwrap();
     }
-    assert_eq!(doc.work().container_steps - before.container_steps, 800);
+    // Two matched Items and the first missing Item; no second path walk.
+    assert_eq!(doc.work().container_steps - before.container_steps, 600);
     assert_eq!(doc.container_count(), 2 * depth);
     let mut doc = Document::new();
     doc.append(&"- `a\n\tb`\n\n".repeat(4096)).unwrap();

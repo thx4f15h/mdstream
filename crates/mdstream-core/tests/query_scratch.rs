@@ -358,7 +358,10 @@ fn query_scratch_budget_cursor_matches_fresh_window_and_atomic_cost_model() {
                 }
             }
         }
-        assert_eq!(output, "中 ≂̸ a 🙂 b z ".repeat(40));
+        assert_eq!(
+            output,
+            format!("{}中 ≂̸ a 🙂 b z", "中 ≂̸ a 🙂 b z ".repeat(39))
+        );
         assert!(cursor.scratch_stats().allocation_calls <= 6);
     }
 }

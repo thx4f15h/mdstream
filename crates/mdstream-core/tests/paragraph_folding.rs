@@ -1687,6 +1687,23 @@ fn container_paragraph_rejects_other_leaves_nontext_and_overlap_atomically() {
 
 #[test]
 fn container_paragraph_growth_scope_changes_and_blank_boundaries() {
+    // A definition-shaped continuation now grows the same folded paragraph.
+    let mut doc = Document::new();
+    doc.append("> one\n").unwrap();
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    let id = register_container(&doc, &mut view, BlockId(0), 3);
+    view.set_collapsed(&doc, id, true).unwrap();
+    let update = doc.append("> [r]: /url\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    let candidate = view.fold_candidate(&doc, id).unwrap().unwrap();
+    assert_eq!(candidate.source, Span::new(0, doc.source().len()));
+    assert!(candidate.open && view.is_collapsed(id));
+    let update = doc.append(">\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    let closed = view.fold_candidate(&doc, id).unwrap().unwrap();
+    assert_eq!(closed.source, candidate.source);
+    assert!(!closed.open && view.is_collapsed(id));
+
     for (initial, tail, end) in [
         ("> one\n", "> two\n>\n> next\n", 12),
         ("> one\n", "lazy\n\nnext\n", 11),
@@ -1695,7 +1712,7 @@ fn container_paragraph_growth_scope_changes_and_blank_boundaries() {
         ("> one\n", "> # next\n", 6),
         ("> one\n", "> ```\n> code\n", 6),
         ("> one\n", "> $$\n> math\n", 6),
-        ("> one\n", "> [r]: /url\n", 6),
+        ("> one\n", ">\n> [r]: /url\n", 6),
         ("> one\n", "> [^f]: note\n", 6),
     ] {
         let mut doc = Document::new();

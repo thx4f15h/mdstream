@@ -204,10 +204,12 @@ pub struct Work {
     /// opaque prefix followed by its independent cell parse. That extra pass
     /// is bounded by table_bytes; failed candidates never replay the prefix.
     /// Raw Setext edge summaries share this scan; confirmation never rescans.
+    /// Hidden root paragraph indentation is charged here before inline parsing.
     /// A partially consumed container tab adds at most three virtual-space visits.
     pub inline_bytes: u64,
     /// Run resolution, opener pushes/pops/rebasing, and isolated cross-line
     /// emphasis/code pairs committed or discarded once when a header resolves.
+    /// Includes bounded failed-code run matching (at most 32 comparisons/run).
     pub delimiter_steps: u64,
     pub label_bytes: u64,
     pub tree_visits: u64,

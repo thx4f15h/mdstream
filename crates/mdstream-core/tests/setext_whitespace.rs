@@ -26,7 +26,7 @@ fn unlimited() -> Budget {
 }
 
 #[test]
-fn only_outer_raw_spaces_and_tabs_are_trimmed() {
+fn outer_raw_whitespace_and_root_paragraph_indentation_are_trimmed() {
     for (raw, text) in [
         ("  Foo *bar\nbaz*\t", "Foo bar\nbaz"),
         ("   中🙂 \t", "中🙂"),
@@ -43,15 +43,37 @@ fn only_outer_raw_spaces_and_tabs_are_trimmed() {
         ("  x\r\r \t", "x\r\r"),
         ("  a  \nb \t", "a\nb"),
         ("  a\n  b \t", "a\n  b"),
-        ("  a\t\nb \t", "a\t\nb"),
+        ("  a\t\nb \t", "a\nb"),
     ] {
         for prefix in ["", "> "] {
+            // The title's raw envelope retains interior indentation; root
+            // paragraph display already hid it before Setext promotion.
+            let text = if prefix.is_empty() && raw == "  a\n  b \t" {
+                "a\nb"
+            } else {
+                text
+            };
             let continuation = prefix;
             for newline in ["\n", "\r\n"] {
                 for ending in ["", "\n", "\r\n"] {
                     let body = raw.replace('\n', &format!("{newline}{continuation}"));
                     let source = format!("{prefix}{body}{newline}{continuation}==={ending}");
                     let doc = parse(&source);
+                    if prefix.is_empty() && raw.starts_with(" \t") {
+                        // Root tab indentation now opens literal code; the
+                        // following underline cannot promote it to Setext.
+                        assert!(doc.headings().entries().is_empty());
+                        assert_eq!(doc.blocks()[0].kind, BlockKind::Code { info: None });
+                        assert_eq!(doc.blocks()[1].kind, BlockKind::Paragraph);
+                        assert_eq!(
+                            visible(&doc, Span::new(0, source.len())),
+                            format!(
+                                "&#32; &#9; \t\n==={}",
+                                if ending.is_empty() { "" } else { "\n" }
+                            )
+                        );
+                        continue;
+                    }
                     let title = *doc
                         .headings()
                         .entries()
@@ -103,23 +125,24 @@ fn raw_envelopes_match_independent_whole_string_model() {
 }
 
 #[test]
-fn rejected_underlines_and_scope_boundaries_do_not_trim_prose() {
+fn rejected_underlines_trim_break_whitespace_and_closed_root_tails() {
     for suffix in ["==x\n", "\n", "# stop\n", "    code\n", "```\nx\n```\n"] {
         let source = format!("  x \t\n{suffix}");
         let doc = parse(&source);
         assert_eq!(
             visible(&doc, Span::new(0, "  x \t\n".len())),
-            "  x \t\n",
+            "x\n",
             "{suffix:?}"
         );
     }
     let source = format!("  old \t\n{}\n===\n", "=".repeat(BLOCK_LOOKAHEAD + 1));
     let doc = parse(&source);
     let title = doc.headings().entries()[0];
-    // The overlong underline is ordinary interior text; only the outer edges trim.
+    // The overlong underline is ordinary text; the preceding internal break
+    // trims its raw space/tab suffix without changing the title envelope.
     assert_eq!(
         visible(&doc, title.content),
-        format!("old \t\n{}", "=".repeat(BLOCK_LOOKAHEAD + 1))
+        format!("old\n{}", "=".repeat(BLOCK_LOOKAHEAD + 1))
     );
     let doc = parse(">   old \t\n>\n>   new \t\n> ===\n");
     assert_eq!(visible(&doc, doc.headings().entries()[0].content), "new");
@@ -146,7 +169,7 @@ fn failed_table_candidates_feed_edges_once_and_success_resets_them() {
             assert!(doc.work().inline_bytes <= source.len() as u64);
         }
     }
-    for barrier in ["> a|b\n> -|-\n>\n", "> # atx \t\n", "> [r]: /u\n"] {
+    for barrier in ["> a|b\n> -|-\n>\n", "> # atx \t\n", ">\n> [r]: /u\n"] {
         let source = format!(">  before\n{barrier}>   fresh \t\n> ===\n");
         let doc = parse(&source);
         assert_eq!(

@@ -95,6 +95,9 @@ pub(crate) struct HeaderCandidate {
     pub leading_break: Option<crate::inline::LineBreak>,
     // An eager root continuation grows its paragraph until table confirmation.
     pub paragraph_end: Option<usize>,
+    pub paragraph_tail: Option<Span>,
+    // Unconsumed columns of the first source byte (a split quote separator).
+    pub virtual_spaces: u8,
 }
 
 pub(crate) struct StreamingHeader {

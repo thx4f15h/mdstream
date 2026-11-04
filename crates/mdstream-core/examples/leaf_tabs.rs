@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
     }
-    assert_eq!(text, "intro\n中🙂\n  let x = 1;\n  x+y\nliteral\n");
+    assert_eq!(text, "intro\n中🙂\nlet x = 1;\n  x+y\nliteral\n");
     println!("{frames} frames / {bytes} charged bytes; heading, code and math retain their scope");
     Ok(())
 }

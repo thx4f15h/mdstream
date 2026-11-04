@@ -109,7 +109,7 @@ fn block_interruptions_end_inline_sequences_including_opaque_candidates() {
         "> # heading\n",
         "> ```\n> raw\n> ```\n",
         ">     raw\n",
-        "> [r]: /url\n",
+        ">\n> [r]: /url\n",
         "> [^n]: raw\n",
         "> a|b\n> -|-\n>\n",
     ] {
@@ -282,7 +282,7 @@ fn labels_and_math_continue_while_footnotes_keep_physical_boundaries() {
             .unwrap()
             .all(|r| !r.style.contains(Style::EMPHASIS))
     );
-    let doc = parse("> *[bad](unclosed\n> plain* [ok][r] $x$ [^n]\n> [r]: /late\n> [^n]: raw\n");
+    let doc = parse("> *[bad](unclosed\n> plain* [ok][r] $x$ [^n]\n>\n> [r]: /late\n> [^n]: raw\n");
     assert_eq!(doc.links().len(), 2);
     assert_eq!(doc.link_destination(LinkId(0)), None);
     assert_eq!(doc.link_destination(LinkId(1)), Some("/late"));

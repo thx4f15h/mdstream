@@ -68,8 +68,8 @@ fn block_interruptions_close_only_the_unmatched_path_before_parsing() {
         "[r]: /url\n",
         "[^n]: raw\n",
         "- next\n",
-        "2. next\n",
-        "+\n",
+        "1. next\n",
+        "+ next\n",
     ] {
         for retained in ["", "> "] {
             let first = "> > *open\n";

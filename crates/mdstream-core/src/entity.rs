@@ -7,6 +7,11 @@ mod names {
 pub(crate) const MAX_ENTITY_BODY: usize = 31;
 
 pub(crate) fn decode(body: &str) -> Option<String> {
+    decode_into(body, &mut [0; 4]).map(str::to_owned)
+}
+
+// Named values borrow the fixed table; numeric values borrow caller scratch.
+pub(crate) fn decode_into<'a>(body: &str, scratch: &'a mut [u8; 4]) -> Option<&'a str> {
     if let Some(numeric) = body.strip_prefix('#') {
         let (digits, radix, max) = match numeric.strip_prefix(['x', 'X']) {
             Some(digits) => (digits, 16, 6),
@@ -28,11 +33,11 @@ pub(crate) fn decode(body: &str) -> Option<String> {
         let scalar = char::from_u32(value)
             .filter(|c| *c != '\0')
             .unwrap_or('\u{fffd}');
-        Some(scalar.to_string())
+        Some(scalar.encode_utf8(scratch))
     } else {
         let index = names::NAMES
             .binary_search_by_key(&body, |(name, _)| *name)
             .ok()?;
-        Some(names::NAMES[index].1.to_owned())
+        Some(names::NAMES[index].1)
     }
 }

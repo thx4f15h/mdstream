@@ -3,12 +3,20 @@ use crate::Span;
 /// General block classification prefix bound (+3 to finish UTF-8). A long
 /// table header/separator can defer a raw suffix without buffering/copying it.
 pub const BLOCK_LOOKAHEAD: usize = 1024;
-pub const MAX_FENCE_LENGTH: usize = 32;
+/// Maximum opening run, leaving one classification byte to confirm its end.
+/// Container prefixes and indentation also consume the classification window.
+pub const MAX_FENCE_LENGTH: usize = BLOCK_LOOKAHEAD - 1;
 
 #[derive(Clone, Copy)]
 pub(crate) struct Fence {
     pub byte: u8,
     pub length: usize,
+    /// Indent relative to the matched container prefix; math keeps its literal body.
+    pub indent: u8,
+    /// At most three spaces may continue beyond the classification window.
+    pub remaining_indent: u8,
+    /// Physical column modulo four at the next unconsumed body byte.
+    pub indent_column: u8,
 }
 
 pub(crate) enum Line {
@@ -63,11 +71,25 @@ pub(crate) fn classify(
     fence: Option<Fence>,
     paragraph: bool,
 ) -> Line {
-    classify_indented(source, span, complete, fence, paragraph, 0)
+    let line = classify_indented(source, span, complete, fence, paragraph, 0, 0);
+    if matches!(line, Line::Text) {
+        // At the root, the first tab after 0–3 spaces ends exactly at column
+        // four. Consume its whole byte; subsequent tabs remain literal code.
+        // Scoped leaves use classify_indented and keep their existing dialect.
+        let body = &source.as_bytes()[span.range()];
+        let spaces = body.iter().take(3).take_while(|&&b| b == b' ').count();
+        if body.get(spaces) == Some(&b'\t') {
+            return Line::Indented {
+                prefix: span.start + spaces + 1,
+            };
+        }
+    }
+    line
 }
 
 /// Unconsumed columns of a container-prefix tab precede this source slice.
 /// They affect indentation only; all returned offsets remain source bytes.
+/// `column` is the physical column modulo four at span.start, after any tab.
 pub(crate) fn classify_indented(
     source: &str,
     span: Span,
@@ -75,33 +97,16 @@ pub(crate) fn classify_indented(
     fence: Option<Fence>,
     paragraph: bool,
     virtual_spaces: u8,
+    column: u8,
 ) -> Line {
     debug_assert!(virtual_spaces <= 3);
+    if let Some(fence) = fence {
+        return classify_fenced(source, span, complete, fence, virtual_spaces, column);
+    }
     let end = body_end(source, span);
     let body = &source.as_bytes()[span.start..end];
     let spaces = body.iter().take_while(|&&b| b == b' ').count();
     let text = &body[spaces..];
-    if let Some(fence) = fence {
-        let run = text.iter().take_while(|&&b| b == fence.byte).count();
-        return if complete
-            && spaces + usize::from(virtual_spaces) <= 3
-            && if fence.byte == b'$' {
-                run == 2
-            } else {
-                run >= fence.length
-            }
-            && text[run..].iter().all(|b| {
-                if fence.byte == b'$' {
-                    matches!(b, b' ' | b'\t')
-                } else {
-                    b.is_ascii_whitespace()
-                }
-            }) {
-            Line::FenceClose
-        } else {
-            Line::Code
-        };
-    }
     if complete && body.iter().all(u8::is_ascii_whitespace) {
         return Line::Blank;
     }
@@ -113,25 +118,52 @@ pub(crate) fn classify_indented(
     if text.is_empty() {
         return Line::Text;
     }
-    // Independent display blocks require a complete, bounded delimiter line.
-    // Longer/failed lines retain the existing ordinary inline interpretation.
-    if complete && text.starts_with(b"$$") && text[2..].iter().all(|b| matches!(b, b' ' | b'\t')) {
+    // Code/math openers, headings, rules and definitions accept raw tabs here.
+    // Other leaves keep their rules. Inspect at most four indentation bytes.
+    let mut fence_start = 0;
+    let mut fence_indent = virtual_spaces;
+    let mut fence_column = column;
+    for &byte in body {
+        let width = match byte {
+            b' ' => 1,
+            b'\t' => 4 - fence_column,
+            _ => break,
+        };
+        fence_indent += width;
+        if fence_indent > 3 {
+            break;
+        }
+        fence_column = (fence_column + width) % 4;
+        fence_start += 1;
+    }
+    let fence_text = &body[fence_start..];
+    // Independent math blocks require a complete, bounded delimiter line.
+    // Their body stays literal; opening indentation is not stripped from it.
+    if complete
+        && fence_indent <= 3
+        && fence_text.starts_with(b"$$")
+        && fence_text[2..].iter().all(|b| matches!(b, b' ' | b'\t'))
+    {
         return Line::FenceOpen {
             fence: Fence {
                 byte: b'$',
                 length: 2,
+                indent: 0,
+                remaining_indent: 0,
+                indent_column: 0,
             },
             info: None,
         };
     }
-    if text.starts_with(b"[^")
-        && let Some(close) = text.iter().position(|&b| b == b']')
-        && text.get(close + 1) == Some(&b':')
+    if fence_indent <= 3
+        && fence_text.starts_with(b"[^")
+        && let Some(close) = fence_text.iter().position(|&b| b == b']')
+        && fence_text.get(close + 1) == Some(&b':')
         && crate::footnotes::valid_label(
-            &source[span.start + spaces + 2..span.start + spaces + close],
+            &source[span.start + fence_start + 2..span.start + fence_start + close],
         )
     {
-        let mut start = span.start + spaces + close + 2;
+        let mut start = span.start + fence_start + close + 2;
         if source
             .as_bytes()
             .get(start)
@@ -141,57 +173,79 @@ pub(crate) fn classify_indented(
             start += 1;
         }
         return Line::FootnoteDefinition {
-            label: Span::new(span.start + spaces + 2, span.start + spaces + close),
+            label: Span::new(
+                span.start + fence_start + 2,
+                span.start + fence_start + close,
+            ),
             content: Span::new(start, end),
         };
     }
-    if complete {
-        if paragraph && let Some(level) = setext_level(text) {
-            return Line::Setext(level);
-        }
-        if let Some(definition) = definition(source, span.start + spaces, end) {
-            return definition;
-        }
-        if matches!(text[0], b'*' | b'-' | b'_') {
-            let mut count = 0;
-            if text.iter().all(|&b| {
-                if b == text[0] {
-                    count += 1;
-                    true
-                } else {
-                    b == b' ' || b == b'\t'
-                }
-            }) && count >= 3
-            {
-                return Line::Rule;
+    // A reference definition can start a block, but cannot interrupt prose in
+    // this exact scope. Reuse the paragraph eligibility already needed for
+    // Setext; rejected candidates flow through the ordinary inline parser.
+    if complete
+        && !paragraph
+        && fence_indent <= 3
+        && let Some(definition) = definition(source, span.start + fence_start, end)
+    {
+        return definition;
+    }
+    if complete
+        && paragraph
+        && fence_indent <= 3
+        && let Some(level) = setext_level(fence_text)
+    {
+        return Line::Setext(level);
+    }
+    if complete && fence_indent <= 3 && matches!(fence_text.first(), Some(b'*' | b'-' | b'_')) {
+        let mut count = 0;
+        if fence_text.iter().all(|&b| {
+            if b == fence_text[0] {
+                count += 1;
+                true
+            } else {
+                b == b' ' || b == b'\t'
             }
+        }) && count >= 3
+        {
+            return Line::Rule;
         }
     }
-    if matches!(text[0], b'`' | b'~') {
-        let length = text.iter().take_while(|&&b| b == text[0]).count();
+    if fence_indent <= 3 && matches!(fence_text.first(), Some(b'`' | b'~')) {
+        let length = fence_text
+            .iter()
+            .take_while(|&&b| b == fence_text[0])
+            .count();
         if (3..=MAX_FENCE_LENGTH).contains(&length)
-            && (text[0] != b'`' || !text[length..].contains(&b'`'))
+            // A run cut by the window may continue in the next append. In
+            // particular, a container prefix can leave fewer than MAX bytes.
+            && (complete || length < fence_text.len())
+            && (fence_text[0] != b'`' || !fence_text[length..].contains(&b'`'))
         {
-            let rest = &source[span.start + spaces + length..end];
+            let rest = &source[span.start + fence_start + length..end];
             let info = rest.trim_ascii();
             let offset = rest.len() - rest.trim_ascii_start().len();
-            let info_start = span.start + spaces + length + offset;
+            let info_start = span.start + fence_start + length + offset;
             return Line::FenceOpen {
                 fence: Fence {
-                    byte: text[0],
+                    byte: fence_text[0],
                     length,
+                    indent: fence_indent,
+                    remaining_indent: 0,
+                    indent_column: 0,
                 },
                 info: (!info.is_empty()).then(|| Span::new(info_start, info_start + info.len())),
             };
         }
     }
-    if text[0] == b'#' {
+    let text = fence_text;
+    if fence_indent <= 3 && text.first() == Some(&b'#') {
         let level = text.iter().take_while(|&&b| b == b'#').count();
         if (1..=6).contains(&level)
             && ((level == text.len() && complete)
                 || text.get(level).is_some_and(|b| matches!(b, b' ' | b'\t')))
         {
-            let mut prefix = span.start + spaces + level;
+            let mut prefix = span.start + fence_start + level;
             while prefix < end && matches!(source.as_bytes()[prefix], b' ' | b'\t') {
                 prefix += 1;
             }
@@ -202,6 +256,54 @@ pub(crate) fn classify_indented(
         }
     }
     Line::Text
+}
+
+/// Match closers before stripping body indentation. `column` is the physical
+/// column modulo four after the matched prefix (including a partly used tab).
+pub(crate) fn classify_fenced(
+    source: &str,
+    span: Span,
+    complete: bool,
+    fence: Fence,
+    virtual_spaces: u8,
+    mut column: u8,
+) -> Line {
+    if !complete {
+        return Line::Code;
+    }
+    let body = &source.as_bytes()[span.start..body_end(source, span)];
+    let mut indent = virtual_spaces;
+    let mut start = 0;
+    for &byte in body {
+        let width = match byte {
+            b' ' => 1,
+            b'\t' => 4 - column,
+            _ => break,
+        };
+        indent += width;
+        if indent > 3 {
+            return Line::Code;
+        }
+        column = (column + width) % 4;
+        start += 1;
+    }
+    let text = &body[start..];
+    let run = text.iter().take_while(|&&b| b == fence.byte).count();
+    if (if fence.byte == b'$' {
+        run == 2
+    } else {
+        run >= fence.length
+    }) && text[run..].iter().all(|b| {
+        if fence.byte == b'$' {
+            matches!(b, b' ' | b'\t')
+        } else {
+            b.is_ascii_whitespace()
+        }
+    }) {
+        Line::FenceClose
+    } else {
+        Line::Code
+    }
 }
 
 /// A possible ATX suffix is only spaces/tabs, or a whitespace-separated hash
@@ -279,8 +381,15 @@ fn definition(source: &str, start: usize, end: usize) -> Option<Line> {
     if text.first() != Some(&b'[') || text.get(1) == Some(&b'^') {
         return None;
     }
-    let close = text.iter().position(|&b| b == b']')?;
-    if close <= 1 || text.get(close + 1) != Some(&b':') {
+    // Find the first unescaped bracket after the opener in this bounded line. Keep
+    // the raw label spelling for reference matching and source offsets.
+    let mut escaped = false;
+    let close = 1 + text[1..].iter().position(|&byte| {
+        let bracket = matches!(byte, b'[' | b']') && !escaped;
+        escaped = byte == b'\\' && !escaped;
+        bracket
+    })?;
+    if text[close] != b']' || close <= 1 || text.get(close + 1) != Some(&b':') {
         return None;
     }
     let mut a = start + close + 2;
@@ -314,7 +423,7 @@ fn definition(source: &str, start: usize, end: usize) -> Option<Line> {
     })
 }
 
-/// Caller has already removed up to three leading spaces and the physical LF.
+/// Caller has already removed up to three indentation columns and the physical LF.
 pub(crate) fn setext_level(text: &[u8]) -> Option<u8> {
     let trimmed = text.trim_ascii_end();
     (matches!(trimmed.first(), Some(b'=' | b'-')) && trimmed.iter().all(|b| *b == trimmed[0]))

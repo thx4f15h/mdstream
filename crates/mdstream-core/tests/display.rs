@@ -111,7 +111,8 @@ fn code_whitespace_uses_normalized_endpoints_and_preserves_interior_spaces() {
         ("x ` a`", "x  a"),
         ("x `a `", "x a "),
         ("x `   `", "x    "),
-        ("x ` \n `", "x    "),
+        // Root paragraph indentation is removed before code normalization.
+        ("x ` \n `", "x   "),
         ("x `\na\n`", "x a"),
         ("x `\r\na\r\n`", "x a"),
         ("x `a\r\nb\nc\rd`", "x a b c d"),
