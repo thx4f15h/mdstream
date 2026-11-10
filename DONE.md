@@ -2506,3 +2506,18 @@ CommonMark 213 已不再建立定义，但未定义引用隐藏括号，继续�
 仍未交付：外部 opener 提前在标签内部闭合（521/534/564、473/474）、419 现有投影的深度/顺序限制、嵌套候选、完整失败字面回退、通用确认/撤销及其它原 TODO 要求。现行相关宽泛条目已收窄到剩余范围；同时依据此前交付事实纠正 Links 全章评分、540 完整 case folding 和 491 单波浪号仍“未交付”的过时描述及汇总。真实未完成复选项仍 **44**，没有删除或勾选这些未完需求；更新前相关原文留在本单元 todo-original-lines.md，DONE 旧历史及此前所有提交完整保留。
 
 最终验证全部在本项目 `nix develop` 中完成，target 取自 `cargo metadata`：`cargo check --workspace --all-targets`；针对性 nextest **102/102**；完整 debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1,566/1,566**；`cargo test --doc --workspace` **75/75**；Clippy `--workspace --all-targets -- -D warnings`、fmt、相关离线生成数据/固定夹具和 `git diff --check` 全部通过。release 示例 `label_delimiters`、`emphasis_runs`、`container_links`、`closed_link_headers`、`link_suffix_headers`、`budget` 均退出 0。最终代码哈希、设计/累计界限、官方逐项审查、红测和中间失败、真实命令/退出状态及完整日志保存在 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-008/`（索引 `commands.tsv`，最终命令日志后缀 `-v3`，离线日志 `fixtures.log`）。本轮未提交、推送、reset、清理、派生代理或改动主机/用户配置、其它工作树及运行器/账本。
+
+
+## 2026-11-11 未闭合代码候选无串数上限回退交付
+
+本单元完成原 TODO“强调和代码 span”及“CommonMark Code spans 标准样例评分”中超过 32 个异长反引号串的代码配对回退。开放外层仍暂定字面；同长度 closer 到来时优先闭合外层并丢弃后备摘要。外层在 EOF、段落/容器/标题/单元格边界失败时，按源码次序寻找最近同长度后继，贪心恢复不相交代码对；没有匹配的串保持字面。其它行内语法仍不重放，完整失败回退继续待办。晚表头确认恢复前序摘要边界及末段空白摘要，失败保留整个候选，跨新表头的配对不泄漏。
+
+先红后绿：原实现面对 33 串只能恢复 0 对，红测要求 16 对并失败。实现移除 overflow/32 串常量，只保留每串的原始区间、全空白/末字节摘要；收尾排序索引并建立同长度最近后继，再作一次源码序贪心遍历。每字节仍只作常数摘要更新，代码规范化沿用已有常数端点读取，不复制或回扫增长中的旧正文、不遍历祖先或旧对象。每个异长串只记录一次，参与一次排序和常数次线性索引/匹配；r 串排序 O(r log(r + 1)) 比较计入 Work.delimiter_search_steps，其余索引/匹配访问不超过 4r 次计入 delimiter_steps。全部候选累计 O(n log n)、空间 O(n)，核心依旧零运行时依赖、禁止 unsafe，消费继续共用整帧预算。32 串的常数候选空间改为与实际串数成正比的摘要空间；这不是解析单次硬时延保证。
+
+复用原 255 组独立贪心模型，新增 256 组 33–128 串模型及外层闭合对照。11 项专项回归覆盖 31/32/33/1000 串、UTF-8 任意字节切点/逐前缀及 EOF、CRLF/空白规范化、容器虚拟 tab、表头确认/失败/EOF、稳定 BlockId/LinkId 和原始源码映射、过期读取游标及两个显示游标共享六字节预算；64/256/1024/4096 串的重复/全异长度对抗模型计量索引和排序，4096 个全异串实际 16,383 次线性访问、51,873 次比较。百万字/千层容器原回归及正文增长不增匹配/分类/树/祖先工作均通过。内部存储测试确认摘要按串数增长、普通正文不增配、成功外层清空并复用容量。
+
+中间两次针对性失败均保留日志：一次是旧算法的工作量阈值尚未更新；一次是新工作量用例不足分类窗口，首批正文尚未消费，已补足前缀后再测增长。这些修正没有放宽渐近界限或修改评分投影。官方 Code spans 仍为 21 支持/0 刻意差异/1 未支持，Backslash escapes 仍为 11/1/1；33 个 CommonMark 离线生成器核验 587 对原始 Markdown/HTML，Unicode/GFM 数据核验通过，123 份来源/生成器/夹具/评分文件与基线逐字一致，篡改来源被拒绝。观察、分类和汇总没有变化。
+
+TODO 直接修订原完成条目和两处剩余范围描述，README 原章节及摘要同步移除过时 32 串限制；没有新增完成复选项或删除任何真实未完成需求，44 个未完成复选项完整保留。旧 DONE 全部保留，原条目文本另存本单元 todo-original-lines.md。
+
+最终验证全部在本项目 nix develop 环境执行，target 由 cargo metadata 获取：cargo check --workspace --all-targets；针对性 nextest 80/80；完整 debug/release cargo nextest run --workspace --all-targets --no-fail-fast 各 1,570/1,570；cargo test --doc --workspace 75/75；cargo clippy --workspace --all-targets -- -D warnings、cargo fmt --all -- --check、离线生成数据/固定夹具及 git diff --check 全部通过。release 示例 code_fallback、code_headers、closed_code_headers、display、budget、stream 和 syntax_fuzz 的 seed 305419896 / 256 cases 均退出 0。设计/累计界限、红测和中间失败、逐项官方审查、完整命令/退出状态与日志、最后代码哈希保存于 /home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-009/，命令索引 commands.tsv。本轮只实现和验证，未提交、推送、reset、清理、派生代理或改动主机/用户配置、其它工作树、运行器及账本。

@@ -174,72 +174,75 @@ impl Code {
     }
 }
 
-const MAX_CODE_FALLBACK_RUNS: usize = 32;
-
 // Summaries between mismatched backtick runs, never copied/replayed body text.
-// At most 32 runs: greedy matching takes at most 32 comparisons per run.
+// At resolution, index equal-length successors in O(r log r), then greedily
+// match in source order. Each run belongs to only one primary candidate.
 // Other inline syntax stays opaque even when the outer opener fails.
 #[derive(Default)]
 struct CodeFallback {
     runs: Vec<Code>,
-    overflow: bool,
     // A late table header ends the old sequence at the preceding line. Keep
-    // its last summary, including when the new line exceeds the run bound.
-    boundary: Option<(usize, Option<Code>, bool)>,
+    // its last summary; later payload must not affect the preceding sequence.
+    boundary: Option<(usize, Option<Code>)>,
 }
 
 impl CodeFallback {
     fn clear(&mut self) {
         self.runs.clear();
-        self.overflow = false;
         self.boundary = None;
     }
 
     fn push(&mut self, open: Span) {
-        if self.runs.len() == MAX_CODE_FALLBACK_RUNS {
-            self.overflow = true;
-        } else {
-            self.runs.push(Code::new(open));
-        }
+        self.runs.push(Code::new(open));
     }
 
     fn isolate(&mut self) {
-        self.boundary = Some((self.runs.len(), self.runs.last().copied(), self.overflow));
+        self.boundary = Some((self.runs.len(), self.runs.last().copied()));
     }
 
     fn confirm_header(&mut self, effects: &mut Effects<'_>) {
-        if let Some((len, last, overflow)) = self.boundary.take() {
+        if let Some((len, last)) = self.boundary.take() {
             self.runs.truncate(len);
             if let Some(last) = last {
                 self.runs[len - 1] = last;
             }
-            self.overflow = overflow;
             self.commit(effects);
         }
     }
 
     fn commit(&mut self, effects: &mut Effects<'_>) {
-        if !self.overflow {
-            let mut i = 0;
-            while i < self.runs.len() {
+        let len = self.runs.len();
+        let mut order: Vec<_> = (0..len).collect();
+        let mut next = vec![len; len];
+        effects.work.delimiter_steps += 2 * len as u64;
+        order.sort_unstable_by(|&a, &b| {
+            effects.work.delimiter_search_steps += 1;
+            (self.runs[a].open.len(), a).cmp(&(self.runs[b].open.len(), b))
+        });
+        for pair in order.windows(2) {
+            effects.work.delimiter_steps += 1;
+            let (a, b) = (pair[0], pair[1]);
+            if self.runs[a].open.len() == self.runs[b].open.len() {
+                next[a] = b;
+            }
+        }
+        let mut i = 0;
+        while i < len {
+            effects.work.delimiter_steps += 1;
+            let j = next[i];
+            if j < len {
                 let mut code = self.runs[i];
-                let close = (i + 1..self.runs.len()).find(|&j| {
-                    effects.work.delimiter_steps += 1;
-                    code.open.len() == self.runs[j].open.len()
-                });
-                if let Some(j) = close {
-                    code.all_spaces &= j == i + 1;
-                    code.last = self.runs[j - 1].last;
-                    code.last_space = self.runs[j - 1].last_space;
-                    CodePair {
-                        code,
-                        close: self.runs[j].open,
-                    }
-                    .commit(effects);
-                    i = j + 1;
-                } else {
-                    i += 1;
+                code.all_spaces &= j == i + 1;
+                code.last = self.runs[j - 1].last;
+                code.last_space = self.runs[j - 1].last_space;
+                CodePair {
+                    code,
+                    close: self.runs[j].open,
                 }
+                .commit(effects);
+                i = j + 1;
+            } else {
+                i += 1;
             }
         }
         self.clear();
@@ -361,7 +364,7 @@ enum HeaderLinkSuffix {
 }
 
 /// Single-pass byte scanner. Each emphasis delimiter is pushed/popped once.
-/// Failed code matches bounded run summaries; it never replays body bytes.
+/// Failed code matches indexed run summaries; it never replays body bytes.
 #[derive(Default)]
 pub(crate) struct Inline {
     // Non-space/tab endpoints of the raw sequence, excluding its final LF/CRLF.
@@ -736,9 +739,7 @@ impl Inline {
                 self.start_run(byte, pos);
             } else {
                 code.payload(byte, pos, self.previous);
-                if !self.code_fallback.overflow
-                    && let Some(inner) = self.code_fallback.runs.last_mut()
-                {
+                if let Some(inner) = self.code_fallback.runs.last_mut() {
                     inner.payload(byte, pos, self.previous);
                 }
             }
@@ -1274,22 +1275,23 @@ mod tests {
     use crate::{Document, LinkId};
 
     #[test]
-    fn failed_code_journal_storage_is_bounded_and_reused() {
+    fn failed_code_journal_storage_tracks_runs_and_is_reused() {
         let mut doc = Document::new();
         doc.append(&format!("`x{}", "``x".repeat(1000))).unwrap();
         let journal = &doc.inline.code_fallback;
-        assert!(journal.overflow);
-        assert_eq!(journal.runs.len(), super::MAX_CODE_FALLBACK_RUNS);
+        assert_eq!(journal.runs.len(), 1000);
         let capacity = journal.runs.capacity();
-        assert_eq!(capacity, super::MAX_CODE_FALLBACK_RUNS);
+        assert!(capacity <= 2 * journal.runs.len());
         for _ in 0..1000 {
-            doc.append("``x").unwrap();
+            doc.append("body").unwrap();
             assert_eq!(doc.inline.code_fallback.runs.capacity(), capacity);
         }
         doc.append("` end\n\n").unwrap();
         assert!(doc.inline.code_fallback.runs.is_empty());
-        assert!(!doc.inline.code_fallback.overflow);
         assert!(doc.inline.code_fallback.boundary.is_none());
+        assert_eq!(doc.inline.code_fallback.runs.capacity(), capacity);
+        doc.append(&format!("`x{}", "``x".repeat(1000))).unwrap();
+        assert_eq!(doc.inline.code_fallback.runs.len(), 1000);
         assert_eq!(doc.inline.code_fallback.runs.capacity(), capacity);
     }
 

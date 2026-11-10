@@ -209,11 +209,13 @@ pub struct Work {
     pub inline_bytes: u64,
     /// Run resolution, opener pushes/pops/rebasing, and isolated cross-line
     /// emphasis/code pairs committed or discarded once when a header resolves.
-    /// Includes bounded failed-code run matching (at most 32 comparisons/run).
+    /// Includes linear failed-code summary indexing and greedy matching visits.
     pub delimiter_steps: u64,
     /// Emphasis opener-category probes, at most six per run/match attempt.
     /// Categories retain original run length modulo three and can-close;
     /// partial consumption never searches old text or walks failed openers.
+    /// Also counts failed-code run sort comparisons, O(r log(r + 1)) for r
+    /// summaries in one candidate; no comparison reads candidate body bytes.
     pub delimiter_search_steps: u64,
     /// Emphasis boundary classifications and fixed Unicode 17.0.0 range
     /// comparisons; <= 12 per boundary (two per supported emphasis run).
