@@ -493,6 +493,7 @@ impl Inline {
                         destination,
                         title,
                     } => {
+                        self.end_label(candidate.open, effects);
                         effects.complete_link(
                             candidate,
                             LinkTarget::Direct(destination),
@@ -904,7 +905,7 @@ impl Inline {
         }
     }
 
-    fn shortcut(&self, mut candidate: Candidate, effects: &mut Effects<'_>) -> Candidate {
+    fn shortcut(&mut self, mut candidate: Candidate, effects: &mut Effects<'_>) -> Candidate {
         // The closing ASCII delimiter leaves a UTF-8 boundary. The buffer is
         // capped and excludes container prefixes; never rescan the envelope.
         let symbol = (!self.label_overflow)
@@ -916,8 +917,22 @@ impl Inline {
         if let Some(symbol) = symbol {
             candidate.link =
                 Some(effects.complete_link(candidate, LinkTarget::Reference(symbol), None, None));
+            self.end_label(candidate.open, effects);
         }
         candidate
+    }
+
+    /// A published label cannot lend unmatched openers to following text.
+    /// Source order identifies the suffix even if an earlier crossing pair
+    /// already consumed an outer opener. Each delimiter is popped once; no
+    /// label/body replay or saved stack is needed. Pre-label openers survive.
+    fn end_label(&mut self, open: usize, effects: &mut Effects<'_>) {
+        while self.stack.last().is_some_and(|d| d.source.start > open) {
+            let delimiter = self.stack.pop().unwrap();
+            self.last[delimiter.kind] = delimiter.previous;
+            effects.work.delimiter_steps += 1;
+        }
+        self.header_floor = self.header_floor.min(self.stack.len());
     }
 
     fn start_run(&mut self, byte: u8, pos: usize) {
@@ -1142,6 +1157,7 @@ impl Inline {
                             title,
                         });
                     } else {
+                        self.end_label(candidate.open, effects);
                         effects.complete_link(
                             candidate,
                             LinkTarget::Direct(destination),
@@ -1189,7 +1205,7 @@ impl Inline {
         true
     }
 
-    fn reference_tail(&self, candidate: Candidate, source: Span, effects: &mut Effects<'_>) {
+    fn reference_tail(&mut self, candidate: Candidate, source: Span, effects: &mut Effects<'_>) {
         let symbol = if source.len() == 2 {
             // The source envelope can contain hidden container prefixes.
             candidate.link.and_then(|id| match effects.links[id.0] {
@@ -1203,6 +1219,7 @@ impl Inline {
             )
         };
         if let Some(symbol) = symbol {
+            self.end_label(candidate.open, effects);
             effects.complete_link(candidate, LinkTarget::Reference(symbol), Some(source), None);
         } else {
             self.seal_candidate(candidate, effects);

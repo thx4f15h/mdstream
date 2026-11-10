@@ -344,7 +344,7 @@ enum Assessment {
 // Frozen observations are reviewed separately from the verbatim upstream oracle.
 fn assessment(number: usize) -> Assessment {
     match number {
-        514..=516 | 518..=519 | 522 | 525..=527 | 529..=530 | 532..=533 | 537..=538 => {
+        514..=516 | 518..=519 | 522 | 525..=527 | 529..=530 | 532..=533 | 535 | 537..=538 => {
             Assessment::Supported
         }
         512 => Assessment::Unsupported {
@@ -386,10 +386,6 @@ fn assessment(number: usize) -> Assessment {
         534 => Assessment::Unsupported {
             reason: "emphasis crosses the full reference label opener",
             observed: "<p><a href=\"/uri\"><em>foo</em></a></p>\n",
-        },
-        535 => Assessment::Unsupported {
-            reason: "emphasis crosses the full reference label closer",
-            observed: "<p><a href=\"/uri\">foo <em>bar</em></a></p>\n",
         },
         536 => Assessment::DeliberateDifference {
             reason: "raw HTML is literal and does not suppress reference recognition",
@@ -454,9 +450,9 @@ fn pinned_commonmark_link_labels_report() {
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [15, 4, 8]);
+    assert_eq!(counts, [16, 4, 7]);
     eprintln!(
-        "CommonMark 0.31.2 Links subset (512–538): 15 supported, 4 deliberate differences, 8 unsupported; 482–511 and 539–571 outside this score"
+        "CommonMark 0.31.2 Links subset (512–538): 16 supported, 4 deliberate differences, 7 unsupported; 482–511 and 539–571 outside this score"
     );
 }
 

@@ -2491,3 +2491,18 @@ CommonMark 213 已不再建立定义，但未定义引用隐藏括号，继续�
 因此现行未完成复选项 **51 → 44**，差额为六处重复合并及一处实质交付，真实未完需求没有移除；其它代码回退、容器、折叠、终端排版、渲染和交互需求保持。README 将八段相互过时的强调评分说明收拢为当前表格，并更新侧界、深度和部分消耗的行为边界；历史交付与此前六单元提交完整保留。
 
 所有 Cargo 命令均在本项目 `nix develop` 中运行，target 来源于 `cargo metadata`。最终 `cargo check --workspace --all-targets`、专项 nextest **103/103**、完整 debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1,560/1,560**、`cargo test --doc --workspace` **75/75**、Clippy `--workspace --all-targets -- -D warnings`、fmt、相关离线生成数据/固定夹具及 `git diff --check` 通过。release 示例 `emphasis_runs`、`emphasis_depth`、`closed_headers`、`open_headers`、`container_inline`、`budget` 均退出 0。真实命令、退出状态及日志在 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-007/validation.jsonl`，失败的红测与中间回归亦保留；设计、局部原型、官方逐项审查、代码哈希及最终差异证据同目录。本轮未提交、推送、reset、清理、派生代理或修改主机/用户配置、其它工作树及运行器/账本。
+
+
+## 2026-11-11 已发布标签的未配对分隔符终点交付
+
+本单元完成原 TODO“链接标签嵌套及强调作用域剩余范围”中的例 535 及同一模型下链接/图片标签的右边界：标签发布为对象时，清退内部未配对的强调、加粗和单/双波浪号 opener，保留标签内已确认的样式及外部 opener。例如 `[foo *bar][ref]*` 的链接文字保留 `foo *bar`，外部 `*` 为字面；外层完整强调/加粗仍可包住对象。未定义 shortcut 仍按现有方言发布隐藏括号的引用对象，晚定义保持 LinkId 与原始区间。未闭合/被替换候选、超长标签的未完成/失败显式后缀沿用原不重放规则；超长标签仅在成功显式后缀后结束作用域。
+
+先红后绿：新增公开语义反例在原实现上失败；最终审查补到长继承标签经晚表头回退发布直接对象的路径，先用 close-only 反例复现再补清退调用。仅新增一个栈尾清退方法，复用 candidate.open 与现有 delimiter arena/category heads；每个原 opener 至多入栈/出栈各一次，新增工作计入原 delimiter_steps，不扫描或复制旧标签、正文及栈。每次对象发布只有常数边界检查与实际弹栈；原部分 run 配对由新 closer 字节摊还，表头确认仍只对 surviving opener 一次重建。没有新增持久字段、运行时依赖或 unsafe，累计解析 O(n log n)、空间 O(n) 和整帧共享预算保持。
+
+六项回归复用原 snapshot 支持：**144 组**独立作用域边界产品模型（3 外层 × 6 内层 × 2 对象 × 4 后缀）及已确认样式/部分 run 反例；任意 UTF-8 字节切点、逐字节前缀与 EOF、CRLF、容器和表格；未完成/失败/超长标签；稳定对象/块 ID、原始标签/对象源码区间及晚定义；两显示游标与目标/title 解码共同使用六字节预算；晚表头成功、失败、EOF、长继承标签及七字节分块；970 层容器、百万字增长、4096 历史对象与 4096 opener 的累计工作及分配上界。长正文增长不增加 delimiter/tree 工作，不回访历史对象或祖先。
+
+官方 535 由未支持转支持，512–538 汇总现 **16 支持、4 刻意差异、7 未支持**；其余 26 例独立观察/分类保持。244 对官方 Markdown/HTML、所有相关评分投影、生成器、Unicode/GFM 数据及许可均逐字/摘要核验保持，篡改输入被拒绝。旧删除线测试的 `[~label](/u)~` 从跨界删除线更新为字面 `~label~`，其它对象优先级断言保留；新示例最初漏计原始空白行的一处 LF，已更正并保留失败日志。
+
+仍未交付：外部 opener 提前在标签内部闭合（521/534/564、473/474）、419 现有投影的深度/顺序限制、嵌套候选、完整失败字面回退、通用确认/撤销及其它原 TODO 要求。现行相关宽泛条目已收窄到剩余范围；同时依据此前交付事实纠正 Links 全章评分、540 完整 case folding 和 491 单波浪号仍“未交付”的过时描述及汇总。真实未完成复选项仍 **44**，没有删除或勾选这些未完需求；更新前相关原文留在本单元 todo-original-lines.md，DONE 旧历史及此前所有提交完整保留。
+
+最终验证全部在本项目 `nix develop` 中完成，target 取自 `cargo metadata`：`cargo check --workspace --all-targets`；针对性 nextest **102/102**；完整 debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1,566/1,566**；`cargo test --doc --workspace` **75/75**；Clippy `--workspace --all-targets -- -D warnings`、fmt、相关离线生成数据/固定夹具和 `git diff --check` 全部通过。release 示例 `label_delimiters`、`emphasis_runs`、`container_links`、`closed_link_headers`、`link_suffix_headers`、`budget` 均退出 0。最终代码哈希、设计/累计界限、官方逐项审查、红测和中间失败、真实命令/退出状态及完整日志保存在 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-008/`（索引 `commands.tsv`，最终命令日志后缀 `-v3`，离线日志 `fixtures.log`）。本轮未提交、推送、reset、清理、派生代理或改动主机/用户配置、其它工作树及运行器/账本。

@@ -150,7 +150,7 @@ fn objects_keep_existing_priority_and_failed_candidates_stay_opaque() {
         ("[~label~](/~dest~)", "label", false, 0, 1),
         ("~[label](/~dest~)~", "label", false, 0, 1),
         ("~[label~](/u)", "label", false, 0, 1),
-        ("[~label](/u)~", "label", false, 0, 1),
+        ("[~label](/u)~", "~label~", false, 0, 1),
         ("[~label~", "[label", false, 0, 0),
         ("~*em* **strong**~", "em strong", false, 0, 0),
     ] {
@@ -165,7 +165,10 @@ fn objects_keep_existing_priority_and_failed_candidates_stay_opaque() {
             code
         );
         if source.contains("label") {
-            assert!(style_at(&doc, "label").contains(Style::STRIKE));
+            assert_eq!(
+                style_at(&doc, "label").contains(Style::STRIKE),
+                source != "[~label](/u)~"
+            );
         }
         if source.starts_with('`') || source.starts_with('$') {
             assert!(!style_at(&doc, "raw").contains(Style::STRIKE));
