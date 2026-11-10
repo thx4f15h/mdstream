@@ -192,14 +192,7 @@ fn siblings_and_nonparagraph_boundaries_keep_existing_rules() {
             "{first:?}"
         );
     }
-    for tail in [
-        "# h\n",
-        "---\n",
-        "```\n",
-        "$$\n",
-        "[r]: /u\n",
-        "[^f]: note\n",
-    ] {
+    for tail in ["# h\n", "---\n", "```\n", "$$\n", "[^f]: note\n"] {
         let doc = parse(&format!("-  - old\n\t{tail}"));
         let tab = doc.source().find('\t').unwrap();
         assert!(
@@ -209,6 +202,7 @@ fn siblings_and_nonparagraph_boundaries_keep_existing_rules() {
             "{tail:?}"
         );
     }
+    assert_eq!(visible(&parse("-  - old\n\t[r]: /u\n")), "old\n r: /u\n");
     for tail in ["\n", "\r\n", ""] {
         let source = format!("-  - old\n\t{tail}");
         let doc = parse(&source);

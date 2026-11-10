@@ -1188,14 +1188,13 @@ impl<'a> Prefix<'a> {
         }
         work.classified_bytes += payload.len() as u64;
         match crate::block::classify(source, payload, self.complete, None, false) {
-            crate::block::Line::Text | crate::block::Line::Indented { .. } => true,
-            crate::block::Line::Definition { label, .. } => {
-                // Match References::intern's label rejection without interning
-                // a symbol or allocating a normalized candidate.
-                self.inspected += label.len() as u64;
-                label.len() > crate::references::MAX_LABEL_BYTES
-                    || source[label.range()].chars().all(char::is_whitespace)
-            }
+            // Callers have an existing nonempty paragraph in the retained
+            // scope. A definition candidate cannot interrupt it just because
+            // some ancestor prefixes are omitted; lazy lines become Text.
+            // Keep the classifier's nonparagraph mode for Setext/rule priority.
+            crate::block::Line::Text
+            | crate::block::Line::Indented { .. }
+            | crate::block::Line::Definition { .. } => true,
             _ => false,
         }
     }

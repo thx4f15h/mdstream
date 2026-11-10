@@ -181,7 +181,6 @@ fn header_fallback_preserves_identity_and_interruption_boundaries() {
         "---\n",
         "```\n",
         "$$\n",
-        "[r]: /u\n",
         "[^f]: note\n",
         "\n",
         "\r\n",
@@ -196,6 +195,7 @@ fn header_fallback_preserves_identity_and_interruption_boundaries() {
             "{tail:?}"
         );
     }
+    assert_eq!(visible(&parse("- > a|b\n\t[r]: /u\n")), "a|b\n  r: /u\n");
     // Complete paths still confirm tables; four columns still start code.
     assert_eq!(parse("- a|b\n\t-|-\n").tables().len(), 1);
     let code = parse("- a|b\n\t\ttext\n");

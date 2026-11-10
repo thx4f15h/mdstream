@@ -3583,3 +3583,12 @@ lazy 行不能确认旧表头，也不能成为新表头；同类/异类兄弟�
 CommonMark Link reference definitions 213 仍为刻意差异，剩余原因改为未定义引用隐藏括号；217 仍未支持，跨行 title 的正文回退还会阻止后续 `baz` 定义。独立观察已审查，官方 Markdown/HTML、生成器与评分投影保持；章节统计仍为 **14 支持、7 刻意差异、6 未支持**。本节收窄此前“链接定义可中断普通段落/待定表头”的描述，多行定义、缺失前缀、完整字面回退及完整容器/标准兼容性继续见 TODO。
 
 复跑：`nix develop -c cargo nextest run --test definition_interrupt --test commonmark_reference_definitions --test paragraph_folding --no-fail-fast`。
+
+
+## 缺失祖先前缀的引用定义候选续接正文
+
+已有非空容器段落省略部分或全部祖先前缀时，有界单行引用定义候选现在也遵守既有 lazy 续行规则。例如 `> seed\n[r]: /url\n` 保留原 Quote，第二行作为正文，不定义 `r`；未定义引用仍按当前方言隐藏方括号。待定表头回退为正文，lazy 行仍不确认或创建表格。部分 tab 路径沿用原字节的虚拟列映射，块、容器及行内对象身份保持。
+
+首行、空行后、非段落块后和新作用域仍可建立定义；已确认表格的中断与脚注定义方言保持。实现只放行既有有界 lazy 判定中的 Definition 分类结果，不增加扫描或持久状态，不访问旧正文或缺失祖先；累计追加 O(n log n)、空间 O(n) 及共享预算保持。此前缺失前缀定义中断的保留范围由本项收窄，多行定义、完整字面回退、分类窗口和完整容器/标准兼容性继续待办。
+
+复跑：`nix develop -c cargo nextest run --test definition_interrupt --test container_lazy --test header_lazy_tabs --test lazy_item_tabs --test lazy_quote_tabs --test commonmark_reference_definitions --no-fail-fast`；模型、映射、预算、深嵌套和历史工作计数见[交付记录](DONE.md#2026-11-10-缺失祖先lazy-的引用定义段落边界交付)。

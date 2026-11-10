@@ -306,7 +306,10 @@ fn late_setext_pending_exit_and_merged_closures_preserve_choices() {
     verify(&doc, &view);
     let mut merged = doc.append("> ===\n").unwrap();
     merged
-        .merge(doc.append("> body\n> ## child\n> more\n[r]: /out").unwrap())
+        .merge(
+            doc.append("> body\n> ## child\n> more\n> \n[r]: /out")
+                .unwrap(),
+        )
         .unwrap();
     view.apply(&doc, &merged).unwrap();
     for id in [h(0), h(1)] {
@@ -840,7 +843,10 @@ fn hundreds_of_open_scopes_and_million_byte_body_have_constant_append_work() {
     assert_eq!(sink.text, "H\n[fold]\n");
     assert!(sink.bytes < 16);
     let before = view.range_visits();
-    let update = doc.append("\n[r]: /out\n").unwrap();
+    // Preserve the closure test's nonparagraph definition trigger.
+    let update = doc
+        .append(&format!("\n{} \n[r]: /out\n", ">".repeat(500)))
+        .unwrap();
     view.apply(&doc, &update).unwrap();
     assert_eq!(view.range_visits() - before, 501);
     let boundary = doc.source().find("[r]:").unwrap();

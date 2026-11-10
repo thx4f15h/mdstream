@@ -2354,3 +2354,18 @@ CommonMark 213 已不再建立定义，但未定义引用隐藏括号，继续�
 验收记录：修复前新六项 5 失败/1 通过；实现后新六项通过。首次全套的 21 项失败定位为旧中断假设，逐项更新测试边界/断言；相关测试随后暴露 217 的连带观察变化，审查后专项 59 项通过。最终全套结果与命令见 `/tmp/mdtui3-goal-run/definition-interrupt-validation.log`；首次全套、相关测试和最终专项日志同目录保留，前缀为 `definition-interrupt-`。
 
 最终验收通过：debug/release 各 1505 项、doc 75 项、`container_links` release 示例及 check/clippy/fmt/引用定义官方夹具/diff 检查。README 旧可执行示例与对应 example 补一个空行边界；README 除此一行修正外仅追加，TODO/DONE 仅追加。首次 doc 74 通过/1 失败的记录保留于 `definition-interrupt-doc-first.log`，修正后全部通过。独立差异 `definition-interrupt-unit.patch` 与范围校验 `definition-interrupt-scope-check.log` 同在 `/tmp/mdtui3-goal-run/`：18 个已有文件和 1 个新回归文件变化，其余 369 个基线文件 SHA-256 保持。
+
+
+## 2026-11-10 缺失祖先/lazy 的引用定义段落边界交付
+
+完成文末同作用域定义边界交付留下的有界 lazy 子项。最小反例 `> seed\n[r]: /url\n` 原先关闭 Quote 并注册定义；已有非空段落省略部分或全部祖先前缀时，现在将候选作为原作用域正文消费，待定表头回退为正文，lazy 行仍不确认或新建表格。部分 tab 路径复用已消费前缀和原 tab 单字节的虚拟列映射。
+
+模型与局部证明：`Containers::line` 的 lazy 分支要求已有最内层段落；`partial_prefix` 的失配探测要求已有正文或同作用域段落/表头资格。两者在首次失配处共用 `Prefix::lazy_text`，旧实现只放行标签无效的 Definition 候选，有效候选错误落入关闭路径。现在放行该分类结果，由既有 `commit_line` 的 lazy → Text 分支阻止定义注册；保留分类器的非段落模式，避免顺带改变 Setext/分隔线判定。标记、空白、脚注、围栏等其它分支和调用资格保持；无活动段落、空行后、新作用域、连续定义及已确认表格仍可建立真正定义。改动不增加扫描或持久状态，移除原标签复查，不访问旧正文、旧引用或缺失祖先；已有累计解析 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 与共享预算契约保持。
+
+复用 `tests/definition_interrupt.rs` 的解析、显示、snapshot 和预算测试设施，新增三项并扩展原有测试：2,592 组独立省略作用域/缩进/行尾模型及部分 tab 反例，17 个流式样本的 375 个合法 UTF-8 切点、390 个字节切点、逐字节输入、358 个逐字符前缀及各前缀 EOF；原始/标量切片/tile 映射、零预算暂停及两个显示游标共享六字节预算；稳定物理块、容器及 LinkId/LinkInfo、晚闭合强调和真正晚定义通知。970 层引用、481 层列表中的百万字追加不增加分类/容器扫描计数，缺失全部前缀的定义候选容器步数最多 2；4,096 轮候选/表头历史后仍验证固定增量和累计工作上界。
+
+先运行反例再改实现：修复前专项 9 项中 5 通过/4 失败；修复后更新四处旧定义中断/tab 映射预期，相关 49 项通过。完整 debug 首轮 1,505 通过/3 失败，均是章节/折叠测试用定义行触发退出的旧假设；补显式容器空行保留原退出、通知与折叠计数断言，相关 75 项全部通过。官方 Markdown/HTML、生成器、评分投影及独立观察均未修改，引用定义章节仍为 14 支持/7 刻意差异/6 未支持。
+
+本轮本地验证均在项目 devShell 完成：`nix develop -c cargo check --all-targets`；`cargo nextest run --workspace --all-targets --no-fail-fast` 与追加 `--release` 各 **1,508 项通过**；`cargo test --doc --workspace` **75 项通过**；`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`container_lazy`/`container_links` release 示例、固定引用定义夹具核验及 `git diff --check` 全部通过。target 路径由 devShell 内 `cargo metadata --no-deps --format-version 1` 获取。日志在 `/tmp/mdtui3-lazy-definition-{before,targeted-first,targeted-final,debug-first,debug,release,doc}.log`，仅作临时执行证据；持久依据为本记录与测试。README/TODO/DONE 仅追加；未提交或推送，留父会话验收。
+
+本项只修复既有非空段落资格与有界单行定义候选的衔接，不代表完整容器/CommonMark 支持。多行目标/title/标签、未定义引用完整字面回退、分类窗口扩展及其它完整容器/表格规则继续保留 TODO；既有空行、新作用域、已确认表格和脚注等优先级与方言保持。

@@ -228,7 +228,8 @@ fn every_utf8_cut_and_live_prefix_matches_single_append_including_long_lines() {
 #[test]
 fn streaming_scope_ranges_pending_input_and_object_updates_are_explicit() {
     let mut doc = Document::new();
-    doc.append("# root\n> ## quote\n> body\n").unwrap();
+    // A definition exits the quote after an explicit paragraph boundary.
+    doc.append("# root\n> ## quote\n> body\n> \n").unwrap();
     let end = doc.source().len();
     let old_heading = doc.headings().entries()[1];
     let pending = doc.append("[r]: /url").unwrap();

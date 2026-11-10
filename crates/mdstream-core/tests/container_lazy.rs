@@ -65,7 +65,6 @@ fn block_interruptions_close_only_the_unmatched_path_before_parsing() {
         "~~~\n",
         "---\n",
         "* * *\n",
-        "[r]: /url\n",
         "[^n]: raw\n",
         "- next\n",
         "1. next\n",
@@ -121,12 +120,13 @@ fn only_nonempty_paragraphs_allow_lazy_continuation() {
 }
 
 #[test]
-fn failed_block_candidates_and_missing_quote_indentation_remain_text() {
+fn noninterrupting_candidates_and_missing_quote_indentation_remain_text() {
     for payload in [
         "#no-space",
         "####### h",
         "``bad",
         "```bad`info",
+        "[r]: /url",
         "[r]: <bad<target>",
         "[ ]: /url",
         "[\u{2003}]: /url",
