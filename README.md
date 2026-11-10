@@ -3616,3 +3616,14 @@ CommonMark 0.31.2 例 540 现匹配官方 HTML，539–552 子集更新为 **7 �
 核心仅增加一种固定 opener 索引，沿用原栈和区间标记。每字节单遍、每个 opener 至多入栈/出栈各一次，隔离 pair 数量由已消费的旧 opener 约束，表头确认只对当前 surviving opener 一次重建前驱索引；不回扫正文、不克隆或重放栈。累计解析 O(n log n)、空间 O(n)、公共查询共享预算、稳定对象与原始源码映射保持；零运行时依赖、禁止 unsafe。
 
 GFM 0.29-gfm 例 491 现匹配官方 HTML，491–493 为 **3 支持、0 刻意差异、0 未支持**。官方 Markdown/HTML 和评分投影保持，离线固定来源与独立读取器核验通过。本节收窄前文仅列举 `~~` 的当前语义及旧 491 差异统计，历史交付记录保留；完整 Unicode flanking、同类嵌套深度、完整强调/部分 run 消耗、链接作用域及宽泛 GFM/容器兼容性继续见 TODO，不扩展渲染或 UI 阶段。
+
+
+## 强调/加粗的 ASCII 标点侧界与下划线词内规则（2026-11-10）
+
+现有精确单/双 `*`、`_` 使用相邻字节的空白/ASCII 标点/普通正文分类：序列端点及 HT/LF/FF/CR/space 为空白，其余非 ASCII 字节仍为普通正文。左侧界要求后继非空白，后继为标点时前驱须为空白或标点；右侧界对称。星号按左右侧界开闭，下划线还要求 opener 非右侧界或前驱为标点、closer 非左侧界或后继为标点。因此 `a*"foo"*`、`*(*foo)` 和 `中_文_尾` 保持字面，`foo-_(bar)_` 显示 `foo-(bar)`；`a*£*b` 与 NBSP 仍沿用普通字节方言，未声称完整 Unicode flanking。
+
+run 等待后继/EOF 才确认，未匹配和三连/更长 run 保持字面，失败不回放。单/双波浪号的独立侧界、贪心配对、同类样式扁平表示及对象候选优先级保持。继承 closer 后接标点可成为 close-only，晚表头复用既有隔离配对：确认时丢弃，失败/EOF 一次提交。实现仅做常数次相邻字节分类，无新增状态、分配、扫描或旧正文/引用/祖先回访，累计 O(n log n)、空间 O(n)；显示、查询及目标/title 读取仍共享 Budget。
+
+CommonMark 0.31.2 的 352/359/362/363/368/372/375/380/385/388/392/398/401 共 13 例现匹配官方 HTML；350–373、374–389、390–405 当前三类统计分别为 **20/2/2、15/0/1、16/0/0**。369/373 和 419 的观察虽改善，仍因缺重复强调深度保持未支持，417–430 仍为 **7/0/7**。官方 Markdown/HTML、生成器和八个评分投影未改。本节取代前文相关 ASCII 标点/普通字节词内下划线差异及旧汇总的当前语义描述；Unicode 侧界、同类深度、部分 run 消耗、链接作用域、完整容器和实际排版/UI 仍见 TODO，历史交付保留。
+
+复跑：`nix develop -c cargo nextest run --test ascii_flanking --test closed_headers --test commonmark_emphasis_single --test commonmark_emphasis_strong --test commonmark_emphasis_strong_close --test commonmark_emphasis_runs --no-fail-fast`。七项新回归、独立模型、分块/EOF/身份/原始映射/六字节共享预算及深层百万字计数和完整验收见[交付记录](DONE.md#2026-11-10-强调加粗-ascii-侧界与词内下划线交付)。

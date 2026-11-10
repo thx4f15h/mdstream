@@ -100,10 +100,6 @@ fn project(doc: &Document) -> String {
 
 enum Assessment {
     Supported,
-    Difference {
-        reason: &'static str,
-        observed: &'static str,
-    },
     Unsupported {
         reason: &'static str,
         observed: &'static str,
@@ -113,19 +109,7 @@ enum Assessment {
 // Independent observations: changes require review, not automatic acceptance.
 fn assessment(number: usize) -> Assessment {
     match number {
-        374 | 376..=379 | 381..=384 | 386 | 387 => Assessment::Supported,
-        375 => Assessment::Difference {
-            reason: "underscore intraword exclusion is limited to ASCII alphanumerics",
-            observed: "<p><em>пристаням</em>стремятся</p>\n",
-        },
-        380 | 385 => Assessment::Difference {
-            reason: "simplified flanking ignores adjacent ASCII punctuation",
-            observed: "<p>a<strong>&quot;foo&quot;</strong></p>\n",
-        },
-        388 => Assessment::Difference {
-            reason: "underscore intraword exclusion is limited to ASCII alphanumerics",
-            observed: "<p>пристаням<strong>стремятся</strong></p>\n",
-        },
+        374..=388 => Assessment::Supported,
         389 => Assessment::Unsupported {
             reason: "nested strong regions collapse to one public style bit; nesting depth is not represented",
             observed: "<p><strong>foo, bar, baz</strong></p>\n",
@@ -138,7 +122,7 @@ fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
     let actual = project(doc);
     match assessment(number) {
         Assessment::Supported => assert_eq!(actual, expected, "example {number}"),
-        Assessment::Difference { observed, .. } | Assessment::Unsupported { observed, .. } => {
+        Assessment::Unsupported { observed, .. } => {
             assert_ne!(
                 actual, expected,
                 "example {number} now matches; review classification"
@@ -171,15 +155,14 @@ fn pinned_commonmark_emphasis_strong_report() {
         check_case(number, markdown, expected, &parse(markdown));
         let (category, reason) = match assessment(number) {
             Assessment::Supported => (0, "matches upstream"),
-            Assessment::Difference { reason, .. } => (1, reason),
             Assessment::Unsupported { reason, .. } => (2, reason),
         };
         counts[category] += 1;
         eprintln!("example {number}: category {category} — {reason}");
     }
-    assert_eq!(counts, [11, 4, 1]);
+    assert_eq!(counts, [15, 0, 1]);
     eprintln!(
-        "CommonMark 0.31.2 Emphasis subset 374–389: 11 supported, 4 deliberate differences, 1 unsupported; 390–481 not scored"
+        "CommonMark 0.31.2 Emphasis subset 374–389: 15 supported, 0 deliberate differences, 1 unsupported; 390–481 not scored"
     );
 }
 

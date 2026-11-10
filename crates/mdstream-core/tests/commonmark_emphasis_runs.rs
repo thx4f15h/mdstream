@@ -173,14 +173,10 @@ enum Assessment {
         reason: &'static str,
         observed: &'static str,
     },
-    Rejected {
-        reason: &'static str,
-    },
 }
 
 // Independently reviewed observations, separate from the unchanged oracle.
-// Rejected is an unsupported case, not a fourth scoring category: the adapter
-// refuses to invent style ordering when the public link envelope is nonuniform.
+// Same-style depth remains unsupported even with a uniform link envelope.
 fn assessment(number: usize) -> Assessment {
     match number {
         420..=424 | 428 | 429 => Assessment::Supported,
@@ -192,8 +188,9 @@ fn assessment(number: usize) -> Assessment {
             reason: "public emphasis bits do not retain the repeated inner emphasis depth",
             observed: "<p><em>foo <strong>bar baz bim</strong> bop</em></p>\n",
         },
-        419 => Assessment::Rejected {
-            reason: "link label loses emphasis while its hidden envelope keeps outer emphasis; link scope and repeated depth are unsupported",
+        419 => Assessment::Unsupported {
+            reason: "inner and outer emphasis collapse to one public style bit, including the link label",
+            observed: "<p><em>foo <a href=\"/url\">bar</a></em></p>\n",
         },
         425 => Assessment::Unsupported {
             reason: "public strong bit does not retain same-style nesting depth",
@@ -229,41 +226,39 @@ fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
                 "example {number} changed; upstream {expected:?}"
             );
         }
-        Assessment::Rejected { .. } => {
-            assert!(std::panic::catch_unwind(|| project(doc)).is_err());
-            // Exact public observations for the rejected case, not repaired HTML.
-            let visible: Vec<_> = doc
-                .display_runs_in(Span::new(0, markdown.len()))
-                .unwrap()
-                .filter(|r| !r.style.contains(Style::HIDDEN))
-                .map(|r| (r.source, r.text, r.style, r.link))
-                .collect();
-            assert_eq!(
-                visible,
-                vec![
-                    (Span::new(1, 5), "foo ", Style::EMPHASIS, None),
-                    (Span::new(7, 10), "bar", Style::default(), Some(LinkId(0))),
-                    (Span::new(19, 20), "\n", Style::default(), None),
-                ]
+    }
+    if number == 419 {
+        // Exact public observations still lack a second emphasis depth.
+        let visible: Vec<_> = doc
+            .display_runs_in(Span::new(0, markdown.len()))
+            .unwrap()
+            .filter(|r| !r.style.contains(Style::HIDDEN))
+            .map(|r| (r.source, r.text, r.style, r.link))
+            .collect();
+        assert_eq!(
+            visible,
+            vec![
+                (Span::new(1, 5), "foo ", Style::EMPHASIS, None),
+                (Span::new(7, 10), "bar", Style::EMPHASIS, Some(LinkId(0))),
+                (Span::new(19, 20), "\n", Style::default(), None),
+            ]
+        );
+        let info = doc.link_info(LinkId(0)).unwrap();
+        assert_eq!(info.source, Span::new(5, 18));
+        assert_eq!(info.label, Span::new(6, 11));
+        assert_eq!(info.kind, LinkKind::Link);
+        assert!(matches!(doc.links()[0], LinkTarget::Direct(_)));
+        assert_eq!(doc.link_destination(LinkId(0)).unwrap(), "/url");
+        assert_eq!(
+            link_metadata::snapshot(doc),
+            vec![Some("<a href=\"/url\">".into())]
+        );
+        for span in [Span::new(5, 6), Span::new(11, 18)] {
+            assert!(
+                doc.display_runs_in(span)
+                    .unwrap()
+                    .all(|r| r.style.contains(Style::HIDDEN) && r.style.contains(Style::EMPHASIS))
             );
-            let info = doc.link_info(LinkId(0)).unwrap();
-            assert_eq!(info.source, Span::new(5, 18));
-            assert_eq!(info.label, Span::new(6, 11));
-            assert_eq!(info.kind, LinkKind::Link);
-            assert!(matches!(doc.links()[0], LinkTarget::Direct(_)));
-            assert_eq!(doc.link_destination(LinkId(0)).unwrap(), "/url");
-            assert_eq!(
-                link_metadata::snapshot(doc),
-                vec![Some("<a href=\"/url\">".into())]
-            );
-            for span in [Span::new(5, 6), Span::new(11, 18)] {
-                assert!(
-                    doc.display_runs_in(span)
-                        .unwrap()
-                        .all(|r| r.style.contains(Style::HIDDEN)
-                            && r.style.contains(Style::EMPHASIS))
-                );
-            }
         }
     }
     assert_eq!(doc.source(), markdown);
@@ -288,7 +283,7 @@ fn pinned_commonmark_emphasis_runs_report() {
         check_case(number, markdown, expected, &parse(markdown));
         let (category, reason) = match assessment(number) {
             Assessment::Supported => (0, "matches upstream"),
-            Assessment::Unsupported { reason, .. } | Assessment::Rejected { reason } => (2, reason),
+            Assessment::Unsupported { reason, .. } => (2, reason),
         };
         counts[category] += 1;
         eprintln!("example {number}: category {category} — {reason}");

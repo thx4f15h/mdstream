@@ -424,6 +424,11 @@ fn nesting_projection_preserves_visible_runs_and_rejects_ambiguous_order() {
         ("*a\n\nb*\n", "<p>*a</p>\n<p>b*</p>\n"),
         ("*&lt;&amp;&quot;*\n", "<p><em>&lt;&amp;&quot;</em></p>\n"),
         ("&#10;\n", "<p>\n</p>\n"),
+        // The uniform envelope is projectable, but still lacks nested em depth.
+        (
+            "*foo [*bar*](/url)*\n",
+            "<p><em>foo <a href=\"/url\">bar</a></em></p>\n",
+        ),
     ] {
         assert_eq!(project(&parse(source)), expected);
     }
@@ -461,7 +466,7 @@ fn nesting_projection_preserves_visible_runs_and_rejects_ambiguous_order() {
         "`code`\n",
         "~~s~~\n",
         "$m$\n",
-        "*foo [*bar*](/url)*\n",
+        "*foo [bar*](/url)\n",
         "[r]\n\n[r]: /url\n",
         "![a](/x)\n",
         "[r]: /x\n",

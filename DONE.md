@@ -2414,3 +2414,20 @@ CommonMark 213 已不再建立定义，但未定义引用隐藏括号，继续�
 - `python3 scripts/generate_gfm_strikethrough.py /home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-003/gfm-0.29.html --check`，由独立核验脚本执行（`fixture.log`）。
 - `nix develop -c cargo run --release --example container_inline` / `open_headers` / `closed_headers` / `budget`（四份 `example-*.log`）。
 - 范围/基线核对与 `git diff --check` 均通过（`scope-final.log` / `diff-final.log`）：389 个其它基线文件与所有既有未跟踪文件保持，三份文档仅追加；本项完整独立差异见证据目录 `task-unit.patch`。
+
+
+## 2026-11-10 强调加粗 ASCII 侧界与词内下划线交付
+
+本轮只完成现有精确单/双 `*`、`_` 的 ASCII 标点侧界及下划线词内规则。旧实现只检查相邻字节是否非空白，错误地把 `a*"foo"*` 识别为强调，把 `*(*foo)` 的中间星号当作 closer；下划线只在两侧均为 ASCII 字母数字时排除。新增两个反例/模型测试先在旧实现下失败，既有 19 项专项保持通过，退出 100 的原始日志已保存。
+
+方言固定为三类相邻字节：序列端点及 HT/LF/FF/CR/space 是空白，ASCII 标点是标点，其余（含非 ASCII 字节）为普通正文。左侧界要求后继非空白，并在后继为标点时要求前驱为空白或标点；右侧界对称。星号直接使用左右侧界，下划线仅在“左侧界，且（非右侧界或前驱是标点）”时开启，并以对称规则闭合。因此 Cyrillic/中文等普通字节词内下划线也保持字面；这不代表 Unicode 空白/标点分类已完成。最大 run 继续等待后继字节或 EOF，未匹配或三连/更长 run 字面保留，失败不回放；既有代码/数学/转义/链接候选优先级、单/双波浪号独立空白侧界、贪心配对和扁平样式位保持。
+
+实现只替换 `Inline::finish_run` 内的常数次谓词，不增加持久状态、分配或扫描。每个 run 仍计一个既有 delimiter step，每个 opener 至多入栈/出栈一次；标点后继可使继承 closer 成为 close-only，复用已有晚表头配对隔离，成功丢弃、失败/EOF 一次提交。区间样式与引用索引保持累计解析 O(n log n)、空间 O(n)，不回扫增长正文、历史引用或祖先链，不引入运行时依赖或 unsafe；显示/查询及元数据仍共用 Budget，append/finish 继续仅承诺摊还界限。
+
+`tests/support/emphasis_model.rs` 使用三类真值表、反向 opener 查找和最终范围涂色，独立于核心索引栈和树；`tests/ascii_flanking.rs` 七项回归覆盖 153,664 组侧界组合、686 组混合/交叉/转义、UTF-8 任意字节切点和逐前缀/EOF、待定/失败表头、对象优先级及块/容器边界、稳定 BlockId/ContainerId/LinkId/MathId、原始区间与切片映射、六字节共享显示/目标预算、970 层百万字追加、4,096 个旧链接和 16,384 个历史 opener 的累计计数。普通增长不增加 delimiter/祖先/引用工作；原有 `closed_headers` 独立矩阵按新 close-only 判定修正，前轮单波浪号覆盖完整保留。
+
+官方观察逐项审查：352/359/362/363/368/372、375/380/385/388、392/398/401 共 13 例从刻意差异转支持；350–373 当前 **20 支持/2 差异/2 未支持**，374–389 **15/0/1**，390–405 **16/0/0**。369/373 改为包住 `(foo)` 的单层样式，仍缺重复强调深度；419 的链接标签恢复外层强调、包络可投影，但仍缺内层重复深度，保持未支持，417–430 仍为 **7/0/7**。419 的精确源码/标签/包络观察保留并修正样式，另保留真正非均匀链接包络的投影拒绝反例；其余 350–481 观察不变。固定 0.31.2 原始来源摘要、132 例 Markdown/HTML、全部生成器和八个评分投影字节不变，离线 `--check`、独立读取器和篡改拒绝通过。
+
+项目 `nix develop` 内 `cargo check --workspace --all-targets`、专项 nextest **107/107**、完整 debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1,533/1,533**、`cargo test --doc --workspace` **75/75**、Clippy `-D warnings`、格式检查与 `git diff --check` 全部通过。release 示例 `closed_headers`、`open_headers`、`container_inline`、`budget` 均退出 0。验证命令、真实退出状态和完整日志在 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-004/validation.jsonl`；逐项观察/模型界限见同目录 `design-and-review.txt`，本轮独立差异见 `task-unit.patch`。
+
+本节收窄旧记录中的 ASCII 标点及普通字节词内下划线差异描述，历史交付不改写。完整 Unicode flanking、同类嵌套深度、部分 run 消耗、链接作用域与通用确认/撤销、完整容器和终端排版/UI 继续保留原 TODO。本轮未提交、推送或派生代理，三份项目文档仅追加，已有验收单元保持。

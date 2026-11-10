@@ -95,11 +95,7 @@ enum Assessment {
 // Independent observations: changes require review, not automatic acceptance.
 fn assessment(number: usize) -> Assessment {
     match number {
-        350 | 351 | 355..=358 | 360 | 361 | 364..=367 | 370 | 371 => Assessment::Supported,
-        352 | 359 => Assessment::Difference {
-            reason: "simplified flanking ignores adjacent ASCII punctuation",
-            observed: "<p>a<em>&quot;foo&quot;</em></p>\n",
-        },
+        350..=352 | 355..=368 | 370..=372 => Assessment::Supported,
         353 => Assessment::Difference {
             reason: "ASCII whitespace predicate does not treat NBSP as whitespace",
             observed: "<p><em>\u{a0}a\u{a0}</em></p>\n",
@@ -108,21 +104,9 @@ fn assessment(number: usize) -> Assessment {
             reason: "non-ASCII symbols are ordinary bytes; dollar math candidate retains its existing precedence",
             observed: "<p>*$*alpha.</p>\n<p><em>£</em>bravo.</p>\n<p><em>€</em>charlie.</p>\n",
         },
-        362 => Assessment::Difference {
-            reason: "underscore intraword exclusion is limited to ASCII alphanumerics",
-            observed: "<p>пристаням<em>стремятся</em></p>\n",
-        },
-        363 => Assessment::Difference {
-            reason: "ASCII-only intraword exclusion does not exclude punctuation-adjacent underscores",
-            observed: "<p>aa<em>&quot;bb&quot;</em>cc</p>\n",
-        },
-        368 | 372 => Assessment::Difference {
-            reason: "simplified flanking allows a punctuation-adjacent closer",
-            observed: "<p><em>(</em>foo)</p>\n",
-        },
         369 | 373 => Assessment::Unsupported {
-            reason: "eager pairing leaves inner text unstyled; same-style nesting tree is not represented",
-            observed: "<p><em>(</em>foo<em>)</em></p>\n",
+            reason: "public emphasis bit collapses the inner and outer same-style depth",
+            observed: "<p><em>(foo)</em></p>\n",
         },
         _ => panic!("unclassified example {number}"),
     }
@@ -171,9 +155,9 @@ fn pinned_commonmark_emphasis_single_report() {
         counts[category] += 1;
         eprintln!("example {number}: category {category} — {reason}");
     }
-    assert_eq!(counts, [14, 8, 2]);
+    assert_eq!(counts, [20, 2, 2]);
     eprintln!(
-        "CommonMark 0.31.2 Emphasis subset 350–373: 14 supported, 8 deliberate differences, 2 unsupported; 374–481 not scored"
+        "CommonMark 0.31.2 Emphasis subset 350–373: 20 supported, 2 deliberate differences, 2 unsupported; 374–481 not scored"
     );
 }
 

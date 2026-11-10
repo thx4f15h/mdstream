@@ -975,15 +975,30 @@ impl Inline {
             (b'~', 1) => (5, Style::STRIKE),
             _ => return,
         };
-        // ASCII flanking rules are intentional; full CommonMark is not claimed.
-        let can_open = next.is_some_and(|b| !b.is_ascii_whitespace());
-        let can_close = run.before.is_some_and(|b| !b.is_ascii_whitespace());
-        if run.byte == b'_'
-            && run.before.is_some_and(|b| b.is_ascii_alphanumeric())
-            && next.is_some_and(|b| b.is_ascii_alphanumeric())
-        {
-            return;
-        }
+        let (can_open, can_close) = if run.byte == b'~' {
+            // Preserve the independent single/double-tilde dialect.
+            (
+                next.is_some_and(|b| !b.is_ascii_whitespace()),
+                run.before.is_some_and(|b| !b.is_ascii_whitespace()),
+            )
+        } else {
+            // Sequence boundaries count as whitespace. Non-ASCII bytes remain
+            // ordinary text; Unicode whitespace/punctuation is a separate task.
+            let before_white = run.before.is_none_or(|b| b.is_ascii_whitespace());
+            let after_white = next.is_none_or(|b| b.is_ascii_whitespace());
+            let before_punct = run.before.is_some_and(|b| b.is_ascii_punctuation());
+            let after_punct = next.is_some_and(|b| b.is_ascii_punctuation());
+            let left = !after_white && (!after_punct || before_white || before_punct);
+            let right = !before_white && (!before_punct || after_white || after_punct);
+            if run.byte == b'_' {
+                (
+                    left && (!right || before_punct),
+                    right && (!left || after_punct),
+                )
+            } else {
+                (left, right)
+            }
+        };
         if can_close && let Some(index) = self.last[kind] {
             let inherited = index < self.header_floor;
             // Without an old opener this close-only run would be literal and

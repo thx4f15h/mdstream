@@ -232,7 +232,9 @@ fn generated_closer_flags_and_stack_interference_match_independent_model() {
                 let intraword = old.starts_with('_') && following == "new ";
                 let expected = intraword
                     || local_marker == Some(old)
-                    || (local.is_empty() && matches!(following, " " | "\t"));
+                    || (local.is_empty()
+                        && (matches!(following, " " | "\t")
+                            || (following == "! " && !old.starts_with('~'))));
                 assert_eq!(
                     !doc.tables().is_empty(),
                     expected,

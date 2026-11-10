@@ -167,49 +167,10 @@ fn project(doc: &Document) -> String {
     html
 }
 
-enum Assessment {
-    Supported,
-    Difference {
-        reason: &'static str,
-        observed: &'static str,
-    },
-}
-
-// Independent observations: changes require review, not automatic acceptance.
-fn assessment(number: usize) -> Assessment {
-    match number {
-        390 | 391 | 393..=397 | 399 | 400 | 402..=405 => Assessment::Supported,
-        392 => Assessment::Difference {
-            reason: "simplified flanking permits a closer after punctuation before a letter",
-            observed: "<p><strong>(</strong>foo)</p>\n",
-        },
-        398 => Assessment::Difference {
-            reason: "simplified flanking permits a closer after punctuation before a letter",
-            observed: "<p><strong>(</strong>foo)</p>\n",
-        },
-        401 => Assessment::Difference {
-            reason: "underscore intraword exclusion is limited to ASCII alphanumerics",
-            observed: "<p><strong>пристаням</strong>стремятся</p>\n",
-        },
-        _ => panic!("unclassified example {number}"),
-    }
-}
-
 fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
     let actual = project(doc);
-    match assessment(number) {
-        Assessment::Supported => assert_eq!(actual, expected, "example {number}"),
-        Assessment::Difference { observed, .. } => {
-            assert_ne!(
-                actual, expected,
-                "example {number} now matches; review classification"
-            );
-            assert_eq!(
-                actual, observed,
-                "example {number} changed; upstream {expected:?}"
-            );
-        }
-    }
+    assert!((390..=405).contains(&number));
+    assert_eq!(actual, expected, "example {number}");
     assert_eq!(doc.source(), markdown);
     let mut end = 0;
     for run in doc.display_runs_in(Span::new(0, markdown.len())).unwrap() {
@@ -230,16 +191,13 @@ fn pinned_commonmark_emphasis_strong_close_report() {
     for (index, &(number, markdown, expected)) in EMPHASIS_CASES.iter().enumerate() {
         assert_eq!(number, 390 + index);
         check_case(number, markdown, expected, &parse(markdown));
-        let (category, reason) = match assessment(number) {
-            Assessment::Supported => (0, "matches upstream"),
-            Assessment::Difference { reason, .. } => (1, reason),
-        };
+        let (category, reason) = (0, "matches upstream");
         counts[category] += 1;
         eprintln!("example {number}: category {category} — {reason}");
     }
-    assert_eq!(counts, [13, 3, 0]);
+    assert_eq!(counts, [16, 0, 0]);
     eprintln!(
-        "CommonMark 0.31.2 Emphasis subset 390–405: 13 supported, 3 deliberate differences, 0 unsupported; 406–481 not scored"
+        "CommonMark 0.31.2 Emphasis subset 390–405: 16 supported, 0 deliberate differences, 0 unsupported; 406–481 not scored"
     );
 }
 
