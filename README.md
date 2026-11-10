@@ -3592,3 +3592,16 @@ CommonMark Link reference definitions 213 仍为刻意差异，剩余原因改�
 首行、空行后、非段落块后和新作用域仍可建立定义；已确认表格的中断与脚注定义方言保持。实现只放行既有有界 lazy 判定中的 Definition 分类结果，不增加扫描或持久状态，不访问旧正文或缺失祖先；累计追加 O(n log n)、空间 O(n) 及共享预算保持。此前缺失前缀定义中断的保留范围由本项收窄，多行定义、完整字面回退、分类窗口和完整容器/标准兼容性继续待办。
 
 复跑：`nix develop -c cargo nextest run --test definition_interrupt --test container_lazy --test header_lazy_tabs --test lazy_item_tabs --test lazy_quote_tabs --test commonmark_reference_definitions --no-fail-fast`；模型、映射、预算、深嵌套和历史工作计数见[交付记录](DONE.md#2026-11-10-缺失祖先lazy-的引用定义段落边界交付)。
+
+
+## 引用标签的完整 Unicode case folding（2026-11-10）
+
+链接、图片及引用定义的匹配键现在使用固定 **Unicode 17.0.0 默认非 Turkic 完整 case folding**，采用官方 `CaseFolding.txt` 的全部 C/F 映射，排除 S/T，未列出的标量保持原值。例如 `ẞ`、`ß`、`SS` 共用 `ss`；`ﬃ` 匹配 `ffi`，`ΐ` 展开为 `ι\u{308}\u{301}`，Cherokee 键可能是大写。`I` 匹配 `i`，`İ` 仅匹配 `i\u{307}`，`ı` 独立。仍按原有 `char::is_whitespace` 折叠 Unicode 空白、去掉标签两端空白；此次固定版本针对 case folding，不改变原空白分类契约。脚注符号表保持独立且区分大小写。
+
+999 字节上限在 folding 前按实际原始标签检查，含原始 CRLF/标记/转义，不含已去除的容器前缀；展开后的键可超过 999 字节。`Reference.label` 是归一化匹配键，`LinkInfo` 的标签/对象区间及源码仍保留原始拼写、字节位置和显示映射。全局首定义优先、稳定 SymbolId/LinkId、晚定义的单符号与首次使用范围通知、显示/目标/title 共享预算保持。不解码标签转义或实体，不增加 NFKC、重音或其它规范化；例如 `É` 与 `e\u{301}`、全角 `Ａ` 与 ASCII `a` 仍不同。完整 folding 自带的连字展开不代表执行了 NFKC。
+
+官方原始数据和完整 Unicode License V3 位于 [data/unicode](data/unicode/README.md)，来源、SHA-256、生成步骤及证明界限随仓库保存。`python3 scripts/generate_case_folding.py --check` 离线验证数据/许可摘要和静态表；生成器只读本地文件，构建和测试不会生成或下载数据，也不使用宿主 Unicode 大小写数据库。每标量最多输出 3 个标量、6 个 UTF-8 字节，归一键总字节数不超过原标签的 3 倍。固定表检索每个非空白标量至多 12 次比较，标签处理 O(label bytes)，有界键仍使用 BTreeMap；整体累计 O(n log n)、空间 O(n)，晚定义不访问历史引用。`Work.label_scalars`、`label_fold_steps`、`label_key_bytes` 分别记录实际标量访问、固定表比较和键输出字节，保留原 `label_bytes` 的原始字节语义；零运行时依赖、禁止 unsafe。
+
+CommonMark 0.31.2 例 540 现匹配官方 HTML，539–552 子集更新为 **7 支持、6 刻意差异、1 未支持**；仅 540 改类，其余逐项观察保持，官方 Markdown/HTML、生成器及评分投影未改。两份评分中的 `[SS]`/`[ẞ]` 辅助期望及晚定义符号/目标断言同步更新。本节取代此前引用匹配“Unicode 小写/转小写、不做完整 case folding”及 540 差异/6–7–1 汇总的当前语义描述；旧交付记录保留历史。541 多行定义、542/543/545/546/547/548 字面回退/嵌套及完整容器等范围继续见 TODO。
+
+新增 11 项回归复用现有 snapshot、元数据和共享预算设施：对照全部 1,112,064 个有效 Unicode 标量与官方独立模型；含全部 1585 映射的全文模型验证 6360 个引用对象及同键首定义；覆盖非 Turkic/不同规范化形式、原始 998/999/1000 字节、UTF-8 任意切点/逐字节及逐标量前缀/EOF、原始映射和六字节共享预算、稳定身份/晚定义通知，以及 980 层、百万字、两万历史引用的工作计数。复跑：`nix develop -c cargo nextest run --test reference_case_folding --test commonmark_reference_labels --test commonmark_reference_forms --lib --no-fail-fast`。

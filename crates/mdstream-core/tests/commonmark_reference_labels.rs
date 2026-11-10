@@ -8,6 +8,16 @@ use mdstream::{
 mod support;
 use support::snapshot;
 include!("fixtures/commonmark_reference_labels.rs");
+
+#[test]
+fn official_540_requires_full_unicode_case_folding() {
+    let &(_, markdown, expected) = REFERENCE_LABEL_CASES
+        .iter()
+        .find(|&&(number, _, _)| number == 540)
+        .unwrap();
+    assert_eq!(project(&parse(markdown)), expected);
+}
+
 const SIX_BYTES: WorkLimit = WorkLimit {
     bytes: 6,
     queries: 1,
@@ -254,11 +264,7 @@ enum Assessment {
 // Frozen observations are separate from the verbatim upstream oracle.
 fn assessment(number: usize) -> Assessment {
     match number {
-        539 | 544 | 549..=552 => Assessment::Supported,
-        540 => Assessment::DeliberateDifference {
-            reason: "reference labels use Unicode lowercase, not full Unicode case folding",
-            observed: "<p>ẞ</p>\n",
-        },
+        539 | 540 | 544 | 549..=552 => Assessment::Supported,
         541 => Assessment::Unsupported {
             reason: "reference definition labels cannot span physical lines",
             observed: "<p>Foo\nbar: /url</p>\n<p>Baz</p>\n",
@@ -346,9 +352,9 @@ fn pinned_commonmark_reference_labels_report() {
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [6, 7, 1]);
+    assert_eq!(counts, [7, 6, 1]);
     eprintln!(
-        "CommonMark 0.31.2 Links subset (539–552): 6 supported, 7 deliberate differences, 1 unsupported; 482–538 and 553–571 outside this score"
+        "CommonMark 0.31.2 Links subset (539–552): 7 supported, 6 deliberate differences, 1 unsupported; 482–538 and 553–571 outside this score"
     );
 }
 
@@ -489,7 +495,7 @@ fn reference_label_projection_preserves_whitespace_matching_and_decoded_metadata
             "<p><a href=\"/u\">x</a></p>\n",
         ),
         ("[É]\n\n[é]: /u\n", "<p><a href=\"/u\">É</a></p>\n"),
-        ("[SS]\n\n[ẞ]: /u\n", "<p>SS</p>\n"),
+        ("[SS]\n\n[ẞ]: /u\n", "<p><a href=\"/u\">SS</a></p>\n"),
         (
             "[x][r] [r][] [r]\n\n[r]: /u 't'\n",
             "<p><a href=\"/u\" title=\"t\">x</a> <a href=\"/u\" title=\"t\">r</a> <a href=\"/u\" title=\"t\">r</a></p>\n",
@@ -582,10 +588,12 @@ fn reference_label_projection_rejects_out_of_subset_structure() {
 #[test]
 fn reference_label_raw_spans_identity_and_shared_display_destination_title_budget() {
     let extra = "[中&amp;\\*](<a b%20中\\\\> 't&amp;\\\"') []() [](/x '')\n";
+    let folded =
+        "[ẞ] ![ﬃ][] [text][ΐ]\n\n[SS]: /a&amp; 't\\*'\n[FFI]: /b '🙂'\n[ι\u{308}\u{301}]: /c\n";
     for source in REFERENCE_LABEL_CASES
         .iter()
         .map(|(_, source, _)| *source)
-        .chain([extra])
+        .chain([extra, folded])
     {
         let mut doc = Document::new();
         doc.append(source).unwrap();
@@ -734,7 +742,7 @@ fn late_definitions_preserve_normalized_symbols_identity_and_first_definition() 
         .collect();
     assert_eq!(symbols[0], symbols[1]);
     assert_ne!(symbols[5], symbols[6]);
-    for (i, label) in ["a b", "a b", "é", "ß", "r\\[", "r!", "r\\!"]
+    for (i, label) in ["a b", "a b", "é", "ss", "r\\[", "r!", "r\\!"]
         .into_iter()
         .enumerate()
     {
@@ -755,7 +763,7 @@ fn late_definitions_preserve_normalized_symbols_identity_and_first_definition() 
         Some("/first&"),
         Some("/first&"),
         Some("/unicode"),
-        None,
+        Some("/casefold"),
         Some("/bracket"),
         Some("/plain"),
         Some("/escaped"),

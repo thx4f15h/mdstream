@@ -211,7 +211,14 @@ pub struct Work {
     /// emphasis/code pairs committed or discarded once when a header resolves.
     /// Includes bounded failed-code run matching (at most 32 comparisons/run).
     pub delimiter_steps: u64,
+    /// Raw bytes of bounded reference labels interned, including whitespace.
     pub label_bytes: u64,
+    /// Each raw reference-label scalar visited exactly once during interning.
+    pub label_scalars: u64,
+    /// Fixed Unicode 17.0.0 table comparisons; <= 12 per label scalar.
+    pub label_fold_steps: u64,
+    /// Normalized key bytes produced; <= 3 times label_bytes (not source data).
+    pub label_key_bytes: u64,
     pub tree_visits: u64,
     pub table_bytes: u64,
     /// Bytes summarized for prospective headers. Each eligible line byte is

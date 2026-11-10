@@ -2369,3 +2369,20 @@ CommonMark 213 已不再建立定义，但未定义引用隐藏括号，继续�
 本轮本地验证均在项目 devShell 完成：`nix develop -c cargo check --all-targets`；`cargo nextest run --workspace --all-targets --no-fail-fast` 与追加 `--release` 各 **1,508 项通过**；`cargo test --doc --workspace` **75 项通过**；`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、`container_lazy`/`container_links` release 示例、固定引用定义夹具核验及 `git diff --check` 全部通过。target 路径由 devShell 内 `cargo metadata --no-deps --format-version 1` 获取。日志在 `/tmp/mdtui3-lazy-definition-{before,targeted-first,targeted-final,debug-first,debug,release,doc}.log`，仅作临时执行证据；持久依据为本记录与测试。README/TODO/DONE 仅追加；未提交或推送，留父会话验收。
 
 本项只修复既有非空段落资格与有界单行定义候选的衔接，不代表完整容器/CommonMark 支持。多行目标/title/标签、未定义引用完整字面回退、分类窗口扩展及其它完整容器/表格规则继续保留 TODO；既有空行、新作用域、已确认表格和脚注等优先级与方言保持。
+
+
+## 2026-11-10 引用标签完整 Unicode case folding 交付
+
+仅完成 TODO“引用标签匹配样例暴露的剩余范围”中的 CommonMark 0.31.2 例 540 完整 case folding 子项。先核验 ark/Linux、工作目录与 main 领先 origin/main 一个原有提交，保存 `/tmp/mdtui3-casefold-baseline.diff`；读取规划、README、`references.rs`、官方评分/夹具和 rust skill 后固定语义。先新增两项反例，旧实现均失败：540 输出未带链接的 ẞ；扩展等价标签分配了不同符号。再运行独立数据局部模型验证与展开界限，随后实现；修复前证据为 `/tmp/mdtui3-casefold-red.log`，模型证据为 `mdtui3-casefold-model.log`，这些临时日志不替代仓库内回归测试。
+
+从官方主源 `https://www.unicode.org/Public/17.0.0/ucd/CaseFolding.txt` 取得固定 Unicode 17.0.0 原始数据，完整保存于 `data/unicode/17.0.0/CaseFolding.txt`；从 `https://www.unicode.org/license.txt` 保存完整 Unicode License V3。`data/unicode/README.md` 记录来源、取得日期、许可与离线操作，生成器固定两份文件 SHA-256。`scripts/generate_case_folding.py` 仅使用 Python 标准库和本地文件，静态表包含全部 1585 个 C/F 映射，排除 S 和 Turkic T，未列出的标量原值保留；不调用宿主 Unicode 大小写数据库、构建钩子或隐式联网。数据、许可和生成表的篡改拒绝已验证。
+
+核心只替换 `References::intern` 内的小写转换，链接、图片与定义复用同一入口，脚注独立且继续区分大小写。原 `char::is_whitespace` 空白折叠保留；固定 Unicode 版本针对 case folding。支持 ß/ẞ→ss、ﬃ→ffi、三标量希腊文展开、final sigma 和 Cherokee 等完整记录；I→i、İ→i+组合点、ı 保持原值。先检查原始标签最多 999 字节，展开键可超过此限；原始标签、目标/title 源码映射、稳定符号/链接 ID、全局首定义及晚定义通知保持。原始 CRLF/空白计入限额，容器前缀不计入。不增加标签转义/实体解码、NFKC/重音或其它规范化、引用失败回退、多行定义或完整容器规则。
+
+数据模型证明每标量最多输出 3 个标量、6 个 UTF-8 字节，键总字节数至多原标签的 3 倍；固定 1585 项表每个非空白标量最多比较 12 次。新增 `Work.label_scalars`、`label_fold_steps`、`label_key_bytes` 统计实际标量访问、比较与输出，原 `label_bytes` 仍统计原始字节。规范化 O(label bytes)，有界键 BTreeMap 查找/登记 O(log S)，文档整体累计 O(n log n)、空间 O(n)。定义仍只更新当前符号及 first_use 范围，未改历史引用处理路径；零运行时依赖、禁止 unsafe，工具链和主机/用户配置未改。
+
+新增 11 项回归：`references.rs` 的两项单元验证全部 1,112,064 个有效 Unicode 标量（含未列出的恒等映射）及每字节/标量工作上界、超限前零 folding 工作；`tests/reference_case_folding.rs` 八项复用原 snapshot/metadata 支持，独立读取官方数据并采用不同的空白/映射模型，全文覆盖 1585 映射、6360 引用对象及同键首定义。覆盖非 Turkic、不同规范化形式、原始 998/999/1000 字节及收缩/展开、CRLF/Quote 去前缀、所有字节切点和逐字节/逐标量前缀/EOF、原始区间/切片、首定义与晚定义单次通知、稳定身份、980 层/百万字/两万旧引用工作计数。既有标准共享显示/目标/title 六字节预算测试追加 Unicode 链接与图片数据；预算/原始元数据断言保留。
+
+标准评分逐项审查：只将 540 从刻意差异改为支持，539–552 汇总从 6/7/1 变为 **7 支持、6 刻意差异、1 未支持**。539/544/549–552 仍支持；541 仍未支持；542/543/545/546/547/548 的独立观察与刻意差异保持。同步修正两份评分的 `[SS]`/`[ẞ]` 辅助期望，以及晚定义的 ss 键和 /casefold 目标断言；官方 Markdown/HTML、夹具生成器与评分投影均未改。引用形式仍为 16/2/1、引用定义仍为 14/7/6、Images 仍为 19/1/2。本段及 README 新节取代旧“仅 Unicode 小写、不做完整 case folding”和 540 差异/旧汇总的当前描述，历史交付记录保持。
+
+最终验收均在项目 `nix develop` 中完成：`cargo check --workspace --all-targets`；针对性 25 项及新增 CRLF 边界专项通过；完整 debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1519 项通过**；`cargo test --doc --workspace` **75 项通过**；`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、Unicode 生成数据/许可/静态表与篡改拒绝离线核验、CommonMark 引用标签/引用形式/引用定义/Images 四份官方夹具离线核验、`container_links`/`link_suffix_headers`/`footnotes` release 示例、`git diff --check` 全部通过。日志前缀 `/tmp/mdtui3-casefold-`，独立差异 `mdtui3-casefold-unit.diff`，范围验证 `mdtui3-casefold-scope-check.log`。上一项 11 个文件完整保留：8 个代码/测试字节不变，3 个文档仅在原内容后追加；本项未重置、提交、推送或派生代理。宽泛引用/标准兼容性大类继续待办。

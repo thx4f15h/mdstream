@@ -484,7 +484,7 @@ fn reference_form_projection_preserves_styles_precedence_and_decoded_metadata() 
             "<p><a href=\"/u\">x</a></p>\n",
         ),
         ("[É]\n\n[é]: /u\n", "<p><a href=\"/u\">É</a></p>\n"),
-        ("[SS]\n\n[ẞ]: /u\n", "<p>SS</p>\n"),
+        ("[SS]\n\n[ẞ]: /u\n", "<p><a href=\"/u\">SS</a></p>\n"),
         (
             "[x][r] [r][] [r]\n\n[r]: /u 't'\n",
             "<p><a href=\"/u\" title=\"t\">x</a> <a href=\"/u\" title=\"t\">r</a> <a href=\"/u\" title=\"t\">r</a></p>\n",
