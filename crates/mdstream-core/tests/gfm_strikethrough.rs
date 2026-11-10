@@ -80,14 +80,17 @@ fn project(doc: &Document) -> String {
     html
 }
 
-// The existing dialect recognizes exactly two tildes. This observation is
-// independent of the fixed upstream HTML; changed behavior requires review.
+// Exact single and double runs now match. Keep observations independent of
+// the fixed upstream input/HTML and of the public-semantics-only projection.
 fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
     let actual = project(doc);
     match number {
         491 => {
-            assert_ne!(actual, expected, "review single-tilde classification");
-            assert_eq!(actual, "<p><del>Hi</del> Hello, ~there~ world!</p>\n");
+            assert_eq!(
+                actual,
+                "<p><del>Hi</del> Hello, <del>there</del> world!</p>\n"
+            );
+            assert_eq!(actual, expected, "example 491");
         }
         492 | 493 => assert_eq!(actual, expected, "example {number}"),
         _ => panic!("unclassified example {number}"),
@@ -111,13 +114,13 @@ fn pinned_gfm_strikethrough_report() {
     for (index, &(number, markdown, expected)) in STRIKE_CASES.iter().enumerate() {
         assert_eq!(number, 491 + index);
         check_case(number, markdown, expected, &parse(markdown));
-        let category = usize::from(number == 491);
+        let category = 0;
         counts[category] += 1;
         eprintln!("example {number}: category {category}");
     }
-    assert_eq!(counts, [2, 1, 0]);
+    assert_eq!(counts, [3, 0, 0]);
     eprintln!(
-        "GFM 0.29-gfm Strikethrough 491–493: 2 supported, 1 deliberate difference (single tilde), 0 unsupported"
+        "GFM 0.29-gfm Strikethrough 491–493: 3 supported, 0 deliberate differences, 0 unsupported"
     );
 }
 
@@ -273,7 +276,7 @@ fn strike_projection_preserves_payload_and_rejects_unscored_structures() {
     for (source, expected) in [
         ("", ""),
         ("~~中😀~~\n", "<p><del>中😀</del></p>\n"),
-        ("~one~\n", "<p>~one~</p>\n"),
+        ("~one~\n", "<p><del>one</del></p>\n"),
         ("x ~~~three~~~\n", "<p>x ~~~three~~~</p>\n"),
         ("~~a  b\tc~~\n", "<p><del>a  b\tc</del></p>\n"),
         ("~~a\nb~~\n", "<p><del>a\nb</del></p>\n"),
@@ -290,7 +293,7 @@ fn strike_projection_preserves_payload_and_rejects_unscored_structures() {
         assert_eq!(project(&parse(source)), expected, "{source:?}");
     }
     let baseline = project(&parse("~~a b~~\n"));
-    for changed in ["a b\n", "~~a x~~\n", "~~a  b~~\n", "~a b~\n"] {
+    for changed in ["a b\n", "~~a x~~\n", "~~a  b~~\n", "~a b~~\n"] {
         assert_ne!(project(&parse(changed)), baseline);
     }
     for source in [
@@ -348,7 +351,7 @@ fn late_strike_closure_preserves_block_identity_beyond_classification_window() {
     let body = "中😀x ".repeat(300);
     for (open, tail, content) in [
         ("~~", "~~", format!("<del>{body}end</del>")),
-        ("~", "~", format!("~{body}end~")),
+        ("~", "~", format!("<del>{body}end</del>")),
         ("~~", "~", format!("~~{body}end~")),
         ("~~", "~~~", format!("~~{body}end~~~")),
         ("~~~", "~~~", format!("~~~{body}end~~~")),

@@ -25,7 +25,7 @@ fn visible(doc: &Document, span: Span) -> String {
 #[test]
 fn isolated_closures_match_independent_early_header_semantics() {
     for (open, next) in [("", ""), ("> ", "> "), ("> - [x] ", ">   "), ("1. ", "   ")] {
-        for marker in ["*", "**", "_", "__", "~~"] {
+        for marker in ["*", "**", "_", "__", "~", "~~"] {
             for ending in ["", "  ", "\\"] {
                 let prior = format!("{open}[p](u) {marker}prior{ending}\r\n");
                 let header = format!(
@@ -98,7 +98,7 @@ fn only_cross_line_effects_wait_while_local_semantics_and_objects_are_live() {
 #[test]
 fn failure_no_pipe_eof_setext_and_scope_exit_commit_each_pair_once() {
     for prefix in ["", "> "] {
-        for marker in ["*", "**", "_", "__", "~~"] {
+        for marker in ["*", "**", "_", "__", "~", "~~"] {
             for suffix in [
                 "",
                 "\n",
@@ -141,13 +141,20 @@ fn failure_no_pipe_eof_setext_and_scope_exit_commit_each_pair_once() {
 #[test]
 fn nonseparable_crossings_flush_isolated_pairs_and_keep_original_semantics() {
     for (prior, current) in [
-        ("*old\n", "end*new "),      // The closer would open in a standalone cell.
+        ("~old\n", "end~new "),
+        ("~old\n", "~~local end~ "),
+        ("~~old ~old\n", "end~ _local end~~ "),
+        ("[old ~old\n", "end~ end](u) &amp; "),
+        ("*old\n", "end*new "), // The closer would open in a standalone cell.
         ("*old\n", "**local end* "), // A current-line opener would be lost.
         ("**old *old\n", "end* end**new "), // Flush an earlier isolated pair.
         ("**old *old\n", "end* _local end** "),
         ("[old *old\n", "end* end](u) &amp; "), // Later entity cancels the probe.
-        ("`old\n", "end` &amp; "),              // Semantic suffix cancels code isolation.
-        ("$old\n", "end$ &amp; "),              // Semantic suffix cancels math isolation.
+        ("`old\n", "end` ~local~ "),
+        ("$old\n", "end$ ~local~ "),
+        ("[old\n", "end](u) ~local~ "),
+        ("`old\n", "end` &amp; "), // Semantic suffix cancels code isolation.
+        ("$old\n", "end$ &amp; "), // Semantic suffix cancels math isolation.
     ] {
         for prefix in ["", "> "] {
             let prior = format!("{prefix}{prior}");
@@ -176,6 +183,9 @@ fn nonseparable_crossings_flush_isolated_pairs_and_keep_original_semantics() {
 #[test]
 fn isolated_pairs_can_pop_old_other_kinds_and_preserve_new_live_openers() {
     for (prior, current) in [
+        ("~old ~~old\n", "end~ ~~live~~ ~new "),
+        ("~~old ~old\n", "end~ end~~ ~live~ ~~new "),
+        ("~old ~~old\n", "end~~ end~ `new "),
         ("*old **old ~~old\n", "end* **live** _new "),
         ("*old **old\n", "end** end* ~~live~~ *new "),
         ("*old *old\n", "end* end* *live* **new "),
@@ -205,9 +215,11 @@ fn isolated_pairs_can_pop_old_other_kinds_and_preserve_new_live_openers() {
 
 #[test]
 fn generated_closer_flags_and_stack_interference_match_independent_model() {
-    let markers = ["*", "**", "_", "__", "~~"];
+    let markers = ["*", "**", "_", "__", "~", "~~"];
     for old in markers {
-        for local in ["", "*local ", "**local ", "_local ", "__local ", "~~local "] {
+        for local in [
+            "", "*local ", "**local ", "_local ", "__local ", "~local ", "~~local ",
+        ] {
             for following in [" ", "\t", "new ", "! "] {
                 let prior = format!("{old}prior\n");
                 let body = format!("{local}end{old}{following}{}|b\n", "x".repeat(1030));

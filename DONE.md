@@ -2386,3 +2386,31 @@ CommonMark 213 已不再建立定义，但未定义引用隐藏括号，继续�
 标准评分逐项审查：只将 540 从刻意差异改为支持，539–552 汇总从 6/7/1 变为 **7 支持、6 刻意差异、1 未支持**。539/544/549–552 仍支持；541 仍未支持；542/543/545/546/547/548 的独立观察与刻意差异保持。同步修正两份评分的 `[SS]`/`[ẞ]` 辅助期望，以及晚定义的 ss 键和 /casefold 目标断言；官方 Markdown/HTML、夹具生成器与评分投影均未改。引用形式仍为 16/2/1、引用定义仍为 14/7/6、Images 仍为 19/1/2。本段及 README 新节取代旧“仅 Unicode 小写、不做完整 case folding”和 540 差异/旧汇总的当前描述，历史交付记录保持。
 
 最终验收均在项目 `nix develop` 中完成：`cargo check --workspace --all-targets`；针对性 25 项及新增 CRLF 边界专项通过；完整 debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1519 项通过**；`cargo test --doc --workspace` **75 项通过**；`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`、Unicode 生成数据/许可/静态表与篡改拒绝离线核验、CommonMark 引用标签/引用形式/引用定义/Images 四份官方夹具离线核验、`container_links`/`link_suffix_headers`/`footnotes` release 示例、`git diff --check` 全部通过。日志前缀 `/tmp/mdtui3-casefold-`，独立差异 `mdtui3-casefold-unit.diff`，范围验证 `mdtui3-casefold-scope-check.log`。上一项 11 个文件完整保留：8 个代码/测试字节不变，3 个文档仅在原内容后追加；本项未重置、提交、推送或派生代理。宽泛引用/标准兼容性大类继续待办。
+
+
+## 2026-11-10 精确单波浪号删除线交付
+
+仅完成 TODO“删除线评分后的剩余范围”中的 GFM 0.29-gfm 例 491 单波浪号子项。先核验 ark/Linux、工作目录与 git 状态，将已有两个验收单元的完整 diff、未跟踪清单/哈希及所有基线文件哈希保存在 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-003/`；未提交、推送或修改主机/用户配置，未派生代理。所有 cargo 命令都经本项目 `nix develop`，target 路径从 `cargo metadata` 获取。
+
+实施前模型与累计证明保存在同目录 `model.md`。先加入独立 batch oracle、对象优先级/边界反例和长表头矩阵，`cargo check --workspace --all-targets` 通过，专项红灯 **21 项中 10 项失败**（退出 100，`targeted-red.log`）。`inline.rs` 原先只为双波浪号保存 kind；本项只增加单波浪号独立索引及三处数组长度，复用原有 run 确认、flanking、闭合/弹栈、表头继承及候选处理。独立模型初次转绿检查另暴露生成语料尾部触及既有段落空白隐藏；给组合语料加正文哨兵隔开该无关边界后通过，记录保留在 `targeted-green.log` / `targeted-green-2.log`，核心未因此放宽。
+
+模型采用精确 maximal run：长度 1/2 分开匹配，>=3 全段字面，不做部分 run 消耗；待定 run 在下一个不同字节或 EOF 才确认，EOF 不能开新 opener。保留 ASCII 空白 flanking、能闭合优先且不重开同一 run；闭合时消费目标及其后全部 opener。因此 `~a ~~b~~ c~` 与反向可配对但公开位扁平，`~a ~~b~ c~~` 会丢弃双 opener，反向组合对称；同类贪心及交叉兼容性未改。代码/数学候选内部及其未完成失败内容保持 opaque，链接标签不是 opaque，目标/title 保留既有消费规则；不在本项修复链接强调作用域。表头可隔离配对只存端点/style、消费不同旧 opener，成功丢弃、失败/EOF 提交；bidirectional closer 或弹出本行 opener 继续永久取消本行探测，混合代码/数学/标签也沿用原优先级。
+
+每字节只进入已有扫描一次，每个 run 一次确认，固定六类索引直接定位 opener；每 opener 至多一次 push 和一次 pop/边界丢弃。隔离 pair 由已消费旧 opener 计数约束，成功表头对当前 surviving opener 的前驱下标仅一次重建。每 pair 常数次 O(log n) 范围 tag，累计 O(n log n)、空间 O(n)；没有增长正文回扫、历史对象遍历、栈重放或评分投影补标记，零运行时依赖、禁止 unsafe，查询仍共用原预算。
+
+新增 `tests/single_tilde.rs` 七项及 `tests/support/strike_model.rs`，复用 snapshot、公开源码/显示游标与现有长表头设施。独立 oracle 用有界串上的反向 opener 搜索和最终范围 painting，避开生产 last 索引/区间树；1,728 组组合及显式反例覆盖单双/失配、空白/标点/非 ASCII、转义、未完成/EOF、嵌套/交叉。活动扫描窗口后的 32 组长前缀 run 组合验证到 EOF/下一字节前不提前隐藏；UTF-8 任意字节切分、逐字节前缀/截断标量 EOF 分别在短输入与活动扫描前缀下比较完整快照/pending。另验收跨行、显式/等价/lazy 容器、空行/兄弟/块/表格边界，晚闭合的块/容器/链接/数学身份与 tile 失效、逐标量原始映射、显示/第二游标/解码目标共用六字节预算及零预算停步。`closed_headers.rs` / `open_headers.rs` 扩展单长度与混合长度、局部对象及可隔离/不可隔离矩阵，不削弱旧断言。
+
+压力模型在 970 层引用中先创建 4,096 个交替单/双 opener，再各闭合一次：创建恰 8,192 次 delimiter 操作，闭合与少量局部对象至多 8,198 次。继承 4,096 对、4,096 个历史链接后，分 1,000 次追加百万字仅增加 inline/header 各百万字节；分隔符、分类、祖先、标签、区间写入及 annotation/container arena 均不增长。表头成功/失败各只结算 4,096 对，局部链接/数学和历史链接身份保持。
+
+例 491 只更新独立观察/分类/统计及直接受本项影响的辅助方言断言，当前章节 **3 支持、0 刻意差异、0 未支持**；官方三例 Markdown/HTML、夹具生成器及 `project` 逐字不变。`fixture.log` 记录固定 HTML SHA-256、独立正则读取器的 491–493 原文比较、91 切点/88 前缀、生成器离线 `--check` 与篡改拒绝。原“仅 ~~”/491 刻意差异描述由本项收窄，旧交付不重写；完整 Unicode flanking、同类嵌套深度、完整强调/部分 run 消耗、链接作用域、更广泛容器/GFM 和渲染/UI 待办均保留。
+
+最终验收均退出 0（完整命令、状态、时间见同目录 `validation.jsonl`）：
+
+- `nix develop -c cargo check --workspace --all-targets`（`check-final-2.log`）。
+- `nix develop -c cargo nextest run --test single_tilde --test gfm_strikethrough --test closed_headers --test open_headers --test inherited_headers --no-fail-fast`：48 项（`targeted-final.log`）。
+- `nix develop -c cargo nextest run --workspace --all-targets --no-fail-fast` / 加 `--release`：各 1,526 项（`debug.log` / `release.log`）。
+- `nix develop -c cargo test --doc --workspace`：75 项，72 普通 + 3 compile-fail（`doc.log`）。
+- `nix develop -c cargo clippy --workspace --all-targets -- -D warnings`、`nix develop -c cargo fmt --all -- --check`（`clippy.log` / `fmt.log`）。
+- `python3 scripts/generate_gfm_strikethrough.py /home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-003/gfm-0.29.html --check`，由独立核验脚本执行（`fixture.log`）。
+- `nix develop -c cargo run --release --example container_inline` / `open_headers` / `closed_headers` / `budget`（四份 `example-*.log`）。
+- 范围/基线核对与 `git diff --check` 均通过（`scope-final.log` / `diff-final.log`）：389 个其它基线文件与所有既有未跟踪文件保持，三份文档仅追加；本项完整独立差异见证据目录 `task-unit.patch`。

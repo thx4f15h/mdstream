@@ -25,12 +25,13 @@ fn visible(doc: &Document, span: Span) -> String {
 #[test]
 fn retained_emphasis_matches_independent_early_header_model() {
     for (open, next) in [("", ""), ("> ", "> "), ("> - [x] ", ">   "), ("1. ", "   ")] {
-        for marker in ["*", "**", "_", "__", "~~"] {
+        for marker in ["*", "**", "_", "__", "~", "~~"] {
             for ending in ["", "  ", "\\"] {
                 let prior = format!("{open}[p](u) {marker}prior{ending}\r\n");
                 for first in [
                     "**local** [h](v) $m$ [^n] &amp; ",
                     "*local ",
+                    "~local ",
                     "`local ",
                     "$local ",
                     "[local ",
@@ -63,7 +64,7 @@ fn retained_emphasis_matches_independent_early_header_model() {
 
 #[test]
 fn generated_local_pairs_and_crossings_match_early_header_or_plain_text_models() {
-    let tokens = ["*", "**", "_", "~~", "a ", "\\*", "`", "[x](u)"];
+    let tokens = ["*", "**", "_", "~", "~~", "a ", "\\*", "`", "[x](u)"];
     let mut confirmed = 0;
     let mut rejected = 0;
     for a in tokens {
@@ -103,7 +104,7 @@ fn generated_local_pairs_and_crossings_match_early_header_or_plain_text_models()
 #[test]
 fn fallback_and_eof_preserve_openers_breaks_objects_and_block_ranges() {
     for prefix in ["", "> "] {
-        for marker in ["*", "**", "_", "__", "~~"] {
+        for marker in ["*", "**", "_", "__", "~", "~~"] {
             for ending in ["", "  ", "\\"] {
                 for suffix in ["", "\r\n", "\r\nwrong\n", "\r\n---\n"] {
                     let suffix = suffix.replace('\n', &format!("\n{prefix}"));
@@ -132,7 +133,7 @@ fn fallback_and_eof_preserve_openers_breaks_objects_and_block_ranges() {
 #[test]
 fn unresolved_run_at_first_pipe_uses_cell_boundary_on_success_and_original_stack_on_failure() {
     for prefix in ["", "> "] {
-        for marker in ["*", "**", "_", "__", "~~"] {
+        for marker in ["*", "**", "_", "__", "~", "~~"] {
             let prior = format!("{prefix}{marker}prior\n");
             let header = format!("{}end{marker}|b\n", "x".repeat(1030));
             let source = format!("{prior}{prefix}{header}{prefix}-|-\n");

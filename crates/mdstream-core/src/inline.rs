@@ -365,7 +365,7 @@ pub(crate) struct Inline {
     raw_content: Option<Span>,
     raw_cr: Option<usize>,
     stack: Vec<Delimiter>,
-    last: [Option<usize>; 5],
+    last: [Option<usize>; 6],
     run: Option<Run>,
     code: Option<Code>,
     code_fallback: CodeFallback,
@@ -581,7 +581,7 @@ impl Inline {
         if self.header_floor != 0 {
             work.delimiter_steps += self.stack.len() as u64;
             self.stack.drain(..self.header_floor);
-            self.last = [None; 5];
+            self.last = [None; 6];
             for (index, delimiter) in self.stack.iter_mut().enumerate() {
                 delimiter.previous = self.last[delimiter.kind];
                 self.last[delimiter.kind] = Some(index);
@@ -971,6 +971,8 @@ impl Inline {
             (b'_', 1) => (2, Style::EMPHASIS),
             (b'_', 2) => (3, Style::STRONG),
             (b'~', 2) => (4, Style::STRIKE),
+            // Separate indices forbid mixing lengths; longer runs stay literal.
+            (b'~', 1) => (5, Style::STRIKE),
             _ => return,
         };
         // ASCII flanking rules are intentional; full CommonMark is not claimed.
@@ -1154,7 +1156,7 @@ impl Inline {
         }
         effects.work.delimiter_steps += self.stack.len() as u64;
         self.stack.clear();
-        self.last = [None; 5];
+        self.last = [None; 6];
         self.code = None;
         self.math = None;
         self.footnote = None;
