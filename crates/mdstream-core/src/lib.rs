@@ -1946,6 +1946,11 @@ pub struct RenderRun<'a> {
     pub text: &'a str,
     pub block: Option<BlockId>,
     pub style: Style,
+    /// Number of confirmed emphasis pairs covering this source interval.
+    /// Zero for unconfirmed candidates; not a complete nesting tree or order.
+    pub emphasis_depth: usize,
+    /// Number of confirmed strong pairs covering this source interval.
+    pub strong_depth: usize,
     pub link: Option<LinkId>,
 }
 
@@ -2035,7 +2040,11 @@ impl<'a> Iterator for Runs<'a> {
         self.pending = (span.end > end).then_some((span, first));
         while end < limit {
             let (span, mark) = self.marks.next()?;
-            if mark.style != first.style || mark.link != first.link {
+            if mark.style != first.style
+                || mark.link != first.link
+                || mark.emphasis_depth != first.emphasis_depth
+                || mark.strong_depth != first.strong_depth
+            {
                 self.pending = Some((span, mark));
                 break;
             }
@@ -2057,6 +2066,8 @@ impl<'a> Iterator for Runs<'a> {
             text: &self.document.source[start..end],
             block,
             style,
+            emphasis_depth: first.emphasis_depth,
+            strong_depth: first.strong_depth,
             link: first.link,
         })
     }

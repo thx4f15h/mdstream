@@ -24,6 +24,7 @@ pub struct Snapshot {
         Option<mdstream::LinkId>,
     )>,
     pub display: Vec<(Span, Option<Span>, String)>,
+    pub depths: Vec<(Span, usize, usize)>,
 }
 
 pub fn snapshot(doc: &Document) -> Snapshot {
@@ -91,6 +92,11 @@ pub fn snapshot(doc: &Document) -> Snapshot {
             .display_runs_in(Span::new(0, doc.source().len()))
             .unwrap()
             .map(|r| (r.source, r.replacement, r.text.to_owned()))
+            .collect(),
+        depths: doc
+            .display_runs_in(Span::new(0, doc.source().len()))
+            .unwrap()
+            .map(|r| (r.source, r.emphasis_depth, r.strong_depth))
             .collect(),
     }
 }

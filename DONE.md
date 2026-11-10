@@ -2448,3 +2448,18 @@ CommonMark 213 已不再建立定义，但未定义引用隐藏括号，继续�
 验证在本项目 `nix develop` 内完成，target 由 `cargo metadata` 确定：`cargo check --workspace --all-targets`、专项 nextest **114/114**、完整 debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1,541/1,541**、`cargo test --doc --workspace` **75/75**、Clippy `-D warnings`、fmt、离线 Unicode/132 例强调/GFM 删除线夹具核验及 `git diff --check` 均通过。release 示例 `closed_headers`、`open_headers`、`container_inline`、`budget` 全部退出 0。命令、真实退出状态及完整日志在 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-005/validation.jsonl` 及同目录各日志；首次反例、观察审查和审计脚本自身修正的失败记录保留。
 
 本节收窄前述“非 ASCII 字节普通分类/完整 Unicode 侧界待办”及 353/354 旧统计的当前描述，历史记录不改写。删除线仍保留独立 ASCII 空白方言；长 run 部分消耗、同类嵌套深度、链接分隔符作用域/通用确认撤销、完整容器和终端排版/UI 继续属于未完成项。本轮未提交、推送、修改配置或派生代理，项目说明仅追加，既有其它验收单元保持。
+
+
+## 2026-11-10 已确认强调加粗的同类嵌套深度接口交付
+
+本轮仅完成公开同类嵌套深度这一核心子项。`_foo _bar_ baz_` 与 `**foo **bar** baz**` 已有内外配对，但区间标注按样式位 OR 合并，消费者不能区分一层和两层。先新增真实反例，在旧行为上得到内层深度 1、预期 2，专项 nextest 退出 100，见本轮 `targeted-red.log`。随后用局部独立原型对照 6,000 次重叠区间累加和全部 4,096 个点，核对对数更新/线性存储界限，再实现；没有派生代理或重复此前五个验收单元。
+
+方言保持现有精确单/双 `*`、`_`、Unicode 侧界与贪心确认：未确认外层不增加计数，内层已确认效果不回放、不撤销；长 run、链接/代码/数学优先级、块/容器及晚表头隔离不变。`Mark` 增加两个 `usize`，每次原有 EMPHASIS/STRONG 区间标注贡献一次，按规范覆盖节点分解保证每个点恰好累加一次；根扩容保留原标签，不复制历史深度。没有新增解析栈、配对 arena、正文/旧引用/祖先回扫；每次已确认配对仍为既有 O(log n) 更新，常数次计数运算纳入 `tree_visits` 和原查询遍历，累计 O(n log n)、空间 O(n)。解析生成的深度不超过输入定界符数，使用 `usize` 避免窄计数饱和；零运行时依赖、禁止 unsafe 和共享预算保持。
+
+`RenderRun` / `DisplayRun` 同时公开 `emphasis_depth`、`strong_depth`，run 合并条件包含两者；原位样式、link serial、revision、源码和替换映射保持。普通区间、tile、scratch 和预算游标使用相同标注；六字节共享预算仍限制显示、目标解码和并行游标，查询无需单独访问深度索引。既有标注树随机点/区间模型现在同时校验累加深度，公共 snapshot 设施纳入显示深度，原有分块套件一并覆盖。新增 10 项集成回归包括 2,400 组独立批量范围涂色、混合/失败/未完成配对、任意 UTF-8 字节切点/逐前缀/EOF、根/Quote/Item 表头确认与失败、晚闭合通知和稳定 BlockId/ContainerId/LinkId/MathId、源码切片/tile/替换映射与共享预算、65,536 层及增长期零额外 tree/delimiter 访问、970 层容器百万字追加、4,096 个历史链接和晚定义。首轮压力测试在有界分类器未提交短行时过早读取 LinkId，延长测试准备正文后通过；真实失败及修正后日志均保留，未因此改变实现。
+
+官方输入/HTML、生成器及八份原样式位评分投影、独立观察、分类和汇总逐字节保持。新增严格的单类深度消费者仅使用公开计数，直接匹配原始官方 369/373/389/407 HTML，不扫描 Markdown、补标记或推导缺失树；四例为本接口的独立消费验收，不改写原评分。132 例逐项核对见 `official-review.tsv`；离线生成、Unicode 两表与 GFM 删除线核验及篡改输入拒绝通过。
+
+项目 `nix develop` 中 `cargo check --workspace --all-targets`、专项 nextest **135/135**、完整 debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1,551/1,551**、`cargo test --doc --workspace` **75/75**、Clippy `-D warnings`、fmt 与 `git diff --check` 全部通过；release 示例 `emphasis_depth`、`closed_headers`、`open_headers`、`container_inline`、`budget` 均退出 0。完整命令、真实退出状态及日志在 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-006/validation.jsonl`；局部原型、设计/边界审查、验收输入哈希、既有修改保留核对及本项独立补丁均保存在同目录。
+
+本项只收窄公开同类深度缺口，计数不表示完整嵌套顺序或相邻配对身份。部分 run 消耗、一般确认/撤销、链接作用域、完整容器和宽泛标准兼容性以及终端绘制/排版/UI 仍保留原未完成项。TODO 仅追加一个具体勾选，README/DONE 仅追加；本轮未提交、推送、reset、清理或修改配置/其它仓库，先前验收修改完整保留。

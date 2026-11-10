@@ -3636,3 +3636,12 @@ CommonMark 0.31.2 的 352/359/362/363/368/372/375/380/385/388/392/398/401 共 13
 分类固定为 Unicode 17.0.0；官方原始数据、完整许可与离线生成步骤见 [data/unicode](data/unicode/README.md)。现有扫描只记录一个前一标量，虚拟 tab 空格和表头隔离同步更新该状态；静态二分表的每侧分类/比较至多 12 步，公开计入 `Work.flanking_steps`。不回扫正文、引用或祖先，保留累计 O(n log n)、空间 O(n)、原始源码映射、稳定对象身份及显示/查询共享预算。
 
 CommonMark 353/354 现匹配官方 HTML，350–373 为 **22 支持、0 刻意差异、2 未支持**；其余强调样例观察和八个评分投影保持。此节取代此前 Unicode 普通字节分类及对应旧汇总的当前描述，历史交付记录保持。复跑：`nix develop -c cargo nextest run --test unicode_flanking --test ascii_flanking --test commonmark_emphasis_single --test closed_headers --no-fail-fast`；离线表核验：`python3 scripts/generate_unicode_categories.py --check`。七项集成回归、全标量模型和完整验收见[交付记录](DONE.md#2026-11-10-强调加粗-unicode-侧界交付)。部分 run 消耗、同类嵌套深度、链接作用域/通用撤销、完整容器及终端排版/UI 仍按 TODO 推进。
+
+
+## 已确认强调/加粗的同类嵌套深度（2026-11-10）
+
+`RenderRun` 与 `DisplayRun` 新增 `emphasis_depth: usize`、`strong_depth: usize`，表示覆盖该源码片段的已确认强调/加粗配对次数。例如 `_foo _bar_ baz_` 的 `foo`、`bar`、`baz` 深度为 1、2、1；`**one **two** three**` 的 `two` 加粗深度为 2。未闭合的外层不贡献深度，已确认内层仍保留。原 `Style::EMPHASIS` / `STRONG` 样式位继续表示存在该样式；深度不同的 run 不合并。隐藏语法也携带原区间上的计数，实体、代码规范化及部分 tab 替换继承底层语义片段的计数。
+
+普通区间、tile、可复用 scratch 及 `DisplayCursor` 读取同一标注；晚闭合通过原有区间失效更新缓存，稳定块/容器/链接/数学身份和源码区间保持。两个计数复用动态标注树的区间累加与既有遍历预算，无独立回扫或查询；每个现有 Mark/遍历帧增加两个 `usize`，保持累计解析 O(n log n)、空间 O(n)、零运行时依赖和禁止 unsafe。示例：`nix develop -c cargo run --release -p mdstream-core --example emphasis_depth`；专项：`nix develop -c cargo nextest run --test emphasis_depth --no-fail-fast`。
+
+此接口描述现有方言中已经确认的配对，不提供完整嵌套树、相邻同深度配对的身份或同时开启多个样式的先后顺序。精确 run、Unicode 侧界、贪心配对、表头隔离及其它对象优先级保持；长 run 部分消耗、通用确认/撤销、链接作用域与完整强调仍按 TODO 推进。原八份评分继续只消费样式位，投影、观察和三类统计保持；旧记录中“样式位丢失深度”的说明不再代表新字段缺失。新增独立计数消费者直接匹配官方 369/373/389/407 的原始 HTML，不将这四例外推为通用嵌套支持或改写旧章评分。完整验收见[交付记录](DONE.md#2026-11-10-已确认强调加粗的同类嵌套深度接口交付)，终端排版/UI 继续保留后续。

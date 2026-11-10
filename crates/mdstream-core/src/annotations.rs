@@ -4,6 +4,8 @@ use std::num::NonZeroUsize;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Mark {
     pub style: Style,
+    pub emphasis_depth: usize,
+    pub strong_depth: usize,
     pub link: Option<LinkId>,
     pub revision: u64,
     // Several link rewrites may occur in one append/revision.
@@ -19,6 +21,8 @@ impl Mark {
         };
         Self {
             style: self.style.union(other.style),
+            emphasis_depth: self.emphasis_depth + other.emphasis_depth,
+            strong_depth: self.strong_depth + other.strong_depth,
             link,
             revision: self.revision.max(other.revision),
             serial: self.serial.max(other.serial),
@@ -84,6 +88,10 @@ impl Annotations {
         self.serial += 1;
         let mark = Mark {
             style,
+            // Each confirmed pair contributes once on each covered point's
+            // root path. Counts cannot exceed the source's delimiter count.
+            emphasis_depth: usize::from(style.contains(Style::EMPHASIS)),
+            strong_depth: usize::from(style.contains(Style::STRONG)),
             link,
             revision,
             serial: if link.is_some() { self.serial } else { 0 },
@@ -406,6 +414,8 @@ mod tests {
             tree.apply(span, style, link, revision);
             for point in &mut model[span.range()] {
                 point.style = point.style.union(style);
+                point.emphasis_depth += usize::from(style.contains(Style::EMPHASIS));
+                point.strong_depth += usize::from(style.contains(Style::STRONG));
                 if link.is_some() {
                     point.link = link;
                 }
@@ -415,6 +425,8 @@ mod tests {
                 let at = random() % 1024;
                 let actual = tree.at(at);
                 assert_eq!(actual.style, model[at].style);
+                assert_eq!(actual.emphasis_depth, model[at].emphasis_depth);
+                assert_eq!(actual.strong_depth, model[at].strong_depth);
                 assert_eq!(actual.link, model[at].link);
                 assert_eq!(actual.revision, model[at].revision);
                 let visible = (at..1024).find(|&i| !model[i].style.contains(Style::HIDDEN));
@@ -439,6 +451,8 @@ mod tests {
                     assert!(span.end > span.start);
                     for &expected in &model[span.range()] {
                         assert_eq!(mark.style, expected.style);
+                        assert_eq!(mark.emphasis_depth, expected.emphasis_depth);
+                        assert_eq!(mark.strong_depth, expected.strong_depth);
                         assert_eq!(mark.link, expected.link);
                         assert_eq!(mark.revision, expected.revision);
                     }

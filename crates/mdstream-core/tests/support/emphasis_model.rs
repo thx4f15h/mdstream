@@ -19,9 +19,16 @@ fn class(ch: Option<char>) -> Class {
 }
 
 pub fn marks(source: &str) -> Vec<(bool, bool, bool)> {
+    depths(source)
+        .into_iter()
+        .map(|(hidden, emphasis, strong)| (hidden, emphasis > 0, strong > 0))
+        .collect()
+}
+
+pub fn depths(source: &str) -> Vec<(bool, usize, usize)> {
     use Class::*;
     let bytes = source.as_bytes();
-    let mut result = vec![(false, false, false); bytes.len()];
+    let mut result = vec![(false, 0, 0); bytes.len()];
     let mut stack: Vec<(u8, usize, usize)> = Vec::new();
     let mut pairs = Vec::new();
     let mut at = 0;
@@ -79,9 +86,9 @@ pub fn marks(source: &str) -> Vec<(bool, bool, bool)> {
         }
         for mark in &mut result[open + len..close] {
             if len == 1 {
-                mark.1 = true;
+                mark.1 += 1;
             } else {
-                mark.2 = true;
+                mark.2 += 1;
             }
         }
     }

@@ -15,6 +15,10 @@ pub struct DisplayRun<'a> {
     pub text: &'a str,
     pub block: Option<BlockId>,
     pub style: Style,
+    /// Confirmed pair counts, identical to the underlying semantic run even
+    /// for entity/code/tab replacements. These do not encode nesting order.
+    pub emphasis_depth: usize,
+    pub strong_depth: usize,
     pub link: Option<LinkId>,
 }
 
@@ -321,6 +325,8 @@ impl<'a> Iterator for DisplayRuns<'a> {
             text: substitute.unwrap_or(&self.document.source()[start..end]),
             block: run.block,
             style: run.style,
+            emphasis_depth: run.emphasis_depth,
+            strong_depth: run.strong_depth,
             link: run.link,
         };
         if end < run.source.end {
