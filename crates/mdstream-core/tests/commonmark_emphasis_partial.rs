@@ -189,26 +189,10 @@ enum Assessment {
 // Independently reviewed observations, separate from the unchanged oracle.
 fn assessment(number: usize) -> Assessment {
     match number {
-        433..=441 => Assessment::Supported,
-        431 => Assessment::Unsupported {
-            reason: "triple closer cannot close strong and emphasis openers separately",
-            observed: "<p>**foo *bar***</p>\n",
-        },
+        431 | 433..=444 => Assessment::Supported,
         432 => Assessment::Unsupported {
-            reason: "public strong bit loses repeated inner strong depth",
+            reason: "bit-only projection omits the published repeated strong depth",
             observed: "<p><strong>foo <em>bar baz\nbim</em> bop</strong></p>\n",
-        },
-        442 => Assessment::Unsupported {
-            reason: "double opener is not partially consumed by a single closer",
-            observed: "<p>**foo*</p>\n",
-        },
-        443 => Assessment::Unsupported {
-            reason: "double closer is not partially consumed by a single opener",
-            observed: "<p>*foo**</p>\n",
-        },
-        444 => Assessment::Unsupported {
-            reason: "triple opener is not partially consumed by a double closer",
-            observed: "<p>***foo**</p>\n",
         },
         _ => panic!("unclassified example {number}"),
     }
@@ -256,9 +240,9 @@ fn pinned_commonmark_emphasis_partial_report() {
         counts[category] += 1;
         eprintln!("example {number}: category {category} — {reason}");
     }
-    assert_eq!(counts, [9, 0, 5]);
+    assert_eq!(counts, [13, 0, 1]);
     eprintln!(
-        "CommonMark 0.31.2 Emphasis subset 431–444: 9 supported, 0 deliberate differences, 5 unsupported; 445–481 not scored"
+        "CommonMark 0.31.2 Emphasis subset 431–444: 13 supported, 0 deliberate differences, 1 unsupported; 445–481 not scored"
     );
 }
 
@@ -531,10 +515,22 @@ fn nested_late_closers_preserve_identity_and_literal_partial_runs() {
             "*",
             format!("<em>{body}<strong>bar</strong> tail</em>"),
         ),
-        ("**", "*", "", "***", format!("**{body}*bar tail***")),
-        ("**", "", "", "*", format!("**{body}bar tail*")),
-        ("*", "", "", "**", format!("*{body}bar tail**")),
-        ("***", "", "", "**", format!("***{body}bar tail**")),
+        (
+            "**",
+            "*",
+            "",
+            "***",
+            format!("<strong>{body}<em>bar tail</em></strong>"),
+        ),
+        ("**", "", "", "*", format!("*<em>{body}bar tail</em>")),
+        ("*", "", "", "**", format!("<em>{body}bar tail</em>*")),
+        (
+            "***",
+            "",
+            "",
+            "**",
+            format!("*<strong>{body}bar tail</strong>"),
+        ),
     ] {
         let prefix = format!("{open}{body}{inner}bar");
         let suffix = format!("{inner_close} tail{close}!\n");

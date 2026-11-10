@@ -327,7 +327,7 @@ fn objects_failed_candidates_and_scope_boundaries_keep_existing_priority() {
         ("$*raw* *unfinished", "$*raw* *unfinished", 0, 0),
         ("[*label*!](/u)", "label!", 1, 0),
         ("a*_label_*b", "a*label*b", 0, 0),
-        ("x***literal***!", "x***literal***!", 0, 0),
+        ("x***literal***!", "xliteral!", 0, 0),
         ("x___literal___!", "x___literal___!", 0, 0),
         ("*open\n\nclose*!", "*open\n\nclose*!", 0, 0),
         ("> *open\nplain*!", "open\nplain!", 0, 0),

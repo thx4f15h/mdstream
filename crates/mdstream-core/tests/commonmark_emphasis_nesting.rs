@@ -103,7 +103,13 @@ fn project(doc: &Document) -> String {
     html
 }
 
+#[path = "support/partial_emphasis.rs"]
+mod partial_emphasis;
+
 enum Assessment {
+    Rejected {
+        reason: &'static str,
+    },
     Supported,
     Unsupported {
         reason: &'static str,
@@ -115,44 +121,31 @@ enum Assessment {
 // No example in this subset is classified as a deliberate dialect difference.
 fn assessment(number: usize) -> Assessment {
     match number {
-        406 | 410..=412 => Assessment::Supported,
+        406 | 410..=412 | 414 | 415 => Assessment::Supported,
         407 => Assessment::Unsupported {
-            reason: "same-style nesting depth is not represented by the public emphasis bit",
+            reason: "bit-only projection does not consume the published repeated emphasis depth",
             observed: "<p><em>foo bar baz</em></p>\n",
         },
-        408 => Assessment::Unsupported {
-            reason: "a double opener cannot be partially consumed by single closers",
-            observed: "<p>__foo_ bar_</p>\n",
+        408 | 409 => Assessment::Unsupported {
+            reason: "partial consumption works, but bit-only projection omits repeated emphasis depth",
+            observed: "<p><em>foo bar</em></p>\n",
         },
-        409 => Assessment::Unsupported {
-            reason: "a double closer cannot close two single openers",
-            observed: "<p>*foo *bar**</p>\n",
-        },
-        413 => Assessment::Unsupported {
-            reason: "a triple opener cannot be consumed by strong and emphasis closers",
-            observed: "<p>***foo** bar*</p>\n",
-        },
-        414 => Assessment::Unsupported {
-            reason: "a triple closer cannot close strong and emphasis openers",
-            observed: "<p>*foo **bar***</p>\n",
-        },
-        415 => Assessment::Unsupported {
-            reason: "a triple closer cannot close adjacent intraword mixed openers",
-            observed: "<p>*foo**bar***</p>\n",
-        },
-        416 => Assessment::Unsupported {
-            reason: "triple delimiter runs remain literal instead of opening mixed styles",
-            observed: "<p>foo***bar***baz</p>\n",
+        413 | 416 => Assessment::Rejected {
+            reason: "public depths record both styles, but simultaneous starts leave their order unspecified",
         },
         _ => panic!("unclassified example {number}"),
     }
 }
 
 fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
-    let actual = project(doc);
     match assessment(number) {
-        Assessment::Supported => assert_eq!(actual, expected, "example {number}"),
+        Assessment::Supported => assert_eq!(project(doc), expected, "example {number}"),
+        Assessment::Rejected { .. } => {
+            assert!(std::panic::catch_unwind(|| project(doc)).is_err());
+            partial_emphasis::check(number, doc);
+        }
         Assessment::Unsupported { observed, .. } => {
+            let actual = project(doc);
             assert_ne!(
                 actual, expected,
                 "example {number} now matches; review classification"
@@ -185,14 +178,14 @@ fn pinned_commonmark_emphasis_nesting_report() {
         check_case(number, markdown, expected, &parse(markdown));
         let (category, reason) = match assessment(number) {
             Assessment::Supported => (0, "matches upstream"),
-            Assessment::Unsupported { reason, .. } => (2, reason),
+            Assessment::Unsupported { reason, .. } | Assessment::Rejected { reason } => (2, reason),
         };
         counts[category] += 1;
         eprintln!("example {number}: category {category} — {reason}");
     }
-    assert_eq!(counts, [4, 0, 7]);
+    assert_eq!(counts, [6, 0, 5]);
     eprintln!(
-        "CommonMark 0.31.2 Emphasis subset 406–416: 4 supported, 0 deliberate differences, 7 unsupported; 417–481 not scored"
+        "CommonMark 0.31.2 Emphasis subset 406–416: 6 supported, 0 deliberate differences, 5 unsupported; 417–481 not scored"
     );
 }
 
@@ -469,6 +462,13 @@ fn nested_late_closers_preserve_identity_and_literal_partial_runs() {
         doc.finish();
         assert_eq!(snapshot(&doc), snapshot(&parse(&current)));
         assert_eq!(doc.block_at(0).unwrap(), block);
-        assert_eq!(project(&doc), format!("<p>{expected}!</p>\n"));
+        if open == "***" {
+            assert!(std::panic::catch_unwind(|| project(&doc)).is_err());
+            let at = doc.source().find('中').unwrap();
+            let run = doc.runs_in(Span::new(at, at + 3)).unwrap().next().unwrap();
+            assert_eq!((run.emphasis_depth, run.strong_depth), (1, 1));
+        } else {
+            assert_eq!(project(&doc), format!("<p>{expected}!</p>\n"));
+        }
     }
 }

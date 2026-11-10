@@ -122,7 +122,7 @@ fn reference_definitions_are_late_and_first_wins() {
 fn unfinished_and_malformed_constructs_do_not_reparse() {
     let doc =
         parse("***literal*** a_b_c ``unclosed `code * x\n\n[x](bad target) [outer [inner]]\n");
-    assert!(visible(&doc).starts_with("***literal*** a_b_c ``unclosed `code * x"));
+    assert!(visible(&doc).starts_with("literal a_b_c ``unclosed `code * x"));
     assert!(visible(&doc).contains("x(bad target) [outer inner]"));
 }
 

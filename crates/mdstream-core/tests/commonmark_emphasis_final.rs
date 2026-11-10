@@ -186,6 +186,9 @@ fn project(doc: &Document) -> String {
     html
 }
 
+#[path = "support/partial_emphasis.rs"]
+mod partial_emphasis;
+
 enum Assessment {
     Supported,
     Unsupported {
@@ -206,25 +209,12 @@ fn assessment(number: usize) -> Assessment {
             reason: "public emphasis bit does not preserve same-style nested depth",
             observed: "<p><em>foo</em></p>\n",
         },
-        464 => Assessment::Unsupported {
-            reason: "long delimiter runs require partial consumption into nested styles",
-            observed: "<p>****foo****</p>\n",
+        464..=466 => Assessment::Unsupported {
+            reason: "partial consumption works, but bit-only projection omits repeated strong depth",
+            observed: "<p><strong>foo</strong></p>\n",
         },
-        465 => Assessment::Unsupported {
-            reason: "long delimiter runs require partial consumption into nested styles",
-            observed: "<p>____foo____</p>\n",
-        },
-        466 => Assessment::Unsupported {
-            reason: "long delimiter runs require partial consumption into nested styles",
-            observed: "<p>******foo******</p>\n",
-        },
-        467 => Assessment::Unsupported {
-            reason: "long delimiter runs require partial consumption into nested styles",
-            observed: "<p>***foo***</p>\n",
-        },
-        468 => Assessment::Unsupported {
-            reason: "long delimiter runs require partial consumption into nested styles",
-            observed: "<p>_____foo_____</p>\n",
+        467 | 468 => Assessment::Rejected {
+            reason: "public depths record both styles, but simultaneous starts leave their order unspecified",
         },
         473 | 474 => Assessment::Rejected {
             reason: "emphasis crosses the link label boundary, hiding literal delimiters and leaving a nonuniform syntax envelope",
@@ -317,7 +307,14 @@ fn check_rejected_scope(number: usize, doc: &Document) {
 fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
     match assessment(number) {
         Assessment::Supported => assert_eq!(project(doc), expected, "example {number}"),
-        Assessment::Rejected { .. } => check_rejected_scope(number, doc),
+        Assessment::Rejected { .. } => {
+            if matches!(number, 467 | 468) {
+                assert!(std::panic::catch_unwind(|| project(doc)).is_err());
+                partial_emphasis::check(number, doc);
+            } else {
+                check_rejected_scope(number, doc);
+            }
+        }
         Assessment::Unsupported { observed, .. } => {
             let actual = project(doc);
             assert_ne!(
@@ -662,6 +659,13 @@ fn late_precedence_closure_preserves_block_and_link_identity() {
         assert_eq!(snapshot(&doc), snapshot(&parse(&current)));
         assert_eq!(doc.block_at(0), Some(block));
         assert_eq!(doc.link_info(LinkId(0)).copied(), link_info);
-        assert_eq!(project(&doc), format!("<p>{content}!</p>\n"));
+        if open == "***" {
+            assert!(std::panic::catch_unwind(|| project(&doc)).is_err());
+            let at = doc.source().find('中').unwrap();
+            let run = doc.runs_in(Span::new(at, at + 3)).unwrap().next().unwrap();
+            assert_eq!((run.emphasis_depth, run.strong_depth), (1, 1));
+        } else {
+            assert_eq!(project(&doc), format!("<p>{content}!</p>\n"));
+        }
     }
 }

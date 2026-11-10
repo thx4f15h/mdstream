@@ -3387,73 +3387,24 @@ nix develop -c cargo nextest run --test commonmark_lists
 七项回归覆盖 **814 个合法 UTF-8 切点、787 个逐字符前缀及逐前缀 EOF**、完整快照/pending、源码与切片映射、显示/目标/title 三游标共享六字节预算、晚定义与首定义优先、稳定对象身份，以及输出敏感性/拒绝边界。运行 `nix develop -c cargo nextest run --test commonmark_link_labels`；[交付记录](DONE.md#2026-11-04-commonmark-链接标签与嵌套组合子集评分交付) 记录来源和验收。本单元只增加评分设施；核心、依赖、累计追加 O(n log n)、空间 O(n) 及共享预算契约保持，短样例不替代既有长输入复杂度验收。
 
 
-## CommonMark 基础单分隔符强调子集评分（2026-11-04）
+## CommonMark 强调与加粗评分
 
-`tests/commonmark_emphasis_single.rs` 固定 [CommonMark 0.31.2 Emphasis and strong emphasis](https://spec.commonmark.org/0.31.2/#emphasis-and-strong-emphasis) 的 **350–373** 共 24 例：**14 支持、8 刻意差异、2 未支持**。此范围只覆盖章节前段的单个 `*`/`_` 分隔符，374–481 仍待评分；不代表完整单分隔符规则、加粗或强调兼容性已经完成。官方 Markdown/HTML 由固定 SHA-256 的离线生成器逐字保留，独立观察与官方期望分离。
+离线固定 [CommonMark 0.31.2 官方数据](https://spec.commonmark.org/0.31.2/spec.json) 的 Emphasis and strong emphasis 全章 350–481，共 132 例。当前八份评分投影合计 **104 支持、0 刻意差异、28 未支持**；支持表示既有投影能按公开语义复现官方 HTML。官方 Markdown/HTML 和投影算法保持，初次评分与后来修复的历史记录留在 DONE。
 
-现有分隔符只检查 ASCII 空白，词内下划线排除只检查 ASCII 字母数字，不实现完整标点 flanking：352/353/354/359/362/363/368/372 保留该方言差异（354 同时保留美元数学候选优先级）。369/373 的贪心配对使内层 `foo` 未获强调，且公开样式位不表示同类嵌套深度，记录为未支持。评分投影只读取公开块/显示样式，不重解析源码、推导嵌套树、补标记或裁剪内容；只省略借用源码中的段末 LF，拒绝其它块、对象和未评分样式。
+| 范围 | 支持 | 刻意差异 | 未支持 | 专项测试 |
+| --- | ---: | ---: | ---: | --- |
+| 350–373 | 22 | 0 | 2 | `commonmark_emphasis_single` |
+| 374–389 | 15 | 0 | 1 | `commonmark_emphasis_strong` |
+| 390–405 | 16 | 0 | 0 | `commonmark_emphasis_strong_close` |
+| 406–416 | 6 | 0 | 5 | `commonmark_emphasis_nesting` |
+| 417–430 | 7 | 0 | 7 | `commonmark_emphasis_runs` |
+| 431–444 | 13 | 0 | 1 | `commonmark_emphasis_partial` |
+| 445–459 | 15 | 0 | 0 | `commonmark_emphasis_unequal` |
+| 460–481 | 10 | 0 | 12 | `commonmark_emphasis_final` |
 
-六项回归覆盖 **286 个 UTF-8 切点、262 个逐字符前缀及逐前缀 EOF**、完整快照/pending、源码和切片映射、六字节显示读取及样式与无限预算对照、共享预算耗尽时另一游标停步、超过分类窗口后的晚闭合块身份、未闭合 EOF、换行/实体/标记与投影敏感性及拒绝边界。运行 `nix develop -c cargo nextest run --test commonmark_emphasis_single`；夹具校验 `python3 scripts/generate_commonmark_emphasis_single.py /path/to/spec.json --check`。本单元只新增评分设施，核心、依赖、累计追加 O(n log n)、空间 O(n) 和预算契约保持；交付与剩余范围见 [DONE](DONE.md#2026-11-04-commonmark-基础单分隔符强调子集评分交付)。
+旧投影只读取样式位，不消费公开的同类深度，也不猜测同时开启样式的顺序。408/409、417/426/427、464–466 的部分消耗与深度已经实现，仍因该投影限制计入未支持；413/416/430/467/468 的同时开启顺序被明确拒绝，并另行锁定显示文本及公开深度。独立的单类深度消费者直接匹配 369/373/389/407–409/417/425–427/461/463–466 的原始 HTML，未据此改写八份投影。419、473/474 的链接作用域仍有核心缺口；475–477 的原始 HTML 在需求范围外。完整顺序/身份、一般确认撤销和链接优先级继续按 TODO 推进。
 
-
-### CommonMark 单下划线收尾与基础加粗子集评分
-
-固定 [CommonMark 0.31.2 官方数据](https://spec.commonmark.org/0.31.2/spec.json) 的 Emphasis and strong emphasis **374–389 共 16 例**：374–377 补齐单下划线收尾，378–389 覆盖基础双分隔符加粗。评分为 **11 支持、4 刻意差异、1 未支持**。375/388 保留 ASCII 字母数字词内判断，380/385 保留简化标点边界；389 的正文虽全部带加粗样式，公开样式位不能表示双层 strong 深度，仍归未支持。前一子集与本子集合计覆盖 350–389；390–481 和完整强调兼容性继续待办。
-
-官方 Markdown/HTML 逐字保存，离线生成器校验固定 SHA-256。独立观察与只读公开语义投影分离；投影只读取段落、显示片段及 EMPHASIS/STRONG 位，不从源码重建分隔符或嵌套树、不补标记。混合强调/加粗嵌套不属于本子集，投影遇到它会拒绝；同类嵌套深度缺口保留在评分中。
-
-六项测试覆盖 **230 个合法 UTF-8 切点、214 个逐字符前缀及逐前缀 EOF**、完整快照/pending、源码与切片映射、六字节共享显示预算及逐字符样式一致性、零预算/同预算第二游标停步、长正文晚闭合块身份、未闭合 EOF、实体/换行/可见标记以及投影敏感性与拒绝边界。运行 `nix develop -c cargo nextest run --test commonmark_emphasis_strong`；夹具校验 `python3 scripts/generate_commonmark_emphasis_strong.py /path/to/spec.json --check`。本单元只新增评分设施，核心、依赖、累计追加 O(n log n)、空间 O(n) 与预算契约保持；短样例不替代既有长输入复杂度验收。见 [交付记录](DONE.md#2026-11-04-commonmark-单下划线收尾与基础加粗子集评分交付)。
-
-## CommonMark 加粗收尾与混合强调子集评分
-
-固定 [CommonMark 0.31.2 官方数据](https://spec.commonmark.org/0.31.2/spec.json) 的 Emphasis and strong emphasis **390–405 共 16 例**，独立评分为 **13 支持、3 刻意差异、0 未支持**。390–403 覆盖加粗收尾及混合嵌套，404–405 覆盖强调中的直接链接和跨行正文。392/398 保留简化标点边界，401 保留 ASCII 字母数字词内下划线判断；三个强调子集现覆盖 350–405，406–481 与完整强调兼容性仍待办。
-
-官方 Markdown/HTML 原样保留于 `tests/fixtures/commonmark_emphasis_strong_close.rs`，生成器固定来源摘要，独立观察与官方预期分开。投影仅根据公开显示样式的先后变化处理两种混合嵌套顺序，要求外层样式先有可见内容；同时开启多个样式、交叉结束与无法表达的同类嵌套不据此认定支持。直接链接要求整个公开对象范围具有一致强调样式，读取公开标签/目标及解码游标，不从 Markdown 推导嵌套或补标记。链接内部样式变化、图片、引用链接及其它未评分结构主动拒绝。
-
-七项回归覆盖 **297 个 UTF-8 切点、281 个逐字符前缀及逐前缀 EOF**、快照/pending、完整与切片源码映射、六字节显示预算及逐字符样式对照、共享预算耗尽时第二游标停步、长正文晚闭合块身份；另验证两种混合嵌套和外层强调晚闭合前后链接身份/目标保持、显示与目标共享六字节预算。官方来源独立核对、篡改拒绝和三份强调夹具编号并集检查通过。复跑 `nix develop -c cargo nextest run --test commonmark_emphasis_strong_close --no-fail-fast`；离线夹具校验 `python3 scripts/generate_commonmark_emphasis_strong_close.py /path/to/spec.json --check`。只新增评分设施，核心、依赖、累计追加 O(n log n)、空间 O(n) 与预算契约保持；本子集不替代已有长输入复杂度验收，详见 [交付记录](DONE.md#2026-11-04-commonmark-加粗收尾与混合强调子集评分交付)。
-
-
-### CommonMark 嵌套强调与分隔符部分消耗子集评分
-
-离线固定 [CommonMark 0.31.2 官方数据](https://spec.commonmark.org/0.31.2/spec.json)中 Emphasis and strong emphasis 的 **406–416 共 11 例**，评分为 **4 支持、0 刻意差异、7 未支持**。406/410/411 的可辨混合嵌套与 412 的未配对双星号匹配官方 HTML；407 的同类嵌套只暴露单个 EMPHASIS 位，408/409 的双连分隔符部分消耗及 413–416 的三连分隔符仍未支持。本次交付评分设施，解析行为保持；417–481 和完整强调兼容性继续待办。
-
-`tests/commonmark_emphasis_nesting.rs` 的投影只读公开段落、显示片段与样式变化，不扫描源码推导嵌套、不补标记；同时开启多个样式和交叉结束主动拒绝，链接等本子集以外结构也拒绝。官方 Markdown/HTML 原样保留，独立观察与夹具分离；新测试覆盖全切点/逐前缀及 EOF、源码/样式映射、六字节共享预算、长正文晚闭合稳定块身份、同类嵌套深度缺口和投影敏感性。运行 `nix develop -c cargo nextest run --test commonmark_emphasis_nesting --no-fail-fast`，来源校验用 `python3 scripts/generate_commonmark_emphasis_nesting.py /path/to/spec.json --check`。
-
-
-## CommonMark 长分隔符与嵌套加粗子集评分
-
-固定 [CommonMark 0.31.2 官方数据](https://spec.commonmark.org/0.31.2/spec.json) 的 Emphasis and strong emphasis **417–430 共 14 例**，评分为 **7 支持、0 刻意差异、7 未支持**。420–424、428/429 匹配官方；417/426/427/430 缺少长分隔符的部分消耗，418/425 缺少公开同类嵌套深度，419 的链接正文丢失强调而隐藏包络仍带外层强调。五份强调夹具现覆盖 350–430；431–481 与完整强调兼容性继续待办。
-
-官方 Markdown/HTML 原样固定，离线生成器校验 SHA-256。投影仅读取公开段落、显示样式和链接元数据；混合样式顺序须由先后变化确定，直接链接须有统一的包络样式。419 主动拒绝投影并单独锁定可见正文/样式/源码范围及链接元数据，计入未支持，不合成修复后的 HTML。同类嵌套不由源码标记重建；其它结构、同时开启多个样式及交叉结束继续拒绝。
-
-七项回归覆盖 **302 个切点、288 个逐字符前缀及逐前缀 EOF**、快照/pending、源码/切片和样式映射、六字节共享显示预算、长正文晚闭合块/链接身份、显示与目标共享预算、实体/空白/可见标记及投影敏感性/歧义拒绝。专项运行 `nix develop -c cargo nextest run --test commonmark_emphasis_runs`；来源校验用 `python3 scripts/generate_commonmark_emphasis_runs.py /path/to/spec.json --check`。只增加评分设施，核心、累计追加 O(n log n)、空间 O(n) 与预算契约保持；见 [交付记录](DONE.md#2026-11-04-commonmark-长分隔符与嵌套加粗子集评分交付)。
-
-
-## CommonMark 混合强调收尾与字面分隔符子集评分
-
-固定 [CommonMark 0.31.2 官方数据](https://spec.commonmark.org/0.31.2/spec.json) 的 Emphasis and strong emphasis **431–444 共 14 例**，评分为 **9 支持、0 刻意差异、5 未支持**。433–441 匹配官方；431/442–444 的分隔符部分消耗与 432 的重复 strong 深度尚未支持。六份强调夹具累计覆盖 350–444；445–481 和完整强调兼容性继续待办。
-
-官方 Markdown/HTML 原样固定，生成器验证来源 SHA-256。本子集投影按公开对象范围与显示样式区分链接内外强调：隐藏的链接前后包络须具有一致外层样式，正文保留外层样式，标签内部的样式变化输出在链接内。433 因此能按公开语义生成官方 HTML；不会扫描源码分隔符、补标记或合成同类嵌套。外层样式丢失、歧义同时开启、交叉结束及其它未评分结构继续拒绝。
-
-七项回归覆盖 **224 个切点、210 个逐字符前缀及逐前缀 EOF**、快照/pending、源码/切片与样式映射、六字节共享预算、长正文晚闭合块/链接身份、链接标签内外样式及显示/目标共享预算。运行 `nix develop -c cargo nextest run --test commonmark_emphasis_partial`；离线来源校验用 `python3 scripts/generate_commonmark_emphasis_partial.py /path/to/spec.json --check`。只增加评分设施，核心、零运行时依赖、累计追加 O(n log n)、空间 O(n) 与预算契约保持，详见[交付记录](DONE.md#2026-11-04-commonmark-混合强调收尾与字面分隔符子集评分交付)。
-
-
-## CommonMark 不等长强调与转义分隔符子集评分
-
-固定 [CommonMark 0.31.2 官方数据](https://spec.commonmark.org/0.31.2/spec.json) 的 Emphasis and strong emphasis **445–459 共 15 例**，评分为 **6 支持、0 刻意差异、9 未支持**。448–453 的字面下划线串、转义下划线和强调中的字面星号匹配官方；445–447、454–459 的不等长 opener/closer 缺少部分消耗能力。七份强调夹具累计覆盖 350–459，460–481 和完整强调兼容性继续待办。
-
-官方 Markdown/HTML 原样固定，离线生成器验证来源 SHA-256；评分投影只读取公开段落、显示片段和样式，不扫描分隔符、补标记或推导嵌套深度。链接与其它未评分结构、同时开启多个样式和交叉结束主动拒绝。转义反斜线隐藏、字面 payload 的源码位置和样式另有直接断言。
-
-六项回归覆盖 **148 个切点、133 个逐字符前缀及逐前缀 EOF**、快照/pending、源码/切片与样式映射、六字节共享预算、超过分类窗口的 Unicode 正文晚闭合块身份，以及投影敏感性和拒绝边界。运行 `nix develop -c cargo nextest run --test commonmark_emphasis_unequal`；离线来源校验用 `python3 scripts/generate_commonmark_emphasis_unequal.py /path/to/spec.json --check`。本项交付评分设施，累计追加 O(n log n)、空间 O(n)、零运行时依赖和预算契约保持，详见[交付记录](DONE.md#2026-11-04-commonmark-不等长强调与转义分隔符子集评分交付)。
-
-
-## CommonMark 嵌套强调收尾与行内优先级子集评分
-
-固定 [CommonMark 0.31.2 官方数据](https://spec.commonmark.org/0.31.2/spec.json) 的 Emphasis and strong emphasis **460–481 共 22 例**，评分为 **10 支持、0 刻意差异、12 未支持**。460/462、469–472 和 478–481 匹配官方；461/463 缺少公开同类嵌套深度，464–468 缺少长分隔符部分消耗，473/474 的强调跨越链接标签边界，475–477 的原始 HTML 不在需求范围内。本次完成此前剩余的 460–481 评分；八份夹具精确覆盖本章 350–481 全部 132 例，合计 **74 支持、15 刻意差异、43 未支持**，完整强调兼容性与宽泛标准覆盖继续待办。
-
-官方 Markdown/HTML 原样固定，生成器校验 SHA-256。投影只读取公开段落、显示样式与链接元数据，按样式变化处理可辨的强调/代码嵌套；链接前后隐藏包络须有统一样式。473/474 明确拒绝投影，并精确断言全部显示片段、样式、对象区间和目标，计入未支持；不补回标记或移动样式边界。歧义同时开启、交叉结束及其它未评分结构继续拒绝。
-
-六项回归覆盖 **356 个切点、334 个逐字符前缀及逐前缀 EOF**、源码/切片/样式与链接映射、六字节共享显示预算、目标/title 预算解码、代码/自动链接内字面定界符和长正文晚闭合块/链接身份。运行 `nix develop -c cargo nextest run --test commonmark_emphasis_final`；来源校验用 `python3 scripts/generate_commonmark_emphasis_final.py /path/to/spec.json --check`。本项只增加评分设施，核心、累计追加 O(n log n)、空间 O(n)、零运行时依赖与预算契约保持，详见[交付记录](DONE.md#2026-11-04-commonmark-嵌套强调收尾与行内优先级子集评分交付)。
+评分回归保留全切点/逐前缀及 EOF、完整与切片源码映射、六字节共享预算、长正文晚闭合身份和投影敏感性/拒绝边界。复跑 `nix develop -c cargo nextest run --test commonmark_emphasis_unequal --test emphasis_runs --test emphasis_depth --no-fail-fast`；对应 `scripts/generate_commonmark_emphasis_*.py /path/to/spec.json --check` 离线核验固定夹具。当前解析模型与验收见下方[部分消耗接口](#强调分隔符部分消耗与三倍数规则)。
 
 ## GFM 删除线章节评分
 
@@ -3618,25 +3569,11 @@ CommonMark 0.31.2 例 540 现匹配官方 HTML，539–552 子集更新为 **7 �
 GFM 0.29-gfm 例 491 现匹配官方 HTML，491–493 为 **3 支持、0 刻意差异、0 未支持**。官方 Markdown/HTML 和评分投影保持，离线固定来源与独立读取器核验通过。本节收窄前文仅列举 `~~` 的当前语义及旧 491 差异统计，历史交付记录保留；完整 Unicode flanking、同类嵌套深度、完整强调/部分 run 消耗、链接作用域及宽泛 GFM/容器兼容性继续见 TODO，不扩展渲染或 UI 阶段。
 
 
-## 强调/加粗的 ASCII 标点侧界与下划线词内规则（2026-11-10）
+## 强调/加粗的 Unicode 侧界
 
-现有精确单/双 `*`、`_` 使用相邻字节的空白/ASCII 标点/普通正文分类：序列端点及 HT/LF/FF/CR/space 为空白，其余非 ASCII 字节仍为普通正文。左侧界要求后继非空白，后继为标点时前驱须为空白或标点；右侧界对称。星号按左右侧界开闭，下划线还要求 opener 非右侧界或前驱为标点、closer 非左侧界或后继为标点。因此 `a*"foo"*`、`*(*foo)` 和 `中_文_尾` 保持字面，`foo-_(bar)_` 显示 `foo-(bar)`；`a*£*b` 与 NBSP 仍沿用普通字节方言，未声称完整 Unicode flanking。
+星号/下划线 run 按相邻语义标量判断侧界：[CommonMark 0.31.2](https://spec.commonmark.org/0.31.2/#emphasis-and-strong-emphasis) 的空白为 Zs + TAB/LF/FF/CR，标点为 Unicode P/S。左侧界要求后继非空白，后继为标点时前驱须为空白或标点；右侧界对称。星号按左右侧界开闭，下划线额外排除词内边界。因此 `a*"foo"*`、`*(*foo)`、`中_文_尾`、`a*£*b` 保持字面，`「_中_」` 显示为 `「中」`。实体不替换用于侧界的原始语义标量，部分 tab 虚拟空格按空白参与。
 
-run 等待后继/EOF 才确认，未匹配和三连/更长 run 保持字面，失败不回放。单/双波浪号的独立侧界、贪心配对、同类样式扁平表示及对象候选优先级保持。继承 closer 后接标点可成为 close-only，晚表头复用既有隔离配对：确认时丢弃，失败/EOF 一次提交。实现仅做常数次相邻字节分类，无新增状态、分配、扫描或旧正文/引用/祖先回访，累计 O(n log n)、空间 O(n)；显示、查询及目标/title 读取仍共享 Budget。
-
-CommonMark 0.31.2 的 352/359/362/363/368/372/375/380/385/388/392/398/401 共 13 例现匹配官方 HTML；350–373、374–389、390–405 当前三类统计分别为 **20/2/2、15/0/1、16/0/0**。369/373 和 419 的观察虽改善，仍因缺重复强调深度保持未支持，417–430 仍为 **7/0/7**。官方 Markdown/HTML、生成器和八个评分投影未改。本节取代前文相关 ASCII 标点/普通字节词内下划线差异及旧汇总的当前语义描述；Unicode 侧界、同类深度、部分 run 消耗、链接作用域、完整容器和实际排版/UI 仍见 TODO，历史交付保留。
-
-复跑：`nix develop -c cargo nextest run --test ascii_flanking --test closed_headers --test commonmark_emphasis_single --test commonmark_emphasis_strong --test commonmark_emphasis_strong_close --test commonmark_emphasis_runs --no-fail-fast`。七项新回归、独立模型、分块/EOF/身份/原始映射/六字节共享预算及深层百万字计数和完整验收见[交付记录](DONE.md#2026-11-10-强调加粗-ascii-侧界与词内下划线交付)。
-
-
-## 强调/加粗的 Unicode 侧界（2026-11-10）
-
-精确单/双 `*`、`_` 现在按相邻语义标量判断侧界：[CommonMark 0.31.2](https://spec.commonmark.org/0.31.2/#emphasis-and-strong-emphasis) 的空白为 Zs + TAB/LF/FF/CR，标点包括 Unicode P/S。`*NBSP a NBSP*`、`a*£*b` 和 `a**😀**b` 保留字面定界符，`「_中_」` 则显示为 `「中」`；NEL、VT、Zl/Zp 作为普通字符，实体解码不改变原始语法侧界。删除线沿用自身 ASCII 空白方言。
-
-分类固定为 Unicode 17.0.0；官方原始数据、完整许可与离线生成步骤见 [data/unicode](data/unicode/README.md)。现有扫描只记录一个前一标量，虚拟 tab 空格和表头隔离同步更新该状态；静态二分表的每侧分类/比较至多 12 步，公开计入 `Work.flanking_steps`。不回扫正文、引用或祖先，保留累计 O(n log n)、空间 O(n)、原始源码映射、稳定对象身份及显示/查询共享预算。
-
-CommonMark 353/354 现匹配官方 HTML，350–373 为 **22 支持、0 刻意差异、2 未支持**；其余强调样例观察和八个评分投影保持。此节取代此前 Unicode 普通字节分类及对应旧汇总的当前描述，历史交付记录保持。复跑：`nix develop -c cargo nextest run --test unicode_flanking --test ascii_flanking --test commonmark_emphasis_single --test closed_headers --no-fail-fast`；离线表核验：`python3 scripts/generate_unicode_categories.py --check`。七项集成回归、全标量模型和完整验收见[交付记录](DONE.md#2026-11-10-强调加粗-unicode-侧界交付)。部分 run 消耗、同类嵌套深度、链接作用域/通用撤销、完整容器及终端排版/UI 仍按 TODO 推进。
-
+固定 Unicode 17.0.0 分类表有 357 段，`Work.flanking_steps` 计入每侧至多 12 次分类/比较；每个 run 只在后继或 EOF 到来时分类，无旧正文/祖先回扫。单/双波浪号保持独立的 ASCII 空白及精确长度方言。官方分类数据、摘要和 Unicode License V3 随仓库保存，`python3 scripts/generate_unicode_categories.py --check` 可离线核验。ASCII 与 Unicode 的历史交付分别见 [ASCII 记录](DONE.md#2026-11-10-强调加粗-ascii-侧界与词内下划线交付)和 [Unicode 记录](DONE.md#2026-11-10-强调加粗-unicode-侧界交付)。
 
 ## 已确认强调/加粗的同类嵌套深度（2026-11-10）
 
@@ -3644,4 +3581,14 @@ CommonMark 353/354 现匹配官方 HTML，350–373 为 **22 支持、0 刻意�
 
 普通区间、tile、可复用 scratch 及 `DisplayCursor` 读取同一标注；晚闭合通过原有区间失效更新缓存，稳定块/容器/链接/数学身份和源码区间保持。两个计数复用动态标注树的区间累加与既有遍历预算，无独立回扫或查询；每个现有 Mark/遍历帧增加两个 `usize`，保持累计解析 O(n log n)、空间 O(n)、零运行时依赖和禁止 unsafe。示例：`nix develop -c cargo run --release -p mdstream-core --example emphasis_depth`；专项：`nix develop -c cargo nextest run --test emphasis_depth --no-fail-fast`。
 
-此接口描述现有方言中已经确认的配对，不提供完整嵌套树、相邻同深度配对的身份或同时开启多个样式的先后顺序。精确 run、Unicode 侧界、贪心配对、表头隔离及其它对象优先级保持；长 run 部分消耗、通用确认/撤销、链接作用域与完整强调仍按 TODO 推进。原八份评分继续只消费样式位，投影、观察和三类统计保持；旧记录中“样式位丢失深度”的说明不再代表新字段缺失。新增独立计数消费者直接匹配官方 369/373/389/407 的原始 HTML，不将这四例外推为通用嵌套支持或改写旧章评分。完整验收见[交付记录](DONE.md#2026-11-10-已确认强调加粗的同类嵌套深度接口交付)，终端排版/UI 继续保留后续。
+此接口描述已确认配对，不提供完整嵌套树、相邻同深度配对的身份或同时开启多个样式的先后顺序。任意长度 run 的部分消耗见下节；通用确认/撤销、链接作用域与完整强调继续按 TODO 推进。八份旧评分仍只消费样式位，当前观察及统计见上方评分表；独立深度消费者只在单类顺序确定时输出对应 HTML。原接口验收见[交付记录](DONE.md#2026-11-10-已确认强调加粗的同类嵌套深度接口交付)，终端排版/UI 保留后续。
+
+## 强调分隔符部分消耗与三倍数规则
+
+星号和下划线支持任意长度的 run：就近寻找兼容 opener，双方剩余长度至少二字节时消耗两字节并增加 strong 深度，否则消耗一字节并增加 emphasis 深度；从 opener 末端与 closer 起端消费。`__foo_ bar_` 的 `foo`/`bar` 强调深度为 2/1，`***foo** bar*` 的 `foo` 同时有强调和加粗各一层。剩余字节保持字面，具备左侧界时也可继续作为 opener。若任一 run 可开又可闭，原始长度之和不得为三的倍数，除非两者原始长度都为三的倍数；部分消耗不改变原始分类。`*foo**bar*` 因此保留内侧双星号，`foo***bar***baz` 可配对。
+
+run 等待后继标量或 EOF 再定长；未完成/失败外层不贡献深度，已确认内层保持，关闭块/容器/单元格时不回放候选正文。继承表头的 close-only 配对可暂存，成功丢弃、失败一次提交；双向旧配对及其它不可隔离情况仍取消探测。容器前缀、代码/数学/链接的现有优先级保持；本接口不扩展链接作用域或一般语义撤销。
+
+每种标记用六个固定分类头表示原长度模三和原 can-close，单次匹配/失败最多探测六次，`Work.delimiter_search_steps` 逐次计数。每个原 opener 只入/出栈一次，剩余范围原地缩小；每次配对消耗至少一个新 closer 字节。加上既有标注树，累计解析 O(n log n)、空间 O(n)，核心继续零运行时依赖、禁止 unsafe，显示/查询/摘要共用原帧预算。
+
+示例：`nix develop -c cargo run --release -p mdstream-core --example emphasis_runs`。独立模型、流式分块/EOF、稳定身份/源码映射/共享预算及长串/深容器验收见[交付记录](DONE.md#2026-11-11-强调分隔符部分消耗与三倍数规则交付)。

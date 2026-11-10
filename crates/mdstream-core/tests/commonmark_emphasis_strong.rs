@@ -17,7 +17,7 @@ fn parse(source: &str) -> Document {
 
 // Project the published emphasis/strong bits, not an inferred delimiter tree.
 // Mixed styles are outside this subset and explicitly rejected.
-// Same-style nesting depth is not exposed by this API; never reconstruct it
+// This bit-only adapter does not consume the published depths; never reconstruct them
 // from source markers or use the example number/expected HTML in this adapter.
 fn project(doc: &Document) -> String {
     assert_eq!(doc.container_count(), 0);
@@ -326,7 +326,7 @@ fn strong_projection_preserves_visible_markers_whitespace_and_style() {
         ("**a\nb**\n", "<p><strong>a\nb</strong></p>\n"),
         ("**a  \nb**\n", "<p><strong>a<br />\nb</strong></p>\n"),
         ("**a\n\nb**\n", "<p>**a</p>\n<p>b**</p>\n"),
-        ("**a***\n", "<p>**a***</p>\n"),
+        ("**a***\n", "<p><strong>a</strong>*</p>\n"),
         (
             "**&lt;&amp;&quot;**\n",
             "<p><strong>&lt;&amp;&quot;</strong></p>\n",
@@ -340,8 +340,8 @@ fn strong_projection_preserves_visible_markers_whitespace_and_style() {
         ("*a\nb*\n", "<p><em>a\nb</em></p>\n"),
         ("*a  \nb*\n", "<p><em>a<br />\nb</em></p>\n"),
         ("*a\n\nb*\n", "<p>*a</p>\n<p>b*</p>\n"),
-        ("***x***\n", "<p>***x***</p>\n"),
-        ("*a**\n", "<p>*a**</p>\n"),
+        ("***x\n", "<p>***x</p>\n"),
+        ("*a**\n", "<p><em>a</em>*</p>\n"),
         ("&#10;\n", "<p>\n</p>\n"),
         ("*&lt;&amp;&quot;*\n", "<p><em>&lt;&amp;&quot;</em></p>\n"),
         ("*a*尾\n", "<p><em>a</em>尾</p>\n"),

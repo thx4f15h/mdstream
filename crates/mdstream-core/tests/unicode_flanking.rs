@@ -346,8 +346,11 @@ fn opaque_failed_and_scope_boundaries_retain_existing_dialects() {
     for marker in ["*", "_"] {
         let source = format!("p {}中{}。", marker.repeat(65536), marker.repeat(65536));
         let doc = parse(&source);
-        assert_eq!(visible(&doc), source);
-        assert_eq!(doc.work().flanking_steps, 0);
+        assert_eq!(visible(&doc), "p 中。");
+        let at = source.find('中').unwrap();
+        let run = doc.runs_in(Span::new(at, at + 3)).unwrap().next().unwrap();
+        assert_eq!((run.emphasis_depth, run.strong_depth), (0, 32768));
+        assert!(doc.work().flanking_steps <= 48);
         assert!(doc.work().inline_bytes <= source.len() as u64);
     }
 }

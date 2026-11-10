@@ -29,7 +29,7 @@ pub fn depths(source: &str) -> Vec<(bool, usize, usize)> {
     use Class::*;
     let bytes = source.as_bytes();
     let mut result = vec![(false, 0, 0); bytes.len()];
-    let mut stack: Vec<(u8, usize, usize)> = Vec::new();
+    let mut stack: Vec<(u8, usize, bool, usize, usize)> = Vec::new();
     let mut pairs = Vec::new();
     let mut at = 0;
     while at < bytes.len() {
@@ -48,9 +48,6 @@ pub fn depths(source: &str) -> Vec<(bool, usize, usize)> {
             at += 1;
         }
         let len = at - start;
-        if len > 2 {
-            continue;
-        }
         let before = class(source[..start].chars().next_back());
         let after = class(source[at..].chars().next());
         let (left, right) = match (before, after) {
@@ -67,14 +64,25 @@ pub fn depths(source: &str) -> Vec<(bool, usize, usize)> {
         } else {
             (left, right)
         };
-        if let Some(index) = stack
-            .iter()
-            .rposition(|&(m, n, _)| close && m == marker && n == len)
-        {
-            pairs.push((stack[index].2, start, len));
-            stack.truncate(index);
-        } else if open {
-            stack.push((marker, len, start));
+        let mut remaining = start;
+        while close && remaining < at {
+            let Some(index) = stack.iter().rposition(|&(m, n, c, _, _)| {
+                m == marker && (!(open || c) || len % 3 == 0 || (n + len) % 3 != 0)
+            }) else {
+                break;
+            };
+            let (_, _, _, left, right) = stack[index];
+            let used = 2.min(right - left).min(at - remaining);
+            pairs.push((right - used, remaining, used));
+            stack.truncate(index + 1);
+            stack[index].4 -= used;
+            if left == stack[index].4 {
+                stack.pop();
+            }
+            remaining += used;
+        }
+        if open && remaining < at {
+            stack.push((marker, len, close, remaining, at));
         }
     }
     for (open, close, len) in pairs {

@@ -103,74 +103,8 @@ fn project(doc: &Document) -> String {
     html
 }
 
-enum Assessment {
-    Supported,
-    Unsupported {
-        reason: &'static str,
-        observed: &'static str,
-    },
-}
-
-// Reviewed observations are separate from the unchanged official oracle.
-// This subset has no deliberate dialect differences.
-fn assessment(number: usize) -> Assessment {
-    match number {
-        448..=453 => Assessment::Supported,
-        445 => Assessment::Unsupported {
-            reason: "unequal delimiter runs require partial consumption of opener or closer",
-            observed: "<p>****foo*</p>\n",
-        },
-        446 => Assessment::Unsupported {
-            reason: "unequal delimiter runs require partial consumption of opener or closer",
-            observed: "<p>**foo***</p>\n",
-        },
-        447 => Assessment::Unsupported {
-            reason: "unequal delimiter runs require partial consumption of opener or closer",
-            observed: "<p>*foo****</p>\n",
-        },
-        454 => Assessment::Unsupported {
-            reason: "unequal delimiter runs require partial consumption of opener or closer",
-            observed: "<p>__foo_</p>\n",
-        },
-        455 => Assessment::Unsupported {
-            reason: "unequal delimiter runs require partial consumption of opener or closer",
-            observed: "<p>_foo__</p>\n",
-        },
-        456 => Assessment::Unsupported {
-            reason: "unequal delimiter runs require partial consumption of opener or closer",
-            observed: "<p>___foo__</p>\n",
-        },
-        457 => Assessment::Unsupported {
-            reason: "unequal delimiter runs require partial consumption of opener or closer",
-            observed: "<p>____foo_</p>\n",
-        },
-        458 => Assessment::Unsupported {
-            reason: "unequal delimiter runs require partial consumption of opener or closer",
-            observed: "<p>__foo___</p>\n",
-        },
-        459 => Assessment::Unsupported {
-            reason: "unequal delimiter runs require partial consumption of opener or closer",
-            observed: "<p>_foo____</p>\n",
-        },
-        _ => panic!("unclassified example {number}"),
-    }
-}
-
 fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
-    match assessment(number) {
-        Assessment::Supported => assert_eq!(project(doc), expected, "example {number}"),
-        Assessment::Unsupported { observed, .. } => {
-            let actual = project(doc);
-            assert_ne!(
-                actual, expected,
-                "example {number} now matches; review classification"
-            );
-            assert_eq!(
-                actual, observed,
-                "example {number} changed; upstream {expected:?}"
-            );
-        }
-    }
+    assert_eq!(project(doc), expected, "example {number}");
     assert_eq!(doc.source(), markdown);
     let mut end = 0;
     for run in doc.display_runs_in(Span::new(0, markdown.len())).unwrap() {
@@ -191,16 +125,12 @@ fn pinned_commonmark_emphasis_unequal_report() {
     for (index, &(number, markdown, expected)) in EMPHASIS_CASES.iter().enumerate() {
         assert_eq!(number, 445 + index);
         check_case(number, markdown, expected, &parse(markdown));
-        let (category, reason) = match assessment(number) {
-            Assessment::Supported => (0, "matches upstream"),
-            Assessment::Unsupported { reason, .. } => (2, reason),
-        };
-        counts[category] += 1;
-        eprintln!("example {number}: category {category} — {reason}");
+        counts[0] += 1;
+        eprintln!("example {number}: category 0 — matches upstream");
     }
-    assert_eq!(counts, [6, 0, 9]);
+    assert_eq!(counts, [15, 0, 0]);
     eprintln!(
-        "CommonMark 0.31.2 Emphasis subset 445–459: 6 supported, 0 deliberate differences, 9 unsupported; 460–481 not scored"
+        "CommonMark 0.31.2 Emphasis subset 445–459: 15 supported, 0 deliberate differences, 0 unsupported; 460–481 not scored"
     );
 }
 
@@ -485,22 +415,22 @@ fn escaped_delimiters_keep_literal_payload_and_original_mapping() {
     }
     // Escaping the would-be closer leaves the opener visible at EOF.
     assert_eq!(project(&parse("foo _\\_\n")), "<p>foo __</p>\n");
-    assert_eq!(project(&parse("foo __\\__\n")), "<p>foo ____</p>\n");
+    assert_eq!(project(&parse("foo __\\__\n")), "<p>foo _<em>_</em></p>\n");
 }
 
 #[test]
 fn late_unequal_runs_and_escaped_payload_preserve_block_identity() {
     let body = "中😀x ".repeat(300);
     for (open, tail, content) in [
-        ("****", "*", format!("****{body}end*")),
-        ("**", "***", format!("**{body}end***")),
-        ("*", "****", format!("*{body}end****")),
-        ("__", "_", format!("__{body}end_")),
-        ("_", "__", format!("_{body}end__")),
-        ("___", "__", format!("___{body}end__")),
-        ("____", "_", format!("____{body}end_")),
-        ("__", "___", format!("__{body}end___")),
-        ("_", "____", format!("_{body}end____")),
+        ("****", "*", format!("***<em>{body}end</em>")),
+        ("**", "***", format!("<strong>{body}end</strong>*")),
+        ("*", "****", format!("<em>{body}end</em>***")),
+        ("__", "_", format!("_<em>{body}end</em>")),
+        ("_", "__", format!("<em>{body}end</em>_")),
+        ("___", "__", format!("_<strong>{body}end</strong>")),
+        ("____", "_", format!("___<em>{body}end</em>")),
+        ("__", "___", format!("<strong>{body}end</strong>_")),
+        ("_", "____", format!("<em>{body}end</em>___")),
         ("_", "\\__", format!("<em>{body}end_</em>")),
         ("__", "\\___", format!("<strong>{body}end_</strong>")),
     ] {

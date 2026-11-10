@@ -165,7 +165,7 @@ fn every_byte_split_prefix_and_eof_preserves_confirmed_depths() {
 
 #[test]
 fn late_closure_keeps_ids_mapping_replacements_and_shared_budget() {
-    for marker in ["*", "**", "_", "__"] {
+    for marker in ["*", "**", "_", "__", "***", "****", "___", "____"] {
         let mut doc = Document::new();
         doc.append(&format!(
             "> - {marker}中 {marker}文 &amp; `code` $式$ [签](/目标) {}",
@@ -191,7 +191,7 @@ fn late_closure_keeps_ids_mapping_replacements_and_shared_budget() {
         assert_eq!(*doc.link_info(LinkId(0)).unwrap(), link);
         assert_eq!(doc.maths()[0], math);
         assert_ne!(doc.tile_key(TileId(0)).unwrap(), key);
-        let expected = if marker.len() == 1 { (2, 0) } else { (0, 2) };
+        let expected = (2 * (marker.len() % 2), 2 * (marker.len() / 2));
         for word in ["文", "&amp;", "code", "式", "签"] {
             assert_eq!(depth_at(&doc, word), expected);
         }
@@ -281,7 +281,7 @@ fn late_closure_keeps_ids_mapping_replacements_and_shared_budget() {
 
 #[test]
 fn header_confirmation_and_failure_discard_or_commit_depth_once() {
-    for marker in ["*", "**", "_", "__"] {
+    for marker in ["*", "**", "_", "__", "***", "****", "___", "____"] {
         for prefix in ["", "> ", "- "] {
             let continuation = if prefix == "- " { "  " } else { prefix };
             let prior = format!("{prefix}{marker}旧 {marker}内\n");
@@ -303,7 +303,7 @@ fn header_confirmation_and_failure_discard_or_commit_depth_once() {
                 } else {
                     assert_eq!(
                         depth_at(&doc, "内"),
-                        if marker.len() == 1 { (2, 0) } else { (0, 2) },
+                        (2 * (marker.len() % 2), 2 * (marker.len() / 2)),
                         "{source:?}"
                     );
                 }
@@ -449,7 +449,43 @@ mod official_nesting {
     include!("fixtures/commonmark_emphasis_nesting.rs");
     #[test]
     fn existing_official_407_exposes_repeated_emphasis() {
-        let &(_, source, html) = EMPHASIS_CASES.iter().find(|c| c.0 == 407).unwrap();
-        assert_eq!(super::project_one_style(source, false), html);
+        for number in [407, 408, 409] {
+            let &(_, source, html) = EMPHASIS_CASES.iter().find(|c| c.0 == number).unwrap();
+            assert_eq!(
+                super::project_one_style(source, false),
+                html,
+                "example {number}"
+            );
+        }
+    }
+}
+
+mod official_runs {
+    include!("fixtures/commonmark_emphasis_runs.rs");
+    #[test]
+    fn partial_runs_publish_original_official_repeated_strong_depths() {
+        for number in [417, 425, 426, 427] {
+            let &(_, source, html) = EMPHASIS_CASES.iter().find(|c| c.0 == number).unwrap();
+            assert_eq!(
+                super::project_one_style(source, true),
+                html,
+                "example {number}"
+            );
+        }
+    }
+}
+
+mod official_final {
+    include!("fixtures/commonmark_emphasis_final.rs");
+    #[test]
+    fn long_runs_and_repeated_single_styles_match_official_html_using_only_depths() {
+        for number in [461, 463, 464, 465, 466] {
+            let &(_, source, html) = EMPHASIS_CASES.iter().find(|c| c.0 == number).unwrap();
+            assert_eq!(
+                super::project_one_style(source, number >= 464),
+                html,
+                "example {number}"
+            );
+        }
     }
 }

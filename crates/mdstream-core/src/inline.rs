@@ -115,6 +115,9 @@ impl Effects<'_> {
 
 #[derive(Clone, Copy)]
 struct Delimiter {
+    // Stars/underscores: marker * 6 + original can-close * 3 + original len % 3.
+    // Original run properties survive partial consumption (rule of three).
+    // Tildes use the final two, exact-length categories.
     kind: usize,
     source: Span,
     previous: Option<usize>,
@@ -367,7 +370,7 @@ pub(crate) struct Inline {
     raw_content: Option<Span>,
     raw_cr: Option<usize>,
     stack: Vec<Delimiter>,
-    last: [Option<usize>; 6],
+    last: [Option<usize>; 14],
     run: Option<Run>,
     code: Option<Code>,
     code_fallback: CodeFallback,
@@ -589,7 +592,7 @@ impl Inline {
         if self.header_floor != 0 {
             work.delimiter_steps += self.stack.len() as u64;
             self.stack.drain(..self.header_floor);
-            self.last = [None; 6];
+            self.last = [None; 14];
             for (index, delimiter) in self.stack.iter_mut().enumerate() {
                 delimiter.previous = self.last[delimiter.kind];
                 self.last[delimiter.kind] = Some(index);
@@ -983,16 +986,9 @@ impl Inline {
             }
             return;
         }
-        let (kind, style) = match (run.byte, run.source.len()) {
-            (b'*', 1) => (0, Style::EMPHASIS),
-            (b'*', 2) => (1, Style::STRONG),
-            (b'_', 1) => (2, Style::EMPHASIS),
-            (b'_', 2) => (3, Style::STRONG),
-            (b'~', 2) => (4, Style::STRIKE),
-            // Separate indices forbid mixing lengths; longer runs stay literal.
-            (b'~', 1) => (5, Style::STRIKE),
-            _ => return,
-        };
+        if run.byte == b'~' && run.source.len() > 2 {
+            return;
+        }
         let (can_open, can_close) = if run.byte == b'~' {
             // Preserve the independent single/double-tilde dialect.
             (
@@ -1018,7 +1014,34 @@ impl Inline {
                 (left, right)
             }
         };
-        if can_close && let Some(index) = self.last[kind] {
+        let base = usize::from(run.byte == b'_') * 6;
+        let residue = run.source.len() % 3;
+        let kind = if run.byte == b'~' {
+            12 + run.source.len() - 1
+        } else {
+            base + usize::from(can_close) * 3 + residue
+        };
+        let mut close = run.source;
+        while can_close && !close.is_empty() {
+            let index = if run.byte == b'~' {
+                self.last[kind]
+            } else {
+                // Eligibility is uniform within each category. Six head reads
+                // replace an unbounded reverse search, including failed ones.
+                let mut newest = None;
+                for bucket in base..base + 6 {
+                    effects.work.delimiter_search_steps += 1;
+                    if (can_open || bucket - base >= 3)
+                        && residue != 0
+                        && (bucket % 3 + residue).is_multiple_of(3)
+                    {
+                        continue;
+                    }
+                    newest = newest.max(self.last[bucket]);
+                }
+                newest
+            };
+            let Some(index) = index else { break };
             let inherited = index < self.header_floor;
             // Without an old opener this close-only run would be literal and
             // leave the local stack intact. No replay, shadow stack or object
@@ -1029,27 +1052,46 @@ impl Inline {
                 && self.stack.len() == self.header_floor;
             self.header_crossed |= inherited && !isolate;
             let open = self.stack[index].source;
-            while self.stack.len() > index {
+            let used = if run.byte == b'~' {
+                close.len()
+            } else {
+                2.min(open.len()).min(close.len())
+            };
+            while self.stack.len() > index + 1 {
                 let delimiter = self.stack.pop().unwrap();
                 self.last[delimiter.kind] = delimiter.previous;
                 effects.work.delimiter_steps += 1;
             }
+            self.stack[index].source.end -= used;
+            effects.work.delimiter_steps += 1;
+            if self.stack[index].source.is_empty() {
+                let delimiter = self.stack.pop().unwrap();
+                self.last[delimiter.kind] = delimiter.previous;
+            }
             self.header_floor = self.header_floor.min(self.stack.len());
             let pair = EmphasisPair {
-                open,
-                close: run.source,
-                style,
+                open: Span::new(open.end - used, open.end),
+                close: Span::new(close.start, close.start + used),
+                style: if run.byte == b'~' {
+                    Style::STRIKE
+                } else if used == 2 {
+                    Style::STRONG
+                } else {
+                    Style::EMPHASIS
+                },
             };
             if isolate {
                 self.header_pairs.push(pair);
             } else {
                 pair.commit(effects);
             }
-        } else if can_open {
+            close.start += used;
+        }
+        if can_open && !close.is_empty() {
             let index = self.stack.len();
             self.stack.push(Delimiter {
                 kind,
-                source: run.source,
+                source: close,
                 previous: self.last[kind],
             });
             self.last[kind] = Some(index);
@@ -1190,7 +1232,7 @@ impl Inline {
         }
         effects.work.delimiter_steps += self.stack.len() as u64;
         self.stack.clear();
-        self.last = [None; 6];
+        self.last = [None; 14];
         self.code = None;
         self.math = None;
         self.footnote = None;

@@ -211,6 +211,10 @@ pub struct Work {
     /// emphasis/code pairs committed or discarded once when a header resolves.
     /// Includes bounded failed-code run matching (at most 32 comparisons/run).
     pub delimiter_steps: u64,
+    /// Emphasis opener-category probes, at most six per run/match attempt.
+    /// Categories retain original run length modulo three and can-close;
+    /// partial consumption never searches old text or walks failed openers.
+    pub delimiter_search_steps: u64,
     /// Emphasis boundary classifications and fixed Unicode 17.0.0 range
     /// comparisons; <= 12 per boundary (two per supported emphasis run).
     pub flanking_steps: u64,

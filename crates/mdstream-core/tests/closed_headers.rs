@@ -146,7 +146,6 @@ fn nonseparable_crossings_flush_isolated_pairs_and_keep_original_semantics() {
         ("~~old ~old\n", "end~ _local end~~ "),
         ("[old ~old\n", "end~ end](u) &amp; "),
         ("*old\n", "end*new "), // The closer would open in a standalone cell.
-        ("*old\n", "**local end* "), // A current-line opener would be lost.
         ("**old *old\n", "end* end**new "), // Flush an earlier isolated pair.
         ("**old *old\n", "end* _local end** "),
         ("[old *old\n", "end* end](u) &amp; "), // Later entity cancels the probe.
@@ -186,6 +185,7 @@ fn isolated_pairs_can_pop_old_other_kinds_and_preserve_new_live_openers() {
         ("~old ~~old\n", "end~ ~~live~~ ~new "),
         ("~~old ~old\n", "end~ end~~ ~live~ ~~new "),
         ("~old ~~old\n", "end~~ end~ `new "),
+        ("*old\n", "**local end* "), // Partial local closure leaves the old opener untouched.
         ("*old **old ~~old\n", "end* **live** _new "),
         ("*old **old\n", "end** end* ~~live~~ *new "),
         ("*old *old\n", "end* end* *live* **new "),
@@ -232,6 +232,9 @@ fn generated_closer_flags_and_stack_interference_match_independent_model() {
                 let intraword = old.starts_with('_') && following == "new ";
                 let expected = intraword
                     || local_marker == Some(old)
+                    || (local_marker.is_some_and(|m| m.starts_with(old.chars().next().unwrap()))
+                        && !old.starts_with('~')
+                        && matches!(following, " " | "\t" | "! "))
                     || (local.is_empty()
                         && (matches!(following, " " | "\t")
                             || (following == "! " && !old.starts_with('~'))));

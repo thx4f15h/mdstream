@@ -167,7 +167,13 @@ fn project(doc: &Document) -> String {
     html
 }
 
+#[path = "support/partial_emphasis.rs"]
+mod partial_emphasis;
+
 enum Assessment {
+    Rejected {
+        reason: &'static str,
+    },
     Supported,
     Unsupported {
         reason: &'static str,
@@ -181,32 +187,27 @@ fn assessment(number: usize) -> Assessment {
     match number {
         420..=424 | 428 | 429 => Assessment::Supported,
         417 => Assessment::Unsupported {
-            reason: "six/nine delimiter runs are not partially consumed into nested strong",
-            observed: "<p>foo******bar*********baz</p>\n",
+            reason: "partial consumption works, but bit-only projection omits repeated strong depth",
+            observed: "<p>foo<strong>bar</strong>***baz</p>\n",
         },
         418 => Assessment::Unsupported {
-            reason: "public emphasis bits do not retain the repeated inner emphasis depth",
+            reason: "bit-only projection omits repeated inner emphasis depth",
             observed: "<p><em>foo <strong>bar baz bim</strong> bop</em></p>\n",
         },
         419 => Assessment::Unsupported {
-            reason: "inner and outer emphasis collapse to one public style bit, including the link label",
+            reason: "link label and envelope retain the existing emphasis scope limitation",
             observed: "<p><em>foo <a href=\"/url\">bar</a></em></p>\n",
         },
         425 => Assessment::Unsupported {
-            reason: "public strong bit does not retain same-style nesting depth",
+            reason: "bit-only projection omits repeated inner strong depth",
             observed: "<p><strong>foo bar baz</strong></p>\n",
         },
-        426 => Assessment::Unsupported {
-            reason: "quadruple opener cannot be consumed by two strong closers",
-            observed: "<p>____foo__ bar__</p>\n",
+        426 | 427 => Assessment::Unsupported {
+            reason: "partial consumption works, but bit-only projection omits repeated strong depth",
+            observed: "<p><strong>foo bar</strong></p>\n",
         },
-        427 => Assessment::Unsupported {
-            reason: "quadruple closer cannot close two strong openers",
-            observed: "<p>**foo **bar****</p>\n",
-        },
-        430 => Assessment::Unsupported {
-            reason: "triple opener cannot be consumed by emphasis and strong closers",
-            observed: "<p>***foo* bar**</p>\n",
+        430 => Assessment::Rejected {
+            reason: "public depths record both styles, but simultaneous starts leave their order unspecified",
         },
         _ => panic!("unclassified example {number}"),
     }
@@ -215,6 +216,10 @@ fn assessment(number: usize) -> Assessment {
 fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
     match assessment(number) {
         Assessment::Supported => assert_eq!(project(doc), expected, "example {number}"),
+        Assessment::Rejected { .. } => {
+            assert!(std::panic::catch_unwind(|| project(doc)).is_err());
+            partial_emphasis::check(number, doc);
+        }
         Assessment::Unsupported { observed, .. } => {
             let actual = project(doc);
             assert_ne!(
@@ -283,7 +288,7 @@ fn pinned_commonmark_emphasis_runs_report() {
         check_case(number, markdown, expected, &parse(markdown));
         let (category, reason) = match assessment(number) {
             Assessment::Supported => (0, "matches upstream"),
-            Assessment::Unsupported { reason, .. } => (2, reason),
+            Assessment::Unsupported { reason, .. } | Assessment::Rejected { reason } => (2, reason),
         };
         counts[category] += 1;
         eprintln!("example {number}: category {category} — {reason}");
@@ -567,7 +572,14 @@ fn nested_late_closers_preserve_identity_and_literal_partial_runs() {
         doc.finish();
         assert_eq!(snapshot(&doc), snapshot(&parse(&current)));
         assert_eq!(doc.block_at(0).unwrap(), block);
-        assert_eq!(project(&doc), format!("<p>{expected}!</p>\n"));
+        if open == "***" {
+            assert!(std::panic::catch_unwind(|| project(&doc)).is_err());
+            let at = doc.source().find('中').unwrap();
+            let run = doc.runs_in(Span::new(at, at + 3)).unwrap().next().unwrap();
+            assert_eq!((run.emphasis_depth, run.strong_depth), (1, 1));
+        } else {
+            assert_eq!(project(&doc), format!("<p>{expected}!</p>\n"));
+        }
     }
 }
 
