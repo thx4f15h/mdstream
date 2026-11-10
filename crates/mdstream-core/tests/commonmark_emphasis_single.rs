@@ -82,10 +82,6 @@ fn project(doc: &Document) -> String {
 
 enum Assessment {
     Supported,
-    Difference {
-        reason: &'static str,
-        observed: &'static str,
-    },
     Unsupported {
         reason: &'static str,
         observed: &'static str,
@@ -95,15 +91,7 @@ enum Assessment {
 // Independent observations: changes require review, not automatic acceptance.
 fn assessment(number: usize) -> Assessment {
     match number {
-        350..=352 | 355..=368 | 370..=372 => Assessment::Supported,
-        353 => Assessment::Difference {
-            reason: "ASCII whitespace predicate does not treat NBSP as whitespace",
-            observed: "<p><em>\u{a0}a\u{a0}</em></p>\n",
-        },
-        354 => Assessment::Difference {
-            reason: "non-ASCII symbols are ordinary bytes; dollar math candidate retains its existing precedence",
-            observed: "<p>*$*alpha.</p>\n<p><em>£</em>bravo.</p>\n<p><em>€</em>charlie.</p>\n",
-        },
+        350..=368 | 370..=372 => Assessment::Supported,
         369 | 373 => Assessment::Unsupported {
             reason: "public emphasis bit collapses the inner and outer same-style depth",
             observed: "<p><em>(foo)</em></p>\n",
@@ -116,7 +104,7 @@ fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
     let actual = project(doc);
     match assessment(number) {
         Assessment::Supported => assert_eq!(actual, expected, "example {number}"),
-        Assessment::Difference { observed, .. } | Assessment::Unsupported { observed, .. } => {
+        Assessment::Unsupported { observed, .. } => {
             assert_ne!(
                 actual, expected,
                 "example {number} now matches; review classification"
@@ -149,15 +137,14 @@ fn pinned_commonmark_emphasis_single_report() {
         check_case(number, markdown, expected, &parse(markdown));
         let (category, reason) = match assessment(number) {
             Assessment::Supported => (0, "matches upstream"),
-            Assessment::Difference { reason, .. } => (1, reason),
             Assessment::Unsupported { reason, .. } => (2, reason),
         };
         counts[category] += 1;
         eprintln!("example {number}: category {category} — {reason}");
     }
-    assert_eq!(counts, [20, 2, 2]);
+    assert_eq!(counts, [22, 0, 2]);
     eprintln!(
-        "CommonMark 0.31.2 Emphasis subset 350–373: 20 supported, 2 deliberate differences, 2 unsupported; 374–481 not scored"
+        "CommonMark 0.31.2 Emphasis subset 350–373: 22 supported, 0 deliberate differences, 2 unsupported; 374–481 not scored"
     );
 }
 

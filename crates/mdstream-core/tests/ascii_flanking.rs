@@ -60,8 +60,8 @@ fn punctuation_and_word_counterexamples_keep_literal_or_close_the_right_pair() {
         ("中_文_尾", "中_文_尾"),
         ("_中_文", "_中_文"),
         ("中__文__尾", "中__文__尾"),
-        ("*\u{a0}x\u{a0}*", "\u{a0}x\u{a0}"),
-        ("a*£*b", "a£b"),
+        ("*\u{a0}x\u{a0}*", "*\u{a0}x\u{a0}*"),
+        ("a*£*b", "a*£*b"),
         ("a~\"x\"~b", "a\"x\"b"),
     ] {
         assert_eq!(visible(&parse(source)), expected, "{source:?}");

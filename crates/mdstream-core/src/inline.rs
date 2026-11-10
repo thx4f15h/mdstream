@@ -1,6 +1,8 @@
 use crate::annotations::Annotations;
 use crate::destination::{Destination, Progress};
 use crate::references::{MAX_LABEL_BYTES, References};
+#[path = "flanking.rs"]
+mod flanking;
 use crate::{
     ChangeKind, LinkId, LinkInfo, LinkKind, LinkTarget, Span, Style, SyntaxState, Update, Work,
 };
@@ -136,7 +138,7 @@ impl EmphasisPair {
 struct Run {
     byte: u8,
     source: Span,
-    before: Option<u8>,
+    before: Option<char>,
 }
 
 #[derive(Clone, Copy)]
@@ -381,6 +383,10 @@ pub(crate) struct Inline {
     tail: Option<Tail>,
     escape: Option<usize>,
     previous: Option<u8>,
+    // Last semantic scalar, including virtual spaces. Decode once at its
+    // leading byte; continuation bytes and omitted container prefixes do not
+    // overwrite it. No lookbehind through source or earlier feed spans.
+    previous_scalar: Option<char>,
     spaces: Option<usize>,
     // Entire raw space/tab suffix to hide on a confirmed ordinary break.
     // `spaces` separately tracks only the immediate ASCII-space hard marker.
@@ -427,6 +433,7 @@ impl Inline {
             effects.work.inline_bytes += 1;
             self.byte(b' ', at, effects);
             self.previous = Some(b' ');
+            self.previous_scalar = Some(' ');
         }
         if let Some(math) = &mut self.math {
             math.end = at + 1;
@@ -464,6 +471,7 @@ impl Inline {
             self.code_fallback.isolate();
         }
         self.previous = None;
+        self.previous_scalar = None;
         self.line_break.take()
     }
 
@@ -631,6 +639,11 @@ impl Inline {
             }
             self.byte(byte, pos, effects);
             self.previous = Some(byte);
+            if byte.is_ascii() {
+                self.previous_scalar = Some(char::from(byte));
+            } else if byte >= 0xc0 {
+                self.previous_scalar = effects.source[pos..].chars().next();
+            }
         }
         if let Some(math) = &mut self.math {
             math.end = span.end;
@@ -676,7 +689,12 @@ impl Inline {
                 run.source.end = pos + 1;
                 return;
             }
-            self.finish_run(Some(byte), effects);
+            let next = if byte.is_ascii() {
+                Some(char::from(byte))
+            } else {
+                effects.source[pos..].chars().next()
+            };
+            self.finish_run(next, effects);
         }
         let syntax = matches!(
             byte,
@@ -903,11 +921,11 @@ impl Inline {
         self.run = Some(Run {
             byte,
             source: Span::new(pos, pos + 1),
-            before: self.previous,
+            before: self.previous_scalar,
         });
     }
 
-    fn finish_run(&mut self, next: Option<u8>, effects: &mut Effects<'_>) {
+    fn finish_run(&mut self, next: Option<char>, effects: &mut Effects<'_>) {
         let Some(run) = self.run.take() else {
             return;
         };
@@ -982,12 +1000,13 @@ impl Inline {
                 run.before.is_some_and(|b| !b.is_ascii_whitespace()),
             )
         } else {
-            // Sequence boundaries count as whitespace. Non-ASCII bytes remain
-            // ordinary text; Unicode whitespace/punctuation is a separate task.
-            let before_white = run.before.is_none_or(|b| b.is_ascii_whitespace());
-            let after_white = next.is_none_or(|b| b.is_ascii_whitespace());
-            let before_punct = run.before.is_some_and(|b| b.is_ascii_punctuation());
-            let after_punct = next.is_some_and(|b| b.is_ascii_punctuation());
+            use flanking::Class::{Punct, White};
+            let before = flanking::class(run.before, effects.work);
+            let after = flanking::class(next, effects.work);
+            let before_white = before == White;
+            let after_white = after == White;
+            let before_punct = before == Punct;
+            let after_punct = after == Punct;
             let left = !after_white && (!after_punct || before_white || before_punct);
             let right = !before_white && (!before_punct || after_white || after_punct);
             if run.byte == b'_' {
@@ -1180,6 +1199,7 @@ impl Inline {
         self.tail = None;
         self.escape = None;
         self.previous = None;
+        self.previous_scalar = None;
         self.spaces = None;
         self.whitespace = None;
         self.carriage = false;

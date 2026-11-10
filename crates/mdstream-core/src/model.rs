@@ -211,6 +211,9 @@ pub struct Work {
     /// emphasis/code pairs committed or discarded once when a header resolves.
     /// Includes bounded failed-code run matching (at most 32 comparisons/run).
     pub delimiter_steps: u64,
+    /// Emphasis boundary classifications and fixed Unicode 17.0.0 range
+    /// comparisons; <= 12 per boundary (two per supported emphasis run).
+    pub flanking_steps: u64,
     /// Raw bytes of bounded reference labels interned, including whitespace.
     pub label_bytes: u64,
     /// Each raw reference-label scalar visited exactly once during interning.

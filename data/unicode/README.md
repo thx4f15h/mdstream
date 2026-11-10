@@ -25,3 +25,29 @@ the normalized key has at most 3B bytes (including collapsed spaces). The
 fixed-size table makes normalization O(B). The existing bounded-key BTreeMap
 adds O(log S) per intern; overall parsing stays cumulative O(n log n), space O(n).
 Definition updates touch one symbol and its first-use range, never old references.
+
+## Fixed emphasis boundary categories
+
+`17.0.0/DerivedGeneralCategory.txt` is the unmodified Unicode 17.0.0 UCD file from
+<https://www.unicode.org/Public/17.0.0/ucd/extracted/DerivedGeneralCategory.txt>,
+retrieved 2026-11-10. SHA-256:
+`d62e5bab70ca74f099343f71224fa051cb1fdd61a1ab45c0488c44cfc0b6102e`.
+It uses the same complete Unicode License V3 above.
+
+Regenerate with `python3 scripts/generate_unicode_categories.py > crates/mdstream-core/src/unicode_categories.rs`.
+Verify offline with `python3 scripts/generate_unicode_categories.py --check`.
+This separate generator verifies the raw data and license hashes and emits 357
+sorted, disjoint non-ASCII ranges for Zs and P/S. All other categories remain
+ordinary. ASCII is handled directly: TAB/LF/FF/CR/SPACE are whitespace and ASCII
+punctuation is punctuation. This implements the CommonMark 0.31.2 emphasis
+classes, rather than the broader Unicode White_Space property. NEL, VT, Zl and
+Zp are ordinary here. The test oracle independently expands upstream category
+records to a dense scalar map and checks all 1,112,064 valid Unicode scalars.
+
+No build hook, network access, host Unicode database, or runtime dependency is
+required. At most 12 classification/comparison steps per adjacent scalar are
+charged to `Work.flanking_steps`; only exact one/two-character emphasis runs
+classify their two sides. The parser retains one previous semantic scalar while
+scanning forward, with constant work for at most four UTF-8 bytes per decode.
+Old body text, reference history and ancestor paths are never revisited for
+flanking. The existing cumulative O(n log n), O(n) space contract is retained.

@@ -2431,3 +2431,20 @@ CommonMark 213 已不再建立定义，但未定义引用隐藏括号，继续�
 项目 `nix develop` 内 `cargo check --workspace --all-targets`、专项 nextest **107/107**、完整 debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1,533/1,533**、`cargo test --doc --workspace` **75/75**、Clippy `-D warnings`、格式检查与 `git diff --check` 全部通过。release 示例 `closed_headers`、`open_headers`、`container_inline`、`budget` 均退出 0。验证命令、真实退出状态和完整日志在 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-004/validation.jsonl`；逐项观察/模型界限见同目录 `design-and-review.txt`，本轮独立差异见 `task-unit.patch`。
 
 本节收窄旧记录中的 ASCII 标点及普通字节词内下划线差异描述，历史交付不改写。完整 Unicode flanking、同类嵌套深度、部分 run 消耗、链接作用域与通用确认/撤销、完整容器和终端排版/UI 继续保留原 TODO。本轮未提交、推送或派生代理，三份项目文档仅追加，已有验收单元保持。
+
+
+## 2026-11-10 强调加粗 Unicode 侧界交付
+
+本轮仅交付 TODO 中强调/加粗的 Unicode 侧界子项。旧实现只记录相邻字节，`*NBSP a NBSP*` 会隐藏星号，`a*£*b`、`a**😀**b` 也会误配对。先新增反例，在旧核心上通过 `cargo check` 后运行专项 nextest，真实退出 100；完整失败输出保存于本轮 `targeted-red.log`。
+
+沿用 CommonMark 0.31.2 左右侧界及下划线词内规则，将输入改为相邻语义标量：空白为 Unicode Zs 加 TAB/LF/FF/CR，标点为 P/S；NEL、VT、Zl/Zp 保持普通字符，不使用宿主 `char::is_whitespace` 代替规范分类。固定 Unicode 17.0.0，与已验收引用 case folding 的版本一致。官方 `DerivedGeneralCategory.txt` 原样入库，保留来源与 SHA-256，沿用完整 Unicode License V3；`scripts/generate_unicode_categories.py --check` 离线验证数据/许可、357 段有序不交叉分类表及比较上界，构建不生成或下载数据。
+
+局部原型先用独立展开的官方类别模型核对全部 1,112,064 个有效 Unicode 标量，再扩展集成回归。`Inline` 在既有正向字节扫描中记录一个前一标量，序列结束/表头隔离重置、部分 tab 虚拟空格写入空格；不读取旧正文的前驱或跨前缀反向搜索。相邻标量解码至多四字节，每个受支持强调 run 仅分类两侧。静态表二分、每侧至多 12 次分类/比较由 `Work.flanking_steps` 计量；纯正文增长不增加该计数。既有 opener 索引栈、精确 1/2 长度、未完成/失败/EOF、跨行表头可隔离配对及源码显示预算接口保持；累计解析 O(n log n)、空间 O(n)、零运行时依赖和禁止 unsafe 的约束保持。
+
+新增七项集成回归及一项全标量单元测试，复用 snapshot、批量强调模型和显示游标设施。覆盖 114,314 组 Unicode 上下文/混合 run、UTF-8 任意字节切点/逐字节前缀及逐前缀 EOF、显式/lazy/部分 tab 路径、代码/数学/实体和失败候选、长 run 字面行为、迟确认表头成功/失败、BlockId/容器/LinkId/MathId 稳定身份、tile 版本、逐标量切片源码映射和共享六字节预算。970 层及百万字 Unicode 正文增长不回访旧侧界，4096 个历史链接与 16384 个混合 opener 的增长/收尾计数保持线性。
+
+逐项审查 CommonMark 350–481 全部 132 例：仅 353 的 NBSP 和 354 的 £/€ 改变观察，二者现匹配官方 HTML，350–373 更新为 **22 支持 / 0 刻意差异 / 2 未支持**。354 的既有美元数学候选优先级保持；369/373 仍缺同类强调深度，473/474 仍由投影明确拒绝，其余 130 例观察保持。官方 Markdown/HTML、全部八个评分投影和原生成器逐字节保持，既有 ASCII 测试中两项明确 Unicode 边界期望随实际语义更新，批量模型改读独立官方类别。
+
+验证在本项目 `nix develop` 内完成，target 由 `cargo metadata` 确定：`cargo check --workspace --all-targets`、专项 nextest **114/114**、完整 debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1,541/1,541**、`cargo test --doc --workspace` **75/75**、Clippy `-D warnings`、fmt、离线 Unicode/132 例强调/GFM 删除线夹具核验及 `git diff --check` 均通过。release 示例 `closed_headers`、`open_headers`、`container_inline`、`budget` 全部退出 0。命令、真实退出状态及完整日志在 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-005/validation.jsonl` 及同目录各日志；首次反例、观察审查和审计脚本自身修正的失败记录保留。
+
+本节收窄前述“非 ASCII 字节普通分类/完整 Unicode 侧界待办”及 353/354 旧统计的当前描述，历史记录不改写。删除线仍保留独立 ASCII 空白方言；长 run 部分消耗、同类嵌套深度、链接分隔符作用域/通用确认撤销、完整容器和终端排版/UI 继续属于未完成项。本轮未提交、推送、修改配置或派生代理，项目说明仅追加，既有其它验收单元保持。

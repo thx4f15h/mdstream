@@ -7,10 +7,13 @@ enum Class {
     Other,
 }
 
-fn class(byte: Option<u8>) -> Class {
-    match byte {
-        None | Some(b'\t' | b'\n' | b'\x0c' | b'\r' | b' ') => Class::White,
-        Some(b'!'..=b'/' | b':'..=b'@' | b'['..=b'`' | b'{'..=b'~') => Class::Punct,
+#[path = "unicode_categories.rs"]
+mod unicode;
+
+fn class(ch: Option<char>) -> Class {
+    match ch.map(|c| unicode::classes()[c as usize]) {
+        None | Some(1) => Class::White,
+        Some(2) => Class::Punct,
         _ => Class::Other,
     }
 }
@@ -41,8 +44,8 @@ pub fn marks(source: &str) -> Vec<(bool, bool, bool)> {
         if len > 2 {
             continue;
         }
-        let before = class(start.checked_sub(1).map(|i| bytes[i]));
-        let after = class(bytes.get(at).copied());
+        let before = class(source[..start].chars().next_back());
+        let after = class(source[at..].chars().next());
         let (left, right) = match (before, after) {
             (White, White) => (false, false),
             (White, Punct | Other) | (Punct, Other) => (true, false),

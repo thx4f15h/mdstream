@@ -3627,3 +3627,12 @@ run 等待后继/EOF 才确认，未匹配和三连/更长 run 保持字面，�
 CommonMark 0.31.2 的 352/359/362/363/368/372/375/380/385/388/392/398/401 共 13 例现匹配官方 HTML；350–373、374–389、390–405 当前三类统计分别为 **20/2/2、15/0/1、16/0/0**。369/373 和 419 的观察虽改善，仍因缺重复强调深度保持未支持，417–430 仍为 **7/0/7**。官方 Markdown/HTML、生成器和八个评分投影未改。本节取代前文相关 ASCII 标点/普通字节词内下划线差异及旧汇总的当前语义描述；Unicode 侧界、同类深度、部分 run 消耗、链接作用域、完整容器和实际排版/UI 仍见 TODO，历史交付保留。
 
 复跑：`nix develop -c cargo nextest run --test ascii_flanking --test closed_headers --test commonmark_emphasis_single --test commonmark_emphasis_strong --test commonmark_emphasis_strong_close --test commonmark_emphasis_runs --no-fail-fast`。七项新回归、独立模型、分块/EOF/身份/原始映射/六字节共享预算及深层百万字计数和完整验收见[交付记录](DONE.md#2026-11-10-强调加粗-ascii-侧界与词内下划线交付)。
+
+
+## 强调/加粗的 Unicode 侧界（2026-11-10）
+
+精确单/双 `*`、`_` 现在按相邻语义标量判断侧界：[CommonMark 0.31.2](https://spec.commonmark.org/0.31.2/#emphasis-and-strong-emphasis) 的空白为 Zs + TAB/LF/FF/CR，标点包括 Unicode P/S。`*NBSP a NBSP*`、`a*£*b` 和 `a**😀**b` 保留字面定界符，`「_中_」` 则显示为 `「中」`；NEL、VT、Zl/Zp 作为普通字符，实体解码不改变原始语法侧界。删除线沿用自身 ASCII 空白方言。
+
+分类固定为 Unicode 17.0.0；官方原始数据、完整许可与离线生成步骤见 [data/unicode](data/unicode/README.md)。现有扫描只记录一个前一标量，虚拟 tab 空格和表头隔离同步更新该状态；静态二分表的每侧分类/比较至多 12 步，公开计入 `Work.flanking_steps`。不回扫正文、引用或祖先，保留累计 O(n log n)、空间 O(n)、原始源码映射、稳定对象身份及显示/查询共享预算。
+
+CommonMark 353/354 现匹配官方 HTML，350–373 为 **22 支持、0 刻意差异、2 未支持**；其余强调样例观察和八个评分投影保持。此节取代此前 Unicode 普通字节分类及对应旧汇总的当前描述，历史交付记录保持。复跑：`nix develop -c cargo nextest run --test unicode_flanking --test ascii_flanking --test commonmark_emphasis_single --test closed_headers --no-fail-fast`；离线表核验：`python3 scripts/generate_unicode_categories.py --check`。七项集成回归、全标量模型和完整验收见[交付记录](DONE.md#2026-11-10-强调加粗-unicode-侧界交付)。部分 run 消耗、同类嵌套深度、链接作用域/通用撤销、完整容器及终端排版/UI 仍按 TODO 推进。
