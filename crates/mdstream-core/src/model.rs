@@ -209,6 +209,15 @@ pub struct Work {
     /// Hidden root paragraph indentation is charged here before inline parsing.
     /// A partially consumed container tab adds at most three virtual-space visits.
     pub inline_bytes: u64,
+    /// Additional visits by the non-publishing ordinary-root eligibility core,
+    /// including equivalent hidden root indentation. Each payload is fed once.
+    /// These visits are excluded from all original publishing-path counters.
+    pub root_eligibility_bytes: u64,
+    /// Additional lexer visits, delimiter/search/flanking, bounded label/key,
+    /// autolink/entity/math/footnote work and fixed-state isolation operations.
+    /// Accumulated from fixed local counters after each observer event; no tree
+    /// or historical reference visits, and no scans when querying Work.
+    pub root_eligibility_steps: u64,
     /// Run resolution, opener pushes/pops/rebasing, and isolated cross-line
     /// emphasis/code pairs committed or discarded once when a header resolves.
     /// Includes linear failed-code summary indexing and greedy matching visits.

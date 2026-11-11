@@ -2666,3 +2666,16 @@ README 当前说明和本任务对应 TODO 已同步，只新增此窄项勾选�
 - 外部临时探针保存 1760 份真实基线快照：56 份自然变为本项新增成功，其余 1704 份结构、ID、引用、原始/显示映射逐字相同。参考 demo 版本为 0.31.0，只辅助解释虚拟余量不输出；项目真实缩进契约及固定 0.31.2 官方夹具保持。定义章 **20/7/0**、引用标签 **8/6/0**、collapsed/shortcut **17/2/0**，其它独立观察按全库真实报告保持；官方 Markdown/HTML、生成器、评分 project 和输出 helper 均未改。
 - 验证全部通过：项目 `nix develop` 内 `cargo check --workspace --all-targets`；针对性 nextest **29/29**；完整 debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1667/1667**；doc **75/75**、docbuild（`RUSTDOCFLAGS=-D warnings`）、clippy `-D warnings`、fmt；六组固定 SHA-256 离线夹具；`container_definitions`、`container_tabs`、`stream` release 示例及 diff 检查。最终源码与测试冻结后完成全套验证，仓库内没有临时驱动；测试不依赖本机 `/home` 或证据目录，也不自动写期望。
 - 证据目录：`/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-020/implementation/`。四量模型 `model.md`、红/绿日志、真实基线与对照 `baseline-comparison.json`、最终命令/退出状态及完整日志 `commands.jsonl`、全套结果 `final-suite-result.json`、最终源码哈希和补丁分别保存；未提交或推送。完整字面失败回退、完整容器、510 跨行行内后缀和原长度/窗口放宽继续保留宽 TODO，本项完成不表示整个 TODO 清空。
+
+
+## 2026-11-11 根段落旧行内表头资格观察基础交付
+
+仅完成 foundation-design 第 11 节步骤 1：同一 Inline 内核的有限无发布 effects、纯 label 规范化、从实际根段落语义消费开始的 RootEligibility 生命周期及独立 Work。合法引用接受与公开 ID 分离，collapsed/full/invalid/overflow 和 inherited label/code/math/header 分支保持。没有第二 Document/引用表/树、旧栈克隆或正文回扫，没有新增依赖或 unsafe。
+
+原 publisher 继续决定表头资格和全部公开发布结果；容器/lazy/partial-tab、ATX、单元格、代码/数学块/脚注不建立 root observer，定义 ledger 释放前不观察。根源按缩进和 eager 第一 pipe 截点单次交付，确认/取消/Setext/新块/EOF 清理。额外一份当前根行内摘要，累计 O(n log n)、O(n)；root_eligibility_bytes/steps 与原发布计数分列，不遍历历史树/引用。
+
+验证包含真实干净 HEAD 7dafb15 的 1552 份完整公开 Snapshot 摘要（source/style/IDs/maps/references/display/objects，含整段、UTF-8 每字节、逐前缀 EOF）、两 backend 逐事件全状态/heads 差分、合法接受标记故障注入红测、真实 root 事件对照、百万字后 1000 追加、两万历史引用和 code fallback 索引计数。旧压力断言不改，官方输入/HTML/生成器/评分/helper 不改。全套验证命令与退出记录见本单元证据 `commands.jsonl`；证据目录 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-021/foundation-implementation/` 保存模型、红/绿、冻结 rlib/探针、完整验证日志、哈希与 patch。
+
+最终验证：`nix develop -c cargo check --workspace --all-targets`；定向 nextest 235/235；`nix develop -c cargo nextest run --workspace --all-targets --no-fail-fast` 与同参数 `--release` 均 1673/1673；`nix develop -c cargo test --workspace --doc` 两组 72+3；`nix develop -c cargo doc --workspace --no-deps`；`nix develop -c cargo clippy --workspace --all-targets -- -D warnings`；`nix develop -c cargo fmt --all -- --check`，均退出 0。7 项离线生成核验、6 个 release 示例、官方 510 原报告、40 个最终公开快照原始文本 diff 及发布 Work 基线 diff 均通过。百万字普通根正文额外 1,000,005 次观察字节/步骤，原树访问仍为 1；8192 组 fallback 的 90,119 字节额外记录 563,305 步，原发布计数逐字段保持。
+
+本次未启用 Destination 新 LF、未接 RootDeferred、未改原表头决策来源；510 仍为基线未支持，跨行链接后缀与完整失败回退的原宽 TODO 保留。复跑定向：`nix develop -c cargo nextest run --lib --test root_eligibility --test code_fallback --test inherited_headers --no-fail-fast`。

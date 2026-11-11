@@ -1,14 +1,13 @@
 use crate::annotations::Annotations;
 use crate::destination::{Destination, Progress};
-use crate::references::{MAX_LABEL_BYTES, References};
+use crate::references::{MAX_LABEL_BYTES, References, normalize_label};
 #[path = "flanking.rs"]
 mod flanking;
 use crate::{
     ChangeKind, LinkId, LinkInfo, LinkKind, LinkTarget, Span, Style, SyntaxState, Update, Work,
 };
 
-pub(crate) struct Effects<'a> {
-    pub source: &'a str,
+pub(crate) struct Publishing<'a> {
     pub annotations: &'a mut Annotations,
     pub display: &'a mut crate::display::DisplayIndex,
     pub references: &'a mut References,
@@ -18,10 +17,9 @@ pub(crate) struct Effects<'a> {
     pub math_gaps: &'a mut Vec<Span>,
     pub footnotes: &'a mut crate::footnotes::Footnotes,
     pub update: &'a mut Update,
-    pub work: &'a mut Work,
 }
 
-impl Effects<'_> {
+impl Publishing<'_> {
     pub fn mark(&mut self, span: Span, style: Style, link: Option<LinkId>) {
         if span.is_empty() {
             return;
@@ -113,7 +111,187 @@ impl Effects<'_> {
     }
 }
 
+// The observer capability contains only source and local counters. All public
+// storage writes are confined to Publishing and these finite effects exits.
+pub(crate) struct Effects<'a> {
+    pub source: &'a str,
+    pub work: &'a mut Work,
+    publishing: Option<Publishing<'a>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum AcceptedReference {
+    Published(crate::SymbolId),
+    Observed,
+}
+
+impl AcceptedReference {
+    fn target(self) -> Option<LinkTarget> {
+        match self {
+            Self::Published(symbol) => Some(LinkTarget::Reference(symbol)),
+            Self::Observed => None,
+        }
+    }
+}
+
+impl<'a> Effects<'a> {
+    pub fn publishing(source: &'a str, work: &'a mut Work, publishing: Publishing<'a>) -> Self {
+        Self {
+            source,
+            work,
+            publishing: Some(publishing),
+        }
+    }
+
+    fn observing(source: &'a str, work: &'a mut Work) -> Self {
+        Self {
+            source,
+            work,
+            publishing: None,
+        }
+    }
+
+    pub fn mark(&mut self, span: Span, style: Style, link: Option<LinkId>) {
+        if let Some(p) = &mut self.publishing {
+            p.mark(span, style, link);
+        }
+    }
+
+    fn hide(&mut self, span: Span) {
+        self.mark(span, Style::HIDDEN, None);
+    }
+
+    fn reference(&mut self, label: &str) -> Option<AcceptedReference> {
+        match &mut self.publishing {
+            Some(p) => p
+                .references
+                .intern(label, self.work)
+                .map(AcceptedReference::Published),
+            None => normalize_label(label, self.work).map(|_| AcceptedReference::Observed),
+        }
+    }
+
+    fn complete_link(
+        &mut self,
+        candidate: Candidate,
+        target: Option<LinkTarget>,
+        suffix: Option<Span>,
+        title: Option<Span>,
+    ) -> Option<LinkId> {
+        self.publishing
+            .as_mut()
+            .map(|p| p.complete_link(candidate, target.expect("published target"), suffix, title))
+    }
+
+    fn seal_link(&mut self, id: Option<LinkId>) {
+        if let Some(p) = &mut self.publishing
+            && let Some(id) = id
+        {
+            p.link_info[id.0].state = SyntaxState::Sealed;
+        }
+    }
+
+    fn code(&mut self, pair: &CodePair) {
+        if let Some(p) = &mut self.publishing {
+            let content = Span::new(pair.code.open.end, pair.close.start);
+            p.display.code(
+                content,
+                self.source,
+                pair.code.all_spaces,
+                pair.code.last,
+                pair.code.last_space,
+            );
+            p.update.change(content, ChangeKind::Text);
+        }
+    }
+
+    fn math(&mut self, pair: &MathPair) {
+        if let Some(p) = &mut self.publishing {
+            let source = Span::new(pair.open.start, pair.close.end);
+            p.maths.push(crate::Math {
+                kind: if pair.open.len() == 1 {
+                    crate::MathKind::Inline
+                } else {
+                    crate::MathKind::Display
+                },
+                source,
+                content: Span::new(pair.open.end, pair.close.start),
+            });
+            p.update.change(source, ChangeKind::Structure);
+        }
+    }
+
+    fn math_gap(&mut self, span: Span) {
+        if let Some(p) = &mut self.publishing {
+            debug_assert!(p.math_gaps.last().is_none_or(|g| g.end <= span.start));
+            p.math_gaps.push(span);
+        }
+    }
+
+    fn autolink(&mut self, start: usize, end: usize, target: crate::autolink::Target) {
+        if let Some(p) = &mut self.publishing {
+            let label = Span::new(start + 1, end);
+            let id = LinkId(p.links.len());
+            p.links.push(match target {
+                crate::autolink::Target::Uri => LinkTarget::Direct(label),
+                crate::autolink::Target::Email => LinkTarget::Email(label),
+            });
+            p.link_info.push(LinkInfo {
+                kind: LinkKind::Link,
+                label,
+                source: Span::new(start, end + 1),
+                title: None,
+                state: SyntaxState::Sealed,
+            });
+            p.mark(label, Style::default(), Some(id));
+            p.hide(Span::new(start, start + 1));
+            p.hide(Span::new(end, end + 1));
+        }
+    }
+
+    fn entity(&mut self, span: Span, text: String) {
+        if let Some(p) = &mut self.publishing {
+            p.display.entity(span, text);
+            p.mark(span, Style::default(), None);
+            p.update.change(span, ChangeKind::Text);
+        }
+    }
+
+    fn footnote(&mut self, start: usize, end: usize) {
+        let label = &self.source[start + 2..end];
+        if let Some(p) = &mut self.publishing {
+            let symbol = p.footnotes.intern(label, self.work);
+            let source = Span::new(start, end + 1);
+            p.footnotes.reference(symbol, source, p.update, self.work);
+            p.mark(source, Style::default(), None);
+        } else {
+            // Same bounded accepted label work, without a symbol table or ID.
+            self.work.footnote_steps += 2;
+            self.work.footnote_label_bytes += label.len() as u64;
+        }
+    }
+
+    pub fn row_changed(&mut self, table: crate::TableId, row: usize) {
+        if let Some(p) = &mut self.publishing {
+            p.update.row_changed(table, row);
+        }
+    }
+
+    pub fn table_width(&mut self, table: crate::TableId, source: Span) {
+        if let Some(p) = &mut self.publishing {
+            p.annotations
+                .apply(source, Style::default(), None, p.update.revision);
+            p.update.dirty.push(source);
+            p.update.change(source, ChangeKind::TableWidth);
+            if p.update.tables_changed.last() != Some(&table) {
+                p.update.tables_changed.push(table);
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
+#[cfg_attr(test, derive(Debug))]
 struct Delimiter {
     // Stars/underscores: marker * 6 + original can-close * 3 + original len % 3.
     // Original run properties survive partial consumption (rule of three).
@@ -123,6 +301,7 @@ struct Delimiter {
     previous: Option<usize>,
 }
 
+#[cfg_attr(test, derive(Debug))]
 struct EmphasisPair {
     open: Span,
     close: Span,
@@ -138,6 +317,7 @@ impl EmphasisPair {
 }
 
 #[derive(Clone, Copy)]
+#[cfg_attr(test, derive(Debug))]
 struct Run {
     byte: u8,
     source: Span,
@@ -146,12 +326,14 @@ struct Run {
 
 // Source/flanking summaries only. An unresolved label must not consume outer
 // openers before its publication is known; no body bytes or stack are copied.
+#[cfg_attr(test, derive(Debug))]
 struct LabelDelimiter {
     run: Run,
     next: Option<char>,
 }
 
 #[derive(Clone, Copy)]
+#[cfg_attr(test, derive(Debug))]
 struct Code {
     open: Span,
     all_spaces: bool,
@@ -186,6 +368,7 @@ impl Code {
 // match in source order. Each run belongs to only one primary candidate.
 // Other inline syntax stays opaque even when the outer opener fails.
 #[derive(Default)]
+#[cfg_attr(test, derive(Debug))]
 struct CodeFallback {
     runs: Vec<Code>,
     // A late table header ends the old sequence at the preceding line. Keep
@@ -256,6 +439,7 @@ impl CodeFallback {
     }
 }
 
+#[cfg_attr(test, derive(Debug))]
 struct CodePair {
     code: Code,
     close: Span,
@@ -264,20 +448,14 @@ struct CodePair {
 impl CodePair {
     fn commit(self, effects: &mut Effects<'_>) {
         let content = Span::new(self.code.open.end, self.close.start);
-        effects.display.code(
-            content,
-            effects.source,
-            self.code.all_spaces,
-            self.code.last,
-            self.code.last_space,
-        );
-        effects.update.change(content, ChangeKind::Text);
+        effects.code(&self);
         effects.mark(content, Style::CODE, None);
         effects.hide(self.code.open);
         effects.hide(self.close);
     }
 }
 
+#[cfg_attr(test, derive(Debug))]
 struct MathCandidate {
     open: Span,
     escaped: bool,
@@ -285,6 +463,7 @@ struct MathCandidate {
     end: usize,
 }
 
+#[cfg_attr(test, derive(Debug))]
 struct MathPair {
     open: Span,
     close: Span,
@@ -293,21 +472,11 @@ struct MathPair {
 impl MathPair {
     fn commit(self, effects: &mut Effects<'_>) {
         let content = Span::new(self.open.end, self.close.start);
-        let source = Span::new(self.open.start, self.close.end);
-        effects.maths.push(crate::Math {
-            kind: if self.open.len() == 1 {
-                crate::MathKind::Inline
-            } else {
-                crate::MathKind::Display
-            },
-            source,
-            content,
-        });
         // The parser never decodes, copies or revisits the body.
         effects.mark(content, Style::MATH, None);
         effects.hide(self.open);
         effects.hide(self.close);
-        effects.update.change(source, ChangeKind::Structure);
+        effects.math(&self);
     }
 }
 
@@ -316,15 +485,18 @@ struct Candidate {
     open: usize,
     close: usize,
     link: Option<LinkId>,
+    reference: Option<AcceptedReference>,
     image: Option<usize>,
 }
 
 #[derive(Clone, Copy)]
+#[cfg_attr(test, derive(Debug))]
 struct Bracket {
     open: usize,
     image: Option<usize>,
 }
 
+#[cfg_attr(test, derive(Debug))]
 pub(crate) struct LineBreak {
     newline: Span,
     hidden: Span,
@@ -359,8 +531,49 @@ enum Tail {
     },
 }
 
+// Compare syntax in tests without conflating acceptance with published IDs.
+#[cfg(test)]
+impl std::fmt::Debug for Candidate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Candidate")
+            .field("open", &self.open)
+            .field("close", &self.close)
+            .field("accepted_reference", &self.reference.is_some())
+            .field("image", &self.image)
+            .finish()
+    }
+}
+
+#[cfg(test)]
+impl std::fmt::Debug for Tail {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::After(candidate) => f.debug_tuple("After").field(candidate).finish(),
+            Self::Destination { candidate, parser } => {
+                // Destination has no effects-dependent state. Future byte events
+                // exercise its pending/invalid/complete branches in both cores.
+                f.debug_tuple("Destination")
+                    .field(candidate)
+                    .field(&parser.start)
+                    .finish()
+            }
+            Self::Label {
+                candidate,
+                start,
+                escaped,
+            } => f
+                .debug_tuple("Label")
+                .field(candidate)
+                .field(start)
+                .field(escaped)
+                .finish(),
+        }
+    }
+}
+
 // Only syntax-free suffix payloads can share the already consumed cell prefix.
 // Keep spans, not copied targets or prematurely interned reference symbols.
+#[cfg_attr(test, derive(Debug))]
 enum HeaderLinkSuffix {
     Destination {
         source: Span,
@@ -373,6 +586,7 @@ enum HeaderLinkSuffix {
 /// Single-pass byte scanner. Each emphasis delimiter is pushed/popped once.
 /// Failed code matches indexed run summaries; it never replays body bytes.
 #[derive(Default)]
+#[cfg_attr(test, derive(Debug))]
 pub(crate) struct Inline {
     // Non-space/tab endpoints of the raw sequence, excluding its final LF/CRLF.
     // Updated in the existing byte scan, including opaque syntax. Setext can
@@ -437,6 +651,72 @@ pub(crate) struct Inline {
     // syntax cancels before it can overwrite the label or emit later links.
     header_link: Option<Candidate>,
     header_link_suffix: Option<HeaderLinkSuffix>,
+}
+
+// One fresh core for the active ordinary root paragraph. No document, tree,
+// reference store, published IDs or copied old parser state is retained here.
+#[derive(Default)]
+pub(crate) struct RootEligibility {
+    inline: Inline,
+    cursor: Option<usize>,
+    work: Work,
+}
+
+impl RootEligibility {
+    fn account(&mut self, total: &mut Work) {
+        let w = std::mem::take(&mut self.work);
+        debug_assert_eq!(w.tree_visits, 0);
+        total.root_eligibility_bytes += w.inline_bytes;
+        total.root_eligibility_steps += w.inline_bytes
+            + w.delimiter_steps
+            + w.delimiter_search_steps
+            + w.flanking_steps
+            + w.label_bytes
+            + w.label_scalars
+            + w.label_fold_steps
+            + w.label_key_bytes
+            + w.autolink_bytes
+            + w.entity_bytes
+            + w.math_steps
+            + w.footnote_steps
+            + w.footnote_label_bytes;
+    }
+
+    pub fn feed(&mut self, source: &str, span: Span, indent: usize, total: &mut Work) {
+        debug_assert!(self.cursor.is_none_or(|end| end <= span.start - indent));
+        self.work.inline_bytes += indent as u64;
+        self.inline
+            .feed(span, &mut Effects::observing(source, &mut self.work));
+        self.cursor = Some(span.end);
+        self.account(total);
+    }
+
+    pub fn isolate_line(&mut self, total: &mut Work) {
+        self.inline.isolate_line();
+        // Fixed-state header isolation is additional observer work too.
+        self.work.delimiter_steps += 1;
+        self.account(total);
+    }
+
+    pub fn cancel_header(&mut self, source: &str, total: &mut Work) {
+        self.inline
+            .cancel_header(&mut Effects::observing(source, &mut self.work));
+        self.account(total);
+    }
+
+    pub fn confirm_header(&mut self, source: &str, total: &mut Work) -> bool {
+        let reuse = self
+            .inline
+            .confirm_header(&mut Effects::observing(source, &mut self.work));
+        self.account(total);
+        reuse
+    }
+
+    pub fn finish(&mut self, source: &str, total: &mut Work) {
+        self.inline
+            .finish(&mut Effects::observing(source, &mut self.work));
+        self.account(total);
+    }
 }
 
 impl Inline {
@@ -510,7 +790,7 @@ impl Inline {
                         self.end_label(candidate.open, effects);
                         effects.complete_link(
                             candidate,
-                            LinkTarget::Direct(destination),
+                            Some(LinkTarget::Direct(destination)),
                             Some(source),
                             title,
                         );
@@ -591,23 +871,22 @@ impl Inline {
         // Its inert label has no other local effects or pending delimiter state.
         // Publish it before any later cell objects, without replaying the row.
         if let Some(HeaderLinkSuffix::Label(source)) = self.header_link_suffix.take()
-            && let Some(symbol) = effects.references.intern(
-                &effects.source[source.start + 1..source.end - 1],
-                effects.work,
-            )
+            && let Some(symbol) =
+                effects.reference(&effects.source[source.start + 1..source.end - 1])
         {
             let id = effects.complete_link(
                 Candidate {
                     open: source.start,
                     close: source.end - 1,
                     link: None,
+                    reference: None,
                     image: None,
                 },
-                LinkTarget::Reference(symbol),
+                symbol.target(),
                 None,
                 None,
             );
-            effects.link_info[id.0].state = SyntaxState::Sealed;
+            effects.seal_link(id);
         }
         let work = &mut effects.work;
         work.delimiter_steps += self.header_pairs.len() as u64;
@@ -654,8 +933,7 @@ impl Inline {
             // or walking ancestors. Failed candidates may leave unused gaps;
             // they cannot overlap a later confirmed object's content.
             // An ATX closing suffix is a same-line gap, not a container prefix.
-            debug_assert!(effects.math_gaps.last().is_none_or(|g| g.end <= math.end));
-            effects.math_gaps.push(Span::new(math.end, start));
+            effects.math_gap(Span::new(math.end, start));
         }
     }
 
@@ -785,22 +1063,7 @@ impl Inline {
             if byte == b'>' {
                 effects.work.autolink_bytes += (pos - start - 1) as u64;
                 if let Some(target) = crate::autolink::classify(&effects.source[start + 1..pos]) {
-                    let label = Span::new(start + 1, pos);
-                    let id = LinkId(effects.links.len());
-                    effects.links.push(match target {
-                        crate::autolink::Target::Uri => LinkTarget::Direct(label),
-                        crate::autolink::Target::Email => LinkTarget::Email(label),
-                    });
-                    effects.link_info.push(LinkInfo {
-                        kind: LinkKind::Link,
-                        label,
-                        source: Span::new(start, pos + 1),
-                        title: None,
-                        state: SyntaxState::Sealed,
-                    });
-                    effects.mark(label, Style::default(), Some(id));
-                    effects.hide(Span::new(start, start + 1));
-                    effects.hide(Span::new(pos, pos + 1));
+                    effects.autolink(start, pos, target);
                 }
                 return;
             }
@@ -819,10 +1082,7 @@ impl Inline {
                 effects.work.entity_bytes += (pos - start - 1) as u64;
                 if let Some(text) = crate::entity::decode(&effects.source[start + 1..pos]) {
                     let span = Span::new(start, pos + 1);
-                    effects.display.entity(span, text);
-                    // Display text changed even if raw syntax/style is unchanged.
-                    effects.mark(span, Style::default(), None);
-                    effects.update.change(span, ChangeKind::Text);
+                    effects.entity(span, text);
                 }
                 return;
             }
@@ -838,12 +1098,7 @@ impl Inline {
             if byte == b']' {
                 let label = &effects.source[start + 2..pos];
                 if crate::footnotes::valid_label(label) {
-                    let symbol = effects.footnotes.intern(label, effects.work);
-                    let source = Span::new(start, pos + 1);
-                    effects
-                        .footnotes
-                        .reference(symbol, source, effects.update, effects.work);
-                    effects.mark(source, Style::default(), None);
+                    effects.footnote(start, pos);
                 }
                 return;
             }
@@ -927,6 +1182,7 @@ impl Inline {
                         open,
                         close: pos,
                         link: None,
+                        reference: None,
                         image,
                     };
                     if self.header_bracket == Some(open) && !self.header_crossed {
@@ -948,12 +1204,12 @@ impl Inline {
         let symbol = (!self.label_overflow)
             .then(|| {
                 let label = std::str::from_utf8(&self.label[..self.label.len() - 1]).unwrap();
-                effects.references.intern(label, effects.work)
+                effects.reference(label)
             })
             .flatten();
         if let Some(symbol) = symbol {
-            candidate.link =
-                Some(effects.complete_link(candidate, LinkTarget::Reference(symbol), None, None));
+            candidate.reference = Some(symbol);
+            candidate.link = effects.complete_link(candidate, symbol.target(), None, None);
             self.end_label(candidate.open, effects);
         }
         candidate
@@ -1237,7 +1493,7 @@ impl Inline {
                         self.end_label(candidate.open, effects);
                         effects.complete_link(
                             candidate,
-                            LinkTarget::Direct(destination),
+                            Some(LinkTarget::Direct(destination)),
                             Some(source),
                             title,
                         );
@@ -1285,19 +1541,13 @@ impl Inline {
     fn reference_tail(&mut self, candidate: Candidate, source: Span, effects: &mut Effects<'_>) {
         let symbol = if source.len() == 2 {
             // The source envelope can contain hidden container prefixes.
-            candidate.link.and_then(|id| match effects.links[id.0] {
-                LinkTarget::Reference(symbol) => Some(symbol),
-                _ => None,
-            })
+            candidate.reference
         } else {
-            effects.references.intern(
-                &effects.source[source.start + 1..source.end - 1],
-                effects.work,
-            )
+            effects.reference(&effects.source[source.start + 1..source.end - 1])
         };
         if let Some(symbol) = symbol {
             self.end_label(candidate.open, effects);
-            effects.complete_link(candidate, LinkTarget::Reference(symbol), Some(source), None);
+            effects.complete_link(candidate, symbol.target(), Some(source), None);
         } else {
             self.seal_candidate(candidate, effects);
         }
@@ -1307,9 +1557,7 @@ impl Inline {
         if self.header_link.is_none() {
             self.resolve_label_delimiters(None, effects);
         }
-        if let Some(id) = candidate.link {
-            effects.link_info[id.0].state = SyntaxState::Sealed;
-        }
+        effects.seal_link(candidate.link);
     }
 
     pub fn finish(&mut self, effects: &mut Effects<'_>) {
@@ -1353,6 +1601,245 @@ impl Inline {
 #[cfg(test)]
 mod tests {
     use crate::{Document, LinkId};
+
+    use super::*;
+
+    fn same(publisher: &Inline, observer: &Inline, event: &str) {
+        // Debug derives cover every core field: stack categories/previous links,
+        // all 14 heads, raw/Unicode/opaque/label summaries and every header field.
+        assert_eq!(format!("{publisher:?}"), format!("{observer:?}"), "{event}");
+        assert_eq!(
+            publisher.can_isolate_line(),
+            observer.can_isolate_line(),
+            "{event}"
+        );
+        assert_eq!(
+            publisher.header_crossed(),
+            observer.header_crossed(),
+            "{event}"
+        );
+    }
+
+    struct Differential {
+        doc: Document,
+        observer: Inline,
+        work: Work,
+        update: Update,
+    }
+
+    impl Differential {
+        fn new(source: &str) -> Self {
+            let mut doc = Document::new();
+            doc.source = source.to_owned();
+            Self {
+                doc,
+                observer: Inline::default(),
+                work: Work::default(),
+                update: Update::default(),
+            }
+        }
+
+        fn compare(&self, event: &str) {
+            same(&self.doc.inline, &self.observer, event);
+            assert_eq!(self.doc.work, self.work, "work after {event}");
+            assert_eq!(self.work.tree_visits, 0);
+        }
+
+        fn feed(&mut self, span: Span) {
+            let mut publishing = std::mem::take(&mut self.doc.inline);
+            publishing.feed(span, &mut self.doc.effects(&mut self.update));
+            self.doc.inline = publishing;
+            self.observer.feed(
+                span,
+                &mut Effects::observing(&self.doc.source, &mut self.work),
+            );
+            self.compare(&format!("feed {span:?}"));
+        }
+
+        fn spaces(&mut self, at: usize, count: u8) {
+            let mut publishing = std::mem::take(&mut self.doc.inline);
+            publishing.virtual_spaces(at, count, &mut self.doc.effects(&mut self.update));
+            self.doc.inline = publishing;
+            self.observer.virtual_spaces(
+                at,
+                count,
+                &mut Effects::observing(&self.doc.source, &mut self.work),
+            );
+            self.compare("virtual spaces");
+        }
+
+        fn isolate(&mut self) {
+            assert!(self.doc.inline.can_isolate_line());
+            let published_break = self.doc.inline.isolate_line();
+            let observed_break = self.observer.isolate_line();
+            assert_eq!(
+                format!("{published_break:?}"),
+                format!("{observed_break:?}")
+            );
+            self.compare("isolate");
+        }
+
+        fn cancel(&mut self) {
+            let mut publishing = std::mem::take(&mut self.doc.inline);
+            publishing.cancel_header(&mut self.doc.effects(&mut self.update));
+            self.doc.inline = publishing;
+            self.observer
+                .cancel_header(&mut Effects::observing(&self.doc.source, &mut self.work));
+            self.compare("cancel");
+        }
+
+        fn confirm(&mut self) {
+            let mut publishing = std::mem::take(&mut self.doc.inline);
+            let reuse = publishing.confirm_header(&mut self.doc.effects(&mut self.update));
+            self.doc.inline = publishing;
+            assert_eq!(
+                reuse,
+                self.observer
+                    .confirm_header(&mut Effects::observing(&self.doc.source, &mut self.work))
+            );
+            self.compare("confirm");
+        }
+
+        fn finish(&mut self) {
+            let mut publishing = std::mem::take(&mut self.doc.inline);
+            publishing.finish(&mut self.doc.effects(&mut self.update));
+            self.doc.inline = publishing;
+            self.observer
+                .finish(&mut Effects::observing(&self.doc.source, &mut self.work));
+            self.compare("finish");
+        }
+    }
+
+    #[test]
+    fn eligibility_backend_matches_every_syntax_event_and_acceptance_branch() {
+        let mut sources: Vec<String> = [
+            "*前🙂 [*签* _中_ unmatched*][] tail* [a][ Straße ] ![图](<my url> 'title')",
+            "[ ][] [\u{2003}][] [a][ ] [a][bad[nested] [a][escaped\\]]",
+            "[a](bad title) [b](unfinished [c][broken\n *outside [literal*",
+            "a***b**c* _中_，~~🙂~~ \\* &amp; &#x1f600; &bad; <https://x> <a@b.co> [^签]",
+            "`x``a```b`` y `ok` $x\\$y$ $$中$$ $unfinished",
+            "a  \r\nb\\\n c\t\n[<https://x> [replacement] [_x*]",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        for label in ["x".repeat(999), "x".repeat(1000), "İ".repeat(499)] {
+            sources.push(format!(
+                "*outside [{label}][] [{label}][valid] [{label}](u) tail*"
+            ));
+        }
+        sources.push(format!("`x{}", "``body```other`` ".repeat(1024)));
+        for source in sources {
+            let mut differential = Differential::new(&source);
+            for (pos, c) in source.char_indices() {
+                differential.feed(Span::new(pos, pos + c.len_utf8()));
+            }
+            differential.finish();
+        }
+    }
+
+    #[test]
+    fn eligibility_backend_matches_all_header_state_and_head_transitions() {
+        for previous in [
+            "*old\n",
+            "**old\n",
+            "_old\n",
+            "~~old\n",
+            "`old``a\n",
+            "$old\n",
+            "[old *a\n",
+            "[old\n",
+            "plain\n",
+        ] {
+            for row in [
+                "end* ",
+                "end*and ",
+                "end** ",
+                "end_ ",
+                "end~~ ",
+                "end` ",
+                "end`` ",
+                "end$ ",
+                "end][key] ",
+                "end][] ",
+                "end](u 't') ",
+                "end](bad title) ",
+                "local *x* [b] &amp; ",
+                "*",
+                "end`[new] ",
+            ] {
+                for confirm in [false, true] {
+                    let source = format!("{previous}{row}|b");
+                    let mut d = Differential::new(&source);
+                    d.feed(Span::new(0, previous.len()));
+                    d.isolate();
+                    for (pos, c) in row.char_indices() {
+                        d.feed(Span::new(
+                            previous.len() + pos,
+                            previous.len() + pos + c.len_utf8(),
+                        ));
+                    }
+                    // Pending runs next to pipe are deliberately not flushed.
+                    if confirm && !d.doc.inline.header_crossed() {
+                        d.confirm();
+                    } else {
+                        d.cancel();
+                    }
+                    d.finish();
+                }
+            }
+        }
+        // Known same-scope omitted prefixes and split-tab semantic payloads
+        // exercise math gaps/code mappings without giving the sink any stores.
+        for source in ["$a\n>\tb$ ", "`a\n>\tb` "] {
+            let mut d = Differential::new(source);
+            d.feed(Span::new(0, 3));
+            d.spaces(4, 3);
+            d.feed(Span::new(5, source.len()));
+            d.finish();
+        }
+    }
+
+    #[test]
+    fn root_observer_lifecycle_mirrors_real_payload_without_prefix_replay() {
+        for prefix in [
+            "root *old\n",
+            "`old``a\n",
+            "$old\n",
+            "[old *x\n",
+            "[r\n",
+            "[r]: /u 'pending\n",
+        ] {
+            for ending in [
+                "|b\n-| -\n",
+                "|b\nwrong\n",
+                "\n",
+                "|b\n===\n",
+                "|b\n> new\n",
+                "",
+            ] {
+                let source = format!("{prefix}end*and {}{ending}", "x".repeat(1100));
+                let mut doc = Document::new();
+                for c in source.chars() {
+                    doc.append(c.encode_utf8(&mut [0; 4])).unwrap();
+                    if let Some(root) = &doc.root_eligibility {
+                        same(&doc.inline, &root.inline, "actual root event");
+                        assert!(root.cursor.unwrap() <= doc.source.len());
+                        assert_eq!(root.work, Work::default(), "event counters drained once");
+                    }
+                }
+                doc.finish();
+                assert!(doc.root_eligibility.is_none());
+                assert!(doc.work().root_eligibility_bytes <= doc.source.len() as u64);
+            }
+        }
+        let mut ledger = Document::new();
+        ledger.append("[open\n").unwrap();
+        assert!(ledger.root_eligibility.is_none());
+        ledger.append("failed\n").unwrap();
+        ledger.finish();
+        assert!(ledger.work().root_eligibility_bytes > 0);
+    }
 
     #[test]
     fn label_summaries_track_runs_reuse_storage_and_wait_for_confirmation() {

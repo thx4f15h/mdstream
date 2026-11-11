@@ -7,6 +7,42 @@ mod case_folding;
 
 pub const MAX_LABEL_BYTES: usize = 999;
 
+pub(crate) fn normalize_label(label: &str, work: &mut Work) -> Option<String> {
+    if label.len() > MAX_LABEL_BYTES {
+        return None;
+    }
+    work.label_bytes += label.len() as u64;
+    let mut normalized = String::new();
+    let mut space = false;
+    for c in label.chars() {
+        work.label_scalars += 1;
+        if c.is_whitespace() {
+            space = !normalized.is_empty();
+        } else {
+            if space {
+                normalized.push(' ');
+                space = false;
+            }
+            // Fixed Unicode 17.0.0 C+F table. One lookup per non-space
+            // scalar, <= 12 comparisons; absent scalars map to themselves.
+            match case_folding::MAPPINGS.binary_search_by_key(&c, |&(key, _)| {
+                work.label_fold_steps += 1;
+                key
+            }) {
+                Ok(index) => normalized.push_str(case_folding::MAPPINGS[index].1),
+                Err(_) => normalized.push(c),
+            }
+        }
+    }
+    // The pinned data proves <= 3 output bytes per raw input byte, even
+    // when the normalized key grows beyond the raw-label limit of 999.
+    work.label_key_bytes += normalized.len() as u64;
+    if normalized.is_empty() {
+        return None;
+    }
+    Some(normalized)
+}
+
 /// BTreeMap avoids relying on expected-time hashing for the complexity contract.
 #[derive(Default)]
 pub(crate) struct References {
@@ -19,38 +55,7 @@ pub(crate) struct References {
 
 impl References {
     pub fn intern(&mut self, label: &str, work: &mut Work) -> Option<SymbolId> {
-        if label.len() > MAX_LABEL_BYTES {
-            return None;
-        }
-        work.label_bytes += label.len() as u64;
-        let mut normalized = String::new();
-        let mut space = false;
-        for c in label.chars() {
-            work.label_scalars += 1;
-            if c.is_whitespace() {
-                space = !normalized.is_empty();
-            } else {
-                if space {
-                    normalized.push(' ');
-                    space = false;
-                }
-                // Fixed Unicode 17.0.0 C+F table. One lookup per non-space
-                // scalar, <= 12 comparisons; absent scalars map to themselves.
-                match case_folding::MAPPINGS.binary_search_by_key(&c, |&(key, _)| {
-                    work.label_fold_steps += 1;
-                    key
-                }) {
-                    Ok(index) => normalized.push_str(case_folding::MAPPINGS[index].1),
-                    Err(_) => normalized.push(c),
-                }
-            }
-        }
-        // The pinned data proves <= 3 output bytes per raw input byte, even
-        // when the normalized key grows beyond the raw-label limit of 999.
-        work.label_key_bytes += normalized.len() as u64;
-        if normalized.is_empty() {
-            return None;
-        }
+        let normalized = normalize_label(label, work)?;
         if let Some(&id) = self.names.get(&normalized) {
             return Some(id);
         }

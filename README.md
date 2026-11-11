@@ -3674,3 +3674,12 @@ run 等待后继标量或 EOF 再定长；未完成/失败外层不贡献深度�
 同行开放 title 在完整合法前不发布定义或需撤销的 LinkId；独立 title 失败保留已确认目标，仅回流自己的来源。来源单次迭代回流、索引 O(1) 追加且只保留当前/获胜定义，重复定义不积累间隙；读取不访问祖先、旧正文或历史引用。首定义、稳定身份、版本和增量通知、Growing/Sealed、source fold 边界及真实 FoldView 更新保持。累计 O(n log n)、空间 O(n)、核心零运行时依赖与禁止 unsafe 保持。
 
 `tests/container_multiline_titles.rs` 及私有普通流程/来源/长度回归覆盖 672 组成功模型、768 组普通回退对照、148 份真实基线快照、UTF-8 全切点/逐前缀 EOF、0/1/6 字节及 query/object 预算、原始映射、折叠/Update、百万字包络和失败尾部、两万旧引用与 4096 条定义。官方输入/HTML、生成器、评分投影保持，定义章 **20/7/0**、引用标签 **8/6/0**、collapsed/shortcut **17/2/0**。证据见 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-019/implementation/`。部分 tab 余量扩展复用同一来源/gap 游标，新增 4032 组独立零/部分余量模型、3840 组真实普通失败对照及 1760 份真实基线快照（仅 56 份新增成功，其余 1704 份结构/映射保持），并覆盖真实缩进、实体 CR/LF、closing-only、长度/窗口、共享微预算、稳定身份及折叠。最终命令/完整日志见 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-020/implementation/` 和[交付记录](DONE.md#2026-11-11-引用定义部分-tab-余量的多行-title-正文交付)。510、完整字面回退/容器和窗口放宽继续见 TODO。
+
+
+## 根段落旧行内表头资格观察基础
+
+实际普通根段落从首个被消费的 payload 建立私有 `RootEligibility`，通过同一 Inline 状态机和有限无发布 effects 观察原语法。它使用相同的 Unicode label 规范化与接受分支，但不持有公开存储、引用表或树的可变引用，不分配 LinkId/SymbolId，不发布标注、映射或 Update。定义暂存源到普通回流时才观察；容器/lazy/partial-tab、ATX、表格单元格、代码、数学块和脚注不创建该对象。
+
+观察随原缩进、eager 第一 pipe 截点和 isolate/cancel/confirm/finish 事件推进，游标保证 payload 不重复进入。额外最多一份当前根段落的行内摘要，总时间仍为累计 O(n log n)、空间 O(n)。`Work.root_eligibility_bytes` 单列额外 payload/等价缩进访问，`root_eligibility_steps` 累计该内核的词法、分隔符/查询、flanking、label 规范化和有界候选工作；原 `inline_bytes`、树访问及其它计数保持发布路径含义。普通长正文每个新字节多一次观察访问，历史树/引用不增加遍历。
+
+这是前置观察基础，现有表头资格决策仍来自原 publisher，语法和公开发布结果保持。未接入 RootDeferred 或新的跨行 Destination 后缀，官方 510 仍保持原基线评估；宽范围需求继续见 TODO。复跑：`nix develop -c cargo nextest run --lib --test root_eligibility --test code_fallback --test inherited_headers --no-fail-fast`。测试含逐事件状态差分、1552 份真实 HEAD 公开快照摘要、UTF-8 每字节/逐前缀 EOF 和百万字/两万历史引用计数，见[交付记录](DONE.md#2026-11-11-根段落旧行内表头资格观察基础交付)。

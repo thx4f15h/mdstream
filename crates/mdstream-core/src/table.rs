@@ -1,5 +1,5 @@
 use crate::inline::{Effects, Inline};
-use crate::{BlockId, ChangeKind, ContainerId, Span, Style, TableId};
+use crate::{BlockId, ContainerId, Span, Style, TableId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Alignment {
@@ -354,7 +354,7 @@ impl RowParser {
     }
 
     pub fn feed(&mut self, span: Span, table: &mut Table, effects: &mut Effects<'_>) {
-        effects.update.row_changed(self.table, self.row);
+        effects.row_changed(self.table, self.row);
         effects.work.table_bytes += span.len() as u64;
         table.source.end = span.end;
         table.rows[self.row].source.end = span.end;
@@ -437,17 +437,7 @@ impl RowParser {
             if width > column.source_width_hint {
                 column.source_width_hint = width;
                 // Keep semantic keys conservative, but distinguish the sizing hint.
-                effects.annotations.apply(
-                    table.source,
-                    Style::default(),
-                    None,
-                    effects.update.revision,
-                );
-                effects.update.dirty.push(table.source);
-                effects.update.change(table.source, ChangeKind::TableWidth);
-                if effects.update.tables_changed.last() != Some(&self.table) {
-                    effects.update.tables_changed.push(self.table);
-                }
+                effects.table_width(self.table, table.source);
             }
         }
     }
@@ -465,7 +455,7 @@ impl RowParser {
         } else {
             self.finish_cell(end, table, effects);
         }
-        effects.update.row_changed(self.table, self.row);
+        effects.row_changed(self.table, self.row);
         self.complete = true;
         table.rows[self.row].complete = true;
     }

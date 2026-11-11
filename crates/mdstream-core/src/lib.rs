@@ -148,7 +148,7 @@ pub fn apply_layout_update_with_policy<S>(
 use annotations::Annotations;
 use block::{Fence, Line};
 use deferred::{DeferredFragment, DeferredSources, SourceOwner};
-use inline::{Effects, Inline};
+use inline::{Effects, Inline, Publishing, RootEligibility};
 use references::References;
 use std::fmt;
 
@@ -239,6 +239,7 @@ pub struct Document {
     annotations: Annotations,
     display: display::DisplayIndex,
     inline: Inline,
+    root_eligibility: Option<RootEligibility>,
     atx: Option<block::Atx>,
     // Inline continuity is independent of the physical leaf-block identity.
     container_inline: Option<ContainerId>,
@@ -787,19 +788,21 @@ impl Document {
     }
 
     fn effects<'a>(&'a mut self, update: &'a mut Update) -> Effects<'a> {
-        Effects {
-            source: &self.source,
-            annotations: &mut self.annotations,
-            display: &mut self.display,
-            references: &mut self.references,
-            links: &mut self.links,
-            link_info: &mut self.link_info,
-            maths: &mut self.maths,
-            math_gaps: &mut self.math_gaps,
-            footnotes: &mut self.footnotes,
-            update,
-            work: &mut self.work,
-        }
+        Effects::publishing(
+            &self.source,
+            &mut self.work,
+            Publishing {
+                annotations: &mut self.annotations,
+                display: &mut self.display,
+                references: &mut self.references,
+                links: &mut self.links,
+                link_info: &mut self.link_info,
+                maths: &mut self.maths,
+                math_gaps: &mut self.math_gaps,
+                footnotes: &mut self.footnotes,
+                update,
+            },
+        )
     }
 
     fn mark(&mut self, span: Span, style: Style, update: &mut Update) {
@@ -807,14 +810,15 @@ impl Document {
     }
 
     fn feed(&mut self, mut span: Span, update: &mut Update) {
+        let root_paragraph = self.current.is_some_and(|id| {
+            self.blocks[id.0].kind == BlockKind::Paragraph && self.blocks[id.0].container.is_none()
+        });
+        let mut indent = 0;
         // Strip only the bounded ASCII indentation of classified root prose.
         // A physical line enters here once, including deferred/failed table
         // headers; streaming suffixes never revisit its prefix. Containers,
         // code blocks, tabs and the four-space interruption dialect are separate.
-        if self.current.is_some_and(|id| {
-            self.blocks[id.0].kind == BlockKind::Paragraph && self.blocks[id.0].container.is_none()
-        }) && (span.start == 0 || self.source.as_bytes()[span.start - 1] == b'\n')
-        {
+        if root_paragraph && (span.start == 0 || self.source.as_bytes()[span.start - 1] == b'\n') {
             let spaces = self.source.as_bytes()[span.range()]
                 .iter()
                 .take(3)
@@ -823,6 +827,7 @@ impl Document {
             // Mixed space/tab indentation retains the existing tab dialect.
             if self.source.as_bytes().get(span.start + spaces) != Some(&b'\t') {
                 self.work.inline_bytes += spaces as u64;
+                indent = spaces;
                 self.mark(
                     Span::new(span.start, span.start + spaces),
                     Style::HIDDEN,
@@ -831,12 +836,27 @@ impl Document {
                 span.start += spaces;
             }
         }
+        if root_paragraph && (!span.is_empty() || indent > 0) {
+            self.root_eligibility
+                .get_or_insert_with(RootEligibility::default)
+                .feed(&self.source, span, indent, &mut self.work);
+        }
         let mut inline = std::mem::take(&mut self.inline);
         inline.feed(span, &mut self.effects(update));
         self.inline = inline;
     }
 
+    fn isolate_header(&mut self) -> Option<inline::LineBreak> {
+        if let Some(root) = &mut self.root_eligibility {
+            root.isolate_line(&mut self.work);
+        }
+        self.inline.isolate_line()
+    }
+
     fn cancel_header(&mut self, update: &mut Update) {
+        if let Some(root) = &mut self.root_eligibility {
+            root.cancel_header(&self.source, &mut self.work);
+        }
         let mut inline = std::mem::take(&mut self.inline);
         inline.cancel_header(&mut self.effects(update));
         self.inline = inline;
@@ -862,6 +882,9 @@ impl Document {
     }
 
     fn close_current(&mut self, update: &mut Update) {
+        if let Some(mut root) = self.root_eligibility.take() {
+            root.finish(&self.source, &mut self.work);
+        }
         if let Some(tail) = self.current_paragraph_tail() {
             self.mark(tail, Style::HIDDEN, update);
         }
@@ -1897,7 +1920,7 @@ impl Document {
                 None
             };
             let leading_break = if eager && inherited {
-                self.inline.isolate_line()
+                self.isolate_header()
             } else {
                 None
             };
@@ -2577,7 +2600,12 @@ impl Document {
         let id = TableId(self.tables.len());
         let first_cell = if header.parsed_end > header.content.start {
             let mut inline = std::mem::take(&mut self.inline);
-            if inline.confirm_header(&mut self.effects(update)) {
+            let reuse = inline.confirm_header(&mut self.effects(update));
+            if let Some(mut root) = self.root_eligibility.take() {
+                let observed_reuse = root.confirm_header(&self.source, &mut self.work);
+                debug_assert_eq!(reuse, observed_reuse);
+            }
+            if reuse {
                 Some(inline)
             } else {
                 self.inline = inline;
