@@ -1,7 +1,10 @@
 use mdstream::*;
 
+#[path = "support/component_gap_model.rs"]
+mod component_model;
 #[path = "support/snapshot.rs"]
 mod support;
+include!("fixtures/container_gap_scope_changes.rs");
 
 fn parse(source: &str) -> Document {
     let mut doc = Document::new();
@@ -167,6 +170,15 @@ fn container_scope_structure_maps_and_ids_match_frozen_single_line_grammar() {
         let doc = parse(&case.source);
         assert_eq!(doc.tables().len(), usize::from(case.table), "case {index}");
         let actual = format!("{:?}", scope_snapshot(&doc, case.boundary, case.completed));
+        let expected = if let Some((_, hash)) = COMPONENT_SCOPE_CHANGES
+            .iter()
+            .find(|entry| entry.0 == case.source)
+        {
+            component_model::assert_direct(&doc, "b", 1);
+            format!("{hash:016x}")
+        } else {
+            expected.to_owned()
+        };
         assert_eq!(
             format!("{:016x}", digest(&actual)),
             expected,

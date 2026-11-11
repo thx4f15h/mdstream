@@ -78,6 +78,47 @@ fn non_target_snapshots_match_real_prechange_baseline() {
                     first_use: Some(0)
                 }]
             );
+        } else if [
+            "> [a](u\n> 't')\n",
+            "> ![a](u\r\n> )\n",
+            "- [a](\n  u)\n",
+            ">\t![a](u\n>\t't')\n",
+        ]
+        .contains(source)
+        {
+            let id = LinkId(0);
+            let open = source.find('[').unwrap();
+            let start =
+                open - usize::from(source.as_bytes().get(open.wrapping_sub(1)) == Some(&b'!'));
+            let target = source.find('u').unwrap();
+            let title = source.find("'t'").map(|at| Span::new(at + 1, at + 2));
+            assert_eq!(
+                doc.links(),
+                [LinkTarget::Direct(Span::new(target, target + 1))]
+            );
+            assert_eq!(doc.link_destination(id), Some("u"));
+            assert_eq!(doc.link_title(id), title.map(|_| "t"));
+            assert_eq!(
+                *doc.link_info(id).unwrap(),
+                LinkInfo {
+                    kind: if start == open {
+                        LinkKind::Link
+                    } else {
+                        LinkKind::Image
+                    },
+                    label: Span::new(open + 1, open + 2),
+                    source: Span::new(start, source.len() - 1),
+                    title,
+                    state: SyntaxState::Sealed,
+                }
+            );
+            let displayed: String = doc
+                .display_runs_in(Span::new(start, source.len()))
+                .unwrap()
+                .filter(|r| !r.style.contains(Style::HIDDEN))
+                .map(|r| r.text)
+                .collect();
+            assert_eq!(displayed, "a\n");
         } else {
             assert_eq!(
                 format!("{:?}", support::snapshot(&doc)),

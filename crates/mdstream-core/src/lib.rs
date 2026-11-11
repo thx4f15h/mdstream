@@ -214,6 +214,7 @@ struct ContainerEligibility {
     first: BlockId,
     scope: ContainerId,
     observer: Eligibility,
+    prefix_source: Option<usize>,
 }
 
 #[derive(Default)]
@@ -598,7 +599,7 @@ impl Document {
                             self.feed(span, update);
                             candidate.header.parsed_end = parsed_end;
                         }
-                        table::HeaderMode::RootDeferred => self.observe_root(span),
+                        table::HeaderMode::Deferred(key) => self.observe_header(key, span, 0),
                     }
                 }
                 candidate.header.source.end = cursor;
@@ -851,10 +852,16 @@ impl Document {
             }
         }
         if root_paragraph && (!span.is_empty() || indent > 0) {
-            self.inline.root_paragraph();
-            self.root_eligibility
-                .get_or_insert_with(RootEligibility::default)
-                .feed(&self.source, span, indent, &mut self.work);
+            let key = table::ParagraphKey {
+                first: self.current.unwrap(),
+                scope: None,
+            };
+            self.inline.root_paragraph(key);
+            let observer = self
+                .root_eligibility
+                .get_or_insert_with(RootEligibility::default);
+            observer.bind_key(key);
+            observer.feed(&self.source, span, indent, &mut self.work);
         }
         if let Some(container) = &mut self.container_eligibility {
             container
@@ -876,7 +883,9 @@ impl Document {
                 Some(container.scope)
             );
             #[cfg(test)]
-            container.observer.assert_same(&self.inline);
+            if !self.inline.root_separator_seen() {
+                container.observer.assert_same(&self.inline);
+            }
         }
     }
 
@@ -892,6 +901,68 @@ impl Document {
         inline.virtual_spaces(at, columns, &mut self.effects(update));
         self.inline = inline;
         self.check_container_eligibility();
+    }
+
+    fn assert_deferred_key(&self, key: table::ParagraphKey) {
+        assert_eq!(
+            self.inline.paragraph_key(),
+            Some(key),
+            "deferred publisher key"
+        );
+        let observer_key = if key.scope.is_some() {
+            let active = self
+                .container_eligibility
+                .as_ref()
+                .expect("deferred container observer");
+            assert_eq!(
+                table::ParagraphKey {
+                    first: active.first,
+                    scope: Some(active.scope)
+                },
+                key
+            );
+            active.observer.key()
+        } else {
+            self.root_eligibility
+                .as_ref()
+                .expect("deferred root observer")
+                .key()
+        };
+        assert_eq!(observer_key, Some(key), "deferred observer key");
+    }
+
+    fn observe_header(&mut self, key: table::ParagraphKey, mut span: Span, spaces: u8) {
+        self.assert_deferred_key(key);
+        if key.scope.is_none() {
+            assert_eq!(spaces, 0);
+            self.observe_root(span);
+        } else {
+            let observer = &mut self.container_eligibility.as_mut().unwrap().observer;
+            if spaces > 0 {
+                observer.virtual_spaces(&self.source, span.start, spaces, &mut self.work);
+                span.start += 1;
+            }
+            observer.feed(&self.source, span, 0, &mut self.work);
+        }
+    }
+
+    // Only producers know which bytes were structural. A retained header may
+    // release its already consumed prefix, so notify each physical source once.
+    fn container_prefix(&mut self, source: Span, raw_start: usize) {
+        if let Some(active) = &mut self.container_eligibility {
+            if active.prefix_source == Some(source.start) {
+                return;
+            }
+            debug_assert!(active.prefix_source.is_none_or(|old| old < source.start));
+            active.prefix_source = Some(source.start);
+            assert_eq!(
+                self.inline.paragraph_key(),
+                active.observer.key(),
+                "prefix belongs to active ordinary sequence"
+            );
+            self.inline
+                .component_prefix(Span::new(source.start, raw_start));
+        }
     }
 
     // Observe a deferred eager prefix with the same bounded indentation rule
@@ -924,7 +995,10 @@ impl Document {
         }
         let line_break = match mode {
             table::HeaderMode::Ordinary => self.inline.isolate_line(),
-            table::HeaderMode::RootDeferred => None,
+            table::HeaderMode::Deferred(key) => {
+                self.assert_deferred_key(key);
+                None
+            }
         };
         self.check_container_eligibility();
         line_break
@@ -933,7 +1007,12 @@ impl Document {
     fn can_isolate_header(&self) -> bool {
         self.check_container_eligibility();
         self.root_eligibility.as_ref().map_or_else(
-            || self.inline.can_isolate_line(),
+            || {
+                self.container_eligibility.as_ref().map_or_else(
+                    || self.inline.can_isolate_line(),
+                    |active| active.observer.can_isolate_line(),
+                )
+            },
             RootEligibility::can_isolate_line,
         )
     }
@@ -941,7 +1020,12 @@ impl Document {
     fn header_crossed(&self) -> bool {
         self.check_container_eligibility();
         self.root_eligibility.as_ref().map_or_else(
-            || self.inline.header_crossed(),
+            || {
+                self.container_eligibility.as_ref().map_or_else(
+                    || self.inline.header_crossed(),
+                    |active| active.observer.header_crossed(),
+                )
+            },
             RootEligibility::header_crossed,
         )
     }
@@ -981,6 +1065,8 @@ impl Document {
     }
 
     fn close_current(&mut self, update: &mut Update) {
+        #[cfg(test)]
+        let diverged = self.inline.root_separator_seen();
         let container = self.container_eligibility.take();
         if let Some(mut root) = self.root_eligibility.take() {
             root.finish(&self.source, &mut self.work);
@@ -999,7 +1085,9 @@ impl Document {
         if let Some(mut container) = container {
             container.observer.finish(&self.source, &mut self.work);
             #[cfg(test)]
-            container.observer.assert_same(&self.inline);
+            if !diverged {
+                container.observer.assert_same(&self.inline);
+            }
         }
         if let Some(id) = self.current.take() {
             if matches!(self.blocks[id.0].kind, BlockKind::Math { .. }) {
@@ -1033,7 +1121,15 @@ impl Document {
                 first,
                 scope: self.container_inline.expect("ordinary container scope"),
                 observer: Eligibility::container(),
+                prefix_source: None,
             });
+            let active = self.container_eligibility.as_mut().unwrap();
+            let key = table::ParagraphKey {
+                first,
+                scope: Some(active.scope),
+            };
+            active.observer.bind_key(key);
+            self.inline.container_paragraph(key);
         }
         self.check_container_eligibility();
         first
@@ -1196,6 +1292,7 @@ impl Document {
     }
 
     fn feed_fragment(&mut self, fragment: DeferredFragment, update: &mut Update) {
+        self.container_prefix(fragment.source, fragment.raw.start);
         if fragment.virtual_spaces > 0 {
             self.feed_virtual(fragment.raw.start - 1, fragment.virtual_spaces, update);
         }
@@ -2021,11 +2118,21 @@ impl Document {
             && !summary.pipe
             && (!inherited || self.can_isolate_header());
         if eager || (summary.pipe && (!complete || summary.columns().is_some())) {
-            let mode = if root_continuation
-                && self.root_eligibility.is_some()
+            let continuation_key = if root_continuation {
+                self.root_eligibility.as_ref().and_then(Eligibility::key)
+            } else if matches!(classification, Line::Container { .. }) && inherited {
+                self.container_eligibility
+                    .as_ref()
+                    .and_then(|active| active.observer.key())
+            } else {
+                None
+            };
+            let mode = if let Some(key) = continuation_key
                 && self.inline.root_separator_seen()
+                && self.inline.paragraph_key() == Some(key)
             {
-                table::HeaderMode::RootDeferred
+                self.assert_deferred_key(key);
+                table::HeaderMode::Deferred(key)
             } else {
                 table::HeaderMode::Ordinary
             };
@@ -2100,9 +2207,15 @@ impl Document {
             if eager {
                 match mode {
                     table::HeaderMode::Ordinary => {
+                        self.container_prefix(
+                            span,
+                            content.start + usize::from(virtual_spaces > 0),
+                        );
                         self.feed_header_content(content, virtual_spaces, update);
                     }
-                    table::HeaderMode::RootDeferred => self.observe_root(content),
+                    table::HeaderMode::Deferred(key) => {
+                        self.observe_header(key, content, virtual_spaces)
+                    }
                 }
             }
             if let Some(label) = candidate_label {
@@ -2408,6 +2521,7 @@ impl Document {
             inline = false;
         }
         if inline {
+            self.container_prefix(span, payload.start + usize::from(virtual_spaces > 0));
             let mut fed = payload;
             if virtual_spaces > 0 {
                 self.feed_virtual(payload.start, virtual_spaces, update);
@@ -2613,11 +2727,22 @@ impl Document {
             hidden: false,
             table: false,
         };
-        self.extend_line(
-            line,
-            Span::new(header.parsed_end, header.content.end),
-            update,
+        if let table::HeaderMode::Deferred(key) = header.mode {
+            self.assert_deferred_key(key);
+        }
+        let _owner = header
+            .owner
+            .expect("rejected header owns its unconsumed source");
+        self.container_prefix(
+            header.source,
+            header.content.start + usize::from(header.virtual_spaces > 0),
         );
+        let mut remaining = Span::new(header.parsed_end, header.content.end);
+        if header.parsed_end == header.content.start && header.virtual_spaces > 0 {
+            self.feed_virtual(remaining.start, header.virtual_spaces, update);
+            remaining.start += 1;
+        }
+        self.extend_line(line, remaining, update);
         if self.source.as_bytes()[header.source.end - 1] == b'\n' {
             self.end_line(line, update);
             self.line_start = header.source.end;
@@ -2677,6 +2802,9 @@ impl Document {
         _owner: SourceOwner,
         update: &mut Update,
     ) {
+        if let table::HeaderMode::Deferred(key) = header.mode {
+            self.assert_deferred_key(key);
+        }
         self.cancel_header(update);
         if let Some(line_break) = header.leading_break {
             line_break.commit(&mut self.effects(update));
@@ -2685,6 +2813,10 @@ impl Document {
             self.blocks[self.current.unwrap().0].source.end = header.source.end;
         }
         self.mark(header.source, Style::default(), update);
+        self.container_prefix(
+            header.source,
+            header.content.start + usize::from(header.virtual_spaces > 0),
+        );
         self.feed_header_content(
             Span::new(header.parsed_end, header.content.end),
             if header.parsed_end == header.content.start {
@@ -2714,6 +2846,9 @@ impl Document {
         columns: Vec<Alignment>,
         update: &mut Update,
     ) {
+        if let table::HeaderMode::Deferred(key) = header.mode {
+            self.assert_deferred_key(key);
+        }
         if let Some(candidate) = self.definition_candidate.take() {
             debug_assert_eq!(header.block, Some(candidate.block));
             debug_assert!(header.owner.is_none());

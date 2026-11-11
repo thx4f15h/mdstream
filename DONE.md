@@ -2722,3 +2722,12 @@ README 当前说明和本任务对应 TODO 已同步，只新增此窄项勾选�
 验证均在项目 nix develop：check --workspace --all-targets；针对性 nextest 216项；完整 debug/release nextest --workspace --all-targets --no-fail-fast 各1728项；doc75项；cargo doc --workspace --no-deps；clippy --workspace --all-targets -- -D warnings；fmt；7组固定 CommonMark 离线夹具、9个相关 release示例及 git diff --check 全部通过。完整命令/退出状态/日志、模型、全局源码哈希和补丁在 /home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-025/implementation/。静态 oracle 随测试提交候选，不依赖证据目录或自动生成期望。
 
 容器后缀组件 gap、直接 title 正文 LF/CRLF、完整字面失败回退和 prefix 预算反例均未扩展；官方 Markdown/HTML、评分/projection/helper 和历史 fixture 原样保留。TODO 的40项真实未完需求保留。本单元未提交、推送或派生代理，后续 B/C 由父流程另行安排。
+
+
+## 2026-11-11 容器普通段落后缀组件换行交付
+
+- 仅 B：真实普通容器链接/图片的三个组件 gap 各至多一个 LF/CRLF，target/title 正文保持单物理行；root 多行 title 模式及 cell/ATX/code/math/footnote/definition 边界保持。容器 title 正文 C、完整字面失败回退、完整容器/嵌套图片和其它宽 TODO 保留。
+- 独立 component 模式复用原 Destination；现场结构 prefix 单独从 suffix8256 扣除，title4096 计数不减历史 prefix，virtual 为零 metadata 源字节。首 leaf+精确 scope 绑定 candidate/observer/Inline；旧 Eligibility 决定表头资格，Deferred 不提前 feed/isolate 实际解析器，旧 key 下唯一 SourceOwner 释放 raw/virtual 一次，确认 table 使用独立 cell。稳定 LinkId/引用 first_use/revision、失败/EOF 已消费 opaque raw 方言和拒绝字节正常词法保持，不宣称完整 fallback/实体解码成功。
+- 18,000 组组件模型；真实 quote/list/nested/lazy/partial-tab、1023/1024/1025/late-pipe、star/underscore/tilde/close-only/code/math/label 角色矩阵；原 observer 分歧后语义独立核对；UTF-8 每切点/逐前缀 EOF；4095/4096/4097 与8256结构前缀反例、稳定元数据/原始映射、共享0/1/6微预算、Update apply/merge与真实Fold/open/fixed/ticket/reader、百万字/两万旧对象/1000追加计数覆盖。
+- 原静态 oracle、root fixture 和官方 Markdown/HTML 原字节保留。A corpus 的66个精确完整输入中32个公开 Direct 新成功，34个公开全快照不变而仅工作计数改变；root旧negative仅4个精确容器输入、scope corpus仅60个精确容器新成功独立验证 typed metadata/display，未泛化按LF或前缀跳过。源码累计 O(n log n)/O(n)，无新增依赖/unsafe/旧正文、旧引用或祖先回扫。
+- 验证命令均在本项目 nix develop：check --workspace --all-targets；针对性nextest；debug/release各1743项 --workspace --all-targets --no-fail-fast；doc 75项、doc build、clippy -D warnings、fmt、8组离线官方夹具和相关示例。完整命令、退出状态、日志、冻结源码hash及patch：`/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-026/implementation/`。本单元不提交，由父独立审查。

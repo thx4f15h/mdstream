@@ -589,6 +589,8 @@ enum HeaderLinkSuffix {
 #[cfg_attr(test, derive(Debug))]
 pub(crate) struct Inline {
     root_paragraph: bool,
+    container_paragraph: bool,
+    paragraph_key: Option<crate::table::ParagraphKey>,
     // Sticky until paragraph closure, even after the suffix completes/fails.
     root_separator_seen: bool,
     // Non-space/tab endpoints of the raw sequence, excluding its final LF/CRLF.
@@ -664,6 +666,7 @@ pub(crate) struct Eligibility {
     cursor: Option<usize>,
     last_virtual_tab: Option<usize>,
     container: bool,
+    key: Option<crate::table::ParagraphKey>,
     work: Work,
 }
 
@@ -675,6 +678,15 @@ impl Eligibility {
             container: true,
             ..Self::default()
         }
+    }
+
+    pub fn bind_key(&mut self, key: crate::table::ParagraphKey) {
+        assert!(self.key.is_none_or(|old| old == key));
+        self.key = Some(key);
+    }
+
+    pub fn key(&self) -> Option<crate::table::ParagraphKey> {
+        self.key
     }
 
     pub fn can_isolate_line(&self) -> bool {
@@ -769,8 +781,24 @@ impl Eligibility {
 }
 
 impl Inline {
-    pub fn root_paragraph(&mut self) {
+    pub fn root_paragraph(&mut self, key: crate::table::ParagraphKey) {
         self.root_paragraph = true;
+        self.paragraph_key = Some(key);
+    }
+
+    pub fn container_paragraph(&mut self, key: crate::table::ParagraphKey) {
+        self.container_paragraph = true;
+        self.paragraph_key = Some(key);
+    }
+
+    pub fn paragraph_key(&self) -> Option<crate::table::ParagraphKey> {
+        self.paragraph_key
+    }
+
+    pub fn component_prefix(&mut self, prefix: Span) {
+        if let Some(Tail::Destination { parser, .. }) = &mut self.tail {
+            parser.component_prefix(prefix);
+        }
     }
 
     pub fn root_separator_seen(&self) -> bool {
@@ -905,6 +933,8 @@ impl Inline {
     /// finish its pending run: that could publish a cross-line mapping/object.
     pub fn confirm_header(&mut self, effects: &mut Effects<'_>) -> bool {
         self.root_paragraph = false;
+        self.container_paragraph = false;
+        self.paragraph_key = None;
         self.root_separator_seen = false;
         debug_assert!(!self.header_crossed);
         self.code_fallback.confirm_header(effects);
@@ -1116,7 +1146,7 @@ impl Inline {
             return;
         }
         if self.tail.is_some() && self.tail_byte(byte, pos, effects) {
-            if self.root_paragraph && byte == b'\n' {
+            if (self.root_paragraph || self.container_paragraph) && byte == b'\n' {
                 // An admitted separator remains a provisional ordinary break
                 // until the suffix succeeds. Failed/EOF candidates retain its
                 // original mapping; completion hides the whole suffix.
@@ -1546,6 +1576,10 @@ impl Inline {
                 let progress = parser.root_byte(byte, pos);
                 self.root_separator_seen |= byte == b'\n' && matches!(progress, Progress::Pending);
                 progress
+            } else if self.container_paragraph {
+                let progress = parser.component_byte(byte, pos);
+                self.root_separator_seen |= byte == b'\n' && matches!(progress, Progress::Pending);
+                progress
             } else {
                 parser.byte(byte, pos)
             } {
@@ -1672,6 +1706,8 @@ impl Inline {
         self.autolink = None;
         self.entity = None;
         self.root_paragraph = false;
+        self.container_paragraph = false;
+        self.paragraph_key = None;
         self.root_separator_seen = false;
     }
 }
@@ -1699,7 +1735,14 @@ mod tests {
                 let end = state.find(", label_delimiters: ").unwrap();
                 state.replace_range(start..end, ", label: <dormant scratch>");
             }
-            state.replacen("root_paragraph: true", "root_paragraph: false", 1)
+            let state = state
+                .replacen("root_paragraph: true", "root_paragraph: false", 1)
+                .replacen("container_paragraph: true", "container_paragraph: false", 1);
+            let start = state.find("paragraph_key: ").unwrap();
+            let end = state[start..].find(", root_separator_seen:").unwrap() + start;
+            let mut state = state;
+            state.replace_range(start..end, "paragraph_key: None");
+            state
         }
         assert_eq!(syntax(publisher), syntax(observer), "{event}");
         assert_eq!(
@@ -2069,6 +2112,72 @@ mod tests {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn container_divergence_keeps_old_observer_semantics_and_exact_deferred_key() {
+        for prefix in ["> ", ">\t", "- "] {
+            let next = if prefix == "- " { "  " } else { prefix };
+            for (prior, row) in [
+                ("*prior [a](u", "end*and"),
+                ("_prior [a](u", "end_and"),
+                ("~~prior [a](u", "end~~and"),
+                ("*prior [a](u", "end* "),
+                ("[a](u", "end"),
+                ("[a](u", "'t') "),
+                ("[a](u", "'t'x) "),
+            ] {
+                let head = format!("{prefix}{prior}\n");
+                let source = format!("{head}{next}{row}{}", "x".repeat(1100));
+                let mut doc = Document::new();
+                doc.append(&head).unwrap();
+                assert!(doc.inline.root_separator_seen());
+                let key = doc.inline.paragraph_key().unwrap();
+                doc.append(&source[head.len()..]).unwrap();
+                assert_eq!(doc.inline.paragraph_key(), Some(key));
+                let active = doc.container_eligibility.as_ref().unwrap();
+                assert_eq!(active.observer.key(), Some(key));
+                // Independently run old single-line syntax over the producer's
+                // known spans. No new publisher effects/state enter this model.
+                let mut old = Inline::default();
+                let mut work = Work::default();
+                let virtuals = u8::from(prefix == ">\t") * 2;
+                if virtuals > 0 {
+                    old.virtual_spaces(1, virtuals, &mut Effects::observing(&source, &mut work));
+                }
+                old.feed(
+                    Span::new(prefix.len(), head.len()),
+                    &mut Effects::observing(&source, &mut work),
+                );
+                assert!(old.can_isolate_line());
+                old.isolate_line();
+                if virtuals > 0 {
+                    old.virtual_spaces(
+                        head.len() + 1,
+                        virtuals,
+                        &mut Effects::observing(&source, &mut work),
+                    );
+                }
+                old.feed(
+                    Span::new(head.len() + next.len(), source.len()),
+                    &mut Effects::observing(&source, &mut work),
+                );
+                if old.header_crossed() {
+                    old.cancel_header(&mut Effects::observing(&source, &mut work));
+                    assert!(doc.streaming_header.is_none());
+                } else {
+                    assert!(matches!(doc.streaming_header.as_ref().unwrap().header.mode,
+                        crate::table::HeaderMode::Deferred(saved) if saved == key));
+                }
+                same(
+                    &old,
+                    &active.observer.inline,
+                    "old observer after publisher divergence",
+                );
+                assert!(doc.inline.root_separator_seen());
+                doc.finish();
             }
         }
     }

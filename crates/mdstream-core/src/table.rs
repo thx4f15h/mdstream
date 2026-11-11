@@ -82,12 +82,18 @@ impl Table {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ParagraphKey {
+    pub first: BlockId,
+    pub scope: Option<crate::ContainerId>,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HeaderMode {
     Ordinary,
-    // The real root parser has not consumed this physical payload. Its
-    // independently maintained old-grammar observer decides eligibility.
-    RootDeferred,
+    // This exact active sequence retains the unconsumed source. Its old
+    // grammar observer alone decides eligibility until release/confirmation.
+    Deferred(ParagraphKey),
 }
 
 pub(crate) struct HeaderCandidate {

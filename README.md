@@ -484,10 +484,10 @@ assert!(doc.finish().loosened_lists.is_empty());
 - 每个正文物理行仍有自己的 `BlockId`、范围和最内层容器；换行后叶块范围 Sealed 不代表行内样式已全部确定。稍后的 closer 可给多个旧叶块应用范围样式和 `dirty` / `Change` 失效，不改它们的身份或逐个生成块变更。`pending()` 仍只表示尚未分类的当前行前缀。
 - 进入子容器、退出到父级/根、切换兄弟条目或列表类型、无前缀空行及显式空白正文终止旧序列；之后回到同一个外层容器也不恢复旧 opener。已识别 ATX、围栏/缩进代码、链接/脚注定义和确认的表格同样中断序列，代码 span 也不屏蔽块分类。已识别的容器内分隔线同样中断序列；超出分类窗口或失败的候选继续沿用正文方言。
 - LF 在下一条同序列正文实际交给行内解析器时才成为 SOFT_BREAK 或 HARD_BREAK；未分类尾部、未决表头不提前确认。行尾两个以上空格或未转义反斜线产生硬换行，CRLF 只隐藏 CR。序列终止时保留末端原文，不把它标为行内换行；代码 span 内的换行由代码显示规则处理。
-- 早管道表头候选保留前序行内状态但不提前消费候选正文；失败/EOF 时一次性消费，确认时丢弃前序状态并按独立单元格解析。新行内序列、只继承待确认换行、尚未闭合旧强调或可隔离的已闭合强调的晚管道表头复用已消费的首单元格前缀，只延迟首管道起的后缀；继承未闭合代码 span 或数学的前缀保持原候选状态；可隔离的代码闭合暂存端点，确认后在单元格扫描中解析正文。未进入根段落后缀延迟模式的无管道普通长行即时消费正文；`RootDeferred` 候选行在结构归属判定后单次消费。其它继承状态的晚管道长行与非法定义继续普通正文。长分隔行采用下方单遍探测及一次回退规则，不在长行尾部重试块分类。
+- 早管道表头候选保留前序行内状态但不提前消费候选正文；失败/EOF 时一次性消费，确认时丢弃前序状态并按独立单元格解析。新行内序列、只继承待确认换行、尚未闭合旧强调或可隔离的已闭合强调的晚管道表头复用已消费的首单元格前缀，只延迟首管道起的后缀；继承未闭合代码 span 或数学的前缀保持原候选状态；可隔离的代码闭合暂存端点，确认后在单元格扫描中解析正文。未进入根段落后缀延迟模式的无管道普通长行即时消费正文；`Deferred(key)` 候选行在结构归属判定后单次消费。其它继承状态的晚管道长行与非法定义继续普通正文。长分隔行采用下方单遍探测及一次回退规则，不在长行尾部重试块分类。
 - **Setext 的晚确认保持单调语义**：同作用域连续正文整体成为标题，保留已确认的跨行样式、换行及对象 ID，下划线终止未闭合状态。例如 `> *first\n> last*\n> ---\n` 的标题显示为 `first\nlast`，已有强调继续有效。物理叶块保持身份，标题保存跨叶块范围，不重扫旧正文；需要撤销已确认语义的更完整块规则仍另行设计。
 - 代码 span 的前缀不参与 all-spaces 判定。规范化照常把内容换行显示为空格，并在两端为空白、内容不全为空白时各去一个规范化空格；末端记录最后一个实际正文 byte/CRLF，所以 closer 前的隐藏前缀不会被错当正文。闭合仅检查端点并建立一个源码包络映射，不回扫内部行。
-- 链接/图片显示标签支持同作用域的跨物理行正文，源码包络和去前缀消费见[容器跨行链接与图片标签](#容器跨行链接与图片标签)。数学候选也可跨同一作用域正文续行，去前缀内容与源码映射见[容器跨行数学内容](#容器跨行数学内容)；失败候选保持字面/opaque 行为，不重新解释内部标记。链接目标保持单物理行；直接 title 正文仅在实际根普通段落允许 LF/CRLF，见[根 title 正文](#根段落直接链接与图片的多行-title-正文)；[根段落后缀的组件间空白](#根段落行内链接后缀的组件换行)可跨行，容器后缀和 full 引用后缀仍限单物理行。脚注、自动链接、实体及 EOF 确认沿用原有规则；更完整的块边界撤销仍待实现。
+- 链接/图片显示标签支持同作用域的跨物理行正文，源码包络和去前缀消费见[容器跨行链接与图片标签](#容器跨行链接与图片标签)。数学候选也可跨同一作用域正文续行，去前缀内容与源码映射见[容器跨行数学内容](#容器跨行数学内容)；失败候选保持字面/opaque 行为，不重新解释内部标记。链接目标保持单物理行；直接 title 正文仅在实际根普通段落允许 LF/CRLF，见[根 title 正文](#根段落直接链接与图片的多行-title-正文)；[根段落后缀的组件间空白](#根段落行内链接后缀的组件换行)可跨行，容器普通段落的组件 gap 见[容器后缀组件换行](#容器普通段落后缀的组件换行)，full 引用后缀仍限单物理行。脚注、自动链接、实体及 EOF 确认沿用原有规则；更完整的块边界撤销仍待实现。
 
 ```rust
 use mdstream::{Document, Span, Style};
@@ -688,7 +688,7 @@ assert!(!doc.fold_candidate(id).unwrap().open);
 - 链接定义的每个物理行必须在含容器前缀的 1 KiB 分类窗口内完成（UTF-8 最多延长三个字节）。短行等 LF/EOF 才发布；超过窗口后按普通容器正文消费，不因晚来的行尾再确认。裸目标、尖括号目标及三种 title 沿用顶层方言。
 - 脚注只要求合法 `[^label]:` 位于分类前缀内，正文可无限流式增长。冒号后前缀内已有的一个 space/tab 可被省略，其余原样保留；正文不解析 Markdown、链接、数学或嵌套脚注。未分类短行仍显示原文；确认后整个定义隐藏，保持 Growing 直到非续行边界或 EOF。同容器路径下的四列完整边界续行、空行分段和去前缀读取见[脚注核心](#脚注核心)。CRLF 只从当前正文包络末端去掉，内部换行原样保留。
 - 链接定义支持[跨物理行标签](#引用定义跨物理行标签)，闭合 `]` 后须在同一行紧接 `:`；冒号后仅有水平空白时，可从紧接下一物理行读取完整目标及该行 title。目标行未带 title 时，可由紧接下一物理行提供[独立完整 title](#引用定义的独立下一物理行完整-title)，包括空 title；已有 title 不再吸收下一行。各续行须完整匹配原显式容器路径，目标/title 行在路径后可多于三列水平缩进。标签/目标候选失败只单次回流；独立 title 候选失败保留已发布目标，当前行走普通块流程。已有段落不能被定义候选中断；表头/Setext 资格和结构优先级保持。脚注续行仍须匹配原容器路径。表格单元格、标题正文和行内代码保持自己的上下文。
-- 确认目标前的非法/超长标签、目标/title 失败或未完成候选沿用普通行内处理，可能创建未解析引用，但不创建有效定义。不回放长行已消费的前缀；无效的纯空白链接标签也保留容器前缀隐藏和独立叶块边界，不并入外层段落。既有完整显式 Quote/List/嵌套路径中，符合原普通文本资格的多行 title 正文及完整前缀匹配后的 1–3 虚拟列已支持，见[容器多行 title 正文](#引用定义容器多行-title-正文)；虚拟余量仅参与结构判定，不产生额外元数据文本，真实缩进保留。根段落行内后缀的组件换行（510）已支持，见[后缀组件换行](#根段落行内链接后缀的组件换行)；容器内后缀及直接 title 正文换行、脚注正文 Markdown 排版和完整容器/字面回退仍待办；根作用域的 196 见[多行 title 正文](#引用定义根作用域的多行-title-正文)。
+- 确认目标前的非法/超长标签、目标/title 失败或未完成候选沿用普通行内处理，可能创建未解析引用，但不创建有效定义。不回放长行已消费的前缀；无效的纯空白链接标签也保留容器前缀隐藏和独立叶块边界，不并入外层段落。既有完整显式 Quote/List/嵌套路径中，符合原普通文本资格的多行 title 正文及完整前缀匹配后的 1–3 虚拟列已支持，见[容器多行 title 正文](#引用定义容器多行-title-正文)；虚拟余量仅参与结构判定，不产生额外元数据文本，真实缩进保留。根段落行内后缀的组件换行（510）已支持，见[后缀组件换行](#根段落行内链接后缀的组件换行)；容器普通段落后缀组件 gap 已支持，见[容器后缀组件换行](#容器普通段落后缀的组件换行)；容器直接 title 正文换行、脚注正文 Markdown 排版和完整容器/字面回退仍待办；根作用域的 196 见[多行 title 正文](#引用定义根作用域的多行-title-正文)。
 
 ```rust
 use mdstream::{Budget, Document, FootnoteReferenceId, FootnoteTarget, LinkId, WorkLimit};
@@ -3682,11 +3682,11 @@ run 等待后继标量或 EOF 再定长；未完成/失败外层不贡献深度�
 
 观察随原缩进、eager 第一 pipe 截点和 isolate/cancel/confirm/finish 事件推进，游标保证 payload 不重复进入。额外最多一份当前根段落的行内摘要，总时间仍为累计 O(n log n)、空间 O(n)。`Work.root_eligibility_bytes` 单列额外 payload/等价缩进访问，`root_eligibility_steps` 累计该内核的词法、分隔符/查询、flanking、label 规范化和有界候选工作；原 `inline_bytes`、树访问及其它计数保持发布路径含义。普通长正文每个新字节多一次观察访问，历史树/引用不增加遍历。
 
-该基础交付时只观察，表头资格仍由原 publisher 决定，未改变语法或公开结果。本次[根段落后缀组件换行](#根段落行内链接后缀的组件换行)已将根表头资格接入旧语法观察器，并接入 `RootDeferred` 和官方 510；非根控制保留原路径，宽范围需求继续见 TODO。复跑：`nix develop -c cargo nextest run --lib --test root_eligibility --test code_fallback --test inherited_headers --no-fail-fast`。测试含逐事件状态差分、1552 份真实 HEAD 公开快照摘要、UTF-8 每字节/逐前缀 EOF 和百万字/两万历史引用计数，见[交付记录](DONE.md#2026-11-11-根段落旧行内表头资格观察基础交付)。
+该基础交付时只观察，表头资格仍由原 publisher 决定，未改变语法或公开结果。本次[根段落后缀组件换行](#根段落行内链接后缀的组件换行)已将根表头资格接入旧语法观察器，并接入 `Deferred(key)` 和官方 510；非根控制保留原路径，宽范围需求继续见 TODO。复跑：`nix develop -c cargo nextest run --lib --test root_eligibility --test code_fallback --test inherited_headers --no-fail-fast`。测试含逐事件状态差分、1552 份真实 HEAD 公开快照摘要、UTF-8 每字节/逐前缀 EOF 和百万字/两万历史引用计数，见[交付记录](DONE.md#2026-11-11-根段落旧行内表头资格观察基础交付)。
 
 ## 根段落行内链接后缀的组件换行
 
-实际根作用域普通段落内，链接和图片后缀在 `(` 后、完整目标后、完整 title 后到 `)` 前的空白中，各允许至多一个 LF 或 CRLF，CRLF 计两个源字节、一次行尾。例如 `[link](   /uri\n  "title"  )`（`\n` 表示物理 LF）直接匹配官方 510。空目标、裸/尖括号目标、平衡括号、三种 title 定界及原始长度限制沿用原规则；目标正文仍为单物理行；直接 title 正文的根扩展见[下节](#根段落直接链接与图片的多行-title-正文)。实体产生的 LF 只是解码内容，不触发组件分隔。空白行、真实块与作用域中断保持原分类优先级；容器/lazy/partial-tab、ATX、表格单元格、代码、数学和脚注不启用新后缀语法。根段落后续被确认为 Setext 或表格时沿用原结构流程。
+实际根作用域普通段落内，链接和图片后缀在 `(` 后、完整目标后、完整 title 后到 `)` 前的空白中，各允许至多一个 LF 或 CRLF，CRLF 计两个源字节、一次行尾。例如 `[link](   /uri\n  "title"  )`（`\n` 表示物理 LF）直接匹配官方 510。空目标、裸/尖括号目标、平衡括号、三种 title 定界及原始长度限制沿用原规则；目标正文仍为单物理行；直接 title 正文的根扩展见[下节](#根段落直接链接与图片的多行-title-正文)。实体产生的 LF 只是解码内容，不触发组件分隔。空白行、真实块与作用域中断保持原分类优先级；根模式不用于容器/lazy/partial-tab、ATX、表格单元格、代码、数学和脚注；真实普通容器的组件模式另见[容器后缀组件换行](#容器普通段落后缀的组件换行)。根段落后续被确认为 Setext 或表格时沿用原结构流程。
 
 合法完成时，已发布的 shortcut LinkId 原子升级为直接目标，源包络包含后缀、title 保留真实借用 Span，原引用及 first_use 保持。未完、失败和 EOF 保留旧 ID、shortcut source/target 和空 title，完成 sealing；已消费的候选前缀不重放，拒绝字节只按普通词法处理一次。这个 opaque 方言在新 root 跨行候选中有明确的新作用范围：
 
@@ -3695,9 +3695,9 @@ run 等待后继标量或 EOF 再定长；未完成/失败外层不贡献深度�
 | `[a](u\n 'a&amp;'x)\n` | `a(u\n'a&'x)\n` | `a(u\n'a&amp;'x)\n` |
 | `[a](u\n 'a&amp;`（EOF） | `a(u\n'a&` | `a(u\n'a&amp;` |
 
-旧语法在首个 LF 拒绝，后面的实体成为普通正文；当前候选已消费它，失败/EOF 后仍显示原拼写。这是新增的 opaque 范围，不是成功解码，也不声称该结果与基线相同。相同边界适用于候选内的 `&#10;`、反斜线转义和代码/强调定界符；它们保留原拼写，不在回退时重新产生换行、去掉反斜线或启用样式。候选外的拒绝字节正常解析，例如 `'a&amp;'&amp;)` 中前一个实体保持 raw，后一个实体显示 `&`，无字符丢失。LF/CRLF 的原 break 映射在完成前保留，成功后整个后缀隐藏。完整字面失败回退、容器后缀及容器内直接 title 正文换行仍在 TODO；根 title 正文见下节。
+旧语法在首个 LF 拒绝，后面的实体成为普通正文；当前候选已消费它，失败/EOF 后仍显示原拼写。这是新增的 opaque 范围，不是成功解码，也不声称该结果与基线相同。相同边界适用于候选内的 `&#10;`、反斜线转义和代码/强调定界符；它们保留原拼写，不在回退时重新产生换行、去掉反斜线或启用样式。候选外的拒绝字节正常解析，例如 `'a&amp;'&amp;)` 中前一个实体保持 raw，后一个实体显示 `&`，无字符丢失。LF/CRLF 的原 break 映射在完成前保留，成功后整个后缀隐藏。完整字面失败回退及容器内直接 title 正文换行仍在 TODO；容器组件 gap 已由下方独立窄项交付；根 title 正文见下节。
 
-根表头资格从首个源 payload 起始终由旧单行 grammar 的 `RootEligibility` 决定，观察 effects 不发布、不合并到正文。实际 Inline 消费合法分隔 LF 后设置粘滞标志；仅继续当前根段落的合格候选显式使用 `HeaderMode::RootDeferred`，与保留原块和观察器使用同一作用域条件，由旧观察器推进至首 pipe，唯一来源在取消/确认/EOF 时消费一次。新 Quote/List/嵌套及部分 tab 路径按原普通模式创建叶块，同时关闭旧根解析器和观察器；lazy、真实块及新根仍按原资格路由。非根及未分歧路径保留 ordinary/eager/opaque 复用。继承强调的否决、两个 gap 后的旧 opener、有效新 title 内的旧资格、code/label 屏蔽及晚管道表格均有原快照对照。无正文回扫、第二 publisher、ID 回滚或旧引用遍历，累计 O(n log n)、空间 O(n)，不承诺单次 append/EOF 硬时延。
+根表头资格从首个源 payload 起始终由旧单行 grammar 的 `RootEligibility` 决定，观察 effects 不发布、不合并到正文。实际 Inline 消费合法分隔 LF 后设置粘滞标志；仅继续当前根段落的合格候选显式使用 `HeaderMode::Deferred(key)`，与保留原块和观察器使用同一作用域条件，由旧观察器推进至首 pipe，唯一来源在取消/确认/EOF 时消费一次。新 Quote/List/嵌套及部分 tab 路径按原普通模式创建叶块，同时关闭旧根解析器和观察器；lazy、真实块及新根仍按原资格路由。非根及未分歧路径保留 ordinary/eager/opaque 复用。继承强调的否决、两个 gap 后的旧 opener、有效新 title 内的旧资格、code/label 屏蔽及晚管道表格均有原快照对照。无正文回扫、第二 publisher、ID 回滚或旧引用遍历，累计 O(n log n)、空间 O(n)，不承诺单次 append/EOF 硬时延。
 
 `tests/root_link_suffixes.rs` 覆盖 3600 组组件模型、UTF-8 每字节/逐字/逐前缀 EOF、原始和显示切片、0/1/6 共享预算、稳定元数据与版本、真实折叠/Update、长度上限、百万字尾部和两万旧对象；历史 24 份非目标中 23 份保持完整快照，精确输入 `[a](u 't\nrest')\n` 由根 title 正文扩展独立断言新元数据/显示；48+24 份表格冻结快照保持。`tests/root_suffix_scope.rs` 另覆盖未完/成功/失败根前缀进入 Quote/List 的六个独立崩溃反例，以及 Link/Image、LF/CRLF、分类窗口附近、嵌套/partial-tab/lazy/真实块、新根、无 pipe/有 pipe 与分隔行确认/失败；1260 份冻结库对照保留容器结构、原始映射及身份，逐字节/逐字符/逐前缀 EOF、共享 0/1/6 预算和两万旧对象工作计数同时核验。成功的新根前缀按新语法独立断言升级，其容器部分仍与旧库对照。`root_eligibility` 的 foundation corpus 仅 `[a](u\n 't')` 及其带终止 LF 的两个完整新合法输入独立改预期，其余原 oracle 保持。官方 Links 482–511 现为 **22/6/2**；512–538 **18/4/5**、539–552 **8/6/0**、553–571 **17/2/0**、Images **19/1/2** 保持。原 Markdown/HTML、生成器、评分投影和输出 helper 不变。复跑：`nix develop -c cargo nextest run --lib --test root_link_suffixes --test root_suffix_scope --test root_eligibility --test commonmark_inline_links --test commonmark_images --test link_suffix_headers --test inherited_headers --test code_fallback --no-fail-fast`。完整证据与验证范围见[交付记录](DONE.md#2026-11-11-根段落行内链接后缀组件换行交付)。
 
@@ -3710,19 +3710,34 @@ raw title 直接借用连续真实源码，CRLF 计两个 title/suffix 字节；
 
 完整合法 suffix 才升级原 LinkId/Image；失败/EOF 保留原 shortcut/reference 来源、身份及解析状态。新 title-body 候选也沿用已验收的 opaque 前缀方言：`[a](u 'first\n&amp;\*` 在 EOF 显示 `a(u 'first\n&amp;\*`，基线曾将正文实体和转义解码；`[a](u 'first\n&amp;'&amp;)` 则显示 `a(u 'first\n&amp;'&)`，拒绝字节起的第二实体正常解码。内部代码/强调/新链接标记不重放，不因失败补发对象；这不是完整字面回退，相关宽 TODO 保留。
 
-新 title LF 复用粘滞分歧标志、旧单行 grammar `RootEligibility`、真实根续接限定的 `RootDeferred` 及单一来源双游标；观察状态不发布或合并。每个新增字节仅常数次访问，树操作 O(log n)，累计 O(n log n)、空间 O(n)，核心零运行时依赖和禁止 unsafe 保持。没有旧正文回扫、历史引用扫描或单次 append 硬时延承诺。
+新 title LF 复用粘滞分歧标志、旧单行 grammar `RootEligibility`、真实根续接限定的 `Deferred(key)` 及单一来源双游标；观察状态不发布或合并。每个新增字节仅常数次访问，树操作 O(log n)，累计 O(n log n)、空间 O(n)，核心零运行时依赖和禁止 unsafe 保持。没有旧正文回扫、历史引用扫描或单次 append 硬时延承诺。
 
-`tests/root_title_bodies.rs` 覆盖 1440 组独立成功模型、每 UTF-8 byte/切点/逐前缀 EOF、LF/CRLF/转义/空 title 对照、原始映射、0/1/6 与 query/object 共享预算、稳定身份及首定义、Update/真实 FoldView/open/fixed/ticket/reader、原长度界限、2000 条正文行、百万字尾及两万旧对象。864 个新正文前缀转长容器的结构/身份/映射与真实 `47d95a8` 对照；另 120 个晚 pipe 输入中 88 个全快照保持，12 个新成功、20 个 opaque 失败差异逐条独立断言。原 48+24 表格、1260 scope 及资格 corpus 保持；旧 negative 测试另有 `[r](/url 'a\nb')`、对应图片及长段落后的 `[a](url "two\nlines")` 三个精确新合法输入，均保留原输入并单独断言 metadata/display；不泛化跳过 LF，历史 fixture 不改。官方 Links 四子集 **22/6/2、18/4/5、8/6/0、17/2/0** 与 Images **19/1/2** 的独立观察和分类保持；原官方 Markdown/HTML、生成器、project/helper 不变。容器内后缀/title 正文、完整字面失败回退及其它宽需求继续保留。
+`tests/root_title_bodies.rs` 覆盖 1440 组独立成功模型、每 UTF-8 byte/切点/逐前缀 EOF、LF/CRLF/转义/空 title 对照、原始映射、0/1/6 与 query/object 共享预算、稳定身份及首定义、Update/真实 FoldView/open/fixed/ticket/reader、原长度界限、2000 条正文行、百万字尾及两万旧对象。864 个新正文前缀转长容器的结构/身份/映射与真实 `47d95a8` 对照；另 120 个晚 pipe 输入中 88 个全快照保持，12 个新成功、20 个 opaque 失败差异逐条独立断言。原 48+24 表格、1260 scope 及资格 corpus 保持；旧 negative 测试另有 `[r](/url 'a\nb')`、对应图片及长段落后的 `[a](url "two\nlines")` 三个精确新合法输入，均保留原输入并单独断言 metadata/display；不泛化跳过 LF，历史 fixture 不改。官方 Links 四子集 **22/6/2、18/4/5、8/6/0、17/2/0** 与 Images **19/1/2** 的独立观察和分类保持；原官方 Markdown/HTML、生成器、project/helper 不变。容器内直接 title 正文、完整字面失败回退及其它宽需求继续保留；容器后缀组件 gap 见下方独立窄项。
 
 复跑：`nix develop -c cargo nextest run --test root_title_bodies --test root_link_suffixes --test root_suffix_scope --test root_eligibility --no-fail-fast`。模型、真实基线、逐例显示差异与完整命令证据见 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-024/implementation/` 和[交付记录](DONE.md#2026-11-11-根段落直接链接与图片的多行-title-正文交付)。
 
 
 ## 容器普通段落的旧语法资格观察基础
 
-容器普通逻辑段落共用私有 `Eligibility` 和现有无发布 Inline 内核，以首个物理 leaf 的 BlockId 与精确 ContainerId 记录唯一活动身份。同 scope 续行保持实例；blank、父 scope 返回、兄弟/嵌套、真实块、Setext、成功 definition、table 确认和 EOF 沿原生命周期退出。它不持有公开 ID、引用表或第二棵树，不发布或合并 effects，容器语法及表头结构判断仍由原 publisher 驱动。
+容器普通逻辑段落共用私有 `Eligibility` 和现有无发布 Inline 内核，以首个物理 leaf 的 BlockId 与精确 ContainerId 记录唯一活动身份。同 scope 续行保持实例；blank、父 scope 返回、兄弟/嵌套、真实块、Setext、成功 definition、table 确认和 EOF 沿原生命周期退出。它不持有公开 ID、引用表或第二棵树，不发布或合并 effects。基础落地时容器语法及表头结构判断由原 publisher 驱动；下方 B 启用组件 gap 后，由该旧语法 observer 决定表头资格。
 
 三个现场生产者统一镜像实际 raw payload 与整组 virtual spaces；结构 prefix 不进入观察，独立 raw cursor 和最后 virtual tab offset 避免 fallback 重复消费。definition/header 未释放的源不预扫；第一 pipe 截点、isolate/cancel/confirm/finish 与 first-cell reuse 同步，观察器不转入 RowParser。`Work.container_eligibility_bytes` 单列 raw 与 virtual 访问，`container_eligibility_steps` 单列局部词法/摘要/隔离工作；root 和旧发布计数保持原义。仅多当前普通段落的状态，累计 O(n log n) 时间、O(n) 空间，核心仍零运行时依赖、禁止 unsafe。
 
 测试冻结真实 `7da6c27` 的 6592 份完整公开快照与全部旧 Work 字段，覆盖 scope、LF/CRLF、UTF-8 每字节/短输入每前缀 EOF、分类窗口/late pipe、partial tab 与 definition 回流；真实 producer 的 2700 组 header 路由逐事件核对全部活动语法状态和复用结果。另核验公开段落首 leaf/映射、virtual 1–3 列整组去重，以及深路径/百万字/两万旧引用后1000次追加精确新增1000次观察。既有共享预算、Update/Fold/sourceFold 和官方 fixture 验证保留。复跑：`nix develop -c cargo nextest run --lib --test container_eligibility --test root_eligibility --test root_suffix_scope --test root_title_bodies --no-fail-fast`。
 
-本项只交付观察基础，没有启用容器后缀组件 gap 或直接 title 正文 LF/CRLF；完整字面失败回退、prefix 预算反例及其它宽需求继续保留 TODO。验证证据见[交付记录](DONE.md#2026-11-11-容器普通段落旧语法资格观察基础交付)。
+本基础项未启用新语法；容器组件 gap 和 prefix 预算现由下方 B 交付。直接 title 正文 LF/CRLF、完整字面失败回退及其它宽需求继续保留 TODO。验证证据见[交付记录](DONE.md#2026-11-11-容器普通段落旧语法资格观察基础交付)。
+
+
+## 容器普通段落后缀的组件换行
+
+真实普通 Quote/List/嵌套容器逻辑段落内，链接和图片在 `(` 后、完整 target 后、完整 title 后三个 gap 各接受至多一个 LF/CRLF。target/title 正文仍各限单物理行；lone CR、转义换行、未闭合尖括号或未平衡裸 target 的内部换行、直接 title 正文换行均拒绝。root 已交付的 title 正文模式保持；cell、ATX、code、math、footnote、definition 不启用此模式。
+
+续段只采用现有分类生产者给出的 raw/结构 prefix/virtual 事件。lazy 和部分 tab 由真实分类决定；例如 `>\t  't')` 的两虚拟列加两真实空格会成为 code，不能接续后缀。首 leaf 与精确 ContainerId 必须同时相同；blank、真实块、父返回、兄弟和嵌套边界不跨接。raw source 包络包含结构 prefix，target/title Span 只含各自单行正文。结构 prefix 从 suffix8256 限额独立扣除，不能减 title 长度；虚拟列为零 metadata 源字节，target/title4096 和 label999 原限制保持。
+
+首次接纳新 gap LF 后的分歧标志持续到逻辑段落结束。旧单行 Eligibility 始终独立观察，决定首 pipe 前的表头资格；`Deferred(key)` 要求 candidate、observer 和实际 Inline 的首 leaf/scope 相同，先完成真实续段分类。eager deferred 不隔离或提前消费实际 Inline；否决时唯一 SourceOwner 释放 raw/virtual 各一次，确认 table 则封存原 shortcut、退役 observer 并使用独立 cell。旧 header 即使在新 containers 栈形成后回流，也按保存的旧 key 消费。Ordinary eager/opaque/inert 复用及 root 原跨容器保护保持。
+
+完整 `)` 才原位升级原 LinkId/Image；引用 first_use/revision 不撤销重建。新增 gap 后的已消费失败/EOF 前缀采用 opaque raw 方言：`> [a](u\n> 'a&amp;'x)\n` 显示 `a(u\n'a&amp;'x)\n`，相应 EOF 显示 `a(u\n'a&amp;`；已消费的 `\*` 和 `*b*` 也保留原拼写，不补发强调。拒绝字节起正常词法仅处理一次。这不是实体解码成功或完整字面回退，容器 title 正文是后续 C。
+
+`container_component_gaps` 测试包含18,000组独立组件模型、真实角色/晚 pipe/作用域矩阵、UTF-8分块与每前缀 EOF、独立长度/结构 prefix 限额、身份/原始映射、共享0/1/6字节预算、Update apply/merge与Fold重建、open/fixed/ticket/reader及百万字/两万旧对象计数。历史静态 oracle 原字节保留：A corpus 仅66个完整输入有精确新期望，其中32个公开 Direct 成功、34个公开全快照保持而仅工作计数改变；旧 root non-target 仅4个精确容器输入升级，scope corpus 仅60个精确容器新成功逐条独立断言 typed metadata/display。无按换行或前缀泛化豁免，官方输入/HTML/评分/projection/helper 不改。
+
+观察、发布、summary 固定次数消费新增 payload；prefix 为现场 O(1) 通知，无增长正文/旧引用/祖先回扫。独立 `Work.container_eligibility_*` 计费，累计 O(n log n) 时间、O(n) 空间，核心零运行时依赖且禁止 unsafe。复跑：`nix develop -c cargo nextest run --lib --test container_component_gaps --test container_eligibility --test root_link_suffixes --test root_suffix_scope --test root_title_bodies --no-fail-fast`。完整验证见[交付记录](DONE.md#2026-11-11-容器普通段落后缀组件换行交付)。

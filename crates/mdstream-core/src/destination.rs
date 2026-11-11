@@ -26,7 +26,7 @@ pub(crate) enum Progress {
 }
 
 /// One pass over a destination and optional title, starting after `(` or `:`.
-/// Spans retain escapes verbatim. Root inline suffixes and definition title
+/// Spans retain escapes verbatim. Root suffixes, container component gaps and definition title
 /// bodies have separate opt-ins for physical line endings.
 #[cfg_attr(test, derive(Debug))]
 pub(crate) struct Destination {
@@ -36,7 +36,8 @@ pub(crate) struct Destination {
     title: Option<Span>,
     escaped: bool,
     separated: bool,
-    // Only definition title continuations can exclude structural source bytes.
+    // Structural source in a container component gap is independent of title data.
+    suffix_prefix_bytes: usize,
     title_prefix_bytes: usize,
     // A component gap admits one LF or CRLF, never a lone CR.
     gap_ending: bool,
@@ -52,6 +53,7 @@ impl Destination {
             title: None,
             escaped: false,
             separated: false,
+            suffix_prefix_bytes: 0,
             title_prefix_bytes: 0,
             gap_ending: false,
             gap_carriage: false,
@@ -69,7 +71,7 @@ impl Destination {
 
     pub fn byte(&mut self, byte: u8, pos: usize) -> Progress {
         // Also bound whitespace and unfinished candidates, without rescanning.
-        if pos - self.start - self.title_prefix_bytes >= MAX_LINK_SUFFIX_BYTES
+        if pos - self.start - self.suffix_prefix_bytes >= MAX_LINK_SUFFIX_BYTES
             || matches!(byte, b'\n' | b'\r')
         {
             return Progress::Invalid;
@@ -176,10 +178,18 @@ impl Destination {
         matches!(self.stage, Stage::Title(_))
     }
 
-    /// Only real root paragraph payload calls this. The observer and every
-    /// independent inline context continue to use the old single-line byte().
+    /// Only real root paragraph payload calls this; container gaps opt in
+    /// separately. The observer and independent contexts keep single-line byte().
     pub fn root_byte(&mut self, byte: u8, pos: usize) -> Progress {
-        if pos - self.start >= MAX_LINK_SUFFIX_BYTES {
+        self.multiline_byte(byte, pos, true)
+    }
+
+    pub fn component_byte(&mut self, byte: u8, pos: usize) -> Progress {
+        self.multiline_byte(byte, pos, false)
+    }
+
+    fn multiline_byte(&mut self, byte: u8, pos: usize, title_body: bool) -> Progress {
+        if pos - self.start - self.suffix_prefix_bytes >= MAX_LINK_SUFFIX_BYTES {
             return Progress::Invalid;
         }
         if self.gap_carriage {
@@ -188,7 +198,7 @@ impl Destination {
                 return Progress::Invalid;
             }
         }
-        if self.open_title() {
+        if title_body && self.open_title() {
             // Root prose omits up to three leading spaces from each feed.
             // The raw title still owns those bytes, even on a closer-only line.
             let title = self.title.as_mut().unwrap();
@@ -233,7 +243,7 @@ impl Destination {
     // independent inline contexts retain byte()'s physical-line rejection.
     pub fn definition_title_byte(&mut self, byte: u8, pos: usize) -> Progress {
         if matches!(byte, b'\n' | b'\r') && self.open_title() {
-            if pos - self.start - self.title_prefix_bytes >= MAX_LINK_SUFFIX_BYTES {
+            if pos - self.start - self.suffix_prefix_bytes >= MAX_LINK_SUFFIX_BYTES {
                 return Progress::Invalid;
             }
             let title = self.title.as_mut().unwrap();
@@ -257,6 +267,14 @@ impl Destination {
         debug_assert_eq!(title.end, prefix.start);
         title.end = prefix.end;
         self.title_prefix_bytes += prefix.len();
+        self.suffix_prefix_bytes += prefix.len();
+    }
+
+    // Only a classified continuation of the same ordinary container sequence.
+    // B never carries a live title body over a physical ending.
+    pub fn component_prefix(&mut self, prefix: Span) {
+        debug_assert!(!self.open_title());
+        self.suffix_prefix_bytes += prefix.len();
     }
 
     fn complete(&self) -> Progress {

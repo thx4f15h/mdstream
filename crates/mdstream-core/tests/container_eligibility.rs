@@ -5,6 +5,9 @@ mod corpus;
 mod support;
 
 include!("fixtures/container_eligibility_baseline.rs");
+include!("fixtures/container_component_gap_changes.rs");
+#[path = "support/component_gap_model.rs"]
+mod component_model;
 
 #[test]
 fn container_eligibility_preserves_head_snapshots_and_every_old_work_counter() {
@@ -18,12 +21,29 @@ fn container_eligibility_preserves_head_snapshots_and_every_old_work_counter() {
                     d.append(chunk).unwrap();
                 }
                 d.finish();
+                let exact_change = COMPONENT_GAP_CHANGES
+                    .iter()
+                    .find(|entry| entry.0.as_bytes() == bytes);
+                let expected = if let Some((_, changes, public)) = exact_change {
+                    if *public {
+                        component_model::assert_direct(d.document(), "a", 0);
+                    } else {
+                        assert_eq!(
+                            corpus::hash(&format!("{:?}", support::snapshot(d.document()))),
+                            BASELINE[index].0
+                        );
+                        assert_eq!(d.document().link_destination(LinkId(0)), None);
+                    }
+                    changes[usize::from(bytewise)]
+                } else {
+                    BASELINE[index]
+                };
                 assert_eq!(
                     (
                         corpus::hash(&format!("{:?}", support::snapshot(d.document()))),
                         corpus::hash(&corpus::old_work(d.document().work()))
                     ),
-                    BASELINE[index],
+                    expected,
                     "case={case} end={end} bytewise={bytewise}"
                 );
                 index += 1;
