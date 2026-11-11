@@ -82,7 +82,16 @@ impl Table {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HeaderMode {
+    Ordinary,
+    // The real root parser has not consumed this physical payload. Its
+    // independently maintained old-grammar observer decides eligibility.
+    RootDeferred,
+}
+
 pub(crate) struct HeaderCandidate {
+    pub mode: HeaderMode,
     // None only while the definition ledger owns this header source.
     pub owner: Option<crate::deferred::SourceOwner>,
     pub block: Option<BlockId>,

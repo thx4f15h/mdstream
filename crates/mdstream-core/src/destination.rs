@@ -25,8 +25,8 @@ pub(crate) enum Progress {
 }
 
 /// One pass over a destination and optional title, starting after `(` or `:`.
-/// Spans retain escapes verbatim. Inline suffixes remain single-line; only
-/// definition titles opt into line endings and known structural prefix gaps.
+/// Spans retain escapes verbatim. Root inline component gaps and definition
+/// title bodies have separate opt-ins for physical line endings.
 pub(crate) struct Destination {
     pub start: usize,
     stage: Stage,
@@ -36,6 +36,9 @@ pub(crate) struct Destination {
     separated: bool,
     // Only definition title continuations can exclude structural source bytes.
     title_prefix_bytes: usize,
+    // A component gap admits one LF or CRLF, never a lone CR.
+    gap_ending: bool,
+    gap_carriage: bool,
 }
 
 impl Destination {
@@ -48,6 +51,8 @@ impl Destination {
             escaped: false,
             separated: false,
             title_prefix_bytes: 0,
+            gap_ending: false,
+            gap_carriage: false,
         }
     }
 
@@ -72,6 +77,7 @@ impl Destination {
                 self.destination = Span::new(pos + 1, pos + 1);
                 return Progress::Pending;
             }
+            self.gap_ending = false;
             if byte == b'<' {
                 self.destination = Span::new(pos + 1, pos + 1);
                 self.stage = Stage::Angle;
@@ -123,6 +129,7 @@ impl Destination {
                     return Progress::Pending;
                 }
                 if self.separated && matches!(byte, b'\'' | b'"' | b'(') {
+                    self.gap_ending = false;
                     self.title = Some(Span::new(pos + 1, pos + 1));
                     self.stage = Stage::Title(if byte == b'(' { b')' } else { byte });
                     return Progress::Pending;
@@ -133,6 +140,7 @@ impl Destination {
                 if !self.escaped {
                     if byte == close {
                         self.stage = Stage::AfterTitle;
+                        self.gap_ending = false;
                         return Progress::Pending;
                     }
                     if close == b')' && byte == b'(' {
@@ -164,6 +172,47 @@ impl Destination {
 
     pub fn open_title(&self) -> bool {
         matches!(self.stage, Stage::Title(_))
+    }
+
+    /// Only real root paragraph payload calls this. The observer and every
+    /// independent inline context continue to use the old single-line byte().
+    pub fn root_byte(&mut self, byte: u8, pos: usize) -> Progress {
+        if pos - self.start >= MAX_LINK_SUFFIX_BYTES {
+            return Progress::Invalid;
+        }
+        if self.gap_carriage {
+            self.gap_carriage = false;
+            if byte != b'\n' {
+                return Progress::Invalid;
+            }
+        } else if !matches!(byte, b'\n' | b'\r') {
+            return self.byte(byte, pos);
+        }
+        if self.escaped
+            || self.gap_ending
+            || !matches!(
+                self.stage,
+                Stage::Before | Stage::Bare(0) | Stage::AfterDestination | Stage::AfterTitle
+            )
+        {
+            return Progress::Invalid;
+        }
+        if byte == b'\r' {
+            self.gap_carriage = true;
+        } else {
+            self.gap_ending = true;
+            match self.stage {
+                Stage::Before => self.destination = Span::new(pos + 1, pos + 1),
+                Stage::Bare(0) => {
+                    self.stage = Stage::AfterDestination;
+                    self.separated = true;
+                }
+                Stage::AfterDestination => self.separated = true,
+                Stage::AfterTitle => {}
+                _ => unreachable!(),
+            }
+        }
+        Progress::Pending
     }
 
     // Only a definition body opts in. Inline suffixes and destinations

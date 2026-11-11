@@ -584,8 +584,14 @@ impl Document {
                     .feed(&self.source[start..cursor], &mut self.work);
                 if eager {
                     let parsed_end = first_pipe.map_or(cursor, |offset| start + offset);
-                    self.feed(Span::new(start, parsed_end), update);
-                    candidate.header.parsed_end = parsed_end;
+                    let span = Span::new(start, parsed_end);
+                    match candidate.header.mode {
+                        table::HeaderMode::Ordinary => {
+                            self.feed(span, update);
+                            candidate.header.parsed_end = parsed_end;
+                        }
+                        table::HeaderMode::RootDeferred => self.observe_root(span),
+                    }
                 }
                 candidate.header.source.end = cursor;
                 candidate.header.content.end = cursor;
@@ -596,7 +602,7 @@ impl Document {
                 }
                 self.containers.end = cursor;
                 self.headings.parsed_end = cursor;
-                if self.inline.header_crossed() {
+                if self.header_crossed() {
                     self.reject_streaming_header(candidate.header, update);
                 } else if self.source.as_bytes()[cursor - 1] == b'\n' {
                     self.finish_header(candidate, update);
@@ -837,6 +843,7 @@ impl Document {
             }
         }
         if root_paragraph && (!span.is_empty() || indent > 0) {
+            self.inline.root_paragraph();
             self.root_eligibility
                 .get_or_insert_with(RootEligibility::default)
                 .feed(&self.source, span, indent, &mut self.work);
@@ -846,11 +853,49 @@ impl Document {
         self.inline = inline;
     }
 
-    fn isolate_header(&mut self) -> Option<inline::LineBreak> {
+    // Observe a deferred eager prefix with the same bounded indentation rule
+    // as feed(), without taking the real parser's source consumption right.
+    fn observe_root(&mut self, mut span: Span) {
+        let mut indent = 0;
+        if span.start == 0 || self.source.as_bytes()[span.start - 1] == b'\n' {
+            let spaces = self.source.as_bytes()[span.range()]
+                .iter()
+                .take(3)
+                .take_while(|&&byte| byte == b' ')
+                .count();
+            if self.source.as_bytes().get(span.start + spaces) != Some(&b'\t') {
+                indent = spaces;
+                span.start += spaces;
+            }
+        }
+        self.root_eligibility
+            .as_mut()
+            .expect("deferred root header has an observer")
+            .feed(&self.source, span, indent, &mut self.work);
+    }
+
+    fn isolate_header(&mut self, mode: table::HeaderMode) -> Option<inline::LineBreak> {
         if let Some(root) = &mut self.root_eligibility {
             root.isolate_line(&mut self.work);
         }
-        self.inline.isolate_line()
+        match mode {
+            table::HeaderMode::Ordinary => self.inline.isolate_line(),
+            table::HeaderMode::RootDeferred => None,
+        }
+    }
+
+    fn can_isolate_header(&self) -> bool {
+        self.root_eligibility.as_ref().map_or_else(
+            || self.inline.can_isolate_line(),
+            RootEligibility::can_isolate_line,
+        )
+    }
+
+    fn header_crossed(&self) -> bool {
+        self.root_eligibility.as_ref().map_or_else(
+            || self.inline.header_crossed(),
+            RootEligibility::header_crossed,
+        )
     }
 
     fn cancel_header(&mut self, update: &mut Update) {
@@ -1904,12 +1949,23 @@ impl Document {
             .containers
             .inner()
             .map_or(paragraph, |scope| self.container_inline == Some(scope));
+        // Only this branch retains the current root paragraph and its observer.
+        // A new container closes both, even if the old root accepted a separator.
+        let root_continuation = paragraph && self.containers.inner().is_none();
         let eager = table_text
             && !complete
             && allow_long_header
             && !summary.pipe
-            && (!inherited || self.inline.can_isolate_line());
+            && (!inherited || self.can_isolate_header());
         if eager || (summary.pipe && (!complete || summary.columns().is_some())) {
+            let mode = if root_continuation
+                && self.root_eligibility.is_some()
+                && self.inline.root_separator_seen()
+            {
+                table::HeaderMode::RootDeferred
+            } else {
+                table::HeaderMode::Ordinary
+            };
             // An eager header moves the inline state into its first cell on
             // confirmation. Save the old paragraph's raw tail before replacing
             // its container leaf or consuming header bytes. Early container
@@ -1920,11 +1976,11 @@ impl Document {
                 None
             };
             let leading_break = if eager && inherited {
-                self.isolate_header()
+                self.isolate_header(mode)
             } else {
                 None
             };
-            let block = if paragraph && self.containers.inner().is_none() {
+            let block = if root_continuation {
                 None
             } else {
                 let kind = match classification {
@@ -1952,12 +2008,17 @@ impl Document {
                     .spaces(Span::new(content.start, content.start + 1), virtual_spaces);
             }
             let mut header = table::HeaderCandidate {
+                mode,
                 block,
                 source: span,
                 content,
                 container: self.containers.inner(),
                 columns: summary.columns().unwrap_or(0),
-                parsed_end: if eager { content.end } else { content.start },
+                parsed_end: if eager && mode == table::HeaderMode::Ordinary {
+                    content.end
+                } else {
+                    content.start
+                },
                 leading_break,
                 paragraph_end,
                 paragraph_tail,
@@ -1974,7 +2035,12 @@ impl Document {
                 self.mark(Span::new(end, end + 1), Style::HIDDEN, update);
             }
             if eager {
-                self.feed_header_content(content, virtual_spaces, update);
+                match mode {
+                    table::HeaderMode::Ordinary => {
+                        self.feed_header_content(content, virtual_spaces, update);
+                    }
+                    table::HeaderMode::RootDeferred => self.observe_root(content),
+                }
             }
             if let Some(label) = candidate_label {
                 self.definition_candidate = Some(DefinitionCandidate {
@@ -1993,7 +2059,7 @@ impl Document {
                     ),
                 });
             }
-            if self.inline.header_crossed() {
+            if self.header_crossed() {
                 self.reject_streaming_header(header, update);
             } else if complete {
                 self.table_header = Some(header);
@@ -2513,7 +2579,7 @@ impl Document {
         if let Some(columns) = candidate.summary.columns() {
             candidate.header.columns = columns;
             self.table_header = Some(candidate.header);
-        } else if !candidate.summary.pipe {
+        } else if !candidate.summary.pipe && candidate.header.mode == table::HeaderMode::Ordinary {
             // No pipe arrived: this was ordinary streaming text all along.
             // Do not add a whole-line annotation or revisit its semantics.
             self.cancel_header(update);
@@ -2598,7 +2664,9 @@ impl Document {
             debug_assert!(header.owner.is_some());
         }
         let id = TableId(self.tables.len());
-        let first_cell = if header.parsed_end > header.content.start {
+        let first_cell = if header.mode == table::HeaderMode::Ordinary
+            && header.parsed_end > header.content.start
+        {
             let mut inline = std::mem::take(&mut self.inline);
             let reuse = inline.confirm_header(&mut self.effects(update));
             if let Some(mut root) = self.root_eligibility.take() {

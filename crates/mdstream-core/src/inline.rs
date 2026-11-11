@@ -588,6 +588,9 @@ enum HeaderLinkSuffix {
 #[derive(Default)]
 #[cfg_attr(test, derive(Debug))]
 pub(crate) struct Inline {
+    root_paragraph: bool,
+    // Sticky until paragraph closure, even after the suffix completes/fails.
+    root_separator_seen: bool,
     // Non-space/tab endpoints of the raw sequence, excluding its final LF/CRLF.
     // Updated in the existing byte scan, including opaque syntax. Setext can
     // trim the outer edges without replaying text or visiting physical leaves.
@@ -663,6 +666,14 @@ pub(crate) struct RootEligibility {
 }
 
 impl RootEligibility {
+    pub fn can_isolate_line(&self) -> bool {
+        self.inline.can_isolate_line()
+    }
+
+    pub fn header_crossed(&self) -> bool {
+        self.inline.header_crossed()
+    }
+
     fn account(&mut self, total: &mut Work) {
         let w = std::mem::take(&mut self.work);
         debug_assert_eq!(w.tree_visits, 0);
@@ -683,11 +694,14 @@ impl RootEligibility {
     }
 
     pub fn feed(&mut self, source: &str, span: Span, indent: usize, total: &mut Work) {
-        debug_assert!(self.cursor.is_none_or(|end| end <= span.start - indent));
-        self.work.inline_bytes += indent as u64;
+        // A deferred header's real owner may release an already observed
+        // prefix. Only its unobserved suffix enters the old grammar again.
+        let end = self.cursor.unwrap_or(span.start - indent);
+        self.work.inline_bytes += span.start.saturating_sub(end).min(indent) as u64;
+        let span = Span::new(span.start.max(end).min(span.end), span.end);
         self.inline
             .feed(span, &mut Effects::observing(source, &mut self.work));
-        self.cursor = Some(span.end);
+        self.cursor = Some(end.max(span.end));
         self.account(total);
     }
 
@@ -720,6 +734,14 @@ impl RootEligibility {
 }
 
 impl Inline {
+    pub fn root_paragraph(&mut self) {
+        self.root_paragraph = true;
+    }
+
+    pub fn root_separator_seen(&self) -> bool {
+        self.root_separator_seen
+    }
+
     /// Feed at most three semantic spaces owned by one original tab byte.
     /// Used before nonblank container text (new or continuing), so it can
     /// neither create a delimiter nor become a trailing ordinary line break.
@@ -847,6 +869,8 @@ impl Inline {
     /// is instead parsed once as a cell during the existing row scan. Never
     /// finish its pending run: that could publish a cross-line mapping/object.
     pub fn confirm_header(&mut self, effects: &mut Effects<'_>) -> bool {
+        self.root_paragraph = false;
+        self.root_separator_seen = false;
         debug_assert!(!self.header_crossed);
         self.code_fallback.confirm_header(effects);
         let inherited_label = self.header_link.is_some()
@@ -1057,6 +1081,13 @@ impl Inline {
             return;
         }
         if self.tail.is_some() && self.tail_byte(byte, pos, effects) {
+            if self.root_paragraph && byte == b'\n' {
+                // An admitted separator remains a provisional ordinary break
+                // until the suffix succeeds. Failed/EOF candidates retain its
+                // original mapping; completion hides the whole suffix.
+                self.carriage = false;
+                self.newline(pos);
+            }
             return;
         }
         if let Some(start) = self.autolink.take() {
@@ -1121,16 +1152,7 @@ impl Inline {
             return;
         }
         if byte == b'\n' {
-            let end = pos - usize::from(self.previous == Some(b'\r'));
-            let escape = self.escape.take().filter(|at| *at + 1 == end);
-            let spaces = self.spaces.take();
-            let whitespace = self.whitespace.take();
-            self.line_break = Some(LineBreak {
-                newline: Span::new(pos, pos + 1),
-                hidden: Span::new(escape.or(whitespace).unwrap_or(end), end),
-                hard: escape.is_some() || spaces.is_some_and(|start| end - start >= 2),
-            });
-            self.bang = None;
+            self.newline(pos);
             return;
         }
         if matches!(byte, b' ' | b'\t') {
@@ -1196,6 +1218,19 @@ impl Inline {
             }
             _ => {}
         }
+    }
+
+    fn newline(&mut self, pos: usize) {
+        let end = pos - usize::from(self.previous == Some(b'\r'));
+        let escape = self.escape.take().filter(|at| *at + 1 == end);
+        let spaces = self.spaces.take();
+        let whitespace = self.whitespace.take();
+        self.line_break = Some(LineBreak {
+            newline: Span::new(pos, pos + 1),
+            hidden: Span::new(escape.or(whitespace).unwrap_or(end), end),
+            hard: escape.is_some() || spaces.is_some_and(|start| end - start >= 2),
+        });
+        self.bang = None;
     }
 
     fn shortcut(&mut self, mut candidate: Candidate, effects: &mut Effects<'_>) -> Candidate {
@@ -1472,7 +1507,13 @@ impl Inline {
             Tail::Destination {
                 candidate,
                 mut parser,
-            } => match parser.byte(byte, pos) {
+            } => match if self.root_paragraph {
+                let progress = parser.root_byte(byte, pos);
+                self.root_separator_seen |= byte == b'\n' && matches!(progress, Progress::Pending);
+                progress
+            } else {
+                parser.byte(byte, pos)
+            } {
                 Progress::Invalid => {
                     if self.header_link.is_some() {
                         self.cancel_header(effects);
@@ -1595,6 +1636,8 @@ impl Inline {
         self.line_break = None;
         self.autolink = None;
         self.entity = None;
+        self.root_paragraph = false;
+        self.root_separator_seen = false;
     }
 }
 
@@ -1607,7 +1650,15 @@ mod tests {
     fn same(publisher: &Inline, observer: &Inline, event: &str) {
         // Debug derives cover every core field: stack categories/previous links,
         // all 14 heads, raw/Unicode/opaque/label summaries and every header field.
-        assert_eq!(format!("{publisher:?}"), format!("{observer:?}"), "{event}");
+        // The publisher may be configured for root separators; these old-mode
+        // differential inputs have not admitted one. Compare all grammar state.
+        assert!(!publisher.root_separator_seen);
+        assert!(!observer.root_paragraph);
+        assert_eq!(
+            format!("{publisher:?}").replacen("root_paragraph: true", "root_paragraph: false", 1),
+            format!("{observer:?}"),
+            "{event}"
+        );
         assert_eq!(
             publisher.can_isolate_line(),
             observer.can_isolate_line(),
@@ -1716,6 +1767,7 @@ mod tests {
             "*前🙂 [*签* _中_ unmatched*][] tail* [a][ Straße ] ![图](<my url> 'title')",
             "[ ][] [\u{2003}][] [a][ ] [a][bad[nested] [a][escaped\\]]",
             "[a](bad title) [b](unfinished [c][broken\n *outside [literal*",
+            "[a](u\n 't') [a](u\n 'a&amp;'x) [a](\n*u\nend*and",
             "a***b**c* _中_，~~🙂~~ \\* &amp; &#x1f600; &bad; <https://x> <a@b.co> [^签]",
             "`x``a```b`` y `ok` $x\\$y$ $$中$$ $unfinished",
             "a  \r\nb\\\n c\t\n[<https://x> [replacement] [_x*]",

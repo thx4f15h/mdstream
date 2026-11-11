@@ -79,6 +79,35 @@ fn observed(source: &[u8], bytewise: bool) -> u64 {
         stream.append(chunk).unwrap();
     }
     stream.finish();
+    if matches!(source, b"[a](u\n 't')" | b"[a](u\n 't')\n") {
+        // The only two newly legal sources in this frozen corpus. Rule 6.3
+        // permits the LF separating the complete target and title. Assert the
+        // raw object model independently before checking its reviewed snapshot.
+        let doc = stream.document();
+        assert_eq!(doc.links(), [LinkTarget::Direct(Span::new(4, 5))]);
+        assert_eq!(doc.link_destination(LinkId(0)), Some("u"));
+        assert_eq!(doc.link_title(LinkId(0)), Some("t"));
+        assert_eq!(
+            doc.link_info(LinkId(0)),
+            Some(&LinkInfo {
+                kind: LinkKind::Link,
+                label: Span::new(1, 2),
+                source: Span::new(0, 11),
+                title: Some(Span::new(8, 9)),
+                state: SyntaxState::Sealed,
+            })
+        );
+        let visible: String = doc
+            .display_runs_in(Span::new(0, source.len()))
+            .unwrap()
+            .filter(|r| !r.style.contains(Style::HIDDEN))
+            .map(|r| r.text)
+            .collect();
+        assert_eq!(visible, if source.len() == 11 { "a" } else { "a\n" });
+        assert_eq!(doc.references().len(), 1);
+        assert_eq!(doc.references()[0].first_use, Some(0));
+        assert_eq!(doc.references()[0].destination, None);
+    }
     let snapshot = format!("{:?}", support::snapshot(stream.document()));
     snapshot.bytes().fold(0xcbf29ce484222325, |h, b| {
         (h ^ u64::from(b)).wrapping_mul(0x100000001b3)
@@ -95,7 +124,12 @@ fn root_eligibility_preserves_real_head_snapshots_including_utf8_and_prefix_eof(
             for bytewise in [false, true] {
                 assert_eq!(
                     observed(&source.as_bytes()[..end], bytewise),
-                    BASELINE[index],
+                    match (case, end) {
+                        // Exact complete sources above, not an LF exemption.
+                        (4, 11) => 0xc578db03a65f9c0e,
+                        (4, 12) => 0x239d8b333a6535cb,
+                        _ => BASELINE[index],
+                    },
                     "case={case} end={end} bytewise={bytewise}"
                 );
                 index += 1;

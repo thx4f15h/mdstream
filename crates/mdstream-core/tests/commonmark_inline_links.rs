@@ -247,7 +247,7 @@ enum Assessment {
 // Frozen observations are separate from the verbatim upstream oracle.
 fn assessment(number: usize) -> Assessment {
     match number {
-        482..=487 | 489 | 492 | 495..=496 | 498..=507 | 509 => Assessment::Supported,
+        482..=487 | 489 | 492 | 495..=496 | 498..=507 | 509..=510 => Assessment::Supported,
         488 => Assessment::DeliberateDifference {
             reason: "invalid bare destination leaves the existing hidden-bracket shortcut reference",
             observed: "<p>link(/my uri)</p>\n",
@@ -275,10 +275,6 @@ fn assessment(number: usize) -> Assessment {
         508 => Assessment::DeliberateDifference {
             reason: "invalid title suffix keeps the existing hidden-bracket shortcut reference",
             observed: "<p>link(/url &quot;title &quot;and&quot; title&quot;)</p>\n",
-        },
-        510 => Assessment::Unsupported {
-            reason: "inline destination/title suffixes are limited to one physical line",
-            observed: "<p>link(   /uri\n&quot;title&quot;  )</p>\n",
         },
         511 => Assessment::DeliberateDifference {
             reason: "a separated suffix leaves an unresolved shortcut with hidden brackets",
@@ -343,9 +339,9 @@ fn pinned_commonmark_inline_links_report() {
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [21, 6, 3]);
+    assert_eq!(counts, [22, 6, 2]);
     eprintln!(
-        "CommonMark 0.31.2 Links subset (482–511): 21 supported, 6 deliberate differences, 3 unsupported; Links 512–571 not scored"
+        "CommonMark 0.31.2 Links subset (482–511): 22 supported, 6 deliberate differences, 2 unsupported; Links 512–571 not scored"
     );
 }
 

@@ -2679,3 +2679,18 @@ README 当前说明和本任务对应 TODO 已同步，只新增此窄项勾选�
 最终验证：`nix develop -c cargo check --workspace --all-targets`；定向 nextest 235/235；`nix develop -c cargo nextest run --workspace --all-targets --no-fail-fast` 与同参数 `--release` 均 1673/1673；`nix develop -c cargo test --workspace --doc` 两组 72+3；`nix develop -c cargo doc --workspace --no-deps`；`nix develop -c cargo clippy --workspace --all-targets -- -D warnings`；`nix develop -c cargo fmt --all -- --check`，均退出 0。7 项离线生成核验、6 个 release 示例、官方 510 原报告、40 个最终公开快照原始文本 diff 及发布 Work 基线 diff 均通过。百万字普通根正文额外 1,000,005 次观察字节/步骤，原树访问仍为 1；8192 组 fallback 的 90,119 字节额外记录 563,305 步，原发布计数逐字段保持。
 
 本次未启用 Destination 新 LF、未接 RootDeferred、未改原表头决策来源；510 仍为基线未支持，跨行链接后缀与完整失败回退的原宽 TODO 保留。复跑定向：`nix develop -c cargo nextest run --lib --test root_eligibility --test code_fallback --test inherited_headers --no-fail-fast`。
+
+
+## 2026-11-11 根段落行内链接后缀组件换行交付
+
+实际根作用域普通段落的链接/图片后缀在 `(` 后、完整目标后、完整 title 后三个组件空白中，各支持至多一个 LF/CRLF。目标和直接 title 正文各限单物理行，空目标/裸与尖括号目标/平衡括号/三种 title 定界及原长度语义保持。容器、lazy/partial-tab、ATX、表格单元格、代码、数学和脚注不扩展；空白行、真实块、Setext 与表格仍由原结构流程决定。官方 510 原输入直接匹配原 HTML，Links 482–511 为 **22 支持、6 刻意差异、2 未支持**；512–538 **18/4/5**、539–552 **8/6/0**、553–571 **17/2/0**、Images **19/1/2** 保持。原官方 Markdown/HTML、生成器、评分投影和输出 helper 不变。
+
+复用前置 RootEligibility 基础：真实根表头资格持续来自旧单行 grammar，实际 Inline 的新分隔 LF 设置粘滞标志，后续合格行显式使用 RootDeferred；首 pipe、取消/确认/EOF 的来源游标各消费一次。非根与未分歧的 ordinary/eager/opaque 复用保持。观察 effects 不发布或合并，实际成功才原子升级旧 shortcut LinkId、借用 source/target/title Span，原引用及 first_use 保持。没有正文回扫、第二 publisher、对象回滚、历史引用遍历、运行时依赖或 unsafe；累计 O(n log n)、空间 O(n) 与共享预算保持。
+
+父流程明确选择保留新 root 候选内已消费前缀的 opaque 失败方言。`[a](u\n 'a&amp;'x)\n` 当前显示 `a(u\n'a&amp;'x)\n`，EOF `[a](u\n 'a&amp;` 显示 `a(u\n'a&amp;`；旧单行语法在首 LF 拒绝，分别显示 `a(u\n'a&'x)\n` 和 `a(u\n'a&`。这是新增 opaque 范围，不是原基线行为或正确实体解码。已消费 `&#10;`、反斜线转义与代码/强调定界符同样保留原拼写；拒绝字节普通词法一次，其后实体仍正常解码。失败/EOF 保持旧 ID/source/引用 target/空 title，finish sealing；原 LF/CRLF break 映射在成功隐藏后缀前保留，无丢字符。完整字面失败回退、容器后缀、直接 title 正文跨行和其它宽范围需求继续保留 TODO，仅勾选本次窄项。
+
+`root_link_suffixes` 覆盖 3600 组组件模型、分块/逐字/Unicode 切点与逐前缀 EOF、稳定身份/引用/版本/Update、Source/Display 原始切片、真实显示及解码共享 0/1/6 预算、长度上限、折叠与百万字/两万旧对象 Work。24 份非目标与 48+24 份表格冻结 fixture 哈希保持；foundation corpus 仅 `[a](u\n 't')` 及带终止 LF 两个完整新合法输入有独立语义断言，其余基线不改。原失败日志及红绿 chronology 保留。
+
+本轮独立复审发现：根候选已接纳 LF 后，旧 RootDeferred 标志会泄漏到新 Quote/List 的长行表头探测，`new_container_text` 关闭旧段落并删除观察器后触发 expect panic，无需 pipe。最小修复让模式与保留当前根块共用真实作用域条件，不删除 expect、不跳过源、不捕获 panic，也不改变根资格、SourceOwner 双游标或 first-pipe 路径。六个独立反例在修复前全红，修复后通过。新增 `root_suffix_scope` 的 11 项回归含 1260 份 6605b24 冻结对照：840 份未完/失败完整快照，420 份成功新根前缀独立断言升级后核对全部容器字段/绝对映射/身份。Link/Image、LF/CRLF、1023/1024/1025 字节与长行、Quote/List/嵌套/partial-tab/lazy/真实块/新根、无 pipe/有 pipe、分隔确认/失败、UTF-8 每字节/逐字符/逐前缀 EOF、共享 0/1/6 预算及两万旧对象均覆盖。新容器后追加 1000 字节，publisher/summary 各恰计 1000，旧根观察/label/树访问增量为零。
+
+原开发与收尾证据只读保留在本任务 `implementation/` 和 `close-opaque-boundary/`；其中原 1690 runtime 日志不代表本轮修复后的 runtime。修复后在项目 `nix develop` 内重新验证：`cargo check --workspace --all-targets`；定向 nextest **142/142**；完整 debug 与 release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1704/1704**；doc **75**、docbuild、clippy `-D warnings`、fmt；五份离线官方 fixture、五份评分报告、五个 release 示例、1260 份作用域快照原始文本 diff 与源码/旧 fixture/原 DONE 前缀核对，均通过。额外运行的 `container_tables` 示例在第 30 行仍用旧折叠父节点期望而退出 101，6605b24 冻结库运行相同原示例也以相同断言退出 101；源码未改，该既有示例问题另交父流程，不扩大本轮修复范围。target 来自 cargo metadata。命令、退出状态、完整日志、模型/consumer audit、全局 source 哈希与补丁见 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-022/fix-scope-transition/`。未提交、未推送，交父流程复审与提交。
