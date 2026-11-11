@@ -201,8 +201,11 @@ fn container_title_utf8_splits_prefix_eof_and_failure_boundaries() {
         "> [r]: /u\n>\t'a\n> b'\n",
         "> [r]:\n>\t/u 'a\n> b'\n",
         "> [r\n>\t中]: /u 'a\n> b'\n",
-        "> [r]: /u 'a\n>\tb'\n", // excluded partial remainder
+        "> [r]: /u 'a\n>\tb'\n", // partial remainder is structural
         "> [r]: /u\n> 'a\n>\tb'\n",
+        "> [r]: /u \"a\\\"\r\n>\t中&quot;\\\"\"\r\n",
+        "1. [r]: /u\n\t(a\\(\n\t🙂\\))\n",
+        "-    [r]: /u (a\n\t\tbad(\n",
         "> x\n[r]: /u 'a\nb'\n", // task18 lazy qualification
         ">\t[r]: /u '\n",        // task18 partial-tab ordinary mapping
         "> - [r]: /u 'a\n> - sibling'\n",
@@ -217,6 +220,20 @@ fn container_title_utf8_splits_prefix_eof_and_failure_boundaries() {
     ] {
         equivalence(source);
     }
+    for &(first, zero, partial, _) in PARTIAL_PATHS {
+        for independent in [false, true] {
+            for ending in ["🙂&amp;\\*'\r\n", "' bad\n", "", "\n", "# h\n", "a|b\n"] {
+                let gap = if independent {
+                    format!("\n{zero}")
+                } else {
+                    " ".into()
+                };
+                let source =
+                    format!("[old](/old) [r]\n\n{first}[r]: /中🙂{gap}'a\r\n{partial}{ending}");
+                equivalence(&source);
+            }
+        }
+    }
     for source in [
         "> [r]: /u\n>\t'a\n> b'\n\n[r]\n",
         "> [r]:\n>\t/u 'a\n> b'\n\n[r]\n",
@@ -230,7 +247,14 @@ fn container_title_utf8_splits_prefix_eof_and_failure_boundaries() {
 
 #[test]
 fn container_title_ownership_and_published_identity_versions() {
-    for (first, next) in [("> ", "> "), ("- ", "  "), ("> - > ", ">   > ")] {
+    for (first, next) in [("> ", "> "), ("- ", "  "), ("> - > ", ">   > ")]
+        .into_iter()
+        .chain(
+            PARTIAL_PATHS
+                .iter()
+                .map(|&(first, _, next, _)| (first, next)),
+        )
+    {
         for independent in [false, true] {
             for ending in ["end'\n", "end' bad\n", "\n", ""] {
                 let mut doc = Document::new();
@@ -332,7 +356,18 @@ fn container_title_gap_mapping_and_shared_microbudgets() {
     let source = format!(
         "[r]\n\n{quotes} [r]: /中&amp;\\*\r\n{quotes} '🙂&#13;&#10;\r\n{quotes}   &NotEqualTilde;\\*\n{quotes} '\n"
     );
-    let doc = parse(&source);
+    assert_gap_mapping_and_shared_microbudgets(&source, "🙂\r\n\n  ≂̸*\n");
+    for (depth, indent) in [(900, ""), (901, " "), (902, "  ")] {
+        let quotes = ">".repeat(depth);
+        let source = format!(
+            "[r]\n\n{quotes} [r]: /中&amp;\\*\r\n{quotes} '🙂&#13;&#10;\r\n{quotes}\t{indent}&NotEqualTilde;\\*\n{quotes}\t'\n"
+        );
+        assert_gap_mapping_and_shared_microbudgets(&source, &format!("🙂\r\n\n{indent}≂̸*\n"));
+    }
+}
+
+fn assert_gap_mapping_and_shared_microbudgets(source: &str, expected_title: &str) {
+    let doc = parse(source);
     let full = Span::new(0, source.len());
     let raw: String = doc.runs_in(full).unwrap().map(|r| r.text).collect();
     assert_eq!(raw, source);
@@ -445,7 +480,7 @@ fn container_title_gap_mapping_and_shared_microbudgets() {
     }
     assert!(td && dd && sd && saw_crlf);
     assert!(gap_steps > 400);
-    assert_eq!(t, "🙂\r\n\n  ≂̸*\n");
+    assert_eq!(t, expected_title);
     assert_eq!(d, "/中&*");
     assert_eq!(s, expected);
     assert_eq!(
@@ -461,7 +496,12 @@ fn container_title_gap_mapping_and_shared_microbudgets() {
 
 #[test]
 fn container_title_semantic_limits_large_envelopes_and_physical_windows() {
-    let prefix = format!("{} ", ">".repeat(900));
+    for separator in [" ", "\t"] {
+        assert_title_limits_and_windows(&format!("{}{separator}", ">".repeat(900)));
+    }
+}
+
+fn assert_title_limits_and_windows(prefix: &str) {
     for independent in [false, true] {
         for length in [4095, 4096, 4097] {
             let gap = if independent {
@@ -469,7 +509,7 @@ fn container_title_semantic_limits_large_envelopes_and_physical_windows() {
             } else {
                 " ".into()
             };
-            let mut source = format!("[r]\n\n{prefix}[r]: /u{gap}'a\n");
+            let mut source = format!("[r]\n\n{}[r]: /u{gap}'a\n", prefix.replace('\t', " "));
             for _ in 0..(length - 2) / 2 {
                 source.push_str(&format!("{prefix}x\n"));
             }
@@ -503,10 +543,11 @@ fn container_title_semantic_limits_large_envelopes_and_physical_windows() {
             );
         }
         for width in [BLOCK_LOOKAHEAD - 1, BLOCK_LOOKAHEAD, BLOCK_LOOKAHEAD + 1] {
+            let next = if prefix.ends_with('\t') { ">\t" } else { "> " };
             for ending in ["\n", "\r\n", ""] {
                 let gap = if independent { "\n> " } else { " " };
                 let source = format!(
-                    "[r]\n\n> [r]: /u{gap}'a\n> {}'{ending}",
+                    "[r]\n\n> [r]: /u{gap}'a\n{next}{}'{ending}",
                     "x".repeat(width - 3 - ending.len())
                 );
                 let doc = parse(&source);
@@ -528,7 +569,11 @@ fn container_title_semantic_limits_large_envelopes_and_physical_windows() {
 
 #[test]
 fn container_title_fold_updates_merge_rebuild_and_tickets() {
-    for (first, next) in [("> ", "> "), ("- > ", "  > ")] {
+    for (first, next) in [("> ", "> "), ("- > ", "  > ")].into_iter().chain(
+        PARTIAL_PATHS
+            .iter()
+            .map(|&(first, _, next, _)| (first, next)),
+    ) {
         for independent in [false, true] {
             for ending in ["end'\n", "end' bad\n", "\n", ""] {
                 let mut doc = Document::new();
@@ -645,7 +690,12 @@ fn container_title_fold_updates_merge_rebuild_and_tickets() {
 
 #[test]
 fn container_title_work_growing_failure_and_late_definitions_ignore_history() {
-    let prefix = format!("{} ", ">".repeat(970));
+    for separator in [" ", "\t"] {
+        assert_title_work_ignores_history(&format!("{}{separator}", ">".repeat(970)));
+    }
+}
+
+fn assert_title_work_ignores_history(prefix: &str) {
     for independent in [false, true] {
         let gap = if independent {
             format!("\n{prefix}")
@@ -712,5 +762,145 @@ fn container_title_work_growing_failure_and_late_definitions_ignore_history() {
             "20k uses + 4096 definitions independent={independent} old={before:?} before_duplicate={before_duplicate:?} after={:?}",
             doc.work()
         );
+    }
+}
+
+// The byte-aligned control has the same post-prefix real source. Tab stops
+// depend on the whole path: these are not a uniform three-column allowance.
+const PARTIAL_PATHS: &[(&str, &str, &str, u8)] = &[
+    ("> ", "> ", ">\t", 2),
+    ("- ", "  ", "\t", 2),
+    ("1. ", "   ", "\t", 1),
+    ("-    ", "     ", "\t\t", 3),
+    ("- > ", "  > ", "\t>\t", 2),
+    ("> > ", "> > ", ">\t>\t", 2),
+    ("- - - ", "      ", "\t\t", 2),
+    (" > ", " > ", " >\t", 1),
+    ("   > ", "   > ", "   >\t", 3),
+    (" > - ", " >   ", " >\t\t", 3),
+    ("> - > ", ">   > ", ">\t>\t", 2),
+];
+
+#[test]
+fn partial_title_columns_are_structure_and_real_source_indentation_is_kept() {
+    let mut cases = 0;
+    for &(first, zero, partial, remainder) in PARTIAL_PATHS {
+        for multiline_label in [false, true] {
+            for next_target in [false, true] {
+                for independent in [false, true] {
+                    for (open, close) in [('\'', '\''), ('"', '"'), ('(', ')')] {
+                        for newline in ["\n", "\r\n"] {
+                            for close_only in [false, true] {
+                                for spaces in 0..4 - remainder {
+                                    // Independently build both physical sources and
+                                    // compare them to an explicit decoded model.
+                                    for next in [zero, partial] {
+                                        let label = if multiline_label {
+                                            format!("[Straße{newline}{next}中🙂]:")
+                                        } else {
+                                            "[r]:".into()
+                                        };
+                                        let target_gap = if next_target {
+                                            format!("{newline}{next}")
+                                        } else {
+                                            " ".into()
+                                        };
+                                        let title_gap = if independent {
+                                            format!("{newline}{next}")
+                                        } else {
+                                            " ".into()
+                                        };
+                                        let tail = format!(
+                                            "{}{}",
+                                            " ".repeat(spaces.into()),
+                                            if close_only { "" } else { "中🙂 &amp;\\*" }
+                                        );
+                                        let raw = format!("a&#13;&#10;{newline}{next}{tail}");
+                                        let usage = if multiline_label {
+                                            "STRASSE 中🙂"
+                                        } else {
+                                            "r"
+                                        };
+                                        let source = format!(
+                                            "{first}{label}{target_gap}<my url>{title_gap}{open}{raw}{close}{newline}\n[{usage}]\n"
+                                        );
+                                        let doc = parse(&source);
+                                        assert_eq!(
+                                            doc.link_destination(LinkId(0)),
+                                            Some("my url"),
+                                            "{source:?}"
+                                        );
+                                        assert_eq!(
+                                            doc.link_title(LinkId(0)),
+                                            Some(raw.as_str()),
+                                            "{source:?}"
+                                        );
+                                        assert_eq!(
+                                            decoded(&doc, LinkId(0)),
+                                            format!(
+                                                "a\r\n\n{}{}",
+                                                " ".repeat(spaces.into()),
+                                                if close_only { "" } else { "中🙂 &*" }
+                                            ),
+                                            "{source:?}"
+                                        );
+                                        let start = source.find(&raw).unwrap();
+                                        assert_eq!(
+                                            doc.references()[0].title,
+                                            Some(Span::new(start, start + raw.len()))
+                                        );
+                                        assert_eq!(doc.links().len(), 1);
+                                        assert_eq!(
+                                            doc.work().inline_bytes,
+                                            format!("[{usage}]\n").len() as u64
+                                        );
+                                        assert!(doc.tables().is_empty());
+                                        cases += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("{cases} independently constructed zero/partial source models");
+}
+
+#[test]
+fn partial_title_label_limit_counts_real_bytes_independently_of_title_gaps() {
+    for &(first, _, next, _) in PARTIAL_PATHS {
+        for bytes in [999, 1000] {
+            for independent in [false, true] {
+                let logical = format!("a\n{}{}", "x\n".repeat(498), "z".repeat(bytes - 998));
+                assert_eq!(logical.len(), bytes);
+                let label = logical.replace('\n', &format!("\n{next}"));
+                let gap = if independent {
+                    format!("\n{next}")
+                } else {
+                    " ".into()
+                };
+                let source = format!("{first}[{label}]: /u{gap}'a\n{next}z'\n");
+                let doc = parse(&source);
+                let winners: Vec<_> = doc
+                    .references()
+                    .iter()
+                    .filter(|r| r.destination.is_some())
+                    .collect();
+                assert_eq!(
+                    winners.len(),
+                    usize::from(bytes == 999),
+                    "{first:?} {next:?} {bytes}"
+                );
+                if bytes == 999 {
+                    assert_eq!(
+                        winners[0].title.and_then(|s| doc.text(s)),
+                        Some(format!("a\n{next}z").as_str())
+                    );
+                }
+                assert!(doc.work().classified_bytes < 24 * source.len() as u64);
+            }
+        }
     }
 }

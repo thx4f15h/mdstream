@@ -893,9 +893,27 @@ mod tests {
             ("- > ", "  > "),
             ("- - ", "\t"),
             (">\t", ">\t"),
+            ("1. ", "\t"),
+            ("-    ", "\t\t"),
+            ("- > ", "\t>\t"),
+            ("> > ", ">\t>\t"),
+            ("- - - ", "\t\t"),
+            (" > ", " >\t"),
+            ("   > ", "   >\t"),
+            (" > - ", " >\t\t"),
+            ("> - > ", ">\t>\t"),
         ] {
             for independent in [false, true] {
-                for middle in ["plain", "a|b", "`a|b`", "[s]: /stay-text"] {
+                for middle in [
+                    "plain",
+                    "a|b",
+                    "`a|b`",
+                    "[s]: /stay-text",
+                    " plain",
+                    "  plain",
+                    "\tplain",
+                    " \tplain",
+                ] {
                     for trigger in [
                         "",
                         " \t",
@@ -952,16 +970,97 @@ mod tests {
     }
 
     #[test]
+    fn partial_title_sources_keep_exact_prefix_gaps_and_failure_tab_replacements() {
+        for (first, next, remainder) in [
+            ("> ", ">\t", 2),
+            ("- ", "\t", 2),
+            ("1. ", "\t", 1),
+            ("-    ", "\t\t", 3),
+            ("- > ", "\t>\t", 2),
+            ("> > ", ">\t>\t", 2),
+            ("- - - ", "\t\t", 2),
+            (" > ", " >\t", 1),
+            ("   > ", "   >\t", 3),
+            (" > - ", " >\t\t", 3),
+            ("> - > ", ">\t>\t", 2),
+        ] {
+            for independent in [false, true] {
+                let gap = if independent {
+                    format!("\n{next}")
+                } else {
+                    " ".into()
+                };
+                let head = format!("[r]\n\n{first}[r]: /u{gap}'a\r\n");
+                let row = format!("{next}中🙂\t&amp;\r\n");
+                let mut doc = Document::new();
+                doc.append(&head).unwrap();
+                let update = doc.append(&row).unwrap();
+                assert!(update.new_links.is_empty());
+                let candidate = doc
+                    .definition_candidate
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("{head:?} {row:?}"));
+                let fragment = candidate.sources.fragments.last().unwrap();
+                assert_eq!(fragment.virtual_spaces, remainder, "{first:?} {next:?}");
+                assert_eq!(doc.text(fragment.raw), Some("中🙂\t&amp;\r\n"));
+                let prefix = Span::new(fragment.source.start, fragment.raw.start);
+                assert_eq!(doc.text(prefix), Some(next));
+                assert_eq!(candidate.title.as_ref().unwrap().gaps, [prefix]);
+                let tab = Span::new(fragment.raw.start - 1, fragment.raw.start);
+
+                // EOF is a real failure, compared to the independent ordinary
+                // pipeline elsewhere. Its partial tab remains one source byte.
+                doc.finish();
+                let run = doc.display_runs_in(tab).unwrap().next().unwrap();
+                assert_eq!(run.source, tab);
+                assert_eq!(run.replacement, Some(tab));
+                assert_eq!(run.text, " ".repeat(remainder.into()));
+                assert!(!run.style.contains(Style::HIDDEN));
+                assert_mapping_and_budget(&doc);
+
+                let doc = parse(&format!("{head}{row}{next}'\n"));
+                let title = doc.link_title_span(LinkId(0)).unwrap();
+                assert_eq!(
+                    doc.link_title(LinkId(0)),
+                    Some(format!("a\r\n{row}{next}").as_str())
+                );
+                assert_eq!(
+                    doc.references.title_gaps[0],
+                    [prefix, Span::new(head.len() + row.len(), title.end)]
+                );
+                let mut cursor = doc.decoded_link_title(LinkId(0)).unwrap();
+                let mut decoded = String::new();
+                while let Some(chunk) = cursor
+                    .advance(&mut Budget::new(WorkLimit::unlimited()))
+                    .unwrap()
+                {
+                    assert!(doc.text(chunk.source).is_some());
+                    decoded.push_str(chunk.text);
+                }
+                assert_eq!(decoded, "a\n中🙂\t&\n");
+                assert_eq!(cursor.source_position(), title.end);
+            }
+        }
+    }
+
+    #[test]
     fn duplicate_container_titles_retain_only_winning_prefix_gaps() {
-        for independent in [false, true] {
-            let gap = if independent { "\n> " } else { " " };
+        for (independent, next) in [false, true]
+            .into_iter()
+            .flat_map(|independent| ["> ", ">\t"].map(|next| (independent, next)))
+        {
+            let gap = if independent {
+                format!("\n{next}")
+            } else {
+                " ".into()
+            };
             let mut doc = Document::new();
-            doc.append(&format!("[r]\n\n> [r]: /u{gap}'a\n> b'\n"))
+            doc.append(&format!("[r]\n\n> [r]: /u{gap}'a\n{next}b'\n"))
                 .unwrap();
             assert_eq!(doc.references.title_gaps.len(), 1);
             let winning = doc.references.title_gaps[0].clone();
             for _ in 0..4096 {
-                doc.append(&format!("\n> [r]: /ignored{gap}'c\n> d'\n"))
+                doc.append(&format!("\n> [r]: /ignored{gap}'c\n{next}d'\n"))
                     .unwrap();
                 assert_eq!(doc.references.title_gaps.len(), 1);
                 assert_eq!(doc.references.title_gaps[0], winning);
@@ -976,7 +1075,10 @@ mod tests {
                     .sum::<usize>(),
                 1
             );
-            assert_eq!(doc.link_title(LinkId(0)), Some("a\n> b"));
+            assert_eq!(
+                doc.link_title(LinkId(0)),
+                Some(format!("a\n{next}b").as_str())
+            );
         }
     }
 

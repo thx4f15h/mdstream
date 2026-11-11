@@ -1256,8 +1256,7 @@ impl Document {
                     &mut self.work,
                 )
             })
-            .flatten()
-            .filter(|&(_, _, virtual_spaces)| virtual_spaces == 0);
+            .flatten();
         let Some((_, raw, virtual_spaces)) = continuation else {
             self.flush_definition_candidate(update);
             return false;
@@ -1270,6 +1269,9 @@ impl Document {
             .take()
             .unwrap();
         let prefix = Span::new(span.start, raw.start);
+        // Qualification already used residual tab columns. The consumed tab
+        // belongs to this real prefix gap; its virtual columns are not title
+        // bytes. Keep any real indentation after raw.start unchanged.
         title.parser.title_prefix(prefix);
         if !prefix.is_empty() {
             title.gaps.push(prefix);

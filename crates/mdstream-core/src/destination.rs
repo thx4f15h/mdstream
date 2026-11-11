@@ -185,7 +185,7 @@ impl Destination {
         self.byte(byte, pos)
     }
 
-    // Called once per matched zero-remainder continuation prefix. Keep the raw
+    // Called once per qualified continuation's real prefix. Keep the raw
     // envelope, including the prefix of a delimiter-only closing line, while
     // title and suffix limits count only real syntax bytes.
     pub fn title_prefix(&mut self, prefix: Span) {
