@@ -1,4 +1,10 @@
 use mdstream::*;
+#[allow(dead_code)]
+#[path = "support/shortcut_hashes.rs"]
+mod shortcut_hashes;
+#[allow(dead_code)]
+#[path = "support/shortcut_text_hashes.rs"]
+mod shortcut_text;
 
 #[path = "support/component_gap_model.rs"]
 mod component_model;
@@ -167,6 +173,12 @@ fn container_scope_structure_maps_and_ids_match_frozen_single_line_grammar() {
     assert_eq!(cases.len(), 1260);
     assert_eq!(expected.len(), cases.len());
     for (index, (case, expected)) in cases.iter().zip(expected).enumerate() {
+        let expected = shortcut_text::line(
+            "root_suffix_scope_baseline",
+            index,
+            case.source.as_bytes(),
+            expected,
+        );
         let doc = parse(&case.source);
         assert_eq!(doc.tables().len(), usize::from(case.table), "case {index}");
         let actual = format!("{:?}", scope_snapshot(&doc, case.boundary, case.completed));
@@ -175,7 +187,10 @@ fn container_scope_structure_maps_and_ids_match_frozen_single_line_grammar() {
             .find(|entry| entry.0 == case.source)
         {
             component_model::assert_direct(&doc, "b", 1);
-            format!("{hash:016x}")
+            format!(
+                "{:016x}",
+                shortcut_hashes::source(&case.source, false, *hash)
+            )
         } else {
             expected.to_owned()
         };

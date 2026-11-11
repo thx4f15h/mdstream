@@ -263,10 +263,6 @@ fn project(doc: &Document) -> String {
 
 enum Assessment {
     Supported,
-    DeliberateDifference {
-        reason: &'static str,
-        observed: &'static str,
-    },
     Unsupported {
         reason: &'static str,
         observed: &'static str,
@@ -276,7 +272,8 @@ enum Assessment {
 // Frozen observations are separate from the verbatim upstream oracle.
 fn assessment(number: usize) -> Assessment {
     match number {
-        572..=573 | 576..=589 | 591..=593 => Assessment::Supported,
+        572 | 573 | 576 | 577 | 578 | 579 | 580 | 581 | 582 | 583 | 584 | 585 | 586 | 587 | 588
+        | 589 | 590 | 591 | 592 | 593 => Assessment::Supported,
         574 => Assessment::Unsupported {
             reason: "a nested image replaces the outer bracket candidate",
             observed: "<p>![foo <img src=\"/url\" alt=\"bar\" />](/url2)</p>\n",
@@ -284,10 +281,6 @@ fn assessment(number: usize) -> Assessment {
         575 => Assessment::Unsupported {
             reason: "a nested link replaces the outer image bracket candidate",
             observed: "<p>![foo <a href=\"/url\">bar</a>](/url2)</p>\n",
-        },
-        590 => Assessment::DeliberateDifference {
-            reason: "unresolved references keep the existing hidden-bracket dialect",
-            observed: "<p>![foo]</p>\n<p>[foo]: /url &quot;title&quot;</p>\n",
         },
         _ => panic!("unclassified upstream example {number}"),
     }
@@ -304,8 +297,7 @@ fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
     metadata_snapshot(doc);
     match assessment(number) {
         Assessment::Supported => assert_eq!(actual, expected, "example {number}"),
-        Assessment::DeliberateDifference { observed, .. }
-        | Assessment::Unsupported { observed, .. } => {
+        Assessment::Unsupported { observed, .. } => {
             assert_ne!(
                 actual, expected,
                 "example {number} now matches upstream; review classification"
@@ -342,15 +334,14 @@ fn pinned_commonmark_images_report() {
         check_case(number, markdown, expected, &parse(markdown));
         let (category, label, reason) = match assessment(number) {
             Assessment::Supported => (0, "supported", "matches upstream"),
-            Assessment::DeliberateDifference { reason, .. } => (1, "deliberate difference", reason),
             Assessment::Unsupported { reason, .. } => (2, "unsupported", reason),
         };
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [19, 1, 2]);
+    assert_eq!(counts, [20, 0, 2]);
     eprintln!(
-        "CommonMark 0.31.2 Images (572–593): 19 supported, 1 deliberate difference, 2 unsupported; other sections not scored by this test"
+        "CommonMark 0.31.2 Images (572–593): 20 supported, 0 deliberate differences, 2 unsupported; other sections not scored by this test"
     );
 }
 
@@ -512,7 +503,7 @@ fn image_projection_preserves_empty_alt_styles_whitespace_and_metadata() {
             "<p><img src=\"/x\" alt=\"a\" title=\"\" /></p>\n",
         ),
         ("[a](/x)\n", "<p><a href=\"/x\">a</a></p>\n"),
-        ("![missing]\n", "<p>missing</p>\n"),
+        ("![missing]\n", "<p>![missing]</p>\n"),
     ] {
         let whole = parse(source);
         assert_eq!(project(&whole), expected, "{source:?}");
@@ -548,7 +539,7 @@ fn image_late_definitions_preserve_ids_raw_spans_and_first_definition() {
     let links = doc.links().to_vec();
     let infos: Vec<_> = (0..3).map(|i| *doc.link_info(LinkId(i)).unwrap()).collect();
     assert_eq!(metadata_snapshot(&doc), vec![None; 3]);
-    assert_eq!(project(&doc), "<p>Foo</p>\n<p>Foo</p>\n<p>a</p>\n");
+    assert_eq!(project(&doc), "<p>![Foo]</p>\n<p>Foo</p>\n<p>a</p>\n");
     doc.append("[FOO]: /a&amp;b 't&amp;'\n").unwrap();
     let revision = doc.references()[0].revision;
     for (i, info) in infos.iter().enumerate() {

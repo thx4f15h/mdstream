@@ -1,4 +1,7 @@
 use mdstream::*;
+#[allow(dead_code)]
+#[path = "support/shortcut_text_hashes.rs"]
+mod shortcut_text;
 
 #[path = "support/snapshot.rs"]
 mod support;
@@ -174,7 +177,7 @@ fn new_body_opaque_failure_and_eof_have_explicit_raw_and_rejecting_byte_models()
                 let expected_tail = if tail.is_empty() { "" } else { "'&)\n" };
                 assert_eq!(
                     visible(&doc),
-                    format!("a(u 'first\n中🙂&amp;\\*`x`*y*&#10;{expected_tail}"),
+                    format!("{image}[a](u 'first\n中🙂&amp;\\*`x`*y*&#10;{expected_tail}"),
                     "{source:?}"
                 );
                 assert_eq!(doc.links(), [LinkTarget::Reference(SymbolId(0))]);
@@ -993,6 +996,12 @@ fn body_old_eligibility_first_pipe_eager_opaque_and_table_decisions_match_head()
     assert_eq!(sources.len(), 120);
     assert_eq!(sources.len(), baseline.len());
     for (index, (source, expected)) in sources.iter().zip(baseline).enumerate() {
+        let expected = shortcut_text::line(
+            "root_title_table_baseline",
+            index,
+            source.as_bytes(),
+            expected,
+        );
         let doc = parse(source);
         let (tables, hash) = expected.split_once(' ').unwrap();
         assert_eq!(
@@ -1012,7 +1021,7 @@ fn body_old_eligibility_first_pipe_eager_opaque_and_table_decisions_match_head()
                 let expected_visible = if success {
                     format!("{}a{}", &source[..start], &source[title_end.unwrap() + 2..])
                 } else {
-                    format!("{}a{}", &source[..start], &source[label + 2..])
+                    source.clone()
                 }
                 .replace("\r\n", "\n");
                 assert_eq!(visible(&doc), expected_visible, "changed display {index}");
@@ -1151,7 +1160,7 @@ fn body_failure_and_eof_raw_source_display_obey_zero_one_six_and_query_object_li
                 assert_eq!(
                     shown,
                     format!(
-                        "a(u 'first\n中🙂&amp;\\*`x`{}",
+                        "{image}[a](u 'first\n中🙂&amp;\\*`x`{}",
                         if tail.is_empty() { "" } else { "'&)\n" }
                     )
                 );

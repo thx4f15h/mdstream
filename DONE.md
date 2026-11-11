@@ -2760,3 +2760,14 @@ README当前说明、对应TODO及示例同步；完整普通lexer回退、未�
 全部命令、退出状态、完整日志、前驱/冻结源码hash和patch保存于 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-028/implementation/`（commands.jsonl）。Rust skill与父反馈已按要求核验；最终门禁结果另随本节补记，不提交/推送，由父新审查会话验收。
 
 最终门禁均退出0：check全目标；针对性183/183及最终相关124/124；完整debug与release各1782/1782；doc76、docbuild、clippy全目标-D warnings、fmt --check；8组离线CommonMark夹具（inline_links/images/link_labels/reference_forms/reference_labels/reference_definitions/entities/tabs）、4个相关release示例及diff检查。8个官方失败输入/HTML/真实Snapshot与前驱逐字相同，外部2000/5000/10000层重叠链对照也相同（official-diff-033.log为空）。原所有fixture保持，未新增运行时依赖或改评分/observer协议；最终源码与验证冻结一致，证据索引含真实开发期红测与修正日志，无覆盖日志。
+
+
+## 2026-11-12 未解析 shortcut 边界与晚定义可见性交付
+
+仅已发布纯 shortcut Link/Image 的真实 `[]`/`!` marker 改为私有 `Mark.conditional_hide: Option<SymbolId>`；原符号 destination 未定义时可见，首个获胜定义后隐藏。永久 HIDDEN 优先，完整 Direct/full/collapsed 继续在原 ID 上永久覆盖旧 gate，不扩展完整引用选择。label 样式/深度、原始 Span、候选 Image metadata、SourceSearch 和 raw summary 保持；公共 Runs/scratch/display/raw LayoutPass 与 next_visible/next_drawable 一致。winner 且 first_use 存在时新增同范围 Visibility，确保 references_affect_size=false 也失效旧 ticket；duplicate/title-only 不新增该历史可见性事件。
+
+旧 rlib 的121份前驱快照逐字节复核；915份扩大 corpus 在实现前冻结，以独立 typed marker/metadata 和逐 scalar 字段比较限制差异。八类 hard LF/CRLF、全空格 code/math 与 base-visible label 证明落实私有查询计数，另有60,000随机 label、UTF-8/EOF、微预算、搜索/摘要/heading/table、Update 合并/重放、策略/缓存/stale、真实固定折叠、百万字追加和两万旧对象回归。旧/新解析 Work 实测逐字节相同；x86_64 Mark 56→72字节、Frame 88→104字节，无 boundary/uses 索引或历史回扫，累计 O(n log n)/O(n) 保持。
+
+原99份 fixture/生成脚本逐字保留，七个评分 project 原字节不变。父反馈要求恢复的旧 rs oracle 与八份完整 txt 派生副本均已归档；仓库恢复原 include_str 回退，仅用精确 case/end/mode 或夹具/索引/完整输入 hash/旧行 hash 的增量表覆盖 shortcut 目标，其余继续验证旧值。普通测试不写期望、不依赖本机路径。
+
+最终 check --workspace --all-targets、针对性 nextest、完整 debug/release nextest --workspace --all-targets --no-fail-fast（各1796通过）、doc（76通过）、doc build、clippy -D warnings、fmt、七项离线夹具和四个相关 release 示例均 exit0；git diff --check 通过。完整命令/退出状态/唯一日志与父反馈处理证据见 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-029/implementation/commands.jsonl`、`consumer-audit.md`、`final-oracle-integrity.json` 和 `final-validation.json`。README/TODO 仅同步本 shortcut 窄项及直接受影响的当前统计；完整 full/collapsed 回选、失败 lexer、HTML、嵌套图片、窗口与其它宽需求继续保留。未提交或推送。

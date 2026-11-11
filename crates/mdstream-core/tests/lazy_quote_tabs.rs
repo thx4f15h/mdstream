@@ -163,7 +163,7 @@ fn block_interruptions_blanks_and_other_failed_paths_keep_their_dialect() {
         ("---\n", 1, "first\n\t---\n"),
         ("```\n", 1, "first\n\t```\n"),
         ("$$\n", 1, "first\n\t$$\n"),
-        ("[r]: /u\n", 1, "first\n  r: /u\n"),
+        ("[r]: /u\n", 1, "first\n  [r]: /u\n"),
         ("[^f]: note\n", 1, "first\n\t[^f]: note\n"),
         ("1. body\n", 3, "first\nbody\n"),
         ("- body\n", 3, "first\nbody\n"),

@@ -405,7 +405,10 @@ impl Document {
         if !self.source.is_char_boundary(offset) {
             return None;
         }
-        self.annotations.next_visible(offset, self.source.len())
+        self.annotations
+            .next_visible_resolving(offset, self.source.len(), |s| {
+                self.references.entries[s.0].destination.is_some()
+            })
     }
 
     /// First text OR drawable object. Unlike next_visible, this cannot skip an
@@ -1399,6 +1402,7 @@ impl Document {
             update.references_changed.push(symbol);
             if let Some(start) = self.references.entries[symbol.0].first_use {
                 update.change(Span::new(start, self.source.len()), ChangeKind::Reference);
+                update.change(Span::new(start, self.source.len()), ChangeKind::Visibility);
             }
         }
         self.close_current(update);
@@ -3065,11 +3069,13 @@ impl<'a> Iterator for Runs<'a> {
             Some(b) => (None, b.source.start.min(self.end)),
             None => (None, self.end),
         };
-        let (span, first) = self.pending.take().or_else(|| self.marks.next())?;
+        let (span, mut first) = self.pending.take().or_else(|| self.marks.next())?;
+        first.style = first.effective_style(&self.document.references.entries);
         let mut end = span.end.min(limit);
         self.pending = (span.end > end).then_some((span, first));
         while end < limit {
-            let (span, mark) = self.marks.next()?;
+            let (span, mut mark) = self.marks.next()?;
+            mark.style = mark.effective_style(&self.document.references.entries);
             if mark.style != first.style
                 || mark.link != first.link
                 || mark.emphasis_depth != first.emphasis_depth

@@ -1068,7 +1068,7 @@ fn open_paragraph_million_byte_growth_has_one_refresh_and_no_body_recovery() {
     assert_eq!(doc.work().container_steps, work.container_steps);
     let work = doc.work();
     let sink = render(&doc, &mut view, TileId(0), 8, true);
-    assert_eq!(sink.text, "prefix~\n");
+    assert_eq!(sink.text, "[prefix]~\n");
     assert_eq!(sink.ends, vec![BlockId(0)]);
     assert!(sink.bytes <= 8 && sink.objects <= 1);
     assert_eq!(doc.work(), work);

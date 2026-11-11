@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|run| !run.style.contains(Style::HIDDEN))
         .map(|run| run.text)
         .collect();
-    assert_eq!(shown, "a(u 'x\n  &*'x)\n");
+    assert_eq!(shown, "[a](u 'x\n  &*'x)\n");
     assert_eq!(doc.link_info(LinkId(0)).unwrap().source, original.source);
     assert_eq!(doc.link_destination(LinkId(0)), None);
     println!("{shown}");

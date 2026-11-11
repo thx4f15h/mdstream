@@ -1,17 +1,17 @@
 use mdstream::*;
 
 pub const TARGETS: &[(&str, &str)] = &[
-    ("[a](&amp;", "a(&"),
-    ("[a](&amp; x)", "a(& x)"),
-    ("[a](\\*", "a(*"),
-    ("[a](u 'x\n&amp;\\*", "a(u 'x\n&*"),
-    ("[a](u 'x\n&amp;'x)", "a(u 'x\n&'x)"),
-    ("> [a](u 'x\n> &amp;\\*", "a(u 'x\n&*"),
-    ("> [a](u 'x\n>\t&amp;\\*", "a(u 'x\n  &*"),
-    ("[a](u '&amp;'\\*)", "a(u '&'*)"),
-    ("[a](u '&amp;'[b](v)", "a(u '&'b"),
-    ("[a](&#10; x)", "a(\n x)"),
-    ("| [a](u '&amp;'x) | b |\n| - | - |\n", "a(u '&'x)b\n"),
+    ("[a](&amp;", "[a](&"),
+    ("[a](&amp; x)", "[a](& x)"),
+    ("[a](\\*", "[a](*"),
+    ("[a](u 'x\n&amp;\\*", "[a](u 'x\n&*"),
+    ("[a](u 'x\n&amp;'x)", "[a](u 'x\n&'x)"),
+    ("> [a](u 'x\n> &amp;\\*", "[a](u 'x\n&*"),
+    ("> [a](u 'x\n>\t&amp;\\*", "[a](u 'x\n  &*"),
+    ("[a](u '&amp;'\\*)", "[a](u '&'*)"),
+    ("[a](u '&amp;'[b](v)", "[a](u '&'b"),
+    ("[a](&#10; x)", "[a](\n x)"),
+    ("| [a](u '&amp;'x) | b |\n| - | - |\n", "[a](u '&'x)b\n"),
 ];
 
 pub fn parse(source: &str) -> Document {

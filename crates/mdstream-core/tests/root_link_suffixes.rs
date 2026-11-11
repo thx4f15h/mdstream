@@ -1,4 +1,7 @@
 use mdstream::*;
+#[allow(dead_code)]
+#[path = "support/shortcut_text_hashes.rs"]
+mod shortcut_text;
 
 #[path = "support/snapshot.rs"]
 mod support;
@@ -43,7 +46,13 @@ fn non_target_snapshots_match_real_prechange_baseline() {
         .lines()
         .collect();
     assert_eq!(baseline.len(), NON_TARGETS.len());
-    for (source, expected) in NON_TARGETS.iter().zip(baseline) {
+    for (index, (source, expected)) in NON_TARGETS.iter().zip(baseline).enumerate() {
+        let expected = shortcut_text::line(
+            "root_link_suffix_baseline",
+            index,
+            source.as_bytes(),
+            expected,
+        );
         let doc = parse(source);
         if *source == "[a](u 't\nrest')\n" {
             // This exact historical non-target is now a valid title body.
@@ -463,7 +472,7 @@ fn atomic_failure_recovers_while_disqualified_markup_stays_raw() {
                     let recovered = if payload == "a&amp;" { "a&" } else { payload };
                     assert_eq!(
                         shown,
-                        format!("a(u\n'{recovered}{visible_tail}"),
+                        format!("{image}[a](u\n'{recovered}{visible_tail}"),
                         "{source:?}"
                     );
                     // This exact atom-closed input recovers; the other complete
@@ -636,7 +645,7 @@ fn atomic_failure_source_display_and_decoded_controls_share_micro_budgets() {
                 let raw: String = doc.runs_in(whole).unwrap().map(|run| run.text).collect();
                 assert_eq!(raw, source);
                 let expected = format!(
-                    "b a(u\n'中🙂\n*{}",
+                    "b {image}[a](u\n'中🙂\n*{}",
                     if tail.is_empty() { "" } else { "'&)\n" }
                 );
                 for (at, ch) in source.char_indices() {
@@ -1032,18 +1041,25 @@ fn late_table_sources() -> Vec<String> {
 #[test]
 fn late_suffix_headers_match_real_baseline_with_arbitrary_cell_syntax() {
     let padding = "x".repeat(1100);
-    let mut actual = String::new();
-    for source in late_table_sources() {
-        let doc = parse(&source);
+    let baseline: Vec<_> = include_str!("fixtures/root_suffix_table_baseline.txt")
+        .lines()
+        .collect();
+    let sources = late_table_sources();
+    assert_eq!(sources.len(), baseline.len());
+    for (index, source) in sources.iter().enumerate() {
+        let doc = parse(source);
         assert_eq!(doc.tables().len(), 1, "{source:?}");
         assert_eq!(doc.link_destination(LinkId(0)), None);
         assert_eq!(doc.link_info(LinkId(0)).unwrap().state, SyntaxState::Sealed);
-        actual.push_str(&format!("{:?}\n", support::snapshot(&doc)).replace(&padding, "<1100 x>"));
+        let actual = format!("{:?}", support::snapshot(&doc)).replace(&padding, "<1100 x>");
+        let expected = shortcut_text::line(
+            "root_suffix_table_baseline",
+            index,
+            source.as_bytes(),
+            baseline[index],
+        );
+        assert_eq!(actual, expected);
     }
-    assert_eq!(
-        actual,
-        include_str!("fixtures/root_suffix_table_baseline.txt")
-    );
 }
 
 #[test]
@@ -1287,6 +1303,12 @@ fn pending_suffix_preserves_inherited_emphasis_table_eligibility_baseline() {
         .zip(include_str!("fixtures/root_suffix_inherited_baseline.txt").lines())
         .enumerate()
     {
+        let expected = shortcut_text::line(
+            "root_suffix_inherited_baseline",
+            index,
+            source.as_bytes(),
+            expected,
+        );
         assert_eq!(
             format!("{:?}", support::snapshot(&parse(source)))
                 .replace(&"x".repeat(1100), "<1100 x>"),

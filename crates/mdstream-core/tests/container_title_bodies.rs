@@ -1,6 +1,12 @@
 use mdstream::*;
 #[path = "support/container_title_model.rs"]
 mod model;
+#[allow(dead_code)]
+#[path = "support/shortcut_hashes.rs"]
+mod shortcut_hashes;
+#[allow(dead_code)]
+#[path = "support/shortcut_text_hashes.rs"]
+mod shortcut_text;
 #[path = "support/snapshot.rs"]
 mod support;
 
@@ -96,7 +102,7 @@ fn control_change_model(d: &Document, source: &str) {
         assert_eq!(model::chunks(d, LinkId(0)), None);
         &source[5..]
     };
-    let mut expected = "a".to_owned();
+    let mut expected = if source.contains("')") { "a" } else { "[a]" }.to_owned();
     for (i, line) in suffix.split('\n').enumerate() {
         if i > 0 {
             expected.push('\n');
@@ -128,7 +134,13 @@ fn real_predecessor_controls_and_all_eof_work_use_exact_source_allowlists() {
                 }
                 d.finish();
                 let d = d.document();
-                let old: Vec<_> = baseline[index].split_whitespace().collect();
+                let original = shortcut_text::line(
+                    "container_title_controls_baseline",
+                    index,
+                    bytes,
+                    baseline[index],
+                );
+                let old: Vec<_> = original.split_whitespace().collect();
                 assert_eq!(
                     (old[0], old[1], old[2]),
                     (
@@ -157,6 +169,10 @@ fn real_predecessor_controls_and_all_eof_work_use_exact_source_allowlists() {
                 } else {
                     original
                 };
+                let expected = (
+                    shortcut_hashes::source(d.source(), bytewise, expected.0),
+                    expected.1,
+                );
                 assert_eq!(
                     (
                         corpus::hash(&format!("{:?}", support::snapshot(d))),
@@ -248,7 +264,10 @@ fn opaque_failure_and_eof_preserve_reference_and_rejecting_byte_once() {
                         state: SyntaxState::Sealed,
                     })
                 );
-                assert_eq!(shown(&d), format!("中(u 'a\n&amp;\\* *b*{visible}"));
+                assert_eq!(
+                    shown(&d),
+                    format!("{image}[中](u 'a\n&amp;\\* *b*{visible}")
+                );
                 for split in 0..=source.len() {
                     let mut stream = Utf8Document::new();
                     stream.append(&source.as_bytes()[..split]).unwrap();
@@ -692,7 +711,13 @@ fn old_header_eligibility_at_window_and_late_pipe_keeps_real_table_shapes() {
             }
             d.finish();
             let d = d.document();
-            let old: Vec<_> = baseline[index].split_whitespace().collect();
+            let original = shortcut_text::line(
+                "container_title_tables_baseline",
+                index,
+                source.as_bytes(),
+                baseline[index],
+            );
+            let old: Vec<_> = original.split_whitespace().collect();
             let expected = if let Some(expected) = table_changes::exact(&source, bytewise) {
                 let open = source.find("[a]").unwrap();
                 let t = open + 7;

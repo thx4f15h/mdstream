@@ -493,9 +493,9 @@ fn reference_form_projection_preserves_styles_precedence_and_decoded_metadata() 
             "[中&amp;\\*](<a b%20中\\\\> 't&amp;\\\"')\n",
             "<p><a href=\"a%20b%20%E4%B8%AD%5C\" title=\"t&amp;&quot;\">中&amp;*</a></p>\n",
         ),
-        ("[a](/x\n", "<p>a(/x</p>\n"),
-        ("[a](/x 't\n", "<p>a(/x 't</p>\n"),
-        ("[a] (<x>)\n", "<p>a (&lt;x&gt;)</p>\n"),
+        ("[a](/x\n", "<p>[a](/x</p>\n"),
+        ("[a](/x 't\n", "<p>[a](/x 't</p>\n"),
+        ("[a] (<x>)\n", "<p>[a] (&lt;x&gt;)</p>\n"),
     ] {
         let whole = parse(source);
         assert_eq!(project(&whole), expected, "{source:?}");

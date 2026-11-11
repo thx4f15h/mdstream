@@ -452,7 +452,7 @@ fn next_line_new_containers_match_the_existing_paragraph_structure_model() {
                             );
                         }
                         assert!(doc.references().iter().all(|r| r.destination.is_none()));
-                        assert!(visible(&doc).contains("r:"));
+                        assert!(visible(&doc).contains("[r]:"));
                     } else {
                         assert_eq!(doc.container_count(), base, "{source:?}");
                         assert!(doc.links().is_empty());
@@ -526,7 +526,7 @@ fn next_line_new_container_fallback_keeps_objects_and_pending_updates() {
             }
             doc.finish();
             assert_eq!(definitions(&doc), 0);
-            assert!(visible(&doc).contains("r:"));
+            assert!(visible(&doc).contains("[r]:"));
         }
     }
 }
@@ -700,7 +700,7 @@ fn next_line_candidate_never_publishes_a_revocable_link_and_keeps_identity() {
                 assert_eq!(doc.links().len(), 2);
                 assert!(update.references_changed.is_empty());
                 assert_eq!(doc.link_destination(LinkId(0)), None);
-                assert!(visible(&doc).contains(&format!("{label}:")));
+                assert!(visible(&doc).contains(&format!("[{label}]:")));
             }
             doc.finish();
         }
@@ -742,7 +742,7 @@ fn next_line_failures_preserve_lazy_paths_and_existing_block_priorities() {
     for source in ["> [r]:\n/url\n", "> - [r]:\n> /url\n"] {
         let doc = parse(source);
         assert_eq!(doc.blocks()[0].container, doc.blocks()[1].container);
-        assert!(visible(&doc).contains("r:\n/url"));
+        assert!(visible(&doc).contains("[r]:\n/url"));
     }
     // A complete independent title now extends this already valid target.
     let doc = parse("[r]:\n/url\n'outside'\n\n[r]\n");
@@ -768,7 +768,7 @@ fn decorated_failed_candidate_consumes_inline_once_with_original_styles() {
             assert_eq!(doc.links().len(), 1);
             assert_eq!(doc.blocks()[0].source.start, block.source.start);
             assert_eq!(doc.blocks()[0].container, block.container);
-            assert_eq!(visible(&doc), format!("a & x r]{pipe}:\n<bad\n"));
+            assert_eq!(visible(&doc), format!("[a & x r]{pipe}]:\n<bad\n"));
             for (needle, style) in [("a*", Style::EMPHASIS), ("x`", Style::CODE)] {
                 let start = first.find(needle).unwrap();
                 let run = doc

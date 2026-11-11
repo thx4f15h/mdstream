@@ -237,10 +237,6 @@ fn project(doc: &Document) -> String {
 
 enum Assessment {
     Supported,
-    Deliberate {
-        reason: &'static str,
-        observed: &'static str,
-    },
     Unsupported {
         reason: &'static str,
         observed: &'static str,
@@ -250,14 +246,10 @@ enum Assessment {
 // Independent observations never replace the verbatim upstream oracle.
 fn assessment(number: usize) -> Assessment {
     match number {
-        25..=30 | 32..=40 => Assessment::Supported,
+        25..=30 | 32..=41 => Assessment::Supported,
         31 => Assessment::Unsupported {
             reason: "raw HTML is outside project requirements",
             observed: "<p>&lt;a href=&quot;öö.html&quot;&gt;</p>\n",
-        },
-        41 => Assessment::Deliberate {
-            reason: "failed link suffix retains the shortcut reference with hidden brackets",
-            observed: "<p>a(url &quot;tit&quot;)</p>\n",
         },
         _ => panic!("unclassified upstream example {number}"),
     }
@@ -268,7 +260,7 @@ fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
     link_metadata::snapshot(doc);
     match assessment(number) {
         Assessment::Supported => assert_eq!(actual, expected, "example {number}"),
-        Assessment::Deliberate { observed, .. } | Assessment::Unsupported { observed, .. } => {
+        Assessment::Unsupported { observed, .. } => {
             assert_ne!(
                 actual, expected,
                 "example {number} now matches; review classification"
@@ -335,15 +327,14 @@ fn pinned_commonmark_entities_report() {
         check_case(number, markdown, expected, &parse(markdown));
         let (category, label, reason) = match assessment(number) {
             Assessment::Supported => (0, "supported", "matches upstream"),
-            Assessment::Deliberate { reason, .. } => (1, "deliberate difference", reason),
             Assessment::Unsupported { reason, .. } => (2, "unsupported", reason),
         };
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [15, 1, 1]);
+    assert_eq!(counts, [16, 0, 1]);
     eprintln!(
-        "CommonMark 0.31.2 Entity and numeric character references (25–41): 15 supported, 1 deliberate difference, 1 unsupported; other sections not scored by this test"
+        "CommonMark 0.31.2 Entity and numeric character references (25–41): 16 supported, 0 deliberate differences, 1 unsupported; other sections not scored by this test"
     );
 }
 
@@ -431,10 +422,10 @@ fn entity_projection_preserves_whitespace_styles_structure_and_raw_metadata() {
             "a\n\n~~~\nx\n~~~\n\nb\n",
             "<p>a</p>\n<pre><code>x\n</code></pre>\n<p>b</p>\n",
         ),
-        ("[missing]\n", "<p>missing</p>\n"),
+        ("[missing]\n", "<p>[missing]</p>\n"),
         (
             "[a](url &quot;tit&quot;)\n",
-            "<p>a(url &quot;tit&quot;)</p>\n",
+            "<p>[a](url &quot;tit&quot;)</p>\n",
         ),
         (
             "[a]\n\n[a]: url 'title'\n",

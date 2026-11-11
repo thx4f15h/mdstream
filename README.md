@@ -3598,7 +3598,7 @@ run 等待后继标量或 EOF 再定长；未完成/失败外层不贡献深度�
 
 ## 已发布标签的未配对分隔符终点
 
-链接/图片标签发布为对象时，内部尚未配对的 `*`、`_`、`~`、`~~` opener 不再与标签外文本配对。例如 `[foo *bar][ref]*` 在定义 ref 后显示链接文字 `foo *bar` 和外部字面 `*`；`**前 [签 *中](u) 后**` 保留外层加粗及标签中的字面星号。标签内已确认的样式保持；未定义 shortcut 仍在 `]` 发布为原有隐藏括号对象，后续定义不改变 LinkId 或源码范围。
+链接/图片标签发布为对象时，内部尚未配对的 `*`、`_`、`~`、`~~` opener 不再与标签外文本配对。例如 `[foo *bar][ref]*` 在定义 ref 后显示链接文字 `foo *bar` 和外部字面 `*`；`**前 [签 *中](u) 后**` 保留外层加粗及标签中的字面星号。标签内已确认的样式保持；未定义 shortcut 仍在 `]` 发布同一对象，原 `[]`/`!` 边界保持可见，后续定义不改变 LinkId 或源码范围。
 
 未闭合、被新括号/自动链接起始替换的候选沿用原行为；不能发布 shortcut 的超长/空白标签只在显式后缀成功时结束作用域。失败/未完成后缀保持原不重放规则。旧标签在晚表头确认前继续隔离，失败才发布并清退，成功由原有单元格确认路径处理。此终点清退的互补左边界已由下节交付，521/534/564、473/474 现匹配官方 HTML；嵌套对象、通用失败回退和混合样式顺序继续待办。
 
@@ -3610,11 +3610,11 @@ run 等待后继标量或 EOF 再定长；未完成/失败外层不贡献深度�
 
 在现有单候选模型内，direct/full/collapsed/shortcut 链接或图片标签内部的 `*`、`_` closer 只消费同标签内的 opener。`*[foo*](/uri)` 显示外部字面星号与链接文字 `foo*`；`*前 [**中***](u) 后*` 保留包围整个链接的强调、标签内部加粗及剩余字面星号。单/双、多字节 run 的部分消费与三倍数规则保持，右边界继续清退标签内部未配对 opener。
 
-候选标签中的强调/加粗/删除线 run 保存原始区间和前后标量摘要，等待候选确认；不保存或重扫正文、不复制外部栈、不撤销已发布标注。合法有界 shortcut 在 `]` 即发布，未定义引用仍隐藏括号；随后成功的 direct/full/collapsed 后缀复用同一 LinkId。不能发布 shortcut 的超长/空白标签等待成功显式后缀；失败或未完成后缀在既有拒绝点/EOF 按普通正文处理摘要一次，不重放后缀。不闭合、被新 `[` 或自动链接起始替换的未发布候选也按普通正文处理；到确认或 EOF 前，其摘要尚不发布样式，因此普通正文的跨括号强调仍可在失败后成立。
+候选标签中的强调/加粗/删除线 run 保存原始区间和前后标量摘要，等待候选确认；不保存或重扫正文、不复制外部栈、不撤销已发布标注。合法有界 shortcut 在 `]` 即发布，未定义 shortcut 保留原 `[]`/`!` 边界，原符号定义后隐藏；随后成功的 direct/full/collapsed 后缀复用同一 LinkId。不能发布 shortcut 的超长/空白标签等待成功显式后缀；失败或未完成后缀在既有拒绝点/EOF 按普通正文处理摘要一次，不重放后缀。不闭合、被新 `[` 或自动链接起始替换的未发布候选也按普通正文处理；到确认或 EOF 前，其摘要尚不发布样式，因此普通正文的跨括号强调仍可在失败后成立。
 
 晚表头成功时，旧标签前一行摘要作为原段落处理一次，当前行摘要用于独立首单元格；失败才按标签确认路径发布。若未发布的继承候选被新 `[` 或自动链接起始替换，释放摘要时先处理旧行，再以其剩余栈恢复当前行的继承边界；旧行内部配对立即保留，跨行配对继续等待表头决定，长短表头结果一致。此衔接不扩展不可隔离表头的一般确认/撤销。每个摘要只处理一次，每次 closer 查固定六个分类头并按源码位置排除外部 opener；局部配对后沿用终点清退。摘要占 O(run 数) 空间并复用容量，处理/移交计入 `Work.delimiter_steps`；无正文增长回扫，累计解析 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 与整帧共享预算保持。
 
-官方 521/534/564 及同一规则覆盖的 473/474 均经独立观察后匹配原 HTML；512–538 为 **18/4/5**，553–571 为 **17/2/0**，460–481 为 **12/0/10**（支持/刻意差异/未支持）。523 仍为隐藏括号差异，独立观察改为字面 `*foo bar* baz`；官方 Markdown/HTML、生成器和评分投影算法保持。419、嵌套链接/图片、多候选、跨行定义/后缀、完整失败回退、混合样式顺序与 UI 继续待办。
+官方 521/534/564 及同一规则覆盖的 473/474 均经独立观察后匹配原 HTML；512–538 当前为 **19/3/5**，553–571 为 **17/2/0**，460–481 为 **12/0/10**（支持/刻意差异/未支持）。523 仍有强调隔离差异，当前独立观察为字面 `*foo [bar* baz]`；官方 Markdown/HTML、生成器和评分投影算法保持。419、嵌套链接/图片、多候选、跨行定义/后缀、完整失败回退、混合样式顺序与 UI 继续待办。
 
 复跑：`nix develop -c cargo nextest run --test label_delimiters --test commonmark_link_labels --test commonmark_reference_forms --test commonmark_emphasis_final --test commonmark_emphasis_partial --test single_tilde --lib --no-fail-fast`。模型、UTF-8 分块/EOF、稳定身份/原始映射、共享预算与长输入计数见[交付记录](DONE.md#2026-11-11-已发布标签左边界的强调隔离交付)。
 
@@ -3625,7 +3625,7 @@ run 等待后继标量或 EOF 再定长；未完成/失败外层不贡献深度�
 
 待决首行只保存 Span/BlockId，不发布可撤销 LinkId，不进入固定手工折叠范围。确认后沿用原块和容器身份、目标/title 原始区间并使首行布局失效；失败首行只消费一次，保留原表头、Setext、标题、代码、lazy 和部分 tab 方言。目标确认按完整路径的实际剩余列数判断结构优先级：新引用/列表和至多三列缩进内的标题、Setext、分隔线、代码/数学围栏优先，部分 tab 不会把它们误算为四列；真正至少四列的目标缩进仍允许。首行同时是表头候选时，先走原表格确认路径：普通空格路径和至多三列部分 tab 保留表格优先级，实际代码叶块路径的目标可确认，不按分隔行字面形状拒绝。增长中的目标超窗后不再追认，不回扫旧正文；晚定义仅沿用符号范围通知，累计 O(n log n)、空间 O(n)。
 
-`tests/next_line_definitions.rs` 覆盖原 1440 组目标模型、3465 组容器结构、3780 组叶块/列宽及 16380 组联合表头资格对照、UTF-8 全切点/逐前缀/EOF、复杂行内失败回退、稳定身份/映射、真实 FoldView 更新、共享六字节显示及 dest/title 预算、百万字失败候选和两万旧引用。本子项交付时官方 198 转支持、评分 15/7/5；独立下一行完整 title 子项随后使 193/195/217 转支持，当前 20/7/0（根作用域多行 title 的 196 已支持）。官方输入/HTML/生成器和 project 结构解析保持，测试输出 helper 仅新增通用 U+0020→`%20` 编码，单行与下一行定义同规则。见[交付记录](DONE.md#2026-11-11-引用定义目标紧接下一物理行交付)。
+`tests/next_line_definitions.rs` 覆盖原 1440 组目标模型、3465 组容器结构、3780 组叶块/列宽及 16380 组联合表头资格对照、UTF-8 全切点/逐前缀/EOF、复杂行内失败回退、稳定身份/映射、真实 FoldView 更新、共享六字节显示及 dest/title 预算、百万字失败候选和两万旧引用。本子项交付时官方 198 转支持、评分 15/7/5；独立下一行完整 title 子项随后使 193/195/217 转支持，当前 26/1/0（根作用域多行 title 的 196 已支持）。官方输入/HTML/生成器和 project 结构解析保持，测试输出 helper 仅新增通用 U+0020→`%20` 编码，单行与下一行定义同规则。见[交付记录](DONE.md#2026-11-11-引用定义目标紧接下一物理行交付)。
 
 
 ## 引用定义的独立下一物理行完整 title
@@ -3636,7 +3636,7 @@ run 等待后继标量或 EOF 再定长；未完成/失败外层不贡献深度�
 
 空行、坏尾缀、缺失祖先、新兄弟、未闭合 title 或超窗都只结束候选，保留已发布目标，当前行按原普通块语义解析；根作用域及既有完整显式容器路径内符合原普通文本资格的正文续接（含 1–3 虚拟列）见下方独立子项。待决期间 `source_fold_limit` 停在定义起点，固定范围注册被拒绝；成功、失败或 EOF 后解除，真实 FoldView 更新与旧测量 ticket 校验保持。每条有界 title 行仅常数次扫描，新增工作计入分类/容器计数，超窗不重试；确认只更新当前符号及增量区间，不遍历历史引用。累计追加 O(n log n)、空间 O(n)、核心零运行时依赖与禁止 unsafe 保持。
 
-`tests/next_line_titles.rs` 八项回归覆盖 2100 组成功模型、失败普通块对照、所有权/已有空 title、UTF-8 全切点与逐前缀 EOF、稳定对象/原始映射、固定折叠及 FoldView、共享六字节显示和目标/title 解码、窗口边界、970 层百万字失败尾部及两万旧引用。官方 193/195/217 直接匹配原 HTML，完整章节当前 20/7/0（根作用域多行 title 的 196 已支持）；208/541 的跨行标签已支持；196 的根作用域多行 title 已由下方子项交付；既有完整显式容器路径内符合原普通文本资格的多行 title 正文（含 1–3 虚拟列）已由[容器多行 title 正文](#引用定义容器多行-title-正文)子项交付；510 的根段落后缀组件换行现已支持；容器后缀及容器内直接 title 正文换行、完整容器/字面回退及窗口放宽继续待办。官方输入/HTML、生成器、评分投影和输出编码 helper 均未改。见[交付记录](DONE.md#2026-11-11-引用定义独立下一物理行完整-title-交付)。
+`tests/next_line_titles.rs` 八项回归覆盖 2100 组成功模型、失败普通块对照、所有权/已有空 title、UTF-8 全切点与逐前缀 EOF、稳定对象/原始映射、固定折叠及 FoldView、共享六字节显示和目标/title 解码、窗口边界、970 层百万字失败尾部及两万旧引用。官方 193/195/217 直接匹配原 HTML，完整章节当前 26/1/0（根作用域多行 title 的 196 已支持）；208/541 的跨行标签已支持；196 的根作用域多行 title 已由下方子项交付；既有完整显式容器路径内符合原普通文本资格的多行 title 正文（含 1–3 虚拟列）已由[容器多行 title 正文](#引用定义容器多行-title-正文)子项交付；510 的根段落后缀组件换行现已支持；容器后缀及容器内直接 title 正文换行、完整容器/字面回退及窗口放宽继续待办。官方输入/HTML、生成器、评分投影和输出编码 helper 均未改。见[交付记录](DONE.md#2026-11-11-引用定义独立下一物理行完整-title-交付)。
 
 
 ## 引用定义跨物理行标签
@@ -3708,7 +3708,7 @@ run 等待后继标量或 EOF 再定长；未完成/失败外层不贡献深度�
 
 raw title 直接借用连续真实源码，CRLF 计两个 title/suffix 字节；已有 `LinkTitle`/`CodeInfo` 游标把 CRLF 原子输出为映射到两个源字节的 LF，保留真实缩进，反斜线和实体沿用原一次解码。反斜线不跨物理行转义下行定界符；实体产生的 LF/CR 不参与结构。单独 CR 保留拒绝方言。label 999、目标/title 4096 和 suffix 8256 的原界限独立保持，不给 inline streaming 加定义的逐行分类窗口。
 
-完整合法 suffix 才升级原 LinkId/Image；失败/EOF 保留原 shortcut/reference 来源、身份及解析状态。合格原子闭合前缀现恢复：`[a](u 'first\n&amp;\*` 在 EOF 显示 `a(u 'first\n&*`；`[a](u 'first\n&amp;'&amp;)` 显示 `a(u 'first\n&'&)`。含内部代码/强调/新链接标记的候选仍不重放，不因失败补发对象；这不是完整字面回退，精确失败域见末节，相关宽 TODO 保留。
+完整合法 suffix 才升级原 LinkId/Image；失败/EOF 保留原 shortcut/reference 来源、身份及解析状态。合格原子闭合前缀现恢复：`[a](u 'first\n&amp;\*` 在 EOF 显示 `[a](u 'first\n&*`；`[a](u 'first\n&amp;'&amp;)` 显示 `[a](u 'first\n&'&)`。含内部代码/强调/新链接标记的候选仍不重放，不因失败补发对象；这不是完整字面回退，精确失败域见末节，相关宽 TODO 保留。
 
 新 title LF 复用粘滞分歧标志、旧单行 grammar `RootEligibility`、真实根续接限定的 `Deferred(key)` 及单一来源双游标；观察状态不发布或合并。每个新增字节仅常数次访问，树操作 O(log n)，累计 O(n log n)、空间 O(n)，核心零运行时依赖和禁止 unsafe 保持。没有旧正文回扫、历史引用扫描或单次 append 硬时延承诺。
 
@@ -3736,7 +3736,7 @@ raw title 直接借用连续真实源码，CRLF 计两个 title/suffix 字节；
 
 首次接纳新 gap LF 后的分歧标志持续到逻辑段落结束。旧单行 Eligibility 始终独立观察，决定首 pipe 前的表头资格；`Deferred(key)` 要求 candidate、observer 和实际 Inline 的首 leaf/scope 相同，先完成真实续段分类。eager deferred 不隔离或提前消费实际 Inline；否决时唯一 SourceOwner 释放 raw/virtual 各一次，确认 table 则封存原 shortcut、退役 observer 并使用独立 cell。旧 header 即使在新 containers 栈形成后回流，也按保存的旧 key 消费。Ordinary eager/opaque/inert 复用及 root 原跨容器保护保持。
 
-完整 `)` 才原位升级原 LinkId/Image；引用 first_use/revision 不撤销重建。合格原子闭合失败前缀现恢复：`> [a](u\n> 'a&amp;'x)\n` 显示 `a(u\n'a&'x)\n`，相应 EOF 显示 `a(u\n'a&`，合格的 `\*` 显示 `*`。含未转义 `*b*` 等其它语法的整个候选继续保留 raw，不补发强调。拒绝字节起正常词法仅处理一次。多行 title 正文同此精确失败域；完整字面回退继续待办。
+完整 `)` 才原位升级原 LinkId/Image；引用 first_use/revision 不撤销重建。合格原子闭合失败前缀现恢复：`> [a](u\n> 'a&amp;'x)\n` 显示 `[a](u\n'a&'x)\n`，相应 EOF 显示 `[a](u\n'a&`，合格的 `\*` 显示 `*`。含未转义 `*b*` 等其它语法的整个候选继续保留 raw，不补发强调。拒绝字节起正常词法仅处理一次。多行 title 正文同此精确失败域；完整字面回退继续待办。
 
 `container_component_gaps` 测试包含18,000组独立组件模型、真实角色/晚 pipe/作用域矩阵、UTF-8分块与每前缀 EOF、独立长度/结构 prefix 限额、身份/原始映射、共享0/1/6字节预算、Update apply/merge与Fold重建、open/fixed/ticket/reader及百万字/两万旧对象计数。历史静态 oracle 原字节保留：A corpus 仅66个完整输入有精确新期望，其中32个公开 Direct 成功、34个公开全快照保持而仅工作计数改变；旧 root non-target 仅4个精确容器输入升级，scope corpus 仅60个精确容器新成功逐条独立断言 typed metadata/display。无按换行或前缀泛化豁免，官方输入/HTML/评分/projection/helper 不改。
 
@@ -3758,8 +3758,18 @@ raw title 直接借用连续真实源码，CRLF 计两个 title/suffix 字节；
 
 所有实际发布 Inline（根/普通容器段落、ATX、独立 table cell）的 `Tail::Destination` 失败或 EOF，只对已消费 raw 数据执行窄恢复：完整实体按既有单层规则解码，ASCII 标点转义隐藏反斜线，未知完整实体保持 raw。开头 `(` 和当前拒绝字节不参与资格，拒绝字节仍正常处理一次；成功 grammar、旧 LinkId/Reference/first_use/title gaps 和 Sealed 流程保持。`\&amp;` 仅去掉反斜线，不二次解码；实体生成的 LF 只是映射文本。
 
-必须先整体验证：未转义 `< [ ] ! * _ ~`、反引号、`$` 使整个已消费候选失格；结束时半实体、尾反斜线或反斜线紧邻物理 LF/CRLF 同样失格，前面的实体也不提前恢复。转义标点可合格；非法实体字符按原拒绝规则在原位继续，不跨拒绝点续接。原空白、缩进、CRLF 和 break 方言保持；不重读普通 lexer、不恢复未解析 label 括号，不补发强调/code/math/autolink/嵌套对象。完整字面回退等宽需求仍在 TODO，官方输入/HTML/评分分类保持。
+必须先整体验证：未转义 `< [ ] ! * _ ~`、反引号、`$` 使整个已消费候选失格；结束时半实体、尾反斜线或反斜线紧邻物理 LF/CRLF 同样失格，前面的实体也不提前恢复。转义标点可合格；非法实体字符按原拒绝规则在原位继续，不跨拒绝点续接。原空白、缩进、CRLF 和 break 方言保持；不重读普通 lexer；未解析 shortcut 的边界由下节独立条件标记控制，不补发强调/code/math/autolink/嵌套对象。完整字面回退等宽需求仍在 TODO，官方输入/HTML/评分分类保持。
 
 候选仅持有不可 Clone 的实际 raw Span RLE，无 Publishing 能力的 Eligibility 不建 trace；virtual 列和结构 prefix 不记录。失败先走原 header cancel/seal，资格通过才第二遍调用原 entity/hide 出口。`Work.link_fallback_bytes` 记录两遍实际字节读取，`link_fallback_steps` 记录 raw 录入/合并及每次 span 访问。若 A 为实际发布 raw visits，则恢复字节和 span 访问分别不超过 2A，录入不超过 A；每 trace 数据不超过 suffix8256，但物理包络可达40万字，不能据包络重扫。成功/失败/EOF 释放 trace，不累积历史；累计 O(n log n)/O(n)，核心零运行时依赖、禁止 unsafe。
 
 `tests/atom_fallback.rs`、私有 trace/DisplayIndex 测试及既有共享 reader 测试覆盖11个真实前驱红目标、159个非目标完整快照、三定界/Link/Image/行尾、UTF-8 全切点和每前缀 EOF、replacement/source 切片、0/1/6/query/object、稳定引用/Fold/Update/stale、真实表头确认/取消/first-cell guard、8256边界/重叠链、40万字prefix与百万正文/两万旧定义计数。复跑：`nix develop -c cargo nextest run --test atom_fallback --no-fail-fast`；示例：`nix develop -c cargo run --release -p mdstream-core --example atom_fallback`。验证见[交付记录](DONE.md#2026-11-11-原子闭合的失败直接链接后缀恢复交付)。
+
+## 未解析 shortcut 的字面边界与晚定义
+
+已发布的 shortcut Link/Image 在原引用未定义时显示真实 `[]`/`!` 边界；例如 `[*a*]` 显示带强调的 `[a]`，失败后缀 `![a](u '&amp;'&amp;)` 显示 `![a](u '&'&)`。label 内部的样式、深度、LinkId 和源码映射保持。首个获胜定义隐藏原符号的边界，不替换对象或扫描历史使用；duplicate 和仅 title 续行不触发该可见性变化。候选 Image 仍有对象回调，destination 为 None 表示未解析。
+
+私有条件 annotation 与永久 HIDDEN 分开；永久隐藏优先。完整 Direct/full/collapsed 后缀仍在原 ID 上永久隐藏语法，完整引用的旧选择保持。Runs、scratch/display、raw LayoutPass、可见位置查找和基于 display 的搜索/摘要均读取有效样式；SourceSearch 和 raw summary 保留源码。晚定义另发 Visibility，因此 references_affect_size=false 也会使旧测量失效。
+
+当前离线统计（支持/刻意差异/未支持）：定义章 **26/1/0**；Links 482–511 **27/1/2**、512–538 **19/3/5**、539–552 **13/1/0**、553–571 **17/2/0**；Images **20/0/2**；实体章 **16/0/1**。以上替代前文各历史交付时的计数。官方输入/HTML、生成器及评分投影不变；full/collapsed 回选、完整失败 lexer、HTML、嵌套图片与其余宽 TODO 仍未交付。
+
+`tests/shortcut_boundaries.rs` 和私有 annotation 回归覆盖真实前驱快照、typed marker/ID/映射、UTF-8/EOF、hard LF/全空格 code/math、微预算、late winner/策略失效、FoldView、百万字追加及两万旧对象。条件标记只占原 marker 的至多三个 ASCII 字节；每个合法 shortcut label 保留 base-visible scalar，配合永久隐藏树汇总使 next_visible 保持 O(log n)。没有新 boundary/uses 索引或旧正文回扫，累计 O(n log n)、空间 O(n)、零运行时依赖和禁止 unsafe 保持。

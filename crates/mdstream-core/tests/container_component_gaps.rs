@@ -69,7 +69,7 @@ fn container_gap_atomic_failure_recovers_and_markup_stays_opaque() {
                 let source = format!("> {image}[a](u{eol}> {tail}");
                 let d = parse(&source);
                 assert_eq!(d.link_destination(LinkId(0)), None);
-                assert_eq!(shown(&d), format!("a(u\n{display}"), "{source:?}");
+                assert_eq!(shown(&d), format!("{image}[a](u\n{display}"), "{source:?}");
                 assert_eq!(
                     d.link_info(LinkId(0)).unwrap().source,
                     Span::new(2, 2 + image.len() + 3)
@@ -263,7 +263,7 @@ fn container_atomic_failure_source_display_and_decoded_controls_share_micro_budg
                 let raw: String = doc.runs_in(whole).unwrap().map(|run| run.text).collect();
                 assert_eq!(raw, source);
                 let expected = format!(
-                    "b a(u\n  '中🙂\n*{}",
+                    "b {image}[a](u\n  '中🙂\n*{}",
                     if tail.is_empty() { "" } else { "'&)\n" }
                 );
                 for (at, ch) in source.char_indices() {

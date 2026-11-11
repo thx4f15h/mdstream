@@ -247,38 +247,21 @@ enum Assessment {
 // Frozen observations are separate from the verbatim upstream oracle.
 fn assessment(number: usize) -> Assessment {
     match number {
-        482..=487 | 489 | 492 | 495..=496 | 498..=507 | 509..=510 => Assessment::Supported,
-        488 => Assessment::DeliberateDifference {
-            reason: "invalid bare destination leaves the existing hidden-bracket shortcut reference",
-            observed: "<p>link(/my uri)</p>\n",
-        },
-        490 => Assessment::DeliberateDifference {
-            reason: "invalid newline in bare destination keeps the hidden-bracket fallback",
-            observed: "<p>link(foo\nbar)</p>\n",
-        },
+        482 | 483 | 484 | 485 | 486 | 487 | 488 | 489 | 490 | 492 | 495 | 496 | 497 | 498 | 499
+        | 500 | 501 | 502 | 503 | 504 | 505 | 506 | 507 | 508 | 509 | 510 | 511 => {
+            Assessment::Supported
+        }
         491 => Assessment::Unsupported {
-            reason: "raw HTML after the failed destination is outside core scope; hidden-bracket fallback also differs",
-            observed: "<p>link(&lt;foo\nbar&gt;)</p>\n",
+            reason: "raw HTML after the failed destination is outside core scope; literal failed suffix remains",
+            observed: "<p>[link](&lt;foo\nbar&gt;)</p>\n",
         },
         493 => Assessment::DeliberateDifference {
-            reason: "failed angle destination does not replay escapes or restore shortcut brackets",
-            observed: "<p>link(&lt;foo\\&gt;)</p>\n",
+            reason: "failed angle destination does not replay escapes",
+            observed: "<p>[link](&lt;foo\\&gt;)</p>\n",
         },
         494 => Assessment::Unsupported {
-            reason: "raw HTML in the final failed destination is outside core scope; hidden-bracket fallback also differs",
-            observed: "<p>a(&lt;b)c\na(&lt;b)c&gt;\na(&lt;b&gt;c)</p>\n",
-        },
-        497 => Assessment::DeliberateDifference {
-            reason: "unfinished balanced destination retains the hidden-bracket fallback at EOF",
-            observed: "<p>link(foo(and(bar))</p>\n",
-        },
-        508 => Assessment::DeliberateDifference {
-            reason: "invalid title suffix keeps the existing hidden-bracket shortcut reference",
-            observed: "<p>link(/url &quot;title &quot;and&quot; title&quot;)</p>\n",
-        },
-        511 => Assessment::DeliberateDifference {
-            reason: "a separated suffix leaves an unresolved shortcut with hidden brackets",
-            observed: "<p>link (/uri)</p>\n",
+            reason: "raw HTML in the final failed destination is outside core scope; literal failed suffix remains",
+            observed: "<p>[a](&lt;b)c\n[a](&lt;b)c&gt;\n[a](&lt;b&gt;c)</p>\n",
         },
         _ => panic!("unclassified upstream example {number}"),
     }
@@ -339,9 +322,9 @@ fn pinned_commonmark_inline_links_report() {
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [22, 6, 2]);
+    assert_eq!(counts, [27, 1, 2]);
     eprintln!(
-        "CommonMark 0.31.2 Links subset (482–511): 22 supported, 6 deliberate differences, 2 unsupported; Links 512–571 not scored"
+        "CommonMark 0.31.2 Links subset (482–511): 27 supported, 1 deliberate differences, 2 unsupported; Links 512–571 not scored"
     );
 }
 
@@ -491,9 +474,9 @@ fn inline_link_projection_preserves_empty_labels_whitespace_and_decoded_metadata
             "[中&amp;\\*](<a b%20中\\\\> 't&amp;\\\"')\n",
             "<p><a href=\"a%20b%20%E4%B8%AD%5C\" title=\"t&amp;&quot;\">中&amp;*</a></p>\n",
         ),
-        ("[a](/x\n", "<p>a(/x</p>\n"),
-        ("[a](/x 't\n", "<p>a(/x 't</p>\n"),
-        ("[a] (<x>)\n", "<p>a (&lt;x&gt;)</p>\n"),
+        ("[a](/x\n", "<p>[a](/x</p>\n"),
+        ("[a](/x 't\n", "<p>[a](/x 't</p>\n"),
+        ("[a] (<x>)\n", "<p>[a] (&lt;x&gt;)</p>\n"),
     ] {
         let whole = parse(source);
         assert_eq!(project(&whole), expected, "{source:?}");

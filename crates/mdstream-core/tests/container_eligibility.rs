@@ -1,6 +1,9 @@
 use mdstream::*;
 #[path = "support/container_eligibility_cases.rs"]
 mod corpus;
+#[allow(dead_code)]
+#[path = "support/shortcut_hashes.rs"]
+mod shortcut_hashes;
 #[path = "support/snapshot.rs"]
 mod support;
 
@@ -54,7 +57,7 @@ fn container_eligibility_preserves_head_snapshots_and_every_old_work_counter() {
                     } else {
                         assert_eq!(
                             corpus::hash(&format!("{:?}", support::snapshot(d.document()))),
-                            BASELINE[index].0
+                            shortcut_hashes::container(case, end, bytewise, BASELINE[index].0)
                         );
                         assert_eq!(d.document().link_destination(LinkId(0)), None);
                     }
@@ -62,6 +65,14 @@ fn container_eligibility_preserves_head_snapshots_and_every_old_work_counter() {
                 } else {
                     BASELINE[index]
                 };
+                let expected = (
+                    shortcut_hashes::source(
+                        d.document().source(),
+                        bytewise,
+                        shortcut_hashes::container(case, end, bytewise, expected.0),
+                    ),
+                    expected.1,
+                );
                 assert_eq!(
                     (
                         corpus::hash(&format!("{:?}", support::snapshot(d.document()))),

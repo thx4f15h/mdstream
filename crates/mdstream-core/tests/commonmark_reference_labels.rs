@@ -260,30 +260,12 @@ enum Assessment {
 // Frozen observations are separate from the verbatim upstream oracle.
 fn assessment(number: usize) -> Assessment {
     match number {
-        539..=541 | 544 | 549..=552 => Assessment::Supported,
-        542 => Assessment::DeliberateDifference {
-            reason: "unresolved shortcut references retain hidden brackets before a spaced reference",
-            observed: "<p>foo <a href=\"/url\" title=\"title\">bar</a></p>\n",
-        },
-        543 => Assessment::DeliberateDifference {
-            reason: "unresolved shortcut references retain hidden brackets before a next-line reference",
-            observed: "<p>foo\n<a href=\"/url\" title=\"title\">bar</a></p>\n",
-        },
+        539 | 540 | 541 | 542 | 543 | 544 | 546 | 547 | 548 | 549 | 550 | 551 | 552 => {
+            Assessment::Supported
+        }
         545 => Assessment::DeliberateDifference {
             reason: "raw reference-label spelling is preserved; unresolved full references hide their syntax",
             observed: "<p>bar</p>\n",
-        },
-        546 => Assessment::DeliberateDifference {
-            reason: "invalid definition remains content; unresolved shortcut reference still hides brackets",
-            observed: "<p>foo[ref[]</p>\n<p>[ref[]: /uri</p>\n",
-        },
-        547 => Assessment::DeliberateDifference {
-            reason: "single nested candidate and unresolved-reference hidden-bracket fallback",
-            observed: "<p>foo[refbar]</p>\n<p>[refbar]: /uri</p>\n",
-        },
-        548 => Assessment::DeliberateDifference {
-            reason: "single nested candidate and unresolved-reference hidden-bracket fallback",
-            observed: "<p>[[foo]]</p>\n<p>[[foo]]: /url</p>\n",
         },
         _ => panic!("unclassified upstream example {number}"),
     }
@@ -342,9 +324,9 @@ fn pinned_commonmark_reference_labels_report() {
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [8, 6, 0]);
+    assert_eq!(counts, [13, 1, 0]);
     eprintln!(
-        "CommonMark 0.31.2 Links subset (539–552): 8 supported, 6 deliberate differences, 0 unsupported; 482–538 and 553–571 outside this score"
+        "CommonMark 0.31.2 Links subset (539–552): 13 supported, 1 deliberate differences, 0 unsupported; 482–538 and 553–571 outside this score"
     );
 }
 
@@ -504,9 +486,9 @@ fn reference_label_projection_preserves_whitespace_matching_and_decoded_metadata
             "[中&amp;\\*](<a b%20中\\\\> 't&amp;\\\"')\n",
             "<p><a href=\"a%20b%20%E4%B8%AD%5C\" title=\"t&amp;&quot;\">中&amp;*</a></p>\n",
         ),
-        ("[a](/x\n", "<p>a(/x</p>\n"),
-        ("[a](/x 't\n", "<p>a(/x 't</p>\n"),
-        ("[a] (<x>)\n", "<p>a (&lt;x&gt;)</p>\n"),
+        ("[a](/x\n", "<p>[a](/x</p>\n"),
+        ("[a](/x 't\n", "<p>[a](/x 't</p>\n"),
+        ("[a] (<x>)\n", "<p>[a] (&lt;x&gt;)</p>\n"),
     ] {
         let whole = parse(source);
         assert_eq!(project(&whole), expected, "{source:?}");

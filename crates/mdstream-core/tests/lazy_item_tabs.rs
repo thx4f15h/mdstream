@@ -202,7 +202,7 @@ fn siblings_and_nonparagraph_boundaries_keep_existing_rules() {
             "{tail:?}"
         );
     }
-    assert_eq!(visible(&parse("-  - old\n\t[r]: /u\n")), "old\n r: /u\n");
+    assert_eq!(visible(&parse("-  - old\n\t[r]: /u\n")), "old\n [r]: /u\n");
     for tail in ["\n", "\r\n", ""] {
         let source = format!("-  - old\n\t{tail}");
         let doc = parse(&source);

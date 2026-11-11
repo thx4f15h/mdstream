@@ -98,7 +98,7 @@ fn suffix_append_preserves_tickets_but_prior_reference_changes_reject_them() {
 }
 
 #[test]
-fn render_policy_preserves_unaffected_heights_and_checkpoints() {
+fn late_reference_visibility_invalidates_heights_even_when_reference_size_is_ignored() {
     let mut doc = Document::new();
     doc.append(&format!("[late]\n\n{}\n\n", "x".repeat(2000)))
         .unwrap();
@@ -120,9 +120,12 @@ fn render_policy_preserves_unaffected_heights_and_checkpoints() {
     checkpoints
         .apply_with_policy(&doc, &update, policy)
         .unwrap();
-    assert_eq!(heights.height_state(TileId(0)), Some(HeightState::Measured));
-    assert_eq!(checkpoints.get(TileId(0)), Some(&7));
-    heights.measure(ticket, 6).unwrap();
+    assert_eq!(heights.height_state(TileId(0)), Some(HeightState::Expired));
+    assert_eq!(checkpoints.get(TileId(0)), None);
+    assert_eq!(
+        heights.measure(ticket, 6),
+        Err(LayoutError::StaleMeasurement)
+    );
 }
 
 #[test]

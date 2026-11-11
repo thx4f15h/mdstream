@@ -218,7 +218,7 @@ fn continued_definition_text_keeps_source_mapping_and_shared_budget() {
         let full = Span::new(0, source.len());
         let expected = visible(&doc);
         assert_eq!(definitions(&doc), 0);
-        assert!(expected.contains(&format!("\n{}r: /中🙂& 't'", " ".repeat(spaces))));
+        assert!(expected.contains(&format!("\n{}[r]: /中🙂& 't'", " ".repeat(spaces))));
         assert_eq!(
             doc.runs_in(full)
                 .unwrap()

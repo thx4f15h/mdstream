@@ -65,8 +65,8 @@ fn invalid_definitions_remain_content_and_do_not_resolve_symbols() {
         .filter(|r| !r.style.contains(Style::HIDDEN))
         .map(|r| r.text)
         .collect();
-    // Existing unresolved-reference fallback still hides matched brackets.
-    assert_eq!(visible, "foo[ref[]\n\n[ref[]: /uri\n");
+    // Pure shortcut fallback retains its original matched brackets.
+    assert_eq!(visible, "[foo][ref[]\n\n[ref[]: /uri\n");
     for source in [
         "[[r]: /bad\n",
         "[r[x]: /bad\n",

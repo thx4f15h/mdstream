@@ -344,16 +344,11 @@ enum Assessment {
 // Frozen observations are reviewed separately from the verbatim upstream oracle.
 fn assessment(number: usize) -> Assessment {
     match number {
-        514..=516 | 518..=519 | 521..=522 | 525..=527 | 529..=530 | 532..=535 | 537..=538 => {
-            Assessment::Supported
-        }
+        513 | 514 | 515 | 516 | 518 | 519 | 521 | 522 | 525 | 526 | 527 | 529 | 530 | 532 | 533
+        | 534 | 535 | 537 | 538 => Assessment::Supported,
         512 => Assessment::Unsupported {
             reason: "nested unescaped brackets replace the outer link candidate",
-            observed: "<p>[link [foo bar]](/uri)</p>\n",
-        },
-        513 => Assessment::DeliberateDifference {
-            reason: "unresolved shortcut references keep the hidden-bracket dialect",
-            observed: "<p>link bar](/uri)</p>\n",
+            observed: "<p>[link [foo [bar]]](/uri)</p>\n",
         },
         517 => Assessment::Unsupported {
             reason: "an inner image replaces the outer link candidate",
@@ -364,8 +359,8 @@ fn assessment(number: usize) -> Assessment {
             observed: "<p>![[<a href=\"uri1\">foo</a>](uri2)](uri3)</p>\n",
         },
         523 => Assessment::DeliberateDifference {
-            reason: "unresolved shortcut references hide brackets and isolate label emphasis",
-            observed: "<p>*foo bar* baz</p>\n",
+            reason: "unresolved shortcut references retain literal brackets and isolate label emphasis",
+            observed: "<p>*foo [bar* baz]</p>\n",
         },
         524 => Assessment::DeliberateDifference {
             reason: "raw HTML is outside the project dialect and stays literal",
@@ -373,7 +368,7 @@ fn assessment(number: usize) -> Assessment {
         },
         528 => Assessment::Unsupported {
             reason: "nested brackets replace the outer full reference candidate",
-            observed: "<p>[link [foo bar]]<a href=\"/uri\">ref</a></p>\n",
+            observed: "<p>[link [foo [bar]]]<a href=\"/uri\">ref</a></p>\n",
         },
         531 => Assessment::Unsupported {
             reason: "an inner image replaces the outer full reference candidate",
@@ -442,9 +437,9 @@ fn pinned_commonmark_link_labels_report() {
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [18, 4, 5]);
+    assert_eq!(counts, [19, 3, 5]);
     eprintln!(
-        "CommonMark 0.31.2 Links subset (512–538): 18 supported, 4 deliberate differences, 5 unsupported; 482–511 and 539–571 outside this score"
+        "CommonMark 0.31.2 Links subset (512–538): 19 supported, 3 deliberate differences, 5 unsupported; 482–511 and 539–571 outside this score"
     );
 }
 
@@ -732,8 +727,8 @@ fn link_label_projection_preserves_nested_styles_objects_and_literal_failures() 
             "[中&amp;\\*](<a b%20中\\\\> 't&amp;\\\"')\n",
             "<p><a href=\"a%20b%20%E4%B8%AD%5C\" title=\"t&amp;&quot;\">中&amp;*</a></p>\n",
         ),
-        ("[a](/x\n", "<p>a(/x</p>\n"),
-        ("[a](/x 't\n", "<p>a(/x 't</p>\n"),
+        ("[a](/x\n", "<p>[a](/x</p>\n"),
+        ("[a](/x 't\n", "<p>[a](/x 't</p>\n"),
         ("*[a](/x)*\n", "<p><em><a href=\"/x\">a</a></em></p>\n"),
         (
             "*before [a](/x) after*\n",

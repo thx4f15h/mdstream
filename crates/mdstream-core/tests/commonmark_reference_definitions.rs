@@ -176,34 +176,11 @@ enum Assessment {
 // A changed result must be reviewed, even if it now matches upstream.
 fn assessment(number: usize) -> Assessment {
     match number {
-        192..=196 | 198 | 200 | 202..=208 | 210 | 214..=218 => Assessment::Supported,
-        197 => Assessment::DeliberateDifference {
-            reason: "unresolved references retain public labels with hidden brackets",
-            observed: "<p>foo: /url 'title</p>\n<p>with blank line'</p>\n<p>foo</p>\n",
-        },
-        199 => Assessment::DeliberateDifference {
-            reason: "unresolved references retain public labels with hidden brackets",
-            observed: "<p>foo:</p>\n<p>foo</p>\n",
-        },
+        192 | 193 | 194 | 195 | 196 | 197 | 198 | 199 | 200 | 202 | 203 | 204 | 205 | 206 | 207
+        | 208 | 209 | 210 | 211 | 212 | 213 | 214 | 215 | 216 | 217 | 218 => Assessment::Supported,
         201 => Assessment::DeliberateDifference {
-            reason: "unresolved references retain public labels with hidden brackets",
-            observed: "<p>foo: &lt;bar&gt;(baz)</p>\n<p>foo</p>\n",
-        },
-        209 => Assessment::DeliberateDifference {
-            reason: "unresolved references retain public labels with hidden brackets",
-            observed: "<p>foo: /url &quot;title&quot; ok</p>\n",
-        },
-        211 => Assessment::DeliberateDifference {
-            reason: "unresolved references retain public labels with hidden brackets",
-            observed: "<pre><code>[foo]: /url &quot;title&quot;\n</code></pre>\n<p>foo</p>\n",
-        },
-        212 => Assessment::DeliberateDifference {
-            reason: "unresolved references retain public labels with hidden brackets",
-            observed: "<pre><code>[foo]: /url\n</code></pre>\n<p>foo</p>\n",
-        },
-        213 => Assessment::DeliberateDifference {
-            reason: "definitions cannot interrupt prose; unresolved references still hide brackets",
-            observed: "<p>Foo\nbar: /baz</p>\n<p>bar</p>\n",
+            reason: "invalid angle target remains literal",
+            observed: "<p>[foo]: &lt;bar&gt;(baz)</p>\n<p>[foo]</p>\n",
         },
         _ => panic!("unclassified upstream example {number}"),
     }
@@ -305,9 +282,9 @@ fn pinned_commonmark_reference_definitions_report() {
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [20, 7, 0]);
+    assert_eq!(counts, [26, 1, 0]);
     eprintln!(
-        "CommonMark 0.31.2 Link reference definitions (192–218): 20 supported, 7 deliberate differences, 0 unsupported; other sections not scored by this test"
+        "CommonMark 0.31.2 Link reference definitions (192–218): 26 supported, 1 deliberate differences, 0 unsupported; other sections not scored by this test"
     );
 }
 
@@ -457,7 +434,7 @@ fn definition_projection_preserves_whitespace_structure_and_metadata() {
         ("h&#10;\n===\n", "<h1>h\n</h1>\n"),
         ("~~~\na  \n\n~~~\n", "<pre><code>a  \n\n</code></pre>\n"),
         ("~~~\nx", "<pre><code>x</code></pre>\n"),
-        ("[missing]\n", "<p>missing</p>\n"),
+        ("[missing]\n", "<p>[missing]</p>\n"),
         ("[a]: url\n", ""),
         ("[a]\n\n[a]: <>\n", "<p><a href=\"\">a</a></p>\n"),
         ("# [a]\n[a]: url\n", "<h1><a href=\"url\">a</a></h1>\n"),
@@ -487,7 +464,7 @@ fn definition_projection_keeps_first_definition_late_resolution_and_raw_spans() 
     assert_eq!(doc.links().len(), 2);
     let targets = doc.links().to_vec();
     let infos: Vec<_> = (0..2).map(|i| *doc.link_info(LinkId(i)).unwrap()).collect();
-    assert_eq!(project(&doc), "<p>Foo</p>\n<p>foo</p>\n");
+    assert_eq!(project(&doc), "<p>[Foo]</p>\n<p>[foo]</p>\n");
     doc.append("[FOO]: /f&ouml; 't&amp;'\n").unwrap();
     let revision = doc.references()[0].revision;
     for (i, info) in infos.iter().enumerate() {

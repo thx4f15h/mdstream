@@ -1,6 +1,9 @@
 use mdstream::*;
 #[path = "support/atom_fallback_model.rs"]
 mod model;
+#[allow(dead_code)]
+#[path = "support/shortcut_text_hashes.rs"]
+mod shortcut_text;
 #[path = "support/snapshot.rs"]
 mod support;
 
@@ -30,7 +33,9 @@ fn non_targets_match_actual_predecessor() {
     let baseline = include_str!("fixtures/atom_fallback_baseline.txt");
     let cases = model::controls();
     assert_eq!(baseline.lines().count(), cases.len());
-    for (source, expected) in cases.iter().zip(baseline.lines()) {
+    for (index, (source, expected)) in cases.iter().zip(baseline.lines()).enumerate() {
+        let expected =
+            shortcut_text::line("atom_fallback_baseline", index, source.as_bytes(), expected);
         let actual = model::hash(&format!("{:?}", support::snapshot(&model::parse(source))));
         assert_eq!(format!("{actual:016x}"), expected, "{source:?}");
     }
@@ -54,7 +59,10 @@ fn independent_atoms_all_roles_delimiters_and_physical_endings() {
                         } else {
                             format!("{close}x)&*")
                         };
-                        assert_eq!(model::shown(&d), format!("a(u {open}x\n{expected}{after}"));
+                        assert_eq!(
+                            model::shown(&d),
+                            format!("{image}[a](u {open}x\n{expected}{after}")
+                        );
                         assert_eq!(d.links(), &[LinkTarget::Reference(SymbolId(0))]);
                         let info = d.link_info(LinkId(0)).unwrap();
                         assert_eq!(info.state, SyntaxState::Sealed);
@@ -95,7 +103,7 @@ fn independent_atoms_all_roles_delimiters_and_physical_endings() {
     }
     for source in ["# [a](&amp; x)", "| [a](&amp; x) | b |\n| - | - |\n"] {
         let d = model::parse(source);
-        assert!(model::shown(&d).starts_with("a(& x)"));
+        assert!(model::shown(&d).starts_with("[a](& x)"));
         assert_eq!(d.link_destination(LinkId(0)), None);
     }
 }
@@ -121,18 +129,18 @@ fn whole_candidate_validation_precedes_any_publication() {
         let d = model::parse(&source);
         assert_eq!(
             model::shown(&d),
-            format!("a(u '&amp;\\*{bad}").replace("\r\n", "\n"),
+            format!("[a](u '&amp;\\*{bad}").replace("\r\n", "\n"),
             "{source:?}"
         );
     }
     // Neither half atom can use the current rejection byte to close itself.
     for (source, shown) in [
-        ("[a](u '&amp';&amp;", "a(u '&amp';&"),
-        ("[a](u '&amp;\\'x)", "a(u '&'x)"),
-        ("[a](u '&amp;'\\*", "a(u '&'*"),
-        ("[a](&bogus; x)", "a(&bogus; x)"),
-        ("[a](&bad-\\* x)", "a(&bad-* x)"),
-        ("[a](\\&amp; x)", "a(&amp; x)"),
+        ("[a](u '&amp';&amp;", "[a](u '&amp';&"),
+        ("[a](u '&amp;\\'x)", "[a](u '&'x)"),
+        ("[a](u '&amp;'\\*", "[a](u '&'*"),
+        ("[a](&bogus; x)", "[a](&bogus; x)"),
+        ("[a](&bad-\\* x)", "[a](&bad-* x)"),
+        ("[a](\\&amp; x)", "[a](&amp; x)"),
     ] {
         assert_eq!(model::shown(&model::parse(source)), shown, "{source:?}");
     }
@@ -254,7 +262,7 @@ fn caps_do_not_close_half_atoms_and_recorded_data_is_bounded() {
         let source = format!("[a]({}&amp;", " ".repeat(count - 5));
         let d = model::parse(&source);
         let expected = format!(
-            "a({}{}",
+            "[a]({}{}",
             " ".repeat(count - 5),
             if count <= 8256 { "&" } else { "&amp;" }
         );
@@ -267,7 +275,7 @@ fn caps_do_not_close_half_atoms_and_recorded_data_is_bounded() {
         "&bogus;".into(),
     ] {
         let d = model::parse(&format!("[a]({entity} x)"));
-        assert_eq!(model::shown(&d), format!("a({entity} x)"));
+        assert_eq!(model::shown(&d), format!("[a]({entity} x)"));
     }
     for scalar in ["中", "🙂"] {
         let source = format!("[a](u '{}&amp;", scalar.repeat(4096 / scalar.len()));
@@ -301,9 +309,9 @@ fn real_table_confirmation_cancellation_first_pipe_and_eager_guard() {
             if decision == "-|-" {
                 // Deferred first-cell confirmation finishes the old paragraph,
                 // then ordinary independent-cell entity handling owns the row.
-                assert_eq!(model::shown(&d), "a(u 'x\n&'b\n");
+                assert_eq!(model::shown(&d), "[a](u 'x\n&'b\n");
             } else {
-                assert_eq!(model::shown(&d), "a(u 'x\n&' | b\nwrong\n");
+                assert_eq!(model::shown(&d), "[a](u 'x\n&' | b\nwrong\n");
             }
             let mut stream = Utf8Document::new();
             for b in source.as_bytes() {
@@ -337,7 +345,7 @@ fn real_table_confirmation_cancellation_first_pipe_and_eager_guard() {
     // never belongs to the failed destination trace or creates duplicate entries.
     let d = model::parse("[a](u '&amp;'x) | &amp; [b](v)\n-|-\n");
     assert_eq!(d.tables().len(), 1);
-    assert_eq!(model::shown(&d), "a(u '&'x)& b\n");
+    assert_eq!(model::shown(&d), "[a](u '&'x)& b\n");
     assert_eq!(d.links().len(), 2);
     assert_eq!(d.link_destination(LinkId(1)), Some("v"));
 }
@@ -390,7 +398,7 @@ fn fallback_updates_fold_rebuild_tickets_and_stale_reader() {
         Err(LayoutError::StaleContinuation)
     ));
     assert!(view.measure(ticket, 9).is_err());
-    assert!(model::shown(&d).ends_with("a(u '&'x) &\n\n"));
+    assert!(model::shown(&d).ends_with("[a](u '&'x) &\n\n"));
     assert_eq!(d.links().len(), 1);
     assert_eq!(d.link_info(LinkId(0)).unwrap().state, SyntaxState::Sealed);
 }
@@ -404,7 +412,10 @@ fn source_prefix_envelopes_and_overlapping_candidates_have_linear_visits() {
     );
     let d = model::parse(&source);
     assert!(source.len() > 400_000);
-    assert_eq!(model::shown(&d), format!("a(u 'x\n{}&", "b\n".repeat(2000)));
+    assert_eq!(
+        model::shown(&d),
+        format!("[a](u 'x\n{}&", "b\n".repeat(2000))
+    );
     let work = d.work();
     assert_eq!(work.inline_bytes, 4014);
     assert_eq!(work.link_fallback_bytes, 2 * (4014 - 4));
@@ -418,7 +429,7 @@ fn source_prefix_envelopes_and_overlapping_candidates_have_linear_visits() {
             assert_eq!(d.work().link_fallback_bytes, 1); // first '[' disqualifies
             assert_eq!(
                 model::shown(&d),
-                format!("a({}&amp;", "[a](".repeat(depth - 1))
+                format!("[a]({}&amp;", "[a](".repeat(depth - 1))
             );
         }
         assert!(d.work().link_fallback_bytes <= 2 * d.work().inline_bytes);

@@ -25,12 +25,22 @@ pub(crate) struct Publishing<'a> {
 
 impl Publishing<'_> {
     pub fn mark(&mut self, span: Span, style: Style, link: Option<LinkId>) {
+        self.annotate(span, style, link, None);
+    }
+
+    fn annotate(
+        &mut self,
+        span: Span,
+        style: Style,
+        link: Option<LinkId>,
+        gate: Option<crate::SymbolId>,
+    ) {
         if span.is_empty() {
             return;
         }
         self.update.change(
             span,
-            if style.contains(Style::HIDDEN) {
+            if style.contains(Style::HIDDEN) || gate.is_some() {
                 ChangeKind::Visibility
             } else if style != Style::default() {
                 ChangeKind::Style
@@ -38,8 +48,13 @@ impl Publishing<'_> {
                 ChangeKind::Structure
             },
         );
-        self.annotations
-            .apply(span, style, link, self.update.revision);
+        if let Some(symbol) = gate {
+            self.annotations
+                .hide_when_resolved(span, symbol, self.update.revision);
+        } else {
+            self.annotations
+                .apply(span, style, link, self.update.revision);
+        }
         // Coalesce adjacent/overlapping mutations without scanning prior changes.
         if let Some(last) = self.update.dirty.last_mut()
             && span.start <= last.end
@@ -54,6 +69,14 @@ impl Publishing<'_> {
 
     fn hide(&mut self, span: Span) {
         self.mark(span, Style::HIDDEN, None);
+    }
+
+    fn marker(&mut self, span: Span, symbol: Option<crate::SymbolId>) {
+        if let Some(symbol) = symbol {
+            self.annotate(span, Style::default(), None, Some(symbol));
+        } else {
+            self.hide(span);
+        }
     }
 
     fn complete_link(
@@ -111,10 +134,14 @@ impl Publishing<'_> {
             Style::default(),
             Some(id),
         );
-        self.hide(Span::new(candidate.open, candidate.open + 1));
-        self.hide(Span::new(candidate.close, candidate.close + 1));
+        let gate = match (target, suffix) {
+            (LinkTarget::Reference(symbol), None) => Some(symbol),
+            _ => None,
+        };
+        self.marker(Span::new(candidate.open, candidate.open + 1), gate);
+        self.marker(Span::new(candidate.close, candidate.close + 1), gate);
         if let Some(image) = candidate.image {
-            self.hide(Span::new(image, image + 1));
+            self.marker(Span::new(image, image + 1), gate);
         }
         if let Some(suffix) = suffix {
             self.hide(suffix);
