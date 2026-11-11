@@ -2569,3 +2569,9 @@ README 当前说明和本任务对应 TODO 已同步，只新增此窄项勾选�
 - 仅关闭 TODO `f4fc97046adb`「开放范围随流增长」。开放容器及内层章节以开放终点索引和共享尾部遮蔽表示，顶层章节与当前未闭合代码等使用常数个增长槽；`FoldView::apply` 返回前新 tile 继承遮蔽，查询要求已消费连续更新。新标题、Setext 晚确认、容器关闭及 EOF 按结构事件修正范围，合并 Update 保留关闭事件与稳定 ID。本次无源码/测试改动；README「基础折叠」「显式容器折叠」「容器内章节独立折叠」现有说明准确，保持原文。
 - `nix develop -c cargo nextest run -p mdstream-core --test folding --test container_folding --test container_sections --test containers --test container_headings --test updates --test utf8 --no-fail-fast`：96/96 通过；另选 `layout::folding_tests` 数组/十亿 tile 模型，2/2 通过。千层容器与 500 个开放章节的百万字正文逐字追加只更新共享尾部、无祖先索引写入；1000/500 个真实关闭事件分别计费。4096 个旧候选、UTF-8 分块/EOF、Setext 收缩、原始源码映射、独立区间/高度模型及共享预算均有现有断言覆盖。
 - 文档测试 75/75、文档构建、fmt、release `container_folding` / `container_sections` 示例及范围/diff 检查通过。逐句契约/反例/累计复杂度映射、完整命令退出状态和日志、最终范围哈希保存于 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-013/`（`audit.md`、`commands.jsonl`、`final.diff`、`final-hashes.json`）。按任务单文档审计例外未重跑源码未变的全套 debug/release/lint；不承诺任意 append 的硬时延，手工范围自动增长/交叉/嵌套、其它可见性预算及实际排版/UI 待办保留。
+
+## 2026-11-11 所有可见性工作纳入预算契约审计交付
+
+- 仅关闭 TODO `835f97a7fd0a`「所有可见性工作纳入预算」。候选发现、可见性查询、逐节点路径展开、边界排版、占位/段尾交付、测量与修正后再查询均在受预算驱动器内按同一传入 Budget 计费并保留继续状态。容器及内层章节查找使用范围索引；前后导航跳到隐藏范围端点，高度查询按权重跳过遮蔽子树，不逐标题或 tile 试探。顶层标题的六级循环没有被用于容器深度；必要展开每个实际节点各收 query/object。本次无源码/测试改动；README「共享预算与增量缓存」「基础折叠」现有说明准确，保持原文。
+- 相关既有 nextest 204/204；整帧修正/稀疏索引专项 6/6；祖先游标/缓存专项 7/7 通过。现有断言覆盖 200 层容器和 300 个容器/章节遮蔽者逐步展开、五万隐藏标题正反各四步、百万字隐藏正文零字节交付、千层索引访问界限、接近 isize::MAX 的稀疏视口、零预算/耗尽重入及 UTF-8 分块/EOF、稳定 ID/源码映射。整帧性能模型以同一 Budget 包含高度修正、首查、恢复、消费、测量和第二次查询，逐维核对 used 与实际访问/交付计数；屏外正文增长不增加帧工作。
+- 文档测试、文档构建、fmt及范围/diff 检查通过。逐入口计费/继续状态、失败输入、模型和累计复杂度映射、真实命令/退出状态/完整日志及最终范围哈希保存于 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-014/audit/`（`audit.md`、`commands.jsonl`、`final.diff`、`final-hashes.json`）。按任务单文档审计例外未重跑源码未变的全套 debug/release/clippy。低层无整帧约束接口仍由调用方计费；不可暂停外部回调、解码/析构及任意 append/finish 不获得硬时延保证。其它边界细化、手工范围扩展、终端排版/UI 等真实待办保留。
