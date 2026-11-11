@@ -2745,3 +2745,18 @@ README 当前说明和本任务对应 TODO 已同步，只新增此窄项勾选�
 验证命令、退出状态、完整日志、源码hash与patch保存在 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-027/implementation/`。项目 `nix develop` 内 check --workspace --all-targets、针对性 nextest、完整 debug/release nextest --workspace --all-targets --no-fail-fast、doc test/doc build、clippy -D warnings、fmt、离线fixture及相关示例/diff为最终门禁。父侧 depth/window、gap结束和计费反馈已按真实前驱探针处理；未提交/推送，交父独立验收。
 
 补充全字段计数审计：历史 hash helper 既有排除 container_eligibility 字段的投影保持；另外冻结并检查完整旧 Work（仅排除本次新字段），100份表头 corpus 中8个精确完整输入的 deferred 确认各多一个 observer 步骤、字节不变且公开快照/结构完全保持，单列完整 source 名单；其余新增差异仍是19个直接 title 成功。外部6592+946份全字段前驱对照中，observer计数全部保持。证据40-all-old-work及最终全源码hash对应测试可独立复跑，不整体重录旧 Work/oracle。
+
+
+## 2026-11-11 原子闭合的失败直接链接后缀恢复交付
+
+仅 task028 implementation：所有实际 Publishing Inline 的 Tail::Destination 失败/EOF，记录 Progress::Pending 实际 raw visits 的不可 Clone Span RLE。先完整验证闭合 entity/escape 与其它语法排除域，合格才第二遍通过原 Effects.entity/hide 恢复；开头括号、当前拒绝字节、结构 prefix/virtual 不录入，不扫描物理包络或普通 lexer，不改变成功 grammar、label 括号、break/空白方言与非目标语法。保持旧 LinkId/Reference/first_use/Sealed、title gaps、key/SourceOwner/observer 协议及 first-cell effect guard。无发布观察器不建 trace；成功、失格、EOF 与 header discard 释放容量。
+
+新增 Work.link_fallback_bytes 计实际恢复读取，link_fallback_steps 计 raw 录入/合并与扫描 span。A 为真实发布 raw visits，录入≤A、恢复字节≤2A、扫描 span≤2A，每条 trace 的 span≤数据字节≤8256；不存在嵌套重放或增长历史扫描。404414字节/2000行/100层 Quote 的物理包络实测4014 inline visits，只恢复4010个raw字节。重叠 [a]( 链的第一个未转义 [ 使整个 trace 失格，不创建内层候选；拒绝点以后的新候选仍由原普通字节路径产生，trace不重叠。累计 O(n log n)/O(n)，核心仍零运行时依赖、禁止 unsafe。
+
+前驱 lib 实际红测11个目标全失败，159个非目标完整 Snapshot 冻结通过，探针/静态oracle生成在外部证据，普通测试只读取portable fixture。独立三定界/Link/Image/行尾/Unicode/实体/转义模型、每UTF-8切点与逐前缀EOF、source/scalar/replacementSpan、先整体验证的反例、0/1/6/query/object及既有Direct/Reference/CodeInfo共享预算、稳定引用/首定义、真实Fold/Update合并/rebuild/open/fixed/ticket/stale覆盖。新增私有RLE/释放/observer及DisplayIndex源序/无重复测试，逐事件仅排除trace元数据继续比较全部活动grammar。真实table确认/取消/首pipe/继承label guard、原窗口/容器/定义/Setext等6592旧corpus与原fixtures保留；旧raw断言只扩展完整合格输入，不按含LF豁免。8256与跨cap半实体、40万字prefix、百万正文/两万旧定义和连续成功/失格计数覆盖。
+
+README当前说明、对应TODO及示例同步；完整普通lexer回退、未解析括号、Tail::Label、其它行内语法、target正文换行、嵌套图片和宽泛标准需求仍保留。官方输入/HTML/评分helper不改，原8例及22/6/2分类保持；本项不等于完整literal fallback或整个TODO完成。
+
+全部命令、退出状态、完整日志、前驱/冻结源码hash和patch保存于 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-028/implementation/`（commands.jsonl）。Rust skill与父反馈已按要求核验；最终门禁结果另随本节补记，不提交/推送，由父新审查会话验收。
+
+最终门禁均退出0：check全目标；针对性183/183及最终相关124/124；完整debug与release各1782/1782；doc76、docbuild、clippy全目标-D warnings、fmt --check；8组离线CommonMark夹具（inline_links/images/link_labels/reference_forms/reference_labels/reference_definitions/entities/tabs）、4个相关release示例及diff检查。8个官方失败输入/HTML/真实Snapshot与前驱逐字相同，外部2000/5000/10000层重叠链对照也相同（official-diff-033.log为空）。原所有fixture保持，未新增运行时依赖或改评分/observer协议；最终源码与验证冻结一致，证据索引含真实开发期红测与修正日志，无覆盖日志。

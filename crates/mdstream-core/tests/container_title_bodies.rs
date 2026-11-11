@@ -729,7 +729,10 @@ fn old_header_eligibility_at_window_and_late_pipe_keeps_real_table_shapes() {
             );
             let full_work = format!("{:?}", d.work())
                 .split(", ")
-                .filter(|field| !field.starts_with("link_title_gap_steps:"))
+                .filter(|field| {
+                    !field.starts_with("link_title_gap_steps:")
+                        && !field.starts_with("link_fallback_")
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
             let work_expected = if let Some((_, expected, public)) = TABLE_FULL_WORK_CHANGES

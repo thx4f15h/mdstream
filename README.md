@@ -3688,14 +3688,14 @@ run 等待后继标量或 EOF 再定长；未完成/失败外层不贡献深度�
 
 实际根作用域普通段落内，链接和图片后缀在 `(` 后、完整目标后、完整 title 后到 `)` 前的空白中，各允许至多一个 LF 或 CRLF，CRLF 计两个源字节、一次行尾。例如 `[link](   /uri\n  "title"  )`（`\n` 表示物理 LF）直接匹配官方 510。空目标、裸/尖括号目标、平衡括号、三种 title 定界及原始长度限制沿用原规则；目标正文仍为单物理行；直接 title 正文的根扩展见[下节](#根段落直接链接与图片的多行-title-正文)。实体产生的 LF 只是解码内容，不触发组件分隔。空白行、真实块与作用域中断保持原分类优先级；根模式不用于容器/lazy/partial-tab、ATX、表格单元格、代码、数学和脚注；真实普通容器的组件模式另见[容器后缀组件换行](#容器普通段落后缀的组件换行)。根段落后续被确认为 Setext 或表格时沿用原结构流程。
 
-合法完成时，已发布的 shortcut LinkId 原子升级为直接目标，源包络包含后缀、title 保留真实借用 Span，原引用及 first_use 保持。未完、失败和 EOF 保留旧 ID、shortcut source/target 和空 title，完成 sealing；已消费的候选前缀不重放，拒绝字节只按普通词法处理一次。这个 opaque 方言在新 root 跨行候选中有明确的新作用范围：
+合法完成时，已发布的 shortcut LinkId 原子升级为直接目标，源包络包含后缀、title 保留真实借用 Span，原引用及 first_use 保持。未完、失败和 EOF 保留旧 ID、shortcut source/target 和空 title，完成 sealing；拒绝字节只按普通词法处理一次。原子闭合的失败直接 suffix 现恢复实体和 ASCII 标点转义（精确资格见末节），例如：
 
 | 原始输入（转义行尾） | 旧单行语法的可见文本 | 当前根跨行语法的可见文本 |
 | --- | --- | --- |
-| `[a](u\n 'a&amp;'x)\n` | `a(u\n'a&'x)\n` | `a(u\n'a&amp;'x)\n` |
-| `[a](u\n 'a&amp;`（EOF） | `a(u\n'a&` | `a(u\n'a&amp;` |
+| `[a](u\n 'a&amp;'x)\n` | `a(u\n'a&'x)\n` | `a(u\n'a&'x)\n` |
+| `[a](u\n 'a&amp;`（EOF） | `a(u\n'a&` | `a(u\n'a&` |
 
-旧语法在首个 LF 拒绝，后面的实体成为普通正文；当前候选已消费它，失败/EOF 后仍显示原拼写。这是新增的 opaque 范围，不是成功解码，也不声称该结果与基线相同。相同边界适用于候选内的 `&#10;`、反斜线转义和代码/强调定界符；它们保留原拼写，不在回退时重新产生换行、去掉反斜线或启用样式。候选外的拒绝字节正常解析，例如 `'a&amp;'&amp;)` 中前一个实体保持 raw，后一个实体显示 `&`，无字符丢失。LF/CRLF 的原 break 映射在完成前保留，成功后整个后缀隐藏。完整字面失败回退及容器内直接 title 正文换行仍在 TODO；容器组件 gap 已由下方独立窄项交付；根 title 正文见下节。
+旧语法在首个 LF 拒绝，后面的实体成为普通正文；当前已消费 suffix 在完整资格验证后恢复闭合原子。含其它未转义行内语法、尾半实体/反斜线或转义物理换行的整个候选继续 opaque raw，不回放代码/强调。候选外的拒绝字节正常解析，例如合格的 `'a&amp;'&amp;)` 中两个实体均显示 `&`。LF/CRLF 的原 break 映射在完成前保留，成功后整个后缀隐藏。完整字面失败回退仍在 TODO；容器组件 gap、根/容器 title 正文见下方各窄项。
 
 根表头资格从首个源 payload 起始终由旧单行 grammar 的 `RootEligibility` 决定，观察 effects 不发布、不合并到正文。实际 Inline 消费合法分隔 LF 后设置粘滞标志；仅继续当前根段落的合格候选显式使用 `HeaderMode::Deferred(key)`，与保留原块和观察器使用同一作用域条件，由旧观察器推进至首 pipe，唯一来源在取消/确认/EOF 时消费一次。新 Quote/List/嵌套及部分 tab 路径按原普通模式创建叶块，同时关闭旧根解析器和观察器；lazy、真实块及新根仍按原资格路由。非根及未分歧路径保留 ordinary/eager/opaque 复用。继承强调的否决、两个 gap 后的旧 opener、有效新 title 内的旧资格、code/label 屏蔽及晚管道表格均有原快照对照。无正文回扫、第二 publisher、ID 回滚或旧引用遍历，累计 O(n log n)、空间 O(n)，不承诺单次 append/EOF 硬时延。
 
@@ -3708,7 +3708,7 @@ run 等待后继标量或 EOF 再定长；未完成/失败外层不贡献深度�
 
 raw title 直接借用连续真实源码，CRLF 计两个 title/suffix 字节；已有 `LinkTitle`/`CodeInfo` 游标把 CRLF 原子输出为映射到两个源字节的 LF，保留真实缩进，反斜线和实体沿用原一次解码。反斜线不跨物理行转义下行定界符；实体产生的 LF/CR 不参与结构。单独 CR 保留拒绝方言。label 999、目标/title 4096 和 suffix 8256 的原界限独立保持，不给 inline streaming 加定义的逐行分类窗口。
 
-完整合法 suffix 才升级原 LinkId/Image；失败/EOF 保留原 shortcut/reference 来源、身份及解析状态。新 title-body 候选也沿用已验收的 opaque 前缀方言：`[a](u 'first\n&amp;\*` 在 EOF 显示 `a(u 'first\n&amp;\*`，基线曾将正文实体和转义解码；`[a](u 'first\n&amp;'&amp;)` 则显示 `a(u 'first\n&amp;'&)`，拒绝字节起的第二实体正常解码。内部代码/强调/新链接标记不重放，不因失败补发对象；这不是完整字面回退，相关宽 TODO 保留。
+完整合法 suffix 才升级原 LinkId/Image；失败/EOF 保留原 shortcut/reference 来源、身份及解析状态。合格原子闭合前缀现恢复：`[a](u 'first\n&amp;\*` 在 EOF 显示 `a(u 'first\n&*`；`[a](u 'first\n&amp;'&amp;)` 显示 `a(u 'first\n&'&)`。含内部代码/强调/新链接标记的候选仍不重放，不因失败补发对象；这不是完整字面回退，精确失败域见末节，相关宽 TODO 保留。
 
 新 title LF 复用粘滞分歧标志、旧单行 grammar `RootEligibility`、真实根续接限定的 `Deferred(key)` 及单一来源双游标；观察状态不发布或合并。每个新增字节仅常数次访问，树操作 O(log n)，累计 O(n log n)、空间 O(n)，核心零运行时依赖和禁止 unsafe 保持。没有旧正文回扫、历史引用扫描或单次 append 硬时延承诺。
 
@@ -3736,7 +3736,7 @@ raw title 直接借用连续真实源码，CRLF 计两个 title/suffix 字节；
 
 首次接纳新 gap LF 后的分歧标志持续到逻辑段落结束。旧单行 Eligibility 始终独立观察，决定首 pipe 前的表头资格；`Deferred(key)` 要求 candidate、observer 和实际 Inline 的首 leaf/scope 相同，先完成真实续段分类。eager deferred 不隔离或提前消费实际 Inline；否决时唯一 SourceOwner 释放 raw/virtual 各一次，确认 table 则封存原 shortcut、退役 observer 并使用独立 cell。旧 header 即使在新 containers 栈形成后回流，也按保存的旧 key 消费。Ordinary eager/opaque/inert 复用及 root 原跨容器保护保持。
 
-完整 `)` 才原位升级原 LinkId/Image；引用 first_use/revision 不撤销重建。新增 gap 后的已消费失败/EOF 前缀采用 opaque raw 方言：`> [a](u\n> 'a&amp;'x)\n` 显示 `a(u\n'a&amp;'x)\n`，相应 EOF 显示 `a(u\n'a&amp;`；已消费的 `\*` 和 `*b*` 也保留原拼写，不补发强调。拒绝字节起正常词法仅处理一次。此 opaque 方言也用于下节的多行 title 正文失败；完整字面回退继续待办。
+完整 `)` 才原位升级原 LinkId/Image；引用 first_use/revision 不撤销重建。合格原子闭合失败前缀现恢复：`> [a](u\n> 'a&amp;'x)\n` 显示 `a(u\n'a&'x)\n`，相应 EOF 显示 `a(u\n'a&`，合格的 `\*` 显示 `*`。含未转义 `*b*` 等其它语法的整个候选继续保留 raw，不补发强调。拒绝字节起正常词法仅处理一次。多行 title 正文同此精确失败域；完整字面回退继续待办。
 
 `container_component_gaps` 测试包含18,000组独立组件模型、真实角色/晚 pipe/作用域矩阵、UTF-8分块与每前缀 EOF、独立长度/结构 prefix 限额、身份/原始映射、共享0/1/6字节预算、Update apply/merge与Fold重建、open/fixed/ticket/reader及百万字/两万旧对象计数。历史静态 oracle 原字节保留：A corpus 仅66个完整输入有精确新期望，其中32个公开 Direct 成功、34个公开全快照保持而仅工作计数改变；旧 root non-target 仅4个精确容器输入升级，scope corpus 仅60个精确容器新成功逐条独立断言 typed metadata/display。无按换行或前缀泛化豁免，官方输入/HTML/评分/projection/helper 不改。
 
@@ -3747,8 +3747,19 @@ raw title 直接借用连续真实源码，CRLF 计两个 title/suffix 字节；
 
 真实普通 Quote/List/嵌套/lazy/partial-tab 逻辑段落的直接 title 正文接受多条 LF/CRLF、三种定界和转义；blank、真实块及精确 scope 中断仍按原分类拒绝。target 正文、独立 ATX/cell/code/math/footnote 与 definition 规则保持。首行 opener 前及 closer 后的结构 prefix 只计组件；正文中的结构 prefix 由唯一 source 消费者现场记录，partial-tab 的虚拟列不进入元数据，真实空格/tab 则保留。例如 `> [a](u 'a\n> b')` 的 raw title 是 `a\n> b`，decoded title 是 `a\nb`，每个 chunk 映射原始源字节。
 
-候选自持有有序 gaps，完整合法 `)` 才随 target/title/source 一次移动到原 LinkId 的私有平行槽；pending、失败、EOF 和 table 确认不改原 shortcut/引用 title，下一候选从空 gaps 开始。Reference reader 继续取首个 winning definition 的 gaps。原始借用 Span、CRLF/UTF-8 原子输出、实体 probe 恢复与 CodeInfo 共享 0/1/6、query/object 预算保持；跳结构 prefix 按真实源字节收费，末尾免费结束。新失败域的已消费实体/转义/强调保留 opaque raw，拒绝字节起正常词法一次；完整字面失败回退、target 正文换行、嵌套图片和宽泛标准覆盖仍在 TODO。
+候选自持有有序 gaps，完整合法 `)` 才随 target/title/source 一次移动到原 LinkId 的私有平行槽；pending、失败、EOF 和 table 确认不改原 shortcut/引用 title，下一候选从空 gaps 开始。Reference reader 继续取首个 winning definition 的 gaps。原始借用 Span、CRLF/UTF-8 原子输出、实体 probe 恢复与 CodeInfo 共享 0/1/6、query/object 预算保持；跳结构 prefix 按真实源字节收费，末尾免费结束。失败实体/ASCII 转义仅在末节完整资格域内恢复，其余整个候选保留 opaque raw，拒绝字节起正常词法一次；完整字面失败回退、target 正文换行、嵌套图片和宽泛标准覆盖仍在 TODO。
 
 正文4096计真实 indent 和 CRLF 两字节，结构 prefix 分别从 title/suffix8256 扣除，target4096及原分类窗口保持。`Work.link_title_gap_steps` 每次非空正文 prefix 入候选加一，不遍历旧 gaps；push 摊销 O(1)、发布 move O(1)，累计 O(n log n) 时间/O(n) 空间，核心零运行时依赖、禁止 unsafe。真实 depth1000 对照仍只有512个结构 Quote；其余488对 `> ` 是正文，decoded 保留。
 
 测试含132组独立三定界/Link/Image/行尾/真实 indent 与逐 chunk 源映射模型、UTF-8 每切点/EOF、真实前驱6592份旧 corpus（仅5个精确新合法输入改变）、946份角色/EOF及100份窗口/late-pipe对照、稳定引用与原子升级、预算/真实 Fold/Update/stale、1000行 title 和两万旧定义加百万正文后的追加计数。旧 fixture 原字节保留，新成功与 opaque/Work 差异按完整输入精确列出。复跑：`nix develop -c cargo nextest run --test container_title_bodies --test container_eligibility --test container_component_gaps --test root_title_bodies --no-fail-fast`；示例：`nix develop -c cargo run --release -p mdstream-core --example container_title_bodies`。完整验证见[交付记录](DONE.md#2026-11-11-容器普通段落直接链接与图片的多行-title-正文交付)。
+
+
+## 原子闭合的失败直接链接后缀恢复
+
+所有实际发布 Inline（根/普通容器段落、ATX、独立 table cell）的 `Tail::Destination` 失败或 EOF，只对已消费 raw 数据执行窄恢复：完整实体按既有单层规则解码，ASCII 标点转义隐藏反斜线，未知完整实体保持 raw。开头 `(` 和当前拒绝字节不参与资格，拒绝字节仍正常处理一次；成功 grammar、旧 LinkId/Reference/first_use/title gaps 和 Sealed 流程保持。`\&amp;` 仅去掉反斜线，不二次解码；实体生成的 LF 只是映射文本。
+
+必须先整体验证：未转义 `< [ ] ! * _ ~`、反引号、`$` 使整个已消费候选失格；结束时半实体、尾反斜线或反斜线紧邻物理 LF/CRLF 同样失格，前面的实体也不提前恢复。转义标点可合格；非法实体字符按原拒绝规则在原位继续，不跨拒绝点续接。原空白、缩进、CRLF 和 break 方言保持；不重读普通 lexer、不恢复未解析 label 括号，不补发强调/code/math/autolink/嵌套对象。完整字面回退等宽需求仍在 TODO，官方输入/HTML/评分分类保持。
+
+候选仅持有不可 Clone 的实际 raw Span RLE，无 Publishing 能力的 Eligibility 不建 trace；virtual 列和结构 prefix 不记录。失败先走原 header cancel/seal，资格通过才第二遍调用原 entity/hide 出口。`Work.link_fallback_bytes` 记录两遍实际字节读取，`link_fallback_steps` 记录 raw 录入/合并及每次 span 访问。若 A 为实际发布 raw visits，则恢复字节和 span 访问分别不超过 2A，录入不超过 A；每 trace 数据不超过 suffix8256，但物理包络可达40万字，不能据包络重扫。成功/失败/EOF 释放 trace，不累积历史；累计 O(n log n)/O(n)，核心零运行时依赖、禁止 unsafe。
+
+`tests/atom_fallback.rs`、私有 trace/DisplayIndex 测试及既有共享 reader 测试覆盖11个真实前驱红目标、159个非目标完整快照、三定界/Link/Image/行尾、UTF-8 全切点和每前缀 EOF、replacement/source 切片、0/1/6/query/object、稳定引用/Fold/Update/stale、真实表头确认/取消/first-cell guard、8256边界/重叠链、40万字prefix与百万正文/两万旧定义计数。复跑：`nix develop -c cargo nextest run --test atom_fallback --no-fail-fast`；示例：`nix develop -c cargo run --release -p mdstream-core --example atom_fallback`。验证见[交付记录](DONE.md#2026-11-11-原子闭合的失败直接链接后缀恢复交付)。

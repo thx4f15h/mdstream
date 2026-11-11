@@ -58,12 +58,12 @@ fn container_component_gaps_have_independent_endings_and_single_line_metadata() 
 }
 
 #[test]
-fn container_gap_failure_prefix_is_opaque_and_body_extension_completes() {
+fn container_gap_atomic_failure_recovers_and_markup_stays_opaque() {
     for image in ["", "!"] {
         for eol in ["\n", "\r\n"] {
             for (tail, display) in [
-                ("'a&amp;'x)\n", "'a&amp;'x)\n"),
-                ("'a&amp;", "'a&amp;"),
+                ("'a&amp;'x)\n", "'a&'x)\n"),
+                ("'a&amp;", "'a&"),
                 ("'\\* *中*'&amp;)\n", "'\\* *中*'&)\n"),
             ] {
                 let source = format!("> {image}[a](u{eol}> {tail}");
@@ -252,7 +252,7 @@ fn old_container_table_roles_survive_new_gap_and_sticky_divergence() {
 }
 
 #[test]
-fn container_opaque_failure_source_display_and_decoded_controls_share_micro_budgets() {
+fn container_atomic_failure_source_display_and_decoded_controls_share_micro_budgets() {
     for image in ["", "!"] {
         for ending in ["\n", "\r\n"] {
             for tail in [format!("'&amp;){ending}"), String::new()] {
@@ -263,7 +263,7 @@ fn container_opaque_failure_source_display_and_decoded_controls_share_micro_budg
                 let raw: String = doc.runs_in(whole).unwrap().map(|run| run.text).collect();
                 assert_eq!(raw, source);
                 let expected = format!(
-                    "b a(u\n  '中🙂&#10;\\*{}",
+                    "b a(u\n  '中🙂\n*{}",
                     if tail.is_empty() { "" } else { "'&)\n" }
                 );
                 for (at, ch) in source.char_indices() {

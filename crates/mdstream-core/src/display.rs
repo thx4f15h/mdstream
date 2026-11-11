@@ -417,6 +417,55 @@ mod tests {
     use crate::{Document, Span, Style};
 
     #[test]
+    fn atomic_suffix_recovery_preserves_entry_order_and_first_cell_effect_guards() {
+        for source in [
+            "&amp; [a](u '&amp;'&amp;) `x` &amp;",
+            "> &amp; [a](u 'x\r\n>\t&amp;'&amp;)\n",
+            "[a](u 'x\n&amp;' | b\n-|-\n",
+            "[a](u 'x\n&amp;' | b\nwrong\n",
+            "> [a](u 'x\n> &amp;' | b\n> -|-\n",
+            "> [a](u 'x\n> &amp;' | b\n> wrong\n",
+            "[old\nend](u 't') | &amp;\n-|-\n",
+            "[old\nend](u '&amp;') | b\n-|-\n",
+            "`old\nend` [a](u '&amp;'&amp;) | b\nwrong\n",
+            "[a](u '&amp;'x) | &amp;\n-|-\n",
+        ] {
+            let mut d = Document::new();
+            for ch in source.chars() {
+                d.append(ch.encode_utf8(&mut [0; 4])).unwrap();
+                assert!(
+                    d.display
+                        .entries
+                        .windows(2)
+                        .all(|w| w[0].source.end <= w[1].source.start)
+                );
+            }
+            d.finish();
+            let actual: Vec<_> = d
+                .display
+                .entries
+                .iter()
+                .filter_map(|e| matches!(e.kind, super::Kind::Entity(_)).then_some(e.source))
+                .collect();
+            let expected: Vec<_> = source
+                .match_indices("&amp;")
+                .map(|(at, _)| Span::new(at, at + 5))
+                .collect();
+            assert_eq!(actual, expected, "{source:?}");
+            assert!(
+                d.display
+                    .entries
+                    .windows(2)
+                    .all(|w| w[0].source.end <= w[1].source.start)
+            );
+            // Independent CRLF/softbreak/virtual indices retain their own source.
+            for (span, _) in d.display.space_mappings() {
+                assert_eq!(d.text(*span), Some("\t"));
+            }
+        }
+    }
+
+    #[test]
     fn partial_tabs_store_one_record_per_line_and_code_closure_never_rewrites_them() {
         let mut doc = Document::new();
         doc.append("- ` a\n").unwrap();

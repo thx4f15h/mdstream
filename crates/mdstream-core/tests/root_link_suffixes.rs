@@ -446,7 +446,7 @@ fn raw_metadata_and_source_display_slices_share_zero_one_and_six_byte_budgets() 
 }
 
 #[test]
-fn opaque_failure_and_eof_keep_newly_consumed_entities_and_punctuation_raw() {
+fn atomic_failure_recovers_while_disqualified_markup_stays_raw() {
     for image in ["", "!"] {
         for ending in ["\n", "\r\n"] {
             for payload in ["a&amp;", "中🙂&#10;\\*`x`"] {
@@ -460,25 +460,33 @@ fn opaque_failure_and_eof_keep_newly_consumed_entities_and_punctuation_raw() {
                         .map(|run| run.text)
                         .collect();
                     let visible_tail = if tail.is_empty() { "" } else { "'x)\n" };
+                    let recovered = if payload == "a&amp;" { "a&" } else { payload };
                     assert_eq!(
                         shown,
-                        format!("a(u\n'{payload}{visible_tail}"),
+                        format!("a(u\n'{recovered}{visible_tail}"),
                         "{source:?}"
                     );
-                    // Before root multiline admission these entities were ordinary
-                    // prose after the rejected LF and decoded. This is new opaque
-                    // scope, not a claim of baseline-equivalent literal fallback.
+                    // This exact atom-closed input recovers; the other complete
+                    // input contains code markup and retains its old snapshot.
                     let start = source.find(payload).unwrap();
                     let raw = Span::new(start, start + payload.len());
                     assert_eq!(doc.text(raw), Some(payload));
                     let runs: Vec<_> = doc.display_runs_in(raw).unwrap().collect();
-                    assert!(runs.iter().all(|run| {
-                        run.replacement.is_none()
-                            && run.text == doc.text(run.source).unwrap()
-                            && !run.style.contains(Style::HIDDEN)
-                            && !run.style.contains(Style::CODE)
-                    }));
-                    assert_eq!(runs.iter().map(|run| run.text).collect::<String>(), payload);
+                    if payload == "a&amp;" {
+                        assert_eq!(runs.iter().map(|run| run.text).collect::<String>(), "a&");
+                        assert_eq!(
+                            runs.last().unwrap().replacement,
+                            Some(Span::new(start + 1, raw.end))
+                        );
+                    } else {
+                        assert!(runs.iter().all(|run| {
+                            run.replacement.is_none()
+                                && run.text == doc.text(run.source).unwrap()
+                                && !run.style.contains(Style::HIDDEN)
+                                && !run.style.contains(Style::CODE)
+                        }));
+                        assert_eq!(runs.iter().map(|run| run.text).collect::<String>(), payload);
+                    }
                     assert_eq!(doc.links(), &[LinkTarget::Reference(SymbolId(0))]);
                     assert_eq!(
                         *doc.link_info(LinkId(0)).unwrap(),
@@ -606,10 +614,7 @@ fn opaque_failure_utf8_splits_preserve_published_shortcut_and_revision_chain() {
                 // The rejecting '&' starts an ordinary entity exactly once.
                 assert_eq!(
                     shown,
-                    format!(
-                        "(u\n'中🙂&amp;{}",
-                        if tail.is_empty() { "" } else { "'&)\n" }
-                    )
+                    format!("(u\n'中🙂&{}", if tail.is_empty() { "" } else { "'&)\n" })
                 );
                 let revision = doc.revision();
                 doc.finish();
@@ -620,7 +625,7 @@ fn opaque_failure_utf8_splits_preserve_published_shortcut_and_revision_chain() {
 }
 
 #[test]
-fn opaque_failure_source_display_and_decoded_controls_share_micro_budgets() {
+fn atomic_failure_source_display_and_decoded_controls_share_micro_budgets() {
     for image in ["", "!"] {
         for ending in ["\n", "\r\n"] {
             for tail in [format!("'&amp;){ending}"), String::new()] {
@@ -631,7 +636,7 @@ fn opaque_failure_source_display_and_decoded_controls_share_micro_budgets() {
                 let raw: String = doc.runs_in(whole).unwrap().map(|run| run.text).collect();
                 assert_eq!(raw, source);
                 let expected = format!(
-                    "b a(u\n'中🙂&#10;\\*{}",
+                    "b a(u\n'中🙂\n*{}",
                     if tail.is_empty() { "" } else { "'&)\n" }
                 );
                 for (at, ch) in source.char_indices() {

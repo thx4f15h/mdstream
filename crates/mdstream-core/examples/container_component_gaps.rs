@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|r| !r.style.contains(Style::HIDDEN))
         .map(|r| r.text)
         .collect();
-    assert_eq!(visible, "a(u\n'a&amp;'&)\n");
-    println!("opaque failure: {visible:?}");
+    assert_eq!(visible, "a(u\n'a&'&)\n");
+    println!("atomic failure recovery: {visible:?}");
     Ok(())
 }

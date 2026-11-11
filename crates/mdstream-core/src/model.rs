@@ -227,6 +227,12 @@ pub struct Work {
     /// Nonempty structural prefixes appended to a live direct-title candidate.
     /// One step per prefix, independent of source length or virtual columns.
     pub link_title_gap_steps: u64,
+    /// Raw failed-suffix bytes inspected during atomic qualification/publication.
+    /// At most two visits per recorded byte; excludes structural/virtual input.
+    pub link_fallback_bytes: u64,
+    /// One per raw trace insertion/coalesce and per recovery span entered.
+    /// No observer work or scans of the physical source envelope.
+    pub link_fallback_steps: u64,
     /// Run resolution, opener pushes/pops/rebasing, and isolated cross-line
     /// emphasis/code pairs committed or discarded once when a header resolves.
     /// Includes linear failed-code summary indexing and greedy matching visits.

@@ -1,11 +1,14 @@
 use crate::annotations::Annotations;
 use crate::destination::{Destination, Progress};
 use crate::references::{MAX_LABEL_BYTES, References, normalize_label};
+#[path = "atom_fallback.rs"]
+mod atom_fallback;
 #[path = "flanking.rs"]
 mod flanking;
 use crate::{
     ChangeKind, LinkId, LinkInfo, LinkKind, LinkTarget, Span, Style, SyntaxState, Update, Work,
 };
+use atom_fallback::AtomTrace;
 
 pub(crate) struct Publishing<'a> {
     pub annotations: &'a mut Annotations,
@@ -535,12 +538,19 @@ impl LineBreak {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Origin {
+    Raw,
+    Virtual,
+}
+
 enum Tail {
     After(Candidate),
     Destination {
         candidate: Candidate,
         parser: Destination,
         title_gaps: Vec<Span>,
+        atoms: Option<AtomTrace>,
     },
     Label {
         candidate: Candidate,
@@ -571,6 +581,7 @@ impl std::fmt::Debug for Tail {
                 candidate,
                 parser,
                 title_gaps,
+                ..
             } => {
                 // Destination has no effects-dependent state. Future byte events
                 // exercise its pending/invalid/complete branches in both cores.
@@ -725,6 +736,8 @@ impl Eligibility {
         let w = std::mem::take(&mut self.work);
         debug_assert_eq!(w.tree_visits, 0);
         debug_assert_eq!(w.link_title_gap_steps, 0);
+        debug_assert_eq!(w.link_fallback_bytes, 0);
+        debug_assert_eq!(w.link_fallback_steps, 0);
         let steps = w.inline_bytes
             + w.delimiter_steps
             + w.delimiter_search_steps
@@ -852,7 +865,7 @@ impl Inline {
         for _ in 0..columns {
             effects.work.inline_bytes += 1;
             if !title_body {
-                self.byte(b' ', at, effects);
+                self.byte(b' ', at, Origin::Virtual, effects);
             }
             self.previous = Some(b' ');
             self.previous_scalar = Some(' ');
@@ -1088,7 +1101,7 @@ impl Inline {
                 b' ' | b'\t' | b'\n' => (),
                 _ => self.raw_nonspace(pos),
             }
-            self.byte(byte, pos, effects);
+            self.byte(byte, pos, Origin::Raw, effects);
             self.previous = Some(byte);
             if byte.is_ascii() {
                 self.previous_scalar = Some(char::from(byte));
@@ -1122,7 +1135,7 @@ impl Inline {
         (start < end).then_some(Span::new(start, end))
     }
 
-    fn byte(&mut self, byte: u8, pos: usize, effects: &mut Effects<'_>) {
+    fn byte(&mut self, byte: u8, pos: usize, origin: Origin, effects: &mut Effects<'_>) {
         if self.bracket.is_some() && !self.label_overflow {
             if self.label.len() <= MAX_LABEL_BYTES {
                 self.label.push(byte);
@@ -1189,7 +1202,7 @@ impl Inline {
             }
             return;
         }
-        if self.tail.is_some() && self.tail_byte(byte, pos, effects) {
+        if self.tail.is_some() && self.tail_byte(byte, pos, origin, effects) {
             if (self.root_paragraph || self.container_paragraph) && byte == b'\n' {
                 // An admitted separator remains a provisional ordinary break
                 // until the suffix succeeds. Failed/EOF candidates retain its
@@ -1593,7 +1606,13 @@ impl Inline {
     }
 
     /// Returns false when the current byte must be processed by the normal lexer.
-    fn tail_byte(&mut self, byte: u8, pos: usize, effects: &mut Effects<'_>) -> bool {
+    fn tail_byte(
+        &mut self,
+        byte: u8,
+        pos: usize,
+        origin: Origin,
+        effects: &mut Effects<'_>,
+    ) -> bool {
         match self.tail.take().unwrap() {
             Tail::After(candidate) => match byte {
                 b'(' => {
@@ -1601,6 +1620,7 @@ impl Inline {
                         candidate,
                         parser: Destination::new(pos + 1),
                         title_gaps: Vec::new(),
+                        atoms: effects.publishing.as_ref().map(|_| AtomTrace::default()),
                     })
                 }
                 b'[' => {
@@ -1619,6 +1639,7 @@ impl Inline {
                 candidate,
                 mut parser,
                 title_gaps,
+                mut atoms,
             } => match if self.root_paragraph {
                 let progress = parser.root_byte(byte, pos);
                 self.root_separator_seen |= byte == b'\n' && matches!(progress, Progress::Pending);
@@ -1636,6 +1657,9 @@ impl Inline {
                         self.header_crossed = true;
                     }
                     self.seal_candidate(candidate, effects);
+                    if let Some(atoms) = atoms {
+                        atoms.recover(effects);
+                    }
                     return false;
                 }
                 Progress::Complete { destination, title } => {
@@ -1659,10 +1683,16 @@ impl Inline {
                     }
                 }
                 Progress::Pending => {
+                    if matches!(origin, Origin::Raw)
+                        && let Some(atoms) = &mut atoms
+                    {
+                        atoms.push(pos, effects.work);
+                    }
                     self.tail = Some(Tail::Destination {
                         candidate,
                         parser,
                         title_gaps,
+                        atoms,
                     })
                 }
             },
@@ -1729,13 +1759,17 @@ impl Inline {
         self.cancel_header(effects);
         self.raw_content = None;
         self.raw_cr = None;
-        if let Some(tail) = &self.tail {
-            let candidate = match tail {
-                Tail::After(c)
-                | Tail::Destination { candidate: c, .. }
-                | Tail::Label { candidate: c, .. } => *c,
+        if let Some(tail) = self.tail.take() {
+            let (candidate, atoms) = match tail {
+                Tail::After(c) | Tail::Label { candidate: c, .. } => (c, None),
+                Tail::Destination {
+                    candidate, atoms, ..
+                } => (candidate, atoms),
             };
             self.seal_candidate(candidate, effects);
+            if let Some(atoms) = atoms {
+                atoms.recover(effects);
+            }
         }
         self.finish_run(None, effects);
         self.resolve_label_delimiters(None, effects);
@@ -1833,7 +1867,10 @@ mod tests {
 
         fn compare(&self, event: &str) {
             same(&self.doc.inline, &self.observer, event);
-            assert_eq!(self.doc.work, self.work, "work after {event}");
+            let mut publishing = self.doc.work;
+            publishing.link_fallback_bytes = 0;
+            publishing.link_fallback_steps = 0;
+            assert_eq!(publishing, self.work, "work after {event}");
             assert_eq!(self.work.tree_visits, 0);
         }
 
