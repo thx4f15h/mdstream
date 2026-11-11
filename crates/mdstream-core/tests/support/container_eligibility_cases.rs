@@ -97,7 +97,10 @@ pub fn hash(text: &str) -> u64 {
 pub fn old_work(work: mdstream::Work) -> String {
     format!("{work:?}")
         .split(", ")
-        .filter(|field| !field.starts_with("container_eligibility_"))
+        .filter(|field| {
+            !field.starts_with("container_eligibility_")
+                && !field.starts_with("link_title_gap_steps:")
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }

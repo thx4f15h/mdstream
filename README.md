@@ -3725,19 +3725,30 @@ raw title 直接借用连续真实源码，CRLF 计两个 title/suffix 字节；
 
 测试冻结真实 `7da6c27` 的 6592 份完整公开快照与全部旧 Work 字段，覆盖 scope、LF/CRLF、UTF-8 每字节/短输入每前缀 EOF、分类窗口/late pipe、partial tab 与 definition 回流；真实 producer 的 2700 组 header 路由逐事件核对全部活动语法状态和复用结果。另核验公开段落首 leaf/映射、virtual 1–3 列整组去重，以及深路径/百万字/两万旧引用后1000次追加精确新增1000次观察。既有共享预算、Update/Fold/sourceFold 和官方 fixture 验证保留。复跑：`nix develop -c cargo nextest run --lib --test container_eligibility --test root_eligibility --test root_suffix_scope --test root_title_bodies --no-fail-fast`。
 
-本基础项未启用新语法；容器组件 gap 和 prefix 预算现由下方 B 交付。直接 title 正文 LF/CRLF、完整字面失败回退及其它宽需求继续保留 TODO。验证证据见[交付记录](DONE.md#2026-11-11-容器普通段落旧语法资格观察基础交付)。
+本基础项未启用新语法；容器组件 gap 和 prefix 预算由下方组件项交付，直接 title 正文 LF/CRLF 由下方正文项交付。完整字面失败回退及其它宽需求继续保留 TODO。验证证据见[交付记录](DONE.md#2026-11-11-容器普通段落旧语法资格观察基础交付)。
 
 
 ## 容器普通段落后缀的组件换行
 
-真实普通 Quote/List/嵌套容器逻辑段落内，链接和图片在 `(` 后、完整 target 后、完整 title 后三个 gap 各接受至多一个 LF/CRLF。target/title 正文仍各限单物理行；lone CR、转义换行、未闭合尖括号或未平衡裸 target 的内部换行、直接 title 正文换行均拒绝。root 已交付的 title 正文模式保持；cell、ATX、code、math、footnote、definition 不启用此模式。
+真实普通 Quote/List/嵌套容器逻辑段落内，链接和图片在 `(` 后、完整 target 后、完整 title 后三个 gap 各接受至多一个 LF/CRLF。target 正文仍限单物理行；lone CR、组件 gap 中的转义换行、未闭合尖括号或未平衡裸 target 的内部换行均拒绝。容器直接 title 正文见下节，root 已交付的 title 正文模式保持；cell、ATX、code、math、footnote、definition 不启用此模式。
 
-续段只采用现有分类生产者给出的 raw/结构 prefix/virtual 事件。lazy 和部分 tab 由真实分类决定；例如 `>\t  't')` 的两虚拟列加两真实空格会成为 code，不能接续后缀。首 leaf 与精确 ContainerId 必须同时相同；blank、真实块、父返回、兄弟和嵌套边界不跨接。raw source 包络包含结构 prefix，target/title Span 只含各自单行正文。结构 prefix 从 suffix8256 限额独立扣除，不能减 title 长度；虚拟列为零 metadata 源字节，target/title4096 和 label999 原限制保持。
+续段只采用现有分类生产者给出的 raw/结构 prefix/virtual 事件。lazy 和部分 tab 由真实分类决定；例如 `>\t  't')` 的两虚拟列加两真实空格会成为 code，不能接续后缀。首 leaf 与精确 ContainerId 必须同时相同；blank、真实块、父返回、兄弟和嵌套边界不跨接。raw source 包络包含结构 prefix，target Span 只含单行正文，直接 title 的 raw/decoded 结构见下节。组件结构 prefix 从 suffix8256 限额独立扣除，不能减 title 长度；虚拟列为零 metadata 源字节，target/title4096 和 label999 原限制保持。
 
 首次接纳新 gap LF 后的分歧标志持续到逻辑段落结束。旧单行 Eligibility 始终独立观察，决定首 pipe 前的表头资格；`Deferred(key)` 要求 candidate、observer 和实际 Inline 的首 leaf/scope 相同，先完成真实续段分类。eager deferred 不隔离或提前消费实际 Inline；否决时唯一 SourceOwner 释放 raw/virtual 各一次，确认 table 则封存原 shortcut、退役 observer 并使用独立 cell。旧 header 即使在新 containers 栈形成后回流，也按保存的旧 key 消费。Ordinary eager/opaque/inert 复用及 root 原跨容器保护保持。
 
-完整 `)` 才原位升级原 LinkId/Image；引用 first_use/revision 不撤销重建。新增 gap 后的已消费失败/EOF 前缀采用 opaque raw 方言：`> [a](u\n> 'a&amp;'x)\n` 显示 `a(u\n'a&amp;'x)\n`，相应 EOF 显示 `a(u\n'a&amp;`；已消费的 `\*` 和 `*b*` 也保留原拼写，不补发强调。拒绝字节起正常词法仅处理一次。这不是实体解码成功或完整字面回退，容器 title 正文是后续 C。
+完整 `)` 才原位升级原 LinkId/Image；引用 first_use/revision 不撤销重建。新增 gap 后的已消费失败/EOF 前缀采用 opaque raw 方言：`> [a](u\n> 'a&amp;'x)\n` 显示 `a(u\n'a&amp;'x)\n`，相应 EOF 显示 `a(u\n'a&amp;`；已消费的 `\*` 和 `*b*` 也保留原拼写，不补发强调。拒绝字节起正常词法仅处理一次。此 opaque 方言也用于下节的多行 title 正文失败；完整字面回退继续待办。
 
 `container_component_gaps` 测试包含18,000组独立组件模型、真实角色/晚 pipe/作用域矩阵、UTF-8分块与每前缀 EOF、独立长度/结构 prefix 限额、身份/原始映射、共享0/1/6字节预算、Update apply/merge与Fold重建、open/fixed/ticket/reader及百万字/两万旧对象计数。历史静态 oracle 原字节保留：A corpus 仅66个完整输入有精确新期望，其中32个公开 Direct 成功、34个公开全快照保持而仅工作计数改变；旧 root non-target 仅4个精确容器输入升级，scope corpus 仅60个精确容器新成功逐条独立断言 typed metadata/display。无按换行或前缀泛化豁免，官方输入/HTML/评分/projection/helper 不改。
 
 观察、发布、summary 固定次数消费新增 payload；prefix 为现场 O(1) 通知，无增长正文/旧引用/祖先回扫。独立 `Work.container_eligibility_*` 计费，累计 O(n log n) 时间、O(n) 空间，核心零运行时依赖且禁止 unsafe。复跑：`nix develop -c cargo nextest run --lib --test container_component_gaps --test container_eligibility --test root_link_suffixes --test root_suffix_scope --test root_title_bodies --no-fail-fast`。完整验证见[交付记录](DONE.md#2026-11-11-容器普通段落后缀组件换行交付)。
+
+
+## 容器普通段落直接链接与图片的多行 title 正文
+
+真实普通 Quote/List/嵌套/lazy/partial-tab 逻辑段落的直接 title 正文接受多条 LF/CRLF、三种定界和转义；blank、真实块及精确 scope 中断仍按原分类拒绝。target 正文、独立 ATX/cell/code/math/footnote 与 definition 规则保持。首行 opener 前及 closer 后的结构 prefix 只计组件；正文中的结构 prefix 由唯一 source 消费者现场记录，partial-tab 的虚拟列不进入元数据，真实空格/tab 则保留。例如 `> [a](u 'a\n> b')` 的 raw title 是 `a\n> b`，decoded title 是 `a\nb`，每个 chunk 映射原始源字节。
+
+候选自持有有序 gaps，完整合法 `)` 才随 target/title/source 一次移动到原 LinkId 的私有平行槽；pending、失败、EOF 和 table 确认不改原 shortcut/引用 title，下一候选从空 gaps 开始。Reference reader 继续取首个 winning definition 的 gaps。原始借用 Span、CRLF/UTF-8 原子输出、实体 probe 恢复与 CodeInfo 共享 0/1/6、query/object 预算保持；跳结构 prefix 按真实源字节收费，末尾免费结束。新失败域的已消费实体/转义/强调保留 opaque raw，拒绝字节起正常词法一次；完整字面失败回退、target 正文换行、嵌套图片和宽泛标准覆盖仍在 TODO。
+
+正文4096计真实 indent 和 CRLF 两字节，结构 prefix 分别从 title/suffix8256 扣除，target4096及原分类窗口保持。`Work.link_title_gap_steps` 每次非空正文 prefix 入候选加一，不遍历旧 gaps；push 摊销 O(1)、发布 move O(1)，累计 O(n log n) 时间/O(n) 空间，核心零运行时依赖、禁止 unsafe。真实 depth1000 对照仍只有512个结构 Quote；其余488对 `> ` 是正文，decoded 保留。
+
+测试含132组独立三定界/Link/Image/行尾/真实 indent 与逐 chunk 源映射模型、UTF-8 每切点/EOF、真实前驱6592份旧 corpus（仅5个精确新合法输入改变）、946份角色/EOF及100份窗口/late-pipe对照、稳定引用与原子升级、预算/真实 Fold/Update/stale、1000行 title 和两万旧定义加百万正文后的追加计数。旧 fixture 原字节保留，新成功与 opaque/Work 差异按完整输入精确列出。复跑：`nix develop -c cargo nextest run --test container_title_bodies --test container_eligibility --test container_component_gaps --test root_title_bodies --no-fail-fast`；示例：`nix develop -c cargo run --release -p mdstream-core --example container_title_bodies`。完整验证见[交付记录](DONE.md#2026-11-11-容器普通段落直接链接与图片的多行-title-正文交付)。

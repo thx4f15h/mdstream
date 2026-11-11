@@ -1,4 +1,6 @@
 use mdstream::*;
+#[path = "support/container_title_changes.rs"]
+mod title_changes;
 
 fn parse(source: &str) -> Document {
     let mut doc = Document::new();
@@ -169,21 +171,34 @@ fn lazy_and_equivalent_prefixes_continue_but_scope_and_blocks_end_labels() {
 }
 
 #[test]
-fn failed_candidates_never_replay_and_suffixes_keep_single_line_rules() {
+fn failed_candidates_never_replay_and_only_title_bodies_cross_lines() {
     let doc = parse("> [*open\n> end*\n");
     assert!(doc.links().is_empty());
     assert_eq!(
         visible(&doc, Span::new(0, doc.source().len())),
         "[open\nend\n"
     );
-    for suffix in [
-        "(unclosed\n> target)",
-        "[ref\n> label]",
-        "(url 'title\n> rest')",
+    for (suffix, direct) in [
+        ("(unclosed\n> target)", false),
+        ("[ref\n> label]", false),
+        ("(url 'title\n> rest')", true),
     ] {
         let doc = parse(&format!("> [a\n> b]{suffix}\n"));
         assert_eq!(doc.links().len(), 1);
-        assert_eq!(doc.link_destination(LinkId(0)), None);
+        assert_eq!(doc.link_destination(LinkId(0)), direct.then_some("url"));
+        if direct {
+            title_changes::assert_plain(
+                &doc,
+                LinkId(0),
+                Span::new(3, 8),
+                Span::new(2, 29),
+                Span::new(10, 13),
+                Span::new(15, 27),
+                &[Span::new(21, 23)],
+            );
+            assert_eq!(doc.link_title(LinkId(0)), Some("title\n> rest"));
+            assert_eq!(visible(&doc, Span::new(0, doc.source().len())), "a\nb\n");
+        }
         assert_eq!(label(&doc, 0), "a\nb");
         assert_eq!(doc.link_info(LinkId(0)).unwrap().state, SyntaxState::Sealed);
         assert!(doc.work().inline_bytes <= doc.source().len() as u64);

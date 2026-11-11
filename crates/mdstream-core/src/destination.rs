@@ -26,7 +26,7 @@ pub(crate) enum Progress {
 }
 
 /// One pass over a destination and optional title, starting after `(` or `:`.
-/// Spans retain escapes verbatim. Root suffixes, container component gaps and definition title
+/// Spans retain escapes verbatim. Root suffixes, container suffixes and definition title
 /// bodies have separate opt-ins for physical line endings.
 #[cfg_attr(test, derive(Debug))]
 pub(crate) struct Destination {
@@ -184,8 +184,8 @@ impl Destination {
         self.multiline_byte(byte, pos, true)
     }
 
-    pub fn component_byte(&mut self, byte: u8, pos: usize) -> Progress {
-        self.multiline_byte(byte, pos, false)
+    pub fn container_byte(&mut self, byte: u8, pos: usize) -> Progress {
+        self.multiline_byte(byte, pos, true)
     }
 
     fn multiline_byte(&mut self, byte: u8, pos: usize, title_body: bool) -> Progress {
@@ -203,7 +203,7 @@ impl Destination {
             // The raw title still owns those bytes, even on a closer-only line.
             let title = self.title.as_mut().unwrap();
             title.end = pos;
-            if title.len() > MAX_LINK_TITLE_BYTES {
+            if title.len() - self.title_prefix_bytes > MAX_LINK_TITLE_BYTES {
                 return Progress::Invalid;
             }
             self.gap_carriage = byte == b'\r';
@@ -264,6 +264,7 @@ impl Destination {
     pub fn title_prefix(&mut self, prefix: Span) {
         debug_assert!(self.open_title());
         let title = self.title.as_mut().unwrap();
+        debug_assert!(title.start <= prefix.start);
         debug_assert_eq!(title.end, prefix.start);
         title.end = prefix.end;
         self.title_prefix_bytes += prefix.len();
@@ -271,7 +272,7 @@ impl Destination {
     }
 
     // Only a classified continuation of the same ordinary container sequence.
-    // B never carries a live title body over a physical ending.
+    // Open title bodies use title_prefix instead, with a separate data count.
     pub fn component_prefix(&mut self, prefix: Span) {
         debug_assert!(!self.open_title());
         self.suffix_prefix_bytes += prefix.len();

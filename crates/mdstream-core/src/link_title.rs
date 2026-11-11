@@ -27,10 +27,19 @@ impl Document {
     /// assert_eq!(text, "a+b ö");
     /// assert_eq!(doc.link_title(LinkId(0)), Some("a\\+b &ouml;"));
     /// ```
+    /// ```compile_fail
+    /// use mdstream::{Budget, Document, LinkId, WorkLimit};
+    /// let mut doc = Document::new();
+    /// doc.append("> [a](u 'a\n> b')\n").unwrap();
+    /// let mut title = doc.decoded_link_title(LinkId(0)).unwrap();
+    /// doc.append("tail").unwrap();
+    /// title.advance(&mut Budget::new(WorkLimit::unlimited())).unwrap();
+    /// ```
     pub fn decoded_link_title(&self, id: LinkId) -> Option<LinkTitle<'_>> {
         let gaps = match self.links.get(id.0)? {
             crate::LinkTarget::Reference(symbol) => &self.references.title_gaps[symbol.0][..],
-            _ => &[],
+            crate::LinkTarget::Direct(_) => &self.direct_title_gaps[id.0][..],
+            crate::LinkTarget::Email(_) => &[],
         };
         Some(LinkTitle {
             inner: CodeInfo::title(self.source(), self.link_title_span(id)?, gaps),

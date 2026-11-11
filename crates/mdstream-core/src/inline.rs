@@ -13,6 +13,7 @@ pub(crate) struct Publishing<'a> {
     pub references: &'a mut References,
     pub links: &'a mut Vec<LinkTarget>,
     pub link_info: &'a mut Vec<LinkInfo>,
+    pub direct_title_gaps: &'a mut Vec<Vec<Span>>,
     pub maths: &'a mut Vec<crate::Math>,
     pub math_gaps: &'a mut Vec<Span>,
     pub footnotes: &'a mut crate::footnotes::Footnotes,
@@ -58,7 +59,13 @@ impl Publishing<'_> {
         target: LinkTarget,
         suffix: Option<Span>,
         title: Option<Span>,
+        title_gaps: Vec<Span>,
     ) -> LinkId {
+        debug_assert_eq!(self.links.len(), self.link_info.len());
+        debug_assert_eq!(self.links.len(), self.direct_title_gaps.len());
+        debug_assert!(
+            title_gaps.is_empty() || (matches!(target, LinkTarget::Direct(_)) && title.is_some())
+        );
         let info = LinkInfo {
             kind: if candidate.image.is_some() {
                 LinkKind::Image
@@ -85,12 +92,14 @@ impl Publishing<'_> {
             Some(id) => {
                 self.links[id.0] = target;
                 self.link_info[id.0] = info;
+                self.direct_title_gaps[id.0] = title_gaps;
                 id
             }
             None => {
                 let id = LinkId(self.links.len());
                 self.links.push(target);
                 self.link_info.push(info);
+                self.direct_title_gaps.push(title_gaps);
                 id
             }
         };
@@ -177,10 +186,17 @@ impl<'a> Effects<'a> {
         target: Option<LinkTarget>,
         suffix: Option<Span>,
         title: Option<Span>,
+        title_gaps: Vec<Span>,
     ) -> Option<LinkId> {
-        self.publishing
-            .as_mut()
-            .map(|p| p.complete_link(candidate, target.expect("published target"), suffix, title))
+        self.publishing.as_mut().map(|p| {
+            p.complete_link(
+                candidate,
+                target.expect("published target"),
+                suffix,
+                title,
+                title_gaps,
+            )
+        })
     }
 
     fn seal_link(&mut self, id: Option<LinkId>) {
@@ -243,6 +259,7 @@ impl<'a> Effects<'a> {
                 title: None,
                 state: SyntaxState::Sealed,
             });
+            p.direct_title_gaps.push(Vec::new());
             p.mark(label, Style::default(), Some(id));
             p.hide(Span::new(start, start + 1));
             p.hide(Span::new(end, end + 1));
@@ -523,6 +540,7 @@ enum Tail {
     Destination {
         candidate: Candidate,
         parser: Destination,
+        title_gaps: Vec<Span>,
     },
     Label {
         candidate: Candidate,
@@ -549,12 +567,17 @@ impl std::fmt::Debug for Tail {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::After(candidate) => f.debug_tuple("After").field(candidate).finish(),
-            Self::Destination { candidate, parser } => {
+            Self::Destination {
+                candidate,
+                parser,
+                title_gaps,
+            } => {
                 // Destination has no effects-dependent state. Future byte events
                 // exercise its pending/invalid/complete branches in both cores.
                 f.debug_tuple("Destination")
                     .field(candidate)
                     .field(parser)
+                    .field(title_gaps)
                     .finish()
             }
             Self::Label {
@@ -579,6 +602,7 @@ enum HeaderLinkSuffix {
         source: Span,
         destination: Span,
         title: Option<Span>,
+        title_gaps: Vec<Span>,
     },
     Label(Span),
 }
@@ -700,6 +724,7 @@ impl Eligibility {
     fn account(&mut self, total: &mut Work) {
         let w = std::mem::take(&mut self.work);
         debug_assert_eq!(w.tree_visits, 0);
+        debug_assert_eq!(w.link_title_gap_steps, 0);
         let steps = w.inline_bytes
             + w.delimiter_steps
             + w.delimiter_search_steps
@@ -795,9 +820,21 @@ impl Inline {
         self.paragraph_key
     }
 
-    pub fn component_prefix(&mut self, prefix: Span) {
-        if let Some(Tail::Destination { parser, .. }) = &mut self.tail {
-            parser.component_prefix(prefix);
+    pub fn component_prefix(&mut self, prefix: Span, work: &mut Work) {
+        if let Some(Tail::Destination {
+            parser, title_gaps, ..
+        }) = &mut self.tail
+        {
+            if parser.open_title() {
+                parser.title_prefix(prefix);
+                if !prefix.is_empty() {
+                    debug_assert!(title_gaps.last().is_none_or(|gap| gap.end <= prefix.start));
+                    title_gaps.push(prefix);
+                    work.link_title_gap_steps += 1;
+                }
+            } else {
+                parser.component_prefix(prefix);
+            }
         }
     }
 
@@ -810,9 +847,13 @@ impl Inline {
     /// neither create a delimiter nor become a trailing ordinary line break.
     pub fn virtual_spaces(&mut self, at: usize, columns: u8, effects: &mut Effects<'_>) {
         self.math_prefix(at, effects);
+        let title_body = self.container_paragraph
+            && matches!(&self.tail, Some(Tail::Destination { parser, .. }) if parser.open_title());
         for _ in 0..columns {
             effects.work.inline_bytes += 1;
-            self.byte(b' ', at, effects);
+            if !title_body {
+                self.byte(b' ', at, effects);
+            }
             self.previous = Some(b' ');
             self.previous_scalar = Some(' ');
         }
@@ -871,6 +912,7 @@ impl Inline {
                         source,
                         destination,
                         title,
+                        title_gaps,
                     } => {
                         self.end_label(candidate.open, effects);
                         effects.complete_link(
@@ -878,6 +920,7 @@ impl Inline {
                             Some(LinkTarget::Direct(destination)),
                             Some(source),
                             title,
+                            title_gaps,
                         );
                     }
                     HeaderLinkSuffix::Label(source) => {
@@ -974,6 +1017,7 @@ impl Inline {
                 symbol.target(),
                 None,
                 None,
+                Vec::new(),
             );
             effects.seal_link(id);
         }
@@ -1309,7 +1353,8 @@ impl Inline {
             .flatten();
         if let Some(symbol) = symbol {
             candidate.reference = Some(symbol);
-            candidate.link = effects.complete_link(candidate, symbol.target(), None, None);
+            candidate.link =
+                effects.complete_link(candidate, symbol.target(), None, None, Vec::new());
             self.end_label(candidate.open, effects);
         }
         candidate
@@ -1555,6 +1600,7 @@ impl Inline {
                     self.tail = Some(Tail::Destination {
                         candidate,
                         parser: Destination::new(pos + 1),
+                        title_gaps: Vec::new(),
                     })
                 }
                 b'[' => {
@@ -1572,12 +1618,13 @@ impl Inline {
             Tail::Destination {
                 candidate,
                 mut parser,
+                title_gaps,
             } => match if self.root_paragraph {
                 let progress = parser.root_byte(byte, pos);
                 self.root_separator_seen |= byte == b'\n' && matches!(progress, Progress::Pending);
                 progress
             } else if self.container_paragraph {
-                let progress = parser.component_byte(byte, pos);
+                let progress = parser.container_byte(byte, pos);
                 self.root_separator_seen |= byte == b'\n' && matches!(progress, Progress::Pending);
                 progress
             } else {
@@ -1598,6 +1645,7 @@ impl Inline {
                             source,
                             destination,
                             title,
+                            title_gaps,
                         });
                     } else {
                         self.end_label(candidate.open, effects);
@@ -1606,10 +1654,17 @@ impl Inline {
                             Some(LinkTarget::Direct(destination)),
                             Some(source),
                             title,
+                            title_gaps,
                         );
                     }
                 }
-                Progress::Pending => self.tail = Some(Tail::Destination { candidate, parser }),
+                Progress::Pending => {
+                    self.tail = Some(Tail::Destination {
+                        candidate,
+                        parser,
+                        title_gaps,
+                    })
+                }
             },
             Tail::Label {
                 candidate,
@@ -1657,7 +1712,7 @@ impl Inline {
         };
         if let Some(symbol) = symbol {
             self.end_label(candidate.open, effects);
-            effects.complete_link(candidate, symbol.target(), Some(source), None);
+            effects.complete_link(candidate, symbol.target(), Some(source), None, Vec::new());
         } else {
             self.seal_candidate(candidate, effects);
         }
@@ -2514,5 +2569,49 @@ mod tests {
         assert_eq!(doc.link_destination(LinkId(0)), Some("u"));
         assert_eq!(doc.references().len(), 1);
         assert_eq!(doc.references()[0].label, "a b");
+    }
+}
+
+#[cfg(test)]
+mod direct_title_storage_tests {
+    use super::*;
+    use crate::Document;
+
+    #[test]
+    fn link_slots_cover_all_allocation_roles_and_move_candidate_storage_once() {
+        let mut d = Document::new();
+        d.append("<https://example.org> <a@b.co> [r] ![i](v '')\n\n> [a](u 'a\n")
+            .unwrap();
+        assert_eq!(d.links.len(), 5);
+        assert_eq!(d.links.len(), d.link_info.len());
+        assert_eq!(d.links.len(), d.direct_title_gaps.len());
+        assert!(d.direct_title_gaps.iter().all(|g| g.capacity() == 0));
+        // Add enough source to release the retained header while the title is
+        // still pending. Storage belongs solely to this candidate until `)`.
+        d.append("> b\n").unwrap();
+        let Some(Tail::Destination { title_gaps, .. }) = &d.inline.tail else {
+            panic!("live candidate")
+        };
+        assert_eq!(title_gaps.len(), 1);
+        let pointer = title_gaps.as_ptr();
+        let capacity = title_gaps.capacity();
+        assert!(d.direct_title_gaps[4].is_empty());
+        d.append("')\n").unwrap();
+        d.finish();
+        assert_eq!(d.direct_title_gaps[4].as_ptr(), pointer);
+        assert_eq!(d.direct_title_gaps[4].capacity(), capacity);
+        assert_eq!(d.links.len(), d.direct_title_gaps.len());
+        assert!(d.direct_title_gaps[..4].iter().all(|g| g.capacity() == 0));
+        // Private storage is one Vec header per stable LinkId, plus only the
+        // owned Span capacity. Existing public arena metrics cover annotation
+        // arenas, not link/reference metadata or their payload heaps.
+        let slot_bytes = d.direct_title_gaps.capacity() * std::mem::size_of::<Vec<Span>>();
+        let gap_bytes: usize = d
+            .direct_title_gaps
+            .iter()
+            .map(|g| g.capacity() * std::mem::size_of::<Span>())
+            .sum();
+        assert!(slot_bytes >= d.links.len() * std::mem::size_of::<Vec<Span>>());
+        assert_eq!(gap_bytes, capacity * std::mem::size_of::<Span>());
     }
 }

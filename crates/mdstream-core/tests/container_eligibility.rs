@@ -6,8 +6,11 @@ mod support;
 
 include!("fixtures/container_eligibility_baseline.rs");
 include!("fixtures/container_component_gap_changes.rs");
+include!("fixtures/container_title_legacy_changes.rs");
 #[path = "support/component_gap_model.rs"]
 mod component_model;
+#[path = "support/container_title_changes.rs"]
+mod title_model;
 
 #[test]
 fn container_eligibility_preserves_head_snapshots_and_every_old_work_counter() {
@@ -24,7 +27,28 @@ fn container_eligibility_preserves_head_snapshots_and_every_old_work_counter() {
                 let exact_change = COMPONENT_GAP_CHANGES
                     .iter()
                     .find(|entry| entry.0.as_bytes() == bytes);
-                let expected = if let Some((_, changes, public)) = exact_change {
+                let title_change = LEGACY_TITLE_CHANGES
+                    .iter()
+                    .find(|entry| entry.0.as_bytes() == bytes);
+                let expected = if let Some((_, changes, _)) = title_change {
+                    let doc = d.document();
+                    let cr = usize::from(doc.source().contains('\r'));
+                    let title = Span::new(9, 14 + cr);
+                    assert_eq!(
+                        doc.text(title),
+                        Some(if cr == 0 { "x\n> y" } else { "x\r\n> y" })
+                    );
+                    title_model::assert_plain(
+                        doc,
+                        LinkId(0),
+                        Span::new(3, 4),
+                        Span::new(2, 16 + cr),
+                        Span::new(6, 7),
+                        title,
+                        &[Span::new(11 + cr, 13 + cr)],
+                    );
+                    changes[usize::from(bytewise)]
+                } else if let Some((_, changes, public)) = exact_change {
                     if *public {
                         component_model::assert_direct(d.document(), "a", 0);
                     } else {

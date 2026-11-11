@@ -224,6 +224,9 @@ pub struct Work {
     /// Local lexer/summary/isolation work, drained after each container observer
     /// event. Excludes publishing, tree and historical reference work.
     pub container_eligibility_steps: u64,
+    /// Nonempty structural prefixes appended to a live direct-title candidate.
+    /// One step per prefix, independent of source length or virtual columns.
+    pub link_title_gap_steps: u64,
     /// Run resolution, opener pushes/pops/rebasing, and isolated cross-line
     /// emphasis/code pairs committed or discarded once when a header resolves.
     /// Includes linear failed-code summary indexing and greedy matching visits.

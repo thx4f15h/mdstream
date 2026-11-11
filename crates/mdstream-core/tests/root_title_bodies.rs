@@ -2,6 +2,8 @@ use mdstream::*;
 
 #[path = "support/snapshot.rs"]
 mod support;
+#[path = "support/container_title_changes.rs"]
+mod title_changes;
 
 fn parse(source: &str) -> Document {
     let mut doc = Document::new();
@@ -767,8 +769,31 @@ fn body_scope_lazy_partial_tabs_real_blocks_and_new_root_keep_original_routing()
                 ),
             ] {
                 let doc = parse(&format!("{prior}{tail}"));
-                assert_eq!(doc.link_destination(LinkId(1)), None);
-                assert_eq!(doc.link_title(LinkId(1)), None);
+                assert_eq!(doc.link_destination(LinkId(1)), Some("v"));
+                let body = if tail.starts_with("> - ") {
+                    format!("x{ending}>   y")
+                } else if tail.starts_with(">\t") {
+                    format!("x{ending}>\ty")
+                } else if tail.starts_with("- ") {
+                    format!("x{ending}  y")
+                } else {
+                    format!("x{ending}> y")
+                };
+                assert_eq!(doc.link_title(LinkId(1)), Some(body.as_str()));
+                assert_eq!(decoded(&doc, LinkId(1)), "x\ny");
+                let open = prior.len() + tail.find("[b]").unwrap();
+                let title_start = open + "[b](v '".len();
+                let title_end = title_start + body.len();
+                let gap_start = title_start + 1 + ending.len();
+                title_changes::assert_plain(
+                    &doc,
+                    LinkId(1),
+                    Span::new(open + 1, open + 2),
+                    Span::new(open, title_end + 2),
+                    Span::new(open + 4, open + 5),
+                    Span::new(title_start, title_end),
+                    &[Span::new(gap_start, title_end - 1)],
+                );
                 assert!(doc.container_count() > 0);
             }
             for interruption in [

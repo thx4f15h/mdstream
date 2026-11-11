@@ -226,6 +226,8 @@ pub struct Document {
     containers: containers::Containers,
     links: Vec<LinkTarget>,
     link_info: Vec<LinkInfo>,
+    // Parallel stable LinkId slots; candidates move their structural gaps here.
+    direct_title_gaps: Vec<Vec<Span>>,
     maths: Vec<Math>,
     math_gaps: Vec<Span>,
     headings: HeadingIndex,
@@ -812,6 +814,7 @@ impl Document {
                 references: &mut self.references,
                 links: &mut self.links,
                 link_info: &mut self.link_info,
+                direct_title_gaps: &mut self.direct_title_gaps,
                 maths: &mut self.maths,
                 math_gaps: &mut self.math_gaps,
                 footnotes: &mut self.footnotes,
@@ -961,7 +964,7 @@ impl Document {
                 "prefix belongs to active ordinary sequence"
             );
             self.inline
-                .component_prefix(Span::new(source.start, raw_start));
+                .component_prefix(Span::new(source.start, raw_start), &mut self.work);
         }
     }
 

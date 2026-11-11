@@ -2731,3 +2731,17 @@ README 当前说明和本任务对应 TODO 已同步，只新增此窄项勾选�
 - 18,000 组组件模型；真实 quote/list/nested/lazy/partial-tab、1023/1024/1025/late-pipe、star/underscore/tilde/close-only/code/math/label 角色矩阵；原 observer 分歧后语义独立核对；UTF-8 每切点/逐前缀 EOF；4095/4096/4097 与8256结构前缀反例、稳定元数据/原始映射、共享0/1/6微预算、Update apply/merge与真实Fold/open/fixed/ticket/reader、百万字/两万旧对象/1000追加计数覆盖。
 - 原静态 oracle、root fixture 和官方 Markdown/HTML 原字节保留。A corpus 的66个精确完整输入中32个公开 Direct 新成功，34个公开全快照不变而仅工作计数改变；root旧negative仅4个精确容器输入、scope corpus仅60个精确容器新成功独立验证 typed metadata/display，未泛化按LF或前缀跳过。源码累计 O(n log n)/O(n)，无新增依赖/unsafe/旧正文、旧引用或祖先回扫。
 - 验证命令均在本项目 nix develop：check --workspace --all-targets；针对性nextest；debug/release各1743项 --workspace --all-targets --no-fail-fast；doc 75项、doc build、clippy -D warnings、fmt、8组离线官方夹具和相关示例。完整命令、退出状态、日志、冻结源码hash及patch：`/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-026/implementation/`。本单元不提交，由父独立审查。
+
+## 2026-11-11 容器普通段落直接链接与图片的多行 title 正文交付
+
+仅 task027 C：已有普通容器逻辑段落的直接 title 接纳多条 LF/CRLF，三定界、转义复位、真实 indent/tab、closing-only 与原始 Span 保持。候选自持有有序结构 gaps，延迟 header 同结果移动；合法 `)` 才一次移动到原稳定 LinkId 平行私有槽，pending/failure/EOF/table 丢弃不污染旧引用或后续候选。全部 complete_link、autolink、新建和原位升级入口维护空槽；Direct decoded reader 选择该槽，Reference 保留 winning definition gaps，Email 无 title。未改 key、SourceOwner、classification、observer/Deferred 协议、官方输入/HTML/评分/helper 或原静态 fixture。
+
+结构 prefix 只由真实消费生产者现场通知一次，title/suffix 各自扣结构源，partial-tab 虚拟列保持原 Work/previous 更新但不送 title 正文。title4096 计真实正文与 CRLF 两字节，target4096/suffix8256 及原窗口保持。每非空正文 prefix 加一次 Work.link_title_gap_steps，摊销 push 与发布 move 不访问旧正文/引用/祖先/gaps；空 Vec 无独立堆分配，私有存储为每 LinkId 一个 Vec header 加 Span capacity。累计 O(n log n)/O(n)，核心零运行时依赖且禁止 unsafe。
+
+新增13项集成测试及1项私有存储测试：132组独立 source/typed metadata/decoded chunk 映射，LF/CRLF/三定界/Link/Image/lazy/partial-tab1–3/真实 indent 与 tab，全部 UTF-8 切点及前缀 EOF；6592份前驱容器 corpus 仅5个完整新合法输入改变，946份角色/EOF和100份窗口/late-pipe全快照与旧 Work 冻结仅按完整源名单扩展独立断言。depth1000 的真实前驱与新实现同为512个结构 Quote、同 Container511；后488对为正文而非结构，独立模型精确保留 decoded/source 映射。保留旧 table/Setext 身份、引用 first_use/revision、原子升级、真实 Update apply/merge/rebuild、Fold/sourceFold/open/fixed/ticket/DisplayCursor stale；原读者借用由 compile_fail 例核验。共享 CodeInfo/title/destination/display 的0/1/6与query/object预算、末尾免费完成、gap内暂停、CRLF/UTF-8原子与实体probe恢复均覆盖。两万旧定义+百万正文后1000单字节追加保持固定新增工作，1000行title成功且gaps只随新prefix增长。
+
+失败域沿用已验收 opaque raw：已消费实体/转义/强调不回放，拒绝字节及后续正常词法一次。完整字面失败回退、target正文换行、嵌套图片、完整引用定义和其它宽需求仍留 TODO；本窄项不代表 TODO 清空。README当前规则和对应TODO同步，DONE只追加。
+
+验证命令、退出状态、完整日志、源码hash与patch保存在 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-027/implementation/`。项目 `nix develop` 内 check --workspace --all-targets、针对性 nextest、完整 debug/release nextest --workspace --all-targets --no-fail-fast、doc test/doc build、clippy -D warnings、fmt、离线fixture及相关示例/diff为最终门禁。父侧 depth/window、gap结束和计费反馈已按真实前驱探针处理；未提交/推送，交父独立验收。
+
+补充全字段计数审计：历史 hash helper 既有排除 container_eligibility 字段的投影保持；另外冻结并检查完整旧 Work（仅排除本次新字段），100份表头 corpus 中8个精确完整输入的 deferred 确认各多一个 observer 步骤、字节不变且公开快照/结构完全保持，单列完整 source 名单；其余新增差异仍是19个直接 title 成功。外部6592+946份全字段前驱对照中，observer计数全部保持。证据40-all-old-work及最终全源码hash对应测试可独立复跑，不整体重录旧 Work/oracle。

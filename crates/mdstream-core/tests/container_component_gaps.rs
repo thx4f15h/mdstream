@@ -58,7 +58,7 @@ fn container_component_gaps_have_independent_endings_and_single_line_metadata() 
 }
 
 #[test]
-fn container_gap_title_body_newline_is_rejected_and_failure_prefix_is_opaque() {
+fn container_gap_failure_prefix_is_opaque_and_body_extension_completes() {
     for image in ["", "!"] {
         for eol in ["\n", "\r\n"] {
             for (tail, display) in [
@@ -77,7 +77,12 @@ fn container_gap_title_body_newline_is_rejected_and_failure_prefix_is_opaque() {
             }
             let source = format!("> {image}[a](u{eol}> 't{eol}> rest')\n");
             let d = parse(&source);
-            assert_eq!(d.link_destination(LinkId(0)), None, "B must not enable C");
+            assert_eq!(d.link_destination(LinkId(0)), Some("u"));
+            assert_eq!(
+                d.link_title(LinkId(0)),
+                Some(format!("t{eol}> rest").as_str())
+            );
+            assert_eq!(shown(&d), "a\n");
         }
     }
 }
@@ -105,7 +110,7 @@ fn container_component_gaps_respect_actual_scope_and_syntax_roles() {
         ("> [a](u(\n> rest))\n", false),
         ("> [a](u\\\n> 't')\n", false),
         ("> [a](u\r> 't')\n", false),
-        ("> [a](u 't\n> rest')\n", false),
+        ("> [a](u 't\n> rest')\n", true),
         ("> [a]\n> (u)\n", false),
         ("> [a](u|b\n> -|-\n> 't')|c\n", false),
         ("> `[a](u\n> )`\n", false),
@@ -382,7 +387,7 @@ fn container_stable_shortcut_and_reference_survive_pending_failure_eof_and_atomi
             ("'t')\n", true),
             ("'t'x)\n", false),
             ("'t", false),
-            ("'t\n> rest')\n", false),
+            ("'t\n> rest')\n", true),
         ] {
             let mut d = Document::new();
             d.append(&format!("> p {} {image}[old]", "x".repeat(1100)))
