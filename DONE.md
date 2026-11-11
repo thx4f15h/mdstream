@@ -2786,3 +2786,16 @@ README当前说明、对应TODO及示例同步；完整普通lexer回退、未�
 本轮新功能验证（全部经项目 nix develop，target 来自 cargo metadata）：check --workspace --all-targets；针对性 nextest 48/48 与私有计数/cache 12/12；完整 debug/release nextest --workspace --all-targets --no-fail-fast 各 1808/1808；doc 76/76、docbuild、clippy -D warnings、fmt 均通过。9 项 CommonMark 与 3 项 GFM 离线生成器 --check、10 份独立分类报告，以及 container_links/link_headers/closed_link_headers/link_suffix_headers/inherited_headers/display 六个 release examples 通过。最终全套前冻结 463 个项目文件（386 个 Rust 文件），全套后只有本 DONE 追加，源码哈希保持。
 
 证据目录：`/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-030/implementation`。`commands.jsonl` 保存真实 argv/退出码/完整日志路径/SHA；`source-frozen.json`、`source-verification.json` 与 `validation.json` 关联源码及最终结果。早期红测/编译/夹具失败保留；初期日志命名冲突的 007/010 明确排除验收，已修复为原子预留，最终全套日志唯一。父设计验收仅作为前驱，本轮日志另证实现。未提交、推送、reset、清理、派生代理或执行下一项。
+
+
+## 2026-11-12 稳定根起点的手工文档尾折叠范围自动增长
+
+本单实现与验证完成，待父独立复审确认提交。`SourceFoldRegistration::tail` 从 `start < source_fold_limit()` 的 UTF-8 根切口登记至真实 EOF；付费拒绝任何语法折叠包络内起点，手工登记仍不相交。单 live 槽在有效 apply 更新真实 registry、summary、Mask 和 HeightIndex，包含未来分类内容，保留 view-local SourceFoldId、意愿和预览；不修改正文、SourceOwner 或语法父链，不回扫历史/正文/祖先。新增同步工作为固定次数 O(log n) 索引操作，累计 O(n log n)、空间 O(n)，核心依赖与 unsafe 约束保持。
+
+`finish` 自动同 ID 封口；有预算 `seal_tail` 仅对本视图 live ID 接受稳定 EOF，再跑固定两端拓扑校验，内部开放结构可能使其失败。预算耗尽可续，失败不修改视图；成功复用 ID、关闭 live 槽并失效布局依赖，保留 saved choice，随后按固定 EOF 混合 tile 一次刷新。移除清登记、意愿、预览与槽且 ID 不复用；reset 保留注册。开放表格行在 live 根尾内可双向顺序登记，固定/段落校验不放宽。
+
+复用 source folding 的独立区间/高度/布局模型，新增14项测试，覆盖8组 corpus 的 UTF-8 每切点/前缀 EOF、Setext/晚表头/definition 确认与回放/多行 inline/CRLF/pending finish、真实语法父链与原始/显示映射、0/1/6及零 query/object 的共享预算、条件封口、跨视图/错误文档/乱序/merged/replay、批量/预览/导航/锚点、ticket/checkpoint/pass/cursor 失效和前方依赖保留。16/256/4096 历史登记下8次追加各新增 range_visits 恰1，Height/generation/checkpoint 访问受常数乘 log 上界；百万字尾只保留一个 owner 占位，不逐 tile 布局、无 paragraph_end。千层输入的 seal 实际访问一个已闭合 Code 后被首个开放 Container 拒绝（5个付费步骤），不将请求嵌套深度冒充 validator 访问深度。
+
+最终均经项目 `nix develop`：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check` 通过；针对性 nextest 230/230；`cargo nextest run --workspace --all-targets --no-fail-fast` 与 `--release` 各1822/1822；`cargo test --workspace --doc` 76/76，`cargo doc --workspace --no-deps` 通过。13个相关 release 示例通过，包括新增 `source_tail_folding`，以及 source/folding/batch/paragraph/container/auto/rows/budget/display/excerpt/stream。58份既有 fixture 与 HEAD 原字节一致，`git diff --check` 通过。新测试不依赖本机路径或外部证据，不写期望；完整验证前已冻结源码，验证后仅文档同步。
+
+按既有“语法父链 + 手工叠加”语义，已准备勾选“稳定身份与范围查询”供父复审；正式确认仍由父验收提交。宽项“手工范围扩展”保持未勾选：任意未定型/语法宿主内起点、一般手工嵌套、交叉拆分/优先级、重载身份映射及 UI/软换行/媒体仍未完成。

@@ -134,10 +134,17 @@ pub(crate) fn validate_pair(source: Span, candidate: FoldCandidate) -> Result<()
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SourceFoldProgress {
     pub completion: Completion,
-    /// Present only after atomic registration. The initial choice is expanded.
+    /// Present only after atomic registration or seal. New registrations start expanded.
     pub id: Option<FoldId>,
     /// Cumulative syntax ancestors inspected, including both endpoint paths.
     pub visited: usize,
+}
+
+#[derive(Clone, Copy)]
+enum SourceAction {
+    Register,
+    RootTail,
+    SealTail(SourceFoldId),
 }
 
 /// Validate and atomically register one nonempty UTF-8 source interval.
@@ -168,6 +175,7 @@ pub struct SourceFoldRegistration {
     parent: Option<FoldId>,
     visited: usize,
     result: Option<FoldId>,
+    action: SourceAction,
 }
 
 impl SourceFoldRegistration {
@@ -186,7 +194,11 @@ impl SourceFoldRegistration {
             return Err(LayoutError::InvalidRange);
         }
         view.validate_source_span(source)?;
-        Ok(Self {
+        Ok(Self::unvalidated(document, view, source))
+    }
+
+    fn unvalidated<S>(document: &Document, view: &FoldView<S>, source: Span) -> Self {
+        Self {
             document: document.id(),
             revision: document.revision(),
             view: view.heights().version().0,
@@ -201,7 +213,55 @@ impl SourceFoldRegistration {
             parent: None,
             visited: 0,
             result: None,
-        })
+            action: SourceAction::Register,
+        }
+    }
+
+    /// Register a live root tail from a stable UTF-8 cut to the real source EOF.
+    /// The start must be strictly before source_fold_limit and outside every
+    /// syntax fold envelope. Root validation and atomic insertion each cost one
+    /// query/object in advance. Initially expanded; apply grows the same ID,
+    /// including pending input, and finish closes it automatically.
+    /// Manual registrations remain disjoint even while expanded or previewed.
+    pub fn tail<S>(
+        document: &Document,
+        view: &FoldView<S>,
+        start: usize,
+    ) -> Result<Self, LayoutError> {
+        view.check(document)?;
+        if document.is_finished()
+            || start >= document.source_fold_limit()
+            || !document.source().is_char_boundary(start)
+        {
+            return Err(LayoutError::InvalidRange);
+        }
+        let source = Span::new(start, document.source().len());
+        view.validate_source_span(source)?;
+        let mut task = Self::unvalidated(document, view, source);
+        task.open = true;
+        task.action = SourceAction::RootTail;
+        Ok(task)
+    }
+
+    /// Close this view's live tail without changing its ID or saved choice.
+    /// EOF must be stable; advance still validates both fixed endpoint paths,
+    /// rejecting open syntax that could later cross the frozen end. Exhaustion
+    /// is resumable and no view state changes before the final paid step.
+    pub fn seal_tail<S>(
+        document: &Document,
+        view: &FoldView<S>,
+        id: SourceFoldId,
+    ) -> Result<Self, LayoutError> {
+        view.check(document)?;
+        let candidate = view.live_source_tail(id).ok_or(LayoutError::InvalidRange)?;
+        if candidate.source.end > document.source_fold_limit() {
+            return Err(LayoutError::InvalidRange);
+        }
+        // The exact registered envelope is already disjoint from every other
+        // source range. Exempting this ID requires no history enumeration.
+        let mut task = Self::unvalidated(document, view, candidate.source);
+        task.action = SourceAction::SealTail(id);
+        Ok(task)
     }
 
     /// Register a bounded source-prefix preview of a closed top-level paragraph.
@@ -364,6 +424,7 @@ impl SourceFoldRegistration {
             parent: None,
             visited: 0,
             result: None,
+            action: SourceAction::Register,
         })
     }
 
@@ -389,14 +450,24 @@ impl SourceFoldRegistration {
             if !budget.charge(cost()) {
                 return Ok(self.progress(Completion::BudgetExhausted));
             }
-            if self.endpoint == 2 {
-                self.result = Some(view.register_source_fold(
-                    self.source,
-                    self.hidden,
-                    self.parent,
-                    self.paragraph,
-                    self.open,
-                ));
+            if matches!(self.action, SourceAction::RootTail) && self.endpoint == 0 {
+                if document.fold_candidate_at(self.source.start).is_some()
+                    || view.row_candidate_at(document, self.source.start).is_some()
+                {
+                    return Err(LayoutError::InvalidRange);
+                }
+                self.endpoint = 2;
+            } else if self.endpoint == 2 {
+                self.result = Some(match self.action {
+                    SourceAction::SealTail(id) => view.seal_source_tail(document, id)?,
+                    SourceAction::Register | SourceAction::RootTail => view.register_source_fold(
+                        self.source,
+                        self.hidden,
+                        self.parent,
+                        self.paragraph,
+                        self.open,
+                    ),
+                });
                 self.version = view.version();
             } else if !self.started {
                 let offset = if self.endpoint == 0 {

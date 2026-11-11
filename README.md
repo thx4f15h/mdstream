@@ -1729,9 +1729,21 @@ assert_eq!(anchor.resolve(&doc, &view, 10, &mut budget)?.unwrap().target.source,
 
 手工候选的 `parent` 是注册时最内层的包含其源码包络的语法节点；不将语法节点或表格行范围改挂到手工节点。批量 Subtree/Focus 仍按源码包含关系判断；完全相同的源码包络按容器、叶语法、手工范围顺序打破平局，避免操作手工子树时反向修改同范围的语法祖先。All/Subtree/Siblings/Focus 包含已注册手工范围，AtLevel/Containers 保持原筛选范围。Siblings 也能发现父标题文字中的手工范围，原有语法扫描及预算边界保持不变。默认策略不自动创建手工选区。
 
-R 个非空不相交注册使用 O(R) 空间（不超过源码字节数），删除后不保留 ID 或范围历史；索引查询 O(log R)，单点切换/移除 O(log R + log F + log T)。注册额外按两端路径深度 D 付费，每步固定次数结构索引操作，游标 O(1)；手工注册的深度成本独立于输入解析契约。普通追加不刷新任何历史手工范围，仅当一个收起范围恰好结束于旧 EOF 时，校正一次可能继续增长的 tile；可与代码/数学/表格行既有边界处理共存。解析器没有新增逐字或祖先工作。布局、导航、摘要和批量仍共用帧预算。
+R 个非空不相交注册使用 O(R) 空间（不超过源码字节数），删除后不保留 ID 或范围历史；索引查询 O(log R)，单点切换/移除 O(log R + log F + log T)。注册额外按两端路径深度 D 付费，每步固定次数结构索引操作，游标 O(1)；手工注册的深度成本独立于输入解析契约。固定范围的普通追加不刷新任何历史手工范围，仅当一个收起范围恰好结束于旧 EOF 时，校正一次可能继续增长的 tile；可与代码/数学/表格行既有边界处理共存。解析器没有新增逐字或祖先工作。布局、导航、摘要和批量仍共用帧预算。
 
-`cargo run -p mdstream-core -r --example source_folding` 演示百万字选区、后续追加、预算布局及源码锚点恢复。`crates/mdstream-core/tests/source_folding.rs` 覆盖 2400 组全量结构区间对照、1000 轮随机可见性/高度模型、240 次流式模型、千层注册暂停、4096 历史范围、百万字正文、UTF-8 分块/逐前缀、表格行双向交叉拒绝、批量/预览/导航和旧任务/测量拒绝。自动增长手工范围、手工嵌套、交叉拆分/优先级、重载后的业务身份持久化与终端选区 UI 仍待设计。
+`cargo run -p mdstream-core -r --example source_folding` 演示百万字选区、后续追加、预算布局及源码锚点恢复。`crates/mdstream-core/tests/source_folding.rs` 覆盖 2400 组全量结构区间对照、1000 轮随机可见性/高度模型、240 次流式模型、千层注册暂停、4096 历史范围、百万字正文、UTF-8 分块/逐前缀、表格行双向交叉拒绝、批量/预览/导航和旧任务/测量拒绝。稳定根起点的自动增长尾范围见下节；其它手工嵌套、交叉拆分/优先级、重载后的业务身份持久化与终端选区 UI 仍待设计。
+
+## 稳定根起点的手工尾范围
+
+`SourceFoldRegistration::tail(document, view, start)` 从已定型 UTF-8 根切口登记到真实 `source.len()`，初始展开。文档必须未结束，且 `start < source_fold_limit()`；`advance` 付费确认 `Document::fold_candidate_at(start) == None`，标题、容器、代码、数学或表格整个包络内的起点均拒绝。其它手工/段落登记与尾包络相交也拒绝，展开/预览不解除约束。登记只有根验证和原子插入两步，各扣 1 query / 1 object，不读正文；零预算、错误或过时任务不发布 ID。
+
+有效 `FoldView::apply` 用单个 live 槽更新真实 registry、summary、Mask 和高度覆盖到当前 EOF，包括尚未分类尾部。`source = hidden = summary`，`parent=None`、无段落 BlockId；内部新语法与表格行保留原语法父链和独立意愿，尾不会成为它们的语法父节点。预览只临时展开这一层；reset 保留登记和意愿。每次新增同步工作为固定次数 O(log R + log F + log T) 索引操作，无历史、叶块、正文或祖先回扫；现有无 Budget 的 apply 不新增伪计费。
+
+`SourceFoldRegistration::seal_tail(document, view, source_id)` 对本视图 live ID 条件封口。若 EOF 超过稳定界限，构造立即 `InvalidRange`；即使 EOF 已稳定，仍按固定范围的两端路径逐预算验证，内部开放标题/容器等未来会交叉时拒绝。预算耗尽可续，失败保留已消费预算但不修改视图；成功的最终付费步骤复用同一 ID，关闭增长并失效布局依赖，保留预览和 saved choice。普通根尾成功需 5 query / 5 object，另加实际访问的祖先步。随后追加不会增长，旧 EOF 混合 tile 沿固定边界机制只刷新一次。
+
+`finish` 自动同 ID 封口，保留尾内 pending 来源的最终分类，无须手动封口拓扑检查。移除释放槽、登记、意愿和预览，ID 不复用。ID/位置/窗口查询读取同步后的真实区间，EOF 保持半开；旧 EOF 锚在追加后可投影到同 ID 占位。增长、seal 和移除后旧布局 pass、ticket/checkpoint 及操作 continuation 按版本失效；语义 `DependencyKey` 可能仍 Valid，不能代替布局依赖。
+
+`nix develop -c cargo run --release -p mdstream-core --example source_tail_folding` 演示增长和条件封口。测试复用 source folding 的朴素区间/高度/布局模型，覆盖八组 UTF-8 切点与前缀 EOF、真实语法父链和原始/显示映射、共享预算、预览/批量/导航、开放表格行双向登记、缓存失效、16/256/4096 历史登记及百万字隐藏尾。任意 pending 或语法宿主内起点、一般手工嵌套、交叉拆分/优先级、重载身份映射和 UI 仍保留待办，见 [交付记录](DONE.md#2026-11-12-稳定根起点的手工文档尾折叠范围自动增长)。
 
 ## 长段落源码前缀预览折叠
 

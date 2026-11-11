@@ -270,6 +270,8 @@ pub(crate) struct FoldState {
     source_candidates: BTreeMap<SourceFoldId, SourceCandidate>,
     // The sole open logical paragraph, even if expanded or previewed.
     open_paragraph: Option<SourceFoldId>,
+    // One disjoint root tail, independent of paragraph and fixed EOF refresh.
+    open_source_tail: Option<SourceFoldId>,
     // At most one disjoint source range ends at the old EOF. It can coexist
     // with a completed syntax/row boundary, so it needs its own refresh slot.
     source_boundary: Option<SourceFoldId>,
@@ -955,11 +957,38 @@ impl<S> FoldView<S> {
             },
         );
         if open {
-            debug_assert!(self.state.open_paragraph.is_none());
-            self.state.open_paragraph = Some(id);
+            if paragraph.is_some() {
+                debug_assert!(self.state.open_paragraph.is_none());
+                self.state.open_paragraph = Some(id);
+            } else {
+                debug_assert!(self.state.open_source_tail.is_none());
+                self.state.open_source_tail = Some(id);
+            }
         }
         self.version += 1;
         FoldId::Source(id)
+    }
+
+    pub(crate) fn live_source_tail(&self, id: SourceFoldId) -> Option<FoldCandidate> {
+        (self.state.open_source_tail == Some(id))
+            .then(|| self.state.source_candidates[&id].candidate)
+    }
+
+    pub(crate) fn seal_source_tail(
+        &mut self,
+        document: &Document,
+        id: SourceFoldId,
+    ) -> Result<FoldId, LayoutError> {
+        let mut candidate = self.live_source_tail(id).ok_or(LayoutError::InvalidRange)?;
+        candidate.open = false;
+        self.state.source_candidates.get_mut(&id).unwrap().candidate = candidate;
+        self.state.open_source_tail = None;
+        if self.state.collapsed.contains_key(&candidate.id) {
+            self.state.refresh(document, &mut self.heights, candidate);
+        }
+        self.version += 1;
+        self.expire_from(document, candidate.hidden.start)?;
+        Ok(candidate.id)
     }
 
     /// Remove one registration, choice and preview; other IDs never change and
@@ -980,6 +1009,9 @@ impl<S> FoldView<S> {
             self.paragraph_auto_excluded.insert(block);
         }
         self.state.source_ranges.remove(&candidate.source.start);
+        if self.state.open_source_tail == Some(id) {
+            self.state.open_source_tail = None;
+        }
         if self.state.open_paragraph == Some(id) {
             self.state.open_paragraph = None;
         }
@@ -1020,7 +1052,16 @@ impl<S> FoldView<S> {
             .ok_or(LayoutError::InvalidRange)?;
         for offset in [candidate.source.start, candidate.source.end - 1] {
             if let Some(manual) = self.source_at(offset) {
-                crate::source_folds::validate_pair(manual.source, candidate)?;
+                // A live root tail also grows with an incomplete row. Only
+                // this slot can contain future growth past the current EOF;
+                // fixed ranges and paragraph overlays keep their validator.
+                let live_contains = self.state.open_source_tail.map(FoldId::Source)
+                    == Some(manual.id)
+                    && manual.source.start <= candidate.source.start
+                    && candidate.source.end <= manual.source.end;
+                if !live_contains {
+                    crate::source_folds::validate_pair(manual.source, candidate)?;
+                }
             }
         }
         let start = candidate.source.start;
@@ -1462,6 +1503,31 @@ impl<S> FoldView<S> {
         }
     }
 
+    fn refresh_source_tail(&mut self, document: &Document, dirty: &mut Option<usize>) {
+        let Some(id) = self.state.open_source_tail else {
+            return;
+        };
+        self.range_visits += 1;
+        let old = self.state.source_candidates[&id].candidate;
+        let source = Span::new(old.source.start, document.source().len());
+        let new = FoldCandidate {
+            source,
+            hidden: source,
+            summary: Some(source),
+            open: !document.is_finished(),
+            ..old
+        };
+        self.state.source_candidates.get_mut(&id).unwrap().candidate = new;
+        if !new.open {
+            self.state.open_source_tail = None;
+        }
+        if self.state.collapsed.contains_key(&old.id) {
+            // Even equal endpoints can change tile membership at EOF.
+            self.state.refresh(document, &mut self.heights, new);
+            *dirty = Some(dirty.unwrap_or(usize::MAX).min(old.hidden.start));
+        }
+    }
+
     /// Consume each consecutive append/finish (or one merged batch) before any
     /// query. New tiles inherit all open folds before this call returns.
     pub fn apply(&mut self, document: &Document, update: &Update) -> Result<(), LayoutError> {
@@ -1474,6 +1540,7 @@ impl<S> FoldView<S> {
         crate::apply_layout_update(document, update, &mut self.heights, &mut self.checkpoints)?;
         let mut dirty = None;
         self.refresh_paragraph(document, &mut dirty);
+        self.refresh_source_tail(document, &mut dirty);
         // Six root sections, one code/math/table, and at most one disjoint range
         // containing the sole incomplete table row. No historical range scan.
         debug_assert!(self.state.growing.len() <= 8);

@@ -962,3 +962,1203 @@ fn source_and_closed_literal_share_eof_without_leaving_a_stale_tile_mask() {
         assert_eq!(view.range_visits(), before);
     }
 }
+
+fn complete_source_task(
+    doc: &Document,
+    view: &mut FoldView,
+    mut task: SourceFoldRegistration,
+) -> Result<FoldId, LayoutError> {
+    for _ in 0..doc.container_count() * 4 + doc.headings().entries().len() * 2 + 20 {
+        let p = task.advance(doc, view, &mut one())?;
+        if let Some(id) = p.id {
+            return Ok(id);
+        }
+    }
+    panic!("source task stalled")
+}
+fn tail(doc: &Document, view: &mut FoldView, start: usize) -> FoldId {
+    let task = SourceFoldRegistration::tail(doc, view, start).unwrap();
+    complete_source_task(doc, view, task).unwrap()
+}
+fn seal(doc: &Document, view: &mut FoldView, id: FoldId) -> Result<FoldId, LayoutError> {
+    let FoldId::Source(id) = id else { panic!() };
+    let task = SourceFoldRegistration::seal_tail(doc, view, id)?;
+    complete_source_task(doc, view, task)
+}
+
+#[test]
+fn root_tail_grows_real_registry_mask_and_finishes_with_same_id() {
+    let mut doc = Document::new();
+    doc.append("lead 中🙂\n\n").unwrap();
+    let mut view = FoldView::new(&doc, 3).unwrap();
+    let id = tail(&doc, &mut view, 5);
+    assert!(!view.is_collapsed(id));
+    view.set_collapsed(&doc, id, true).unwrap();
+    let old_eof = FoldAnchor::new(&doc, doc.source().len()).unwrap();
+    for chunk in ["# H\n", "> body\n", "x\n"].into_iter().chain(["z"; 300]) {
+        let update = doc.append(chunk).unwrap();
+        view.apply(&doc, &update).unwrap();
+        let c = view.fold_candidate(&doc, id).unwrap().unwrap();
+        assert_eq!(c.source, Span::new(5, doc.source().len()));
+        assert_eq!(c.hidden, c.source);
+        assert_eq!(c.summary, Some(c.source));
+        assert_eq!(c.parent, None);
+        assert!(c.open);
+        assert_eq!(view.source_fold_at(&doc, c.source.end).unwrap(), None);
+        let expected = verify(&doc, &view, &[c]);
+        assert_eq!(render(&doc, &mut view, true).text, expected);
+    }
+    assert_eq!(
+        old_eof
+            .resolve(&doc, &view, 10, &mut one())
+            .unwrap()
+            .unwrap()
+            .hidden_by,
+        Some(id)
+    );
+    let update = doc.finish();
+    view.apply(&doc, &update).unwrap();
+    let c = view.fold_candidate(&doc, id).unwrap().unwrap();
+    assert!(!c.open);
+    assert_eq!(c.source.end, doc.source().len());
+    assert_eq!(view.source_fold_count(), 1);
+    assert_eq!(render(&doc, &mut view, true).placeholders.len(), 1);
+}
+
+#[test]
+fn root_tail_seals_same_id_and_refreshes_fixed_eof_tile_once() {
+    for size in [240, 255, 256, 257, 800] {
+        let mut doc = Document::new();
+        doc.append(&format!("{}\n\n", "x".repeat(size))).unwrap();
+        let mut view = FoldView::new(&doc, 2).unwrap();
+        let id = tail(&doc, &mut view, 5);
+        view.set_collapsed(&doc, id, true).unwrap();
+        let end = doc.source().len();
+        let version = view.version();
+        assert_eq!(seal(&doc, &mut view, id), Ok(id));
+        assert_eq!(view.version(), version + 1);
+        assert!(!view.fold_candidate(&doc, id).unwrap().unwrap().open);
+        assert_eq!(seal(&doc, &mut view, id), Err(LayoutError::InvalidRange));
+        let before = view.range_visits();
+        let update = doc.append("🙂 new\n\n").unwrap();
+        view.apply(&doc, &update).unwrap();
+        assert_eq!(view.range_visits() - before, 1);
+        let c = view.fold_candidate(&doc, id).unwrap().unwrap();
+        assert_eq!(c.source.end, end);
+        assert_eq!(hidden(&doc, &view, end), None);
+        let expected = verify(&doc, &view, &[c]);
+        assert_eq!(render(&doc, &mut view, true).text, expected);
+        let before = view.range_visits();
+        let update = doc.append("more").unwrap();
+        view.apply(&doc, &update).unwrap();
+        assert_eq!(view.range_visits(), before);
+    }
+}
+
+// Parser snapshots are typed public API values from a separate, unfolded
+// document receiving exactly the same chunks. Expected output is never written.
+fn root_tail_model(doc: &Document, baseline: &Document, view: &mut FoldView, id: FoldId) {
+    let range = Span::new(0, doc.source().len());
+    assert_eq!(doc.source(), baseline.source());
+    assert_eq!(
+        doc.runs_in(range).unwrap().collect::<Vec<_>>(),
+        baseline.runs_in(range).unwrap().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        doc.display_runs_in(range).unwrap().collect::<Vec<_>>(),
+        baseline.display_runs_in(range).unwrap().collect::<Vec<_>>()
+    );
+    let original = syntax(baseline);
+    assert_eq!(syntax(doc), original); // Includes actual syntax parents and IDs.
+    let c = view.fold_candidate(doc, id).unwrap().unwrap();
+    assert_eq!(c.source, Span::new(5, doc.source().len()));
+    assert_eq!(
+        (c.hidden, c.summary, c.parent, c.open),
+        (c.source, Some(c.source), None, !doc.is_finished())
+    );
+    let FoldId::Source(source_id) = id else {
+        panic!()
+    };
+    assert_eq!(view.paragraph_fold_block(doc, source_id).unwrap(), None);
+    assert!(original.iter().all(|s| s.source.start >= 5));
+    let candidates = original.into_iter().chain([c]).collect::<Vec<_>>();
+    let expected = verify(doc, view, &candidates);
+    // Exact point/anchor model, including old EOFs and the half-open current EOF.
+    for at in (0..=doc.source().len()).filter(|&at| doc.source().is_char_boundary(at)) {
+        let expected = candidates
+            .iter()
+            .filter(|s| {
+                view.is_collapsed(s.id)
+                    && view.preview() != Some(s.id)
+                    && s.hidden.range().contains(&at)
+            })
+            .min_by_key(|s| (s.hidden.start, std::cmp::Reverse(s.hidden.end), s.id));
+        assert_eq!(
+            hidden(doc, view, at).map(|s| s.hidden),
+            expected.map(|s| s.hidden)
+        );
+        let a = FoldAnchor::new(doc, at)
+            .unwrap()
+            .resolve(doc, view, 10, &mut one())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            a.target.source,
+            Some(expected.map_or(at, |s| s.hidden.start))
+        );
+        assert_eq!(
+            view.source_fold_at(doc, at).unwrap(),
+            c.source.range().contains(&at).then_some(c)
+        );
+    }
+    assert_eq!(render(doc, view, true).text, expected);
+    let mut window =
+        SourceFoldCandidates::new(doc, view, Span::new(c.source.end - 1, c.source.end)).unwrap();
+    let mut out = Vec::new();
+    assert_eq!(
+        window
+            .advance(doc, view, &mut Budget::new(WorkLimit::default()), &mut out)
+            .unwrap(),
+        Completion::BudgetExhausted
+    );
+    assert!(out.is_empty());
+    let mut budget = one();
+    assert_eq!(
+        window.advance(doc, view, &mut budget, &mut out).unwrap(),
+        Completion::Covered
+    );
+    assert_eq!(out, [c]);
+    assert_eq!(
+        (
+            budget.used().queries,
+            budget.used().objects,
+            budget.used().bytes
+        ),
+        (1, 1, 0)
+    );
+}
+
+// Deliberately linear fixed-range oracle: source/hidden laminarity and future
+// growth crossing, without endpoint lookup or ancestry traversal.
+fn root_tail_can_seal(doc: &Document) -> bool {
+    let span = Span::new(5, doc.source().len());
+    span.end <= doc.source_fold_limit()
+        && syntax(doc).iter().all(|c| {
+            [c.source, c.hidden].into_iter().all(|s| {
+                compatible(span, s) && !(c.open && span.start < s.start && s.start < span.end)
+            })
+        })
+}
+
+#[test]
+fn root_tail_eight_corpora_every_utf8_cut_prefix_eof_and_typed_model() {
+    let corpora = [
+        "# H\n> body\n> ```\n> code\n> ```\n\n$$\nmath\n$$\n",
+        "title\n---\nbody\n",
+        "before\nh|v\n-|-\na|b\n\n",
+        "> multi\n> line\n> ===\n> \n> h|v\n> -|-\n> a|b\n",
+        "[r]: /url\n  \"title\"\n\n[r]\n",
+        "[r]: /url\nnot title\n\n[x](url\n \"a\nb\")\n",
+        "> `a\n> b` &amp; $a\n> b$ [a\n> b](/u)\n",
+        "中🙂\r\n\r\n> h|v\r\n> -|-\r\n> pending🙂",
+    ];
+    for body in corpora {
+        for cut in (0..=body.len()).filter(|&n| body.is_char_boundary(n)) {
+            for prefix_eof in [false, true] {
+                let mut doc = Document::new();
+                let mut baseline = Document::new();
+                for d in [&mut doc, &mut baseline] {
+                    d.append("lead 中🙂\n\n").unwrap();
+                }
+                let mut view = FoldView::new(&doc, 2).unwrap();
+                let id = tail(&doc, &mut view, 5);
+                view.set_collapsed(&doc, id, true).unwrap();
+                let update = doc.append(&body[..cut]).unwrap();
+                baseline.append(&body[..cut]).unwrap();
+                view.apply(&doc, &update).unwrap();
+                root_tail_model(&doc, &baseline, &mut view, id);
+                // Exercise the real seal at every prefix with a fresh view.
+                let mut sealing = FoldView::new(&doc, 2).unwrap();
+                let seal_id = tail(&doc, &mut sealing, 5);
+                let before = sealing.version();
+                let accepted = root_tail_can_seal(&doc);
+                assert_eq!(
+                    seal(&doc, &mut sealing, seal_id).is_ok(),
+                    accepted,
+                    "{body:?} cut={cut}"
+                );
+                assert_eq!(sealing.version(), before + u64::from(accepted));
+                assert_eq!(
+                    sealing.fold_candidate(&doc, seal_id).unwrap().unwrap().open,
+                    !accepted
+                );
+                if !prefix_eof {
+                    let update = doc.append(&body[cut..]).unwrap();
+                    baseline.append(&body[cut..]).unwrap();
+                    view.apply(&doc, &update).unwrap();
+                    view.set_preview(&doc, Some(id), &mut one()).unwrap();
+                    root_tail_model(&doc, &baseline, &mut view, id);
+                    view.set_preview(&doc, None, &mut one()).unwrap();
+                }
+                let update = doc.finish();
+                baseline.finish();
+                view.apply(&doc, &update).unwrap();
+                root_tail_model(&doc, &baseline, &mut view, id);
+            }
+        }
+    }
+}
+
+#[test]
+fn root_tail_rejects_unstable_utf8_and_all_syntax_host_envelopes() {
+    for text in ["", "pending", "title\n", "h|v\n", "[r]: /u\n", "> title\n"] {
+        let mut doc = Document::new();
+        doc.append(text).unwrap();
+        let view = FoldView::new(&doc, 1).unwrap();
+        for start in [doc.source_fold_limit(), doc.source().len(), usize::MAX] {
+            assert!(matches!(
+                SourceFoldRegistration::tail(&doc, &view, start),
+                Err(LayoutError::InvalidRange)
+            ));
+        }
+    }
+    for body in [
+        "# H\nbody\n\n",
+        "> body\n> \n",
+        "```\ncode\n```\n\n",
+        "$$\nmath\n$$\n\n",
+        "h|v\n-|-\na|b\n\n",
+        "- body\n\n",
+    ] {
+        let mut doc = Document::new();
+        doc.append(&format!("lead 中🙂\n\n{body}")).unwrap();
+        let mut view = FoldView::new(&doc, 1).unwrap();
+        for c in syntax(&doc) {
+            for start in [
+                c.source.start,
+                c.source.end.saturating_sub(1),
+                c.hidden.start,
+            ] {
+                if start >= doc.source_fold_limit() || !doc.source().is_char_boundary(start) {
+                    continue;
+                }
+                if doc.fold_candidate_at(start).is_none() {
+                    continue;
+                }
+                let mut task = SourceFoldRegistration::tail(&doc, &view, start).unwrap();
+                let before = view.version();
+                let mut budget = one();
+                assert_eq!(
+                    task.advance(&doc, &mut view, &mut budget),
+                    Err(LayoutError::InvalidRange)
+                );
+                assert_eq!(budget.used(), one().remaining());
+                assert_eq!((view.version(), view.source_fold_count()), (before, 0));
+            }
+        }
+        for start in [6, 7, 9, 10, 11] {
+            // Inside 中 or 🙂.
+            assert!(!doc.source().is_char_boundary(start));
+            assert!(matches!(
+                SourceFoldRegistration::tail(&doc, &view, start),
+                Err(LayoutError::InvalidRange)
+            ));
+        }
+        doc.finish();
+        let view = FoldView::new(&doc, 1).unwrap();
+        assert!(matches!(
+            SourceFoldRegistration::tail(&doc, &view, 5),
+            Err(LayoutError::InvalidRange)
+        ));
+    }
+}
+
+#[test]
+fn root_tail_shared_budget_registration_and_conditional_seal_are_atomic() {
+    for amount in [0, 1, 6] {
+        let mut doc = Document::new();
+        doc.append("lead 中🙂\n\n").unwrap();
+        let mut view = FoldView::new(&doc, 2).unwrap();
+        let before = view.version();
+        let mut task = SourceFoldRegistration::tail(&doc, &view, 5).unwrap();
+        for limit in [
+            WorkLimit::default(),
+            WorkLimit {
+                queries: 6,
+                ..Default::default()
+            },
+            WorkLimit {
+                objects: 6,
+                ..Default::default()
+            },
+        ] {
+            let mut b = Budget::new(limit);
+            assert_eq!(
+                task.advance(&doc, &mut view, &mut b).unwrap().completion,
+                Completion::BudgetExhausted
+            );
+            assert_eq!(b.used(), WorkLimit::default());
+            assert_eq!((view.version(), view.source_fold_count()), (before, 0));
+        }
+        let mut b = Budget::new(WorkLimit {
+            queries: amount,
+            objects: amount,
+            ..Default::default()
+        });
+        let p = task.advance(&doc, &mut view, &mut b).unwrap();
+        assert_eq!(b.used().queries, amount.min(2));
+        assert_eq!(b.used().objects, amount.min(2));
+        if amount < 2 {
+            assert_eq!(view.source_fold_count(), 0);
+        }
+        let id = if let Some(id) = p.id {
+            id
+        } else {
+            complete_source_task(&doc, &mut view, task).unwrap()
+        };
+        view.set_collapsed(&doc, id, true).unwrap();
+        view.set_preview(&doc, Some(id), &mut one()).unwrap();
+        let FoldId::Source(sid) = id else { panic!() };
+        let before = view.version();
+        let mut seal_task = SourceFoldRegistration::seal_tail(&doc, &view, sid).unwrap();
+        let mut b = Budget::new(WorkLimit {
+            queries: 6,
+            objects: 6,
+            ..Default::default()
+        });
+        let p = seal_task.advance(&doc, &mut view, &mut b).unwrap();
+        assert_eq!(p.id, Some(id));
+        assert_eq!(
+            (b.used().queries, b.used().objects, b.used().bytes),
+            (5, 5, 0)
+        );
+        assert_eq!(view.version(), before + 1);
+        assert_eq!(view.preview(), Some(id));
+        assert!(view.is_collapsed(id));
+        // The remaining shared frame can perform exactly one anchor operation.
+        assert!(FoldAnchor::new(&doc, 6).unwrap_err() == LayoutError::InvalidRange);
+        assert!(
+            FoldAnchor::new(&doc, 5)
+                .unwrap()
+                .resolve(&doc, &view, 10, &mut b)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(b.used().queries, 6);
+        assert_eq!(
+            view.set_preview(&doc, None, &mut b).unwrap().completion,
+            Completion::BudgetExhausted
+        );
+        view.set_preview(&doc, None, &mut one()).unwrap();
+        assert_eq!(hidden(&doc, &view, 5).unwrap().id, id);
+    }
+    // Stable EOF is necessary but not sufficient: an open heading inside the
+    // tail can cross a fixed end on future append. Fail after paid validation.
+    let mut doc = Document::new();
+    doc.append("lead text\n\n").unwrap();
+    let mut view = FoldView::new(&doc, 2).unwrap();
+    let id = tail(&doc, &mut view, 5);
+    for suffix in ["pending", "\n\n# H\n"] {
+        let update = doc.append(suffix).unwrap();
+        view.apply(&doc, &update).unwrap();
+        let before = (
+            view.version(),
+            view.heights().mutation_visits(),
+            view.fold_candidate(&doc, id).unwrap(),
+        );
+        let result = seal(&doc, &mut view, id);
+        assert_eq!(result, Err(LayoutError::InvalidRange));
+        assert_eq!(
+            (
+                view.version(),
+                view.heights().mutation_visits(),
+                view.fold_candidate(&doc, id).unwrap()
+            ),
+            before
+        );
+    }
+}
+
+#[test]
+fn root_tail_future_syntax_rows_defaults_batches_and_preview_keep_overlay_parents() {
+    let mut doc = Document::new();
+    doc.append("lead text\n\n").unwrap();
+    let mut view = FoldView::new(&doc, 2).unwrap();
+    let id = tail(&doc, &mut view, 5);
+    view.set_defaults(FoldDefaults {
+        heading_levels: [true; 6],
+        code: true,
+        math: true,
+        table: true,
+        container_depth: Some(1),
+        ..Default::default()
+    });
+    let mut other = FoldView::new(&doc, 2).unwrap();
+    let other_id = tail(&doc, &mut other, 5);
+    assert_ne!(id, other_id);
+    assert_eq!(other.fold_candidate(&doc, id).unwrap(), None);
+    let update = doc
+        .append("# H\nintro\n> body\n> ```\n> code\n> ```\n> \n> h|v\n> -|-\n> a|b\n> c|d")
+        .unwrap();
+    view.apply(&doc, &update).unwrap();
+    other.apply(&doc, &update).unwrap();
+    let mut all = syntax(&doc);
+    assert!(all.iter().all(|s| view.is_collapsed(s.id)));
+    let table = all
+        .iter()
+        .find_map(|s| {
+            if let FoldId::Table(t) = s.id {
+                Some(t)
+            } else {
+                None
+            }
+        })
+        .unwrap();
+    // Complete registered rows keep their Table parent inside the overlay.
+    let rows = view
+        .insert_table_rows(&doc, table, 1..doc.table(table).unwrap().rows().len())
+        .unwrap();
+    let row = view.fold_candidate(&doc, rows).unwrap().unwrap();
+    assert_eq!(row.parent, Some(FoldId::Table(table)));
+    all.push(row);
+    let parents: Vec<_> = all.iter().map(|c| (c.id, c.parent)).collect();
+    view.set_collapsed(&doc, rows, true).unwrap();
+    for target in [id, FoldId::Heading(HeadingId(0)), rows] {
+        batch(&doc, &mut view, FoldBatchAction::Focus { target });
+        let target_c = view.fold_candidate(&doc, target).unwrap().unwrap();
+        for c in all
+            .iter()
+            .copied()
+            .chain([view.fold_candidate(&doc, id).unwrap().unwrap()])
+        {
+            let ancestor = c.id == target
+                || (contains(c.source, target_c.source) && c.source != target_c.source);
+            assert_eq!(
+                view.is_collapsed(c.id),
+                !ancestor,
+                "focus {target:?} candidate {c:?}"
+            );
+        }
+        let c = view.fold_candidate(&doc, id).unwrap().unwrap();
+        let candidates = all.iter().copied().chain([c]).collect::<Vec<_>>();
+        let expected = verify(&doc, &view, &candidates);
+        assert_eq!(render(&doc, &mut view, true).text, expected);
+    }
+    batch(
+        &doc,
+        &mut view,
+        FoldBatchAction::Subtree {
+            root: id,
+            collapsed: false,
+        },
+    );
+    assert!(all.iter().all(|c| !view.is_collapsed(c.id)));
+    batch(
+        &doc,
+        &mut view,
+        FoldBatchAction::Siblings {
+            target: id,
+            collapsed: true,
+        },
+    );
+    for c in &all {
+        assert_eq!(view.is_collapsed(c.id), c.parent.is_none());
+    }
+    for (candidate, parent) in parents {
+        assert_eq!(
+            view.fold_candidate(&doc, candidate)
+                .unwrap()
+                .unwrap()
+                .parent,
+            parent
+        );
+    }
+    view.set_collapsed(&doc, id, true).unwrap();
+    view.set_preview(&doc, Some(id), &mut one()).unwrap();
+    assert!(view.is_collapsed(id));
+    assert!(hidden(&doc, &view, doc.source().find("body").unwrap()).is_some()); // inner heading still collapsed
+    view.set_collapsed(&doc, id, false).unwrap();
+    view.reset(3).unwrap();
+    assert_eq!(view.preview(), Some(id));
+    let update = doc.append("> more\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    other.apply(&doc, &update).unwrap();
+    assert_eq!(
+        view.fold_candidate(&doc, id).unwrap().unwrap().source.end,
+        doc.source().len()
+    );
+    let update = doc.finish();
+    view.apply(&doc, &update).unwrap();
+    other.apply(&doc, &update).unwrap();
+    view.set_preview(&doc, None, &mut one()).unwrap();
+    assert!(!view.is_collapsed(id));
+    assert!(!other.is_collapsed(other_id));
+    view.set_collapsed(&doc, id, true).unwrap();
+    view.set_preview(&doc, Some(id), &mut one()).unwrap();
+    remove(&doc, &mut view, id);
+    assert_eq!(view.preview(), None);
+    assert_eq!(view.fold_candidate(&doc, id).unwrap(), None);
+    assert!(!view.is_collapsed(id));
+    assert_eq!(view.source_fold_count(), 0);
+}
+
+#[test]
+fn root_tail_overlap_all_source_modes_both_orders_and_auto_recovery() {
+    for preview in [false, true] {
+        let mut doc = Document::new();
+        doc.append("lead text\n\nsecond body\n\n> closed\n> \n> open\n")
+            .unwrap();
+        let mut view = FoldView::new(&doc, 2).unwrap();
+        let id = tail(&doc, &mut view, 5);
+        if preview {
+            view.set_preview(&doc, Some(id), &mut one()).unwrap();
+        }
+        let head = register(&doc, &mut view, Span::new(0, 4)).unwrap();
+        assert_ne!(head, id);
+        assert!(matches!(
+            SourceFoldRegistration::tail(&doc, &view, 5),
+            Err(LayoutError::InvalidRange)
+        ));
+        assert!(matches!(
+            SourceFoldRegistration::new(&doc, &view, Span::new(6, 8)),
+            Err(LayoutError::InvalidRange)
+        ));
+        assert!(matches!(
+            SourceFoldRegistration::paragraph(&doc, &view, BlockId(1), 1),
+            Err(LayoutError::InvalidRange)
+        ));
+        let first = doc
+            .blocks()
+            .iter()
+            .enumerate()
+            .find(|(_, b)| {
+                b.container.is_some() && b.source.start == doc.source().find("> closed").unwrap()
+            })
+            .map(|(i, _)| BlockId(i))
+            .unwrap();
+        assert!(matches!(
+            SourceFoldRegistration::container_paragraph(&doc, &view, first, 1),
+            Err(LayoutError::InvalidRange)
+        ));
+        view.set_defaults(FoldDefaults {
+            paragraphs: Some(ParagraphFoldPolicy {
+                min_bytes: 0,
+                preview_bytes: 1,
+            }),
+            ..Default::default()
+        });
+        let mut auto =
+            ParagraphAutoFold::new(&doc, &view, Span::new(0, doc.source().len())).unwrap();
+        let progress = loop {
+            let p = auto.advance(&doc, &mut view, &mut one()).unwrap();
+            if p.completion == Completion::Covered {
+                break p;
+            }
+        };
+        assert_eq!(progress.registered, 0);
+        assert!(progress.skipped >= 2);
+        remove(&doc, &mut view, id);
+        let mut auto =
+            ParagraphAutoFold::new(&doc, &view, Span::new(0, doc.source().len())).unwrap();
+        let progress = loop {
+            let p = auto.advance(&doc, &mut view, &mut one()).unwrap();
+            if p.completion == Completion::Covered {
+                break p;
+            }
+        };
+        assert!(progress.registered >= 2); // removing tail added no paragraph exclusions
+        assert!(matches!(
+            SourceFoldRegistration::tail(&doc, &view, 5),
+            Err(LayoutError::InvalidRange)
+        ));
+    }
+    for mode in 0..4 {
+        let mut doc = Document::new();
+        doc.append("lead text\n\nsecond body\n").unwrap();
+        let mut view = FoldView::new(&doc, 1).unwrap();
+        let task = match mode {
+            0 => SourceFoldRegistration::new(&doc, &view, Span::new(6, 8)),
+            1 => SourceFoldRegistration::paragraph(&doc, &view, BlockId(0), 1),
+            2 => SourceFoldRegistration::open_paragraph(
+                &doc,
+                &view,
+                doc.block_at(doc.source().find("second body").unwrap())
+                    .unwrap(),
+                1,
+            ),
+            _ => {
+                let u = doc.append("\n> body\n").unwrap();
+                view.apply(&doc, &u).unwrap();
+                let b = doc.block_at(doc.source().find("> body").unwrap()).unwrap();
+                SourceFoldRegistration::container_paragraph(&doc, &view, b, 1)
+            }
+        }
+        .unwrap_or_else(|e| panic!("mode {mode}: {e:?}"));
+        let id = complete_source_task(&doc, &mut view, task).unwrap();
+        view.set_preview(&doc, Some(id), &mut one()).unwrap();
+        assert!(matches!(
+            SourceFoldRegistration::tail(&doc, &view, 5),
+            Err(LayoutError::InvalidRange)
+        ));
+    }
+}
+
+#[test]
+fn root_tail_updates_tasks_replay_merged_and_foreign_errors_are_precise() {
+    let mut doc = Document::new();
+    doc.append("lead text\n\n").unwrap();
+    let mut view = FoldView::new(&doc, 2).unwrap();
+    let mut task = SourceFoldRegistration::tail(&doc, &view, 5).unwrap();
+    let mut other = FoldView::new(&doc, 2).unwrap();
+    assert_eq!(
+        task.advance(&doc, &mut other, &mut one()),
+        Err(LayoutError::WrongView)
+    );
+    let foreign = parse("lead text\n\n");
+    assert_eq!(
+        task.advance(&foreign, &mut view, &mut one()),
+        Err(LayoutError::WrongDocument)
+    );
+    assert_eq!(task.advance(&doc, &mut view, &mut one()).unwrap().id, None);
+    view.reset(2).unwrap();
+    assert_eq!(
+        task.advance(&doc, &mut view, &mut one()),
+        Err(LayoutError::StaleContinuation)
+    );
+    let id = tail(&doc, &mut view, 5);
+    let FoldId::Source(sid) = id else { panic!() };
+    assert!(matches!(
+        SourceFoldRegistration::seal_tail(&doc, &other, sid),
+        Err(LayoutError::InvalidRange)
+    ));
+    let mut seal_task = SourceFoldRegistration::seal_tail(&doc, &view, sid).unwrap();
+    let old_version = view.version();
+    let first = doc.append("a").unwrap();
+    assert_eq!(
+        seal_task.advance(&doc, &mut view, &mut one()),
+        Err(LayoutError::StaleContinuation)
+    );
+    assert_eq!(
+        view.fold_candidate(&doc, id),
+        Err(LayoutError::OutOfOrderUpdate)
+    );
+    let second = doc.append("中\n\n").unwrap();
+    assert_eq!(view.apply(&doc, &first), Err(LayoutError::OutOfOrderUpdate));
+    assert_eq!(
+        view.apply(&doc, &second),
+        Err(LayoutError::OutOfOrderUpdate)
+    );
+    assert_eq!(view.version(), old_version);
+    let mut merged = first.clone();
+    merged.merge(second.clone()).unwrap();
+    let before = view.range_visits();
+    view.apply(&doc, &merged).unwrap();
+    assert_eq!(view.range_visits() - before, 1);
+    let frozen = (
+        view.version(),
+        view.range_visits(),
+        view.heights().mutation_visits(),
+    );
+    view.apply(&doc, &merged).unwrap();
+    view.apply(&doc, &second).unwrap();
+    assert_eq!(
+        (
+            view.version(),
+            view.range_visits(),
+            view.heights().mutation_visits()
+        ),
+        frozen
+    );
+    assert_eq!(view.apply(&doc, &first), Err(LayoutError::OutOfOrderUpdate));
+    let mut foreign = Document::new();
+    let update = foreign.append("x").unwrap();
+    assert_eq!(
+        view.apply(&foreign, &update),
+        Err(LayoutError::WrongDocument)
+    );
+    let mut stale = SourceFoldRegistration::seal_tail(&doc, &view, sid).unwrap();
+    view.toggle(&doc, id).unwrap();
+    assert_eq!(
+        stale.advance(&doc, &mut view, &mut one()),
+        Err(LayoutError::StaleContinuation)
+    );
+    remove(&doc, &mut view, id);
+    assert!(matches!(
+        SourceFoldRegistration::seal_tail(&doc, &view, sid),
+        Err(LayoutError::InvalidRange)
+    ));
+    let replacement = tail(&doc, &mut view, 5);
+    assert_ne!(replacement, id);
+    let update = doc.finish();
+    view.apply(&doc, &update).unwrap();
+    assert!(doc.append("x").is_err());
+    let frozen = (view.version(), view.range_visits());
+    let update = doc.finish();
+    view.apply(&doc, &update).unwrap();
+    assert_eq!((view.version(), view.range_visits()), frozen);
+}
+
+#[test]
+fn root_tail_growth_seal_remove_invalidate_layout_dependencies_but_keep_front() {
+    for mutation in 0..3 {
+        let mut doc = Document::new();
+        doc.append(&format!(
+            "{}\n\ntail {}\n\n",
+            "a".repeat(4096),
+            "b".repeat(4096)
+        ))
+        .unwrap();
+        let start = doc.source().find("tail").unwrap() + 5;
+        let mut view = FoldView::new(&doc, 7).unwrap();
+        let id = tail(&doc, &mut view, start);
+        view.set_collapsed(&doc, id, true).unwrap();
+        let owner = doc.tile_at(start).unwrap();
+        view.insert_checkpoint(TileId(0), ()).unwrap();
+        view.insert_checkpoint(owner, ()).unwrap();
+        let front = view
+            .heights()
+            .ticket_from(TileId(1), view.checkpoints(), TileId(0))
+            .unwrap();
+        let ticket = view
+            .heights()
+            .ticket_from(owner, view.checkpoints(), owner)
+            .unwrap();
+        let base = view.heights().base_height(TileId(owner.0 + 1));
+        let key = DependencyKey::capture(&doc, owner, &mut Budget::new(WorkLimit::unlimited()))
+            .unwrap()
+            .unwrap();
+        let mut layout = LayoutPass::folded(&doc, &view, owner, 20).unwrap();
+        let mut window =
+            SourceFoldCandidates::new(&doc, &view, Span::new(start, doc.source().len())).unwrap();
+        let mut batch =
+            FoldBatch::new(&doc, &view, FoldBatchAction::All { collapsed: false }).unwrap();
+        let mut nav = FoldNavigation::new(
+            &doc,
+            &view,
+            &Navigator::new(),
+            NavAction::Source(start + 1),
+            FoldNavigationPolicy::Reveal,
+            20,
+        )
+        .unwrap();
+        match mutation {
+            0 => {
+                let u = doc.append("more\n\n").unwrap();
+                view.apply(&doc, &u).unwrap();
+            }
+            1 => {
+                assert_eq!(seal(&doc, &mut view, id), Ok(id));
+            }
+            _ => remove(&doc, &mut view, id),
+        }
+        assert_eq!(view.measure(ticket, 30), Err(LayoutError::StaleMeasurement));
+        assert_eq!(view.measure(front, 11), Ok(()));
+        assert_eq!(view.checkpoints().get(owner), None);
+        assert_eq!(view.checkpoints().get(TileId(0)), Some(&()));
+        assert_eq!(view.heights().base_height(TileId(owner.0 + 1)), base);
+        assert_eq!(
+            layout.advance_folded(&doc, &mut view, &mut one(), &mut Sink::default()),
+            Err(LayoutError::StaleContinuation)
+        );
+        assert_eq!(
+            window.advance(&doc, &view, &mut one(), &mut Vec::new()),
+            Err(LayoutError::StaleContinuation)
+        );
+        assert_eq!(
+            batch.advance(&doc, &mut view, &mut one()),
+            Err(LayoutError::StaleContinuation)
+        );
+        assert_eq!(
+            nav.advance(&doc, &mut view, &mut one()),
+            Err(LayoutError::StaleContinuation)
+        );
+        // Parser semantic validity cannot substitute for the layout ticket.
+        assert_eq!(
+            key.validate(&doc, &mut one()).unwrap(),
+            CacheValidity::Valid
+        );
+    }
+}
+
+#[test]
+fn root_tail_one_slot_work_is_logarithmic_with_real_history_and_million_byte_tail() {
+    for count in [16, 256, 4096] {
+        let mut doc = Document::new();
+        doc.append(&format!("{}\n\n", "abcdefgh".repeat(count * 2)))
+            .unwrap();
+        let mut view = FoldView::new(&doc, 7).unwrap();
+        for start in (0..count * 16).step_by(16) {
+            let id = register(&doc, &mut view, Span::new(start, start + 8)).unwrap();
+            view.set_collapsed(&doc, id, true).unwrap();
+        }
+        let start = doc.source().len() - 2;
+        let id = tail(&doc, &mut view, start);
+        view.set_collapsed(&doc, id, true).unwrap();
+        for turn in 0..8 {
+            let ranges = view.range_visits();
+            let h = view.heights().mutation_visits();
+            let g = view.heights().dependency_mutation_visits();
+            let c = view.checkpoints().mutation_visits();
+            let update = doc
+                .append(if turn == 0 { "中🙂" } else { "abcdefghi" })
+                .unwrap();
+            let parser = doc.work();
+            view.apply(&doc, &update).unwrap();
+            assert_eq!(doc.work(), parser);
+            assert_eq!(view.range_visits() - ranges, 1);
+            let log = usize::BITS - doc.tile_count().max(1).leading_zeros();
+            assert!(view.heights().mutation_visits() - h <= 64 * u64::from(log + 1));
+            assert!(view.heights().dependency_mutation_visits() - g <= 32 * u64::from(log + 1));
+            assert!(view.checkpoints().mutation_visits() - c <= 32 * u64::from(log + 1));
+            let mut out = Vec::new();
+            let mut cursor =
+                SourceFoldCandidates::new(&doc, &view, Span::new(start + 1, doc.source().len()))
+                    .unwrap();
+            let mut b = one();
+            cursor.advance(&doc, &view, &mut b, &mut out).unwrap();
+            assert_eq!(out.len(), 1);
+            assert_eq!(out[0].id, id);
+            assert_eq!(b.used(), one().remaining());
+        }
+    }
+    let mut doc = Document::new();
+    doc.append("lead text\n\n").unwrap();
+    let mut view = FoldView::new(&doc, 7).unwrap();
+    let id = tail(&doc, &mut view, 5);
+    view.set_collapsed(&doc, id, true).unwrap();
+    let update = doc
+        .append(&format!("{}![image](/u)", "x".repeat(1_000_000)))
+        .unwrap();
+    let parser = doc.work();
+    view.apply(&doc, &update).unwrap();
+    assert_eq!(doc.work(), parser);
+    let c = view.fold_candidate(&doc, id).unwrap().unwrap();
+    let mut b = Budget::new(WorkLimit {
+        queries: 2,
+        objects: 1,
+        bytes: 4,
+        ..Default::default()
+    });
+    assert!(matches!(
+        view.hidden_at(&doc, 900_000, &mut b).unwrap(),
+        FoldLookup::Hidden(_)
+    ));
+    assert_eq!(c.summary_text(&doc, 4, &mut b), Some("text"));
+    assert_eq!(b.used().bytes, 4);
+    let mut pass = LayoutPass::folded(&doc, &view, TileId(0), 20).unwrap();
+    let mut sink = TailSink::default();
+    let mut frames = 0;
+    loop {
+        frames += 1;
+        let mut b = Budget::new(WorkLimit {
+            queries: 1,
+            objects: 1,
+            bytes: 6,
+            tiles: 1,
+            ..Default::default()
+        });
+        if pass
+            .advance_folded(&doc, &mut view, &mut b, &mut sink)
+            .unwrap()
+            == Completion::EndOfDocument
+        {
+            break;
+        }
+        assert!(frames < 20);
+    }
+    assert_eq!(sink.inner.text, "lead [fold]\n");
+    assert_eq!(sink.inner.placeholders.len(), 1);
+    assert_eq!(sink.ends, 0);
+    assert!(sink.inner.bytes <= 5);
+    assert_eq!(sink.inner.objects, 0);
+    assert_eq!(view.heights().base_height(TileId(100)), Some(7));
+    assert_eq!(view.heights().height(TileId(100)), Some(0));
+    // A remote start inside the tail emits neither its owner nor paragraph_end.
+    let mut pass = LayoutPass::folded(&doc, &view, TileId(100), 20).unwrap();
+    let mut remote = TailSink::default();
+    for _ in 0..6 {
+        if pass
+            .advance_folded(&doc, &mut view, &mut one(), &mut remote)
+            .unwrap()
+            == Completion::EndOfDocument
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        (
+            remote.inner.bytes,
+            remote.inner.placeholders.len(),
+            remote.ends
+        ),
+        (0, 0, 0)
+    );
+}
+
+#[derive(Default)]
+struct TailSink {
+    inner: Sink,
+    ends: usize,
+}
+impl LayoutSink for TailSink {
+    fn begin_tile(&mut self, tile: TileId) {
+        self.inner.begin_tile(tile);
+    }
+    fn text(&mut self, run: RenderRun<'_>) {
+        self.inner.text(run);
+    }
+    fn object(&mut self, id: LinkId, object: &LinkInfo) {
+        self.inner.object(id, object);
+    }
+    fn end_tile(&mut self, tile: TileId) -> u64 {
+        self.inner.end_tile(tile)
+    }
+}
+impl FoldLayoutSink for TailSink {
+    fn placeholder(&mut self, p: FoldPlaceholder) {
+        self.inner.placeholder(p);
+    }
+    fn paragraph_end(&mut self, _: BlockId) {
+        self.ends += 1;
+    }
+}
+
+#[test]
+fn root_tail_seal_pays_each_reachable_ancestor_and_resumes_without_mutation() {
+    let mut doc = Document::new();
+    doc.append("lead text\n\n").unwrap();
+    let mut view = FoldView::new(&doc, 1).unwrap();
+    let id = tail(&doc, &mut view, 5);
+    let prefix = ">".repeat(1000);
+    let update = doc
+        .append(&format!("{prefix} ```\n{prefix} code\n{prefix} ```\n"))
+        .unwrap();
+    view.apply(&doc, &update).unwrap();
+    assert_eq!(doc.source_fold_limit(), doc.source().len());
+    let FoldId::Source(sid) = id else { panic!() };
+    let mut task = SourceFoldRegistration::seal_tail(&doc, &view, sid).unwrap();
+    let before = (view.version(), view.fold_candidate(&doc, id).unwrap());
+    let mut steps = 0;
+    let mut visited = 0;
+    loop {
+        let mut b = one();
+        steps += 1;
+        match task.advance(&doc, &mut view, &mut b) {
+            Ok(p) => {
+                assert_eq!(p.completion, Completion::BudgetExhausted);
+                visited = p.visited;
+            }
+            Err(e) => {
+                assert_eq!(e, LayoutError::InvalidRange);
+                break;
+            }
+        }
+        assert_eq!(
+            (view.version(), view.fold_candidate(&doc, id).unwrap()),
+            before
+        );
+        assert!(steps < 10);
+    }
+    // A thousand requested containers is not a thousand reachable ancestors:
+    // the closed code is visited, then the first open container rejects seal.
+    assert_eq!(visited, 1);
+    assert_eq!(steps, 5);
+    assert_eq!(
+        (view.version(), view.fold_candidate(&doc, id).unwrap()),
+        before
+    );
+}
+
+#[test]
+fn root_tail_contains_open_table_rows_in_both_registration_orders() {
+    for tail_first in [false, true] {
+        let mut doc = Document::new();
+        doc.append("lead text\n\n").unwrap();
+        let mut view = FoldView::new(&doc, 2).unwrap();
+        let early = tail_first.then(|| tail(&doc, &mut view, 5));
+        let u = doc
+            .append(&format!("| h |\n| - |\n| {}", "x".repeat(1024)))
+            .unwrap();
+        view.apply(&doc, &u).unwrap();
+        let row_id = FoldId::TableRows(TableRowRange {
+            table: TableId(0),
+            start: 1,
+            end: 2,
+        });
+        assert!(doc.fold_candidate(row_id).unwrap().open);
+        assert_eq!(
+            view.insert_table_rows(&doc, TableId(0), 1..2).unwrap(),
+            row_id
+        );
+        let id = early.unwrap_or_else(|| tail(&doc, &mut view, 5));
+        view.set_collapsed(&doc, id, true).unwrap();
+        view.set_collapsed(&doc, row_id, true).unwrap();
+        for chunk in ["🙂", " |\n", "| next |\n\n"] {
+            let u = doc.append(chunk).unwrap();
+            view.apply(&doc, &u).unwrap();
+            let c = view.fold_candidate(&doc, id).unwrap().unwrap();
+            let r = view.fold_candidate(&doc, row_id).unwrap().unwrap();
+            assert_eq!(r.parent, Some(FoldId::Table(TableId(0))));
+            let expected = verify(&doc, &view, &[c, r]);
+            assert_eq!(render(&doc, &mut view, true).text, expected);
+        }
+    }
+}
+
+#[test]
+fn root_tail_navigation_and_preview_batch_choice_survive_growth_and_seal() {
+    let mut doc = Document::new();
+    doc.append("lead text\n\n").unwrap();
+    let mut view = FoldView::new(&doc, 2).unwrap();
+    let id = tail(&doc, &mut view, 5);
+    let update = doc.append("# H\nbody\n").unwrap();
+    view.apply(&doc, &update).unwrap();
+    view.set_collapsed(&doc, id, true).unwrap();
+    let heading = FoldId::Heading(HeadingId(0));
+    view.set_collapsed(&doc, heading, true).unwrap();
+    for policy in [
+        FoldNavigationPolicy::VisibleOnly,
+        FoldNavigationPolicy::Reveal,
+    ] {
+        let action = if policy == FoldNavigationPolicy::VisibleOnly {
+            NavAction::NextHeading { max_level: 6 }
+        } else {
+            NavAction::Source(doc.source().find("body").unwrap())
+        };
+        let mut nav =
+            FoldNavigation::new(&doc, &view, &Navigator::new(), action, policy, 10).unwrap();
+        for step in 0..10 {
+            let p = nav.advance(&doc, &mut view, &mut one()).unwrap();
+            if p.completion == Completion::Covered {
+                assert_eq!(p.target.is_some(), policy == FoldNavigationPolicy::Reveal);
+                break;
+            }
+            assert!(step < 9);
+        }
+    }
+    assert!(!view.is_collapsed(id));
+    assert!(!view.is_collapsed(heading));
+    // Start a separate stable tail so a successful manual seal can be checked
+    // with both saved choices changed by a batch while preview is active.
+    for collapsed in [false, true] {
+        let mut doc = Document::new();
+        doc.append("lead text\n\n").unwrap();
+        let mut view = FoldView::new(&doc, 2).unwrap();
+        let id = tail(&doc, &mut view, 5);
+        view.set_preview(&doc, Some(id), &mut one()).unwrap();
+        batch(
+            &doc,
+            &mut view,
+            FoldBatchAction::Subtree {
+                root: id,
+                collapsed,
+            },
+        );
+        let u = doc.append("next\n\n").unwrap();
+        view.apply(&doc, &u).unwrap();
+        view.reset(3).unwrap();
+        assert_eq!(view.preview(), Some(id));
+        let end = doc.source().len();
+        assert_eq!(seal(&doc, &mut view, id), Ok(id));
+        let u = doc.append("visible\n\n").unwrap();
+        view.apply(&doc, &u).unwrap();
+        view.set_preview(&doc, None, &mut one()).unwrap();
+        assert_eq!(view.is_collapsed(id), collapsed);
+        assert_eq!(
+            view.fold_candidate(&doc, id).unwrap().unwrap().source.end,
+            end
+        );
+        assert_eq!(hidden(&doc, &view, 5).is_some(), collapsed);
+        assert_eq!(hidden(&doc, &view, end), None);
+    }
+}
+
+#[test]
+fn root_tail_consumers_share_one_frame_budget_without_hidden_allowance() {
+    let mut doc = Document::new();
+    doc.append("lead text\n\n").unwrap();
+    let mut view = FoldView::new(&doc, 2).unwrap();
+    let mut b = Budget::new(WorkLimit {
+        queries: 6,
+        objects: 6,
+        bytes: 6,
+        tiles: 1,
+        ..Default::default()
+    });
+    let mut task = SourceFoldRegistration::tail(&doc, &view, 5).unwrap();
+    let id = task.advance(&doc, &mut view, &mut b).unwrap().id.unwrap();
+    view.set_preview(&doc, Some(id), &mut b).unwrap();
+    let c = view.fold_candidate(&doc, id).unwrap().unwrap();
+    let mut cursor = SourceFoldCandidates::new(&doc, &view, c.source).unwrap();
+    cursor
+        .advance(&doc, &view, &mut b, &mut Vec::new())
+        .unwrap();
+    assert_eq!(
+        view.hidden_at(&doc, 5, &mut b).unwrap(),
+        FoldLookup::Visible
+    );
+    let mut display = DisplayExcerpt::new(
+        &doc,
+        c.source,
+        ExcerptLimits {
+            source_bytes: 6,
+            display_bytes: 6,
+            lines: 2,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        display.next(&doc, &mut b).unwrap(),
+        ExcerptStep::Run(_)
+    ));
+    assert_eq!(b.used().queries, 6);
+    assert_eq!(b.used().bytes, 6);
+    assert_eq!(c.summary_text(&doc, 1, &mut b), None);
+    let before = b.used();
+    let FoldId::Source(sid) = id else { panic!() };
+    let mut seal = SourceFoldRegistration::seal_tail(&doc, &view, sid).unwrap();
+    assert_eq!(
+        seal.advance(&doc, &mut view, &mut b).unwrap().completion,
+        Completion::BudgetExhausted
+    );
+    let mut batch = FoldBatch::new(&doc, &view, FoldBatchAction::All { collapsed: true }).unwrap();
+    assert_eq!(
+        batch.advance(&doc, &mut view, &mut b).unwrap().completion,
+        Completion::BudgetExhausted
+    );
+    let mut nav = FoldNavigation::new(
+        &doc,
+        &view,
+        &Navigator::new(),
+        NavAction::Source(5),
+        FoldNavigationPolicy::Reveal,
+        10,
+    )
+    .unwrap();
+    assert_eq!(
+        nav.advance(&doc, &mut view, &mut b).unwrap().completion,
+        Completion::BudgetExhausted
+    );
+    let mut pass = LayoutPass::folded(&doc, &view, TileId(0), 10).unwrap();
+    assert_eq!(
+        pass.advance_folded(&doc, &mut view, &mut b, &mut Sink::default())
+            .unwrap(),
+        Completion::BudgetExhausted
+    );
+    assert_eq!(b.used(), before);
+    // Dependency discovery must pay even on a hidden owner tile.
+    let u = doc.append("[r](/u)\n\n").unwrap();
+    view.apply(&doc, &u).unwrap();
+    let mut b = Budget::new(WorkLimit {
+        queries: 1,
+        objects: 1,
+        ..Default::default()
+    });
+    assert!(
+        DependencyKey::capture(&doc, TileId(0), &mut b)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(b.used().dependencies, 0);
+    assert_eq!(b.used().queries, 1);
+}
