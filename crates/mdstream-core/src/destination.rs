@@ -6,6 +6,7 @@ pub const MAX_LINK_TITLE_BYTES: usize = 4096;
 pub const MAX_LINK_SUFFIX_BYTES: usize = MAX_DESTINATION_BYTES + MAX_LINK_TITLE_BYTES + 64;
 
 #[derive(Clone, Copy)]
+#[cfg_attr(test, derive(Debug))]
 enum Stage {
     Before,
     Bare(usize),
@@ -27,6 +28,7 @@ pub(crate) enum Progress {
 /// One pass over a destination and optional title, starting after `(` or `:`.
 /// Spans retain escapes verbatim. Root inline suffixes and definition title
 /// bodies have separate opt-ins for physical line endings.
+#[cfg_attr(test, derive(Debug))]
 pub(crate) struct Destination {
     pub start: usize,
     stage: Stage,

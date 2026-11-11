@@ -2709,3 +2709,16 @@ README 当前说明和本任务对应 TODO 已同步，只新增此窄项勾选�
 官方原 Markdown/HTML、生成器、评分 project/helper 均未改；Links 四子集 22/6/2、18/4/5、8/6/0、17/2/0 和 Images 19/1/2 的独立观察及分类保持。README 当前概览/详细/解码/评分/组件换行节已同步，并增加根 title 正文节；TODO 仅新增本窄项完成标记，宽 TODO 保留。
 
 最终验证全在项目 `nix develop` 内运行：`cargo check --workspace --all-targets`；专项 nextest 219/219；`cargo nextest run --workspace --all-targets --no-fail-fast` debug 1721/1721、release 1721/1721；`cargo test --workspace --doc`；`cargo doc --workspace --no-deps`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo fmt --all -- --check`。8 份固定 spec 离线生成器 --check、官方报告、container_tables/link_suffix_headers/stream 三示例、工作计数专项和 diff 检查均通过。初始红测/旧 negative 发现与修正、完整命令/退出码/日志、模型/全 source 差异/冻结源码哈希和 patch 均存 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-024/implementation/`，索引 `commands.jsonl`、`validation.json`；未提交或推送，交父流程独立验收。
+
+
+## 2026-11-11 容器普通段落旧语法资格观察基础交付
+
+仅交付容器普通逻辑段落的无语法变化观察基础。私有 Eligibility 共用现有无发布 Inline 内核，保存首 leaf BlockId 与精确 ContainerId 的唯一活动 key；同 scope 物理续行保留实例，blank、父 scope 返回、兄弟/嵌套、块中断、成功 definition、Setext/table/EOF 沿原生命周期退役。原 root 行为与计费保留，容器 can_isolate/header_crossed 和结构决定仍由真实 publisher 驱动。
+
+三处实际 virtual 生产点和 payload、streaming/eager header、definition fallback、isolate/cancel/confirm/finish 全部镜像；raw cursor 与真实 parsed_end 独立，最后 virtual tab offset 对整组1–3列去重，不猜结构 prefix 或预扫未交付源。SourceOwner/expect 及原 first-cell reuse 保留，observer 不转入 RowParser，不发布/合并 effects 或访问历史引用/公开 ID。新增 Work.container_eligibility_bytes/steps 独立记录实际 raw/virtual 访问与局部状态工作。无新增运行时依赖、unsafe、旧正文/祖先回扫或第二文档，累计 O(n log n) 时间、O(n) 空间。
+
+新增七项测试：6592 份真实 7da6c27 的完整公开快照与全部旧 Work 字段冻结对照；2700 组真实 producer header 路由逐事件核对全部活动语法状态、完整 Destination 状态与 reuse；活动首 leaf/scope 生命周期、definition ledger 零提前观察、fallback 首次消费、virtual-only/整组去重、公开 ParagraphFoldCandidate/原始映射，以及500层/百万字/两万旧引用后1000次单字节追加精确新增1000次观察。闲置 label scratch 仅在无任何消费者时不作为活动语法比较；活动 label 全字节比较。既有 root、Update merge/rebuild、sourceFold/open/fixed/ticket 和共享0/1/6预算测试保持。
+
+验证均在项目 nix develop：check --workspace --all-targets；针对性 nextest 216项；完整 debug/release nextest --workspace --all-targets --no-fail-fast 各1728项；doc75项；cargo doc --workspace --no-deps；clippy --workspace --all-targets -- -D warnings；fmt；7组固定 CommonMark 离线夹具、9个相关 release示例及 git diff --check 全部通过。完整命令/退出状态/日志、模型、全局源码哈希和补丁在 /home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-025/implementation/。静态 oracle 随测试提交候选，不依赖证据目录或自动生成期望。
+
+容器后缀组件 gap、直接 title 正文 LF/CRLF、完整字面失败回退和 prefix 预算反例均未扩展；官方 Markdown/HTML、评分/projection/helper 和历史 fixture 原样保留。TODO 的40项真实未完需求保留。本单元未提交、推送或派生代理，后续 B/C 由父流程另行安排。

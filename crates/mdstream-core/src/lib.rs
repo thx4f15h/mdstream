@@ -148,7 +148,7 @@ pub fn apply_layout_update_with_policy<S>(
 use annotations::Annotations;
 use block::{Fence, Line};
 use deferred::{DeferredFragment, DeferredSources, SourceOwner};
-use inline::{Effects, Inline, Publishing, RootEligibility};
+use inline::{Effects, Eligibility, Inline, Publishing, RootEligibility};
 use references::References;
 use std::fmt;
 
@@ -209,6 +209,13 @@ struct DefinitionTitleCandidate {
     owner: Option<SymbolId>,
 }
 
+// Only the active logical sequence owns this key; ended scopes cannot revive it.
+struct ContainerEligibility {
+    first: BlockId,
+    scope: ContainerId,
+    observer: Eligibility,
+}
+
 #[derive(Default)]
 pub struct Document {
     id: DocumentId,
@@ -240,6 +247,7 @@ pub struct Document {
     display: display::DisplayIndex,
     inline: Inline,
     root_eligibility: Option<RootEligibility>,
+    container_eligibility: Option<ContainerEligibility>,
     atx: Option<block::Atx>,
     // Inline continuity is independent of the physical leaf-block identity.
     container_inline: Option<ContainerId>,
@@ -848,9 +856,42 @@ impl Document {
                 .get_or_insert_with(RootEligibility::default)
                 .feed(&self.source, span, indent, &mut self.work);
         }
+        if let Some(container) = &mut self.container_eligibility {
+            container
+                .observer
+                .feed(&self.source, span, 0, &mut self.work);
+        }
         let mut inline = std::mem::take(&mut self.inline);
         inline.feed(span, &mut self.effects(update));
         self.inline = inline;
+        self.check_container_eligibility();
+    }
+
+    fn check_container_eligibility(&self) {
+        if let Some(container) = &self.container_eligibility {
+            debug_assert!(self.root_eligibility.is_none());
+            debug_assert_eq!(self.container_inline, Some(container.scope));
+            debug_assert_eq!(
+                self.blocks[container.first.0].container,
+                Some(container.scope)
+            );
+            #[cfg(test)]
+            container.observer.assert_same(&self.inline);
+        }
+    }
+
+    // Producers normalize their payload first. The tab's entire semantic group
+    // is a separate event; no offset gap is interpreted as a structural prefix.
+    fn feed_virtual(&mut self, at: usize, columns: u8, update: &mut Update) {
+        if let Some(container) = &mut self.container_eligibility {
+            container
+                .observer
+                .virtual_spaces(&self.source, at, columns, &mut self.work);
+        }
+        let mut inline = std::mem::take(&mut self.inline);
+        inline.virtual_spaces(at, columns, &mut self.effects(update));
+        self.inline = inline;
+        self.check_container_eligibility();
     }
 
     // Observe a deferred eager prefix with the same bounded indentation rule
@@ -878,13 +919,19 @@ impl Document {
         if let Some(root) = &mut self.root_eligibility {
             root.isolate_line(&mut self.work);
         }
-        match mode {
+        if let Some(container) = &mut self.container_eligibility {
+            container.observer.isolate_line(&mut self.work);
+        }
+        let line_break = match mode {
             table::HeaderMode::Ordinary => self.inline.isolate_line(),
             table::HeaderMode::RootDeferred => None,
-        }
+        };
+        self.check_container_eligibility();
+        line_break
     }
 
     fn can_isolate_header(&self) -> bool {
+        self.check_container_eligibility();
         self.root_eligibility.as_ref().map_or_else(
             || self.inline.can_isolate_line(),
             RootEligibility::can_isolate_line,
@@ -892,6 +939,7 @@ impl Document {
     }
 
     fn header_crossed(&self) -> bool {
+        self.check_container_eligibility();
         self.root_eligibility.as_ref().map_or_else(
             || self.inline.header_crossed(),
             RootEligibility::header_crossed,
@@ -902,9 +950,15 @@ impl Document {
         if let Some(root) = &mut self.root_eligibility {
             root.cancel_header(&self.source, &mut self.work);
         }
+        if let Some(container) = &mut self.container_eligibility {
+            container
+                .observer
+                .cancel_header(&self.source, &mut self.work);
+        }
         let mut inline = std::mem::take(&mut self.inline);
         inline.cancel_header(&mut self.effects(update));
         self.inline = inline;
+        self.check_container_eligibility();
     }
 
     fn current_paragraph_tail(&self) -> Option<Span> {
@@ -927,6 +981,7 @@ impl Document {
     }
 
     fn close_current(&mut self, update: &mut Update) {
+        let container = self.container_eligibility.take();
         if let Some(mut root) = self.root_eligibility.take() {
             root.finish(&self.source, &mut self.work);
         }
@@ -941,6 +996,11 @@ impl Document {
         let mut inline = std::mem::take(&mut self.inline);
         inline.finish(&mut self.effects(update));
         self.inline = inline;
+        if let Some(mut container) = container {
+            container.observer.finish(&self.source, &mut self.work);
+            #[cfg(test)]
+            container.observer.assert_same(&self.inline);
+        }
         if let Some(id) = self.current.take() {
             if matches!(self.blocks[id.0].kind, BlockKind::Math { .. }) {
                 // Sealing can change an object consumer's layout even at EOF.
@@ -967,7 +1027,16 @@ impl Document {
             self.close_current(update);
         }
         self.container_inline = self.containers.inner();
-        self.push_block(span, kind, update)
+        let first = self.push_block(span, kind, update);
+        if self.container_eligibility.is_none() {
+            self.container_eligibility = Some(ContainerEligibility {
+                first,
+                scope: self.container_inline.expect("ordinary container scope"),
+                observer: Eligibility::container(),
+            });
+        }
+        self.check_container_eligibility();
+        first
     }
 
     fn extend_container_title(&mut self, block: BlockId, content: Span) {
@@ -1128,13 +1197,7 @@ impl Document {
 
     fn feed_fragment(&mut self, fragment: DeferredFragment, update: &mut Update) {
         if fragment.virtual_spaces > 0 {
-            let mut parser = std::mem::take(&mut self.inline);
-            parser.virtual_spaces(
-                fragment.raw.start - 1,
-                fragment.virtual_spaces,
-                &mut self.effects(update),
-            );
-            self.inline = parser;
+            self.feed_virtual(fragment.raw.start - 1, fragment.virtual_spaces, update);
         }
         self.feed(fragment.raw, update);
     }
@@ -2347,9 +2410,7 @@ impl Document {
         if inline {
             let mut fed = payload;
             if virtual_spaces > 0 {
-                let mut parser = std::mem::take(&mut self.inline);
-                parser.virtual_spaces(payload.start, virtual_spaces, &mut self.effects(update));
-                self.inline = parser;
+                self.feed_virtual(payload.start, virtual_spaces, update);
                 fed.start += 1;
             }
             if self.atx.is_some() {
@@ -2640,9 +2701,7 @@ impl Document {
 
     fn feed_header_content(&mut self, mut content: Span, spaces: u8, update: &mut Update) {
         if spaces > 0 {
-            let mut parser = std::mem::take(&mut self.inline);
-            parser.virtual_spaces(content.start, spaces, &mut self.effects(update));
-            self.inline = parser;
+            self.feed_virtual(content.start, spaces, update);
             content.start += 1;
         }
         self.feed(content, update);
@@ -2672,6 +2731,14 @@ impl Document {
             if let Some(mut root) = self.root_eligibility.take() {
                 let observed_reuse = root.confirm_header(&self.source, &mut self.work);
                 debug_assert_eq!(reuse, observed_reuse);
+            }
+            if let Some(mut container) = self.container_eligibility.take() {
+                let observed_reuse = container
+                    .observer
+                    .confirm_header(&self.source, &mut self.work);
+                debug_assert_eq!(reuse, observed_reuse);
+                #[cfg(test)]
+                container.observer.assert_same(&inline);
             }
             if reuse {
                 Some(inline)

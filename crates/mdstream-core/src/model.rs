@@ -218,6 +218,12 @@ pub struct Work {
     /// Accumulated from fixed local counters after each observer event; no tree
     /// or historical reference visits, and no scans when querying Work.
     pub root_eligibility_steps: u64,
+    /// Additional old-grammar visits for the active ordinary container paragraph.
+    /// Counts consumed raw payload and virtual columns, excluding structural prefix.
+    pub container_eligibility_bytes: u64,
+    /// Local lexer/summary/isolation work, drained after each container observer
+    /// event. Excludes publishing, tree and historical reference work.
+    pub container_eligibility_steps: u64,
     /// Run resolution, opener pushes/pops/rebasing, and isolated cross-line
     /// emphasis/code pairs committed or discarded once when a header resolves.
     /// Includes linear failed-code summary indexing and greedy matching visits.

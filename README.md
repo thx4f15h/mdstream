@@ -3678,7 +3678,7 @@ run 等待后继标量或 EOF 再定长；未完成/失败外层不贡献深度�
 
 ## 根段落旧行内表头资格观察基础
 
-实际普通根段落从首个被消费的 payload 建立私有 `RootEligibility`，通过同一 Inline 状态机和有限无发布 effects 观察原语法。它使用相同的 Unicode label 规范化与接受分支，但不持有公开存储、引用表或树的可变引用，不分配 LinkId/SymbolId，不发布标注、映射或 Update。定义暂存源到普通回流时才观察；容器/lazy/partial-tab、ATX、表格单元格、代码、数学块和脚注不创建该对象。
+实际普通根段落从首个被消费的 payload 建立私有 `RootEligibility`，通过同一 Inline 状态机和有限无发布 effects 观察原语法。它使用相同的 Unicode label 规范化与接受分支，但不持有公开存储、引用表或树的可变引用，不分配 LinkId/SymbolId，不发布标注、映射或 Update。定义暂存源到普通回流时才观察；容器普通段落由下方独立活动 key 的容器观察状态维护，ATX、表格单元格、代码、数学块和脚注不创建普通段落观察器。
 
 观察随原缩进、eager 第一 pipe 截点和 isolate/cancel/confirm/finish 事件推进，游标保证 payload 不重复进入。额外最多一份当前根段落的行内摘要，总时间仍为累计 O(n log n)、空间 O(n)。`Work.root_eligibility_bytes` 单列额外 payload/等价缩进访问，`root_eligibility_steps` 累计该内核的词法、分隔符/查询、flanking、label 规范化和有界候选工作；原 `inline_bytes`、树访问及其它计数保持发布路径含义。普通长正文每个新字节多一次观察访问，历史树/引用不增加遍历。
 
@@ -3715,3 +3715,14 @@ raw title 直接借用连续真实源码，CRLF 计两个 title/suffix 字节；
 `tests/root_title_bodies.rs` 覆盖 1440 组独立成功模型、每 UTF-8 byte/切点/逐前缀 EOF、LF/CRLF/转义/空 title 对照、原始映射、0/1/6 与 query/object 共享预算、稳定身份及首定义、Update/真实 FoldView/open/fixed/ticket/reader、原长度界限、2000 条正文行、百万字尾及两万旧对象。864 个新正文前缀转长容器的结构/身份/映射与真实 `47d95a8` 对照；另 120 个晚 pipe 输入中 88 个全快照保持，12 个新成功、20 个 opaque 失败差异逐条独立断言。原 48+24 表格、1260 scope 及资格 corpus 保持；旧 negative 测试另有 `[r](/url 'a\nb')`、对应图片及长段落后的 `[a](url "two\nlines")` 三个精确新合法输入，均保留原输入并单独断言 metadata/display；不泛化跳过 LF，历史 fixture 不改。官方 Links 四子集 **22/6/2、18/4/5、8/6/0、17/2/0** 与 Images **19/1/2** 的独立观察和分类保持；原官方 Markdown/HTML、生成器、project/helper 不变。容器内后缀/title 正文、完整字面失败回退及其它宽需求继续保留。
 
 复跑：`nix develop -c cargo nextest run --test root_title_bodies --test root_link_suffixes --test root_suffix_scope --test root_eligibility --no-fail-fast`。模型、真实基线、逐例显示差异与完整命令证据见 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-024/implementation/` 和[交付记录](DONE.md#2026-11-11-根段落直接链接与图片的多行-title-正文交付)。
+
+
+## 容器普通段落的旧语法资格观察基础
+
+容器普通逻辑段落共用私有 `Eligibility` 和现有无发布 Inline 内核，以首个物理 leaf 的 BlockId 与精确 ContainerId 记录唯一活动身份。同 scope 续行保持实例；blank、父 scope 返回、兄弟/嵌套、真实块、Setext、成功 definition、table 确认和 EOF 沿原生命周期退出。它不持有公开 ID、引用表或第二棵树，不发布或合并 effects，容器语法及表头结构判断仍由原 publisher 驱动。
+
+三个现场生产者统一镜像实际 raw payload 与整组 virtual spaces；结构 prefix 不进入观察，独立 raw cursor 和最后 virtual tab offset 避免 fallback 重复消费。definition/header 未释放的源不预扫；第一 pipe 截点、isolate/cancel/confirm/finish 与 first-cell reuse 同步，观察器不转入 RowParser。`Work.container_eligibility_bytes` 单列 raw 与 virtual 访问，`container_eligibility_steps` 单列局部词法/摘要/隔离工作；root 和旧发布计数保持原义。仅多当前普通段落的状态，累计 O(n log n) 时间、O(n) 空间，核心仍零运行时依赖、禁止 unsafe。
+
+测试冻结真实 `7da6c27` 的 6592 份完整公开快照与全部旧 Work 字段，覆盖 scope、LF/CRLF、UTF-8 每字节/短输入每前缀 EOF、分类窗口/late pipe、partial tab 与 definition 回流；真实 producer 的 2700 组 header 路由逐事件核对全部活动语法状态和复用结果。另核验公开段落首 leaf/映射、virtual 1–3 列整组去重，以及深路径/百万字/两万旧引用后1000次追加精确新增1000次观察。既有共享预算、Update/Fold/sourceFold 和官方 fixture 验证保留。复跑：`nix develop -c cargo nextest run --lib --test container_eligibility --test root_eligibility --test root_suffix_scope --test root_title_bodies --no-fail-fast`。
+
+本项只交付观察基础，没有启用容器后缀组件 gap 或直接 title 正文 LF/CRLF；完整字面失败回退、prefix 预算反例及其它宽需求继续保留 TODO。验证证据见[交付记录](DONE.md#2026-11-11-容器普通段落旧语法资格观察基础交付)。

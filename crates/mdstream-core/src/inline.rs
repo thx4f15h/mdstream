@@ -554,7 +554,7 @@ impl std::fmt::Debug for Tail {
                 // exercise its pending/invalid/complete branches in both cores.
                 f.debug_tuple("Destination")
                     .field(candidate)
-                    .field(&parser.start)
+                    .field(parser)
                     .finish()
             }
             Self::Label {
@@ -656,16 +656,27 @@ pub(crate) struct Inline {
     header_link_suffix: Option<HeaderLinkSuffix>,
 }
 
-// One fresh core for the active ordinary root paragraph. No document, tree,
+// One fresh core for the active ordinary paragraph. No document, tree,
 // reference store, published IDs or copied old parser state is retained here.
 #[derive(Default)]
-pub(crate) struct RootEligibility {
+pub(crate) struct Eligibility {
     inline: Inline,
     cursor: Option<usize>,
+    last_virtual_tab: Option<usize>,
+    container: bool,
     work: Work,
 }
 
-impl RootEligibility {
+pub(crate) type RootEligibility = Eligibility;
+
+impl Eligibility {
+    pub fn container() -> Self {
+        Self {
+            container: true,
+            ..Self::default()
+        }
+    }
+
     pub fn can_isolate_line(&self) -> bool {
         self.inline.can_isolate_line()
     }
@@ -677,8 +688,7 @@ impl RootEligibility {
     fn account(&mut self, total: &mut Work) {
         let w = std::mem::take(&mut self.work);
         debug_assert_eq!(w.tree_visits, 0);
-        total.root_eligibility_bytes += w.inline_bytes;
-        total.root_eligibility_steps += w.inline_bytes
+        let steps = w.inline_bytes
             + w.delimiter_steps
             + w.delimiter_search_steps
             + w.flanking_steps
@@ -691,6 +701,31 @@ impl RootEligibility {
             + w.math_steps
             + w.footnote_steps
             + w.footnote_label_bytes;
+        if self.container {
+            total.container_eligibility_bytes += w.inline_bytes;
+            total.container_eligibility_steps += steps;
+        } else {
+            total.root_eligibility_bytes += w.inline_bytes;
+            total.root_eligibility_steps += steps;
+        }
+    }
+
+    pub fn virtual_spaces(&mut self, source: &str, at: usize, columns: u8, total: &mut Work) {
+        debug_assert!((1..=3).contains(&columns));
+        if self.last_virtual_tab == Some(at) {
+            return;
+        }
+        debug_assert!(self.last_virtual_tab.is_none_or(|last| last < at));
+        self.inline
+            .virtual_spaces(at, columns, &mut Effects::observing(source, &mut self.work));
+        self.last_virtual_tab = Some(at);
+        self.account(total);
+    }
+
+    #[cfg(test)]
+    pub fn assert_same(&self, publisher: &Inline) {
+        tests::same(publisher, &self.inline, "container event");
+        assert_eq!(self.work, Work::default(), "observer counters drained");
     }
 
     pub fn feed(&mut self, source: &str, span: Span, indent: usize, total: &mut Work) {
@@ -1647,18 +1682,26 @@ mod tests {
 
     use super::*;
 
-    fn same(publisher: &Inline, observer: &Inline, event: &str) {
+    pub(super) fn same(publisher: &Inline, observer: &Inline, event: &str) {
         // Debug derives cover every core field: stack categories/previous links,
         // all 14 heads, raw/Unicode/opaque/label summaries and every header field.
         // The publisher may be configured for root separators; these old-mode
         // differential inputs have not admitted one. Compare all grammar state.
         assert!(!publisher.root_separator_seen);
         assert!(!observer.root_paragraph);
-        assert_eq!(
-            format!("{publisher:?}").replacen("root_paragraph: true", "root_paragraph: false", 1),
-            format!("{observer:?}"),
-            "{event}"
-        );
+        fn syntax(inline: &Inline) -> String {
+            let mut state = format!("{inline:?}");
+            // finish retains bounded label scratch for allocation reuse. Its
+            // dormant bytes/overflow are not grammar state: the next '[' resets
+            // both. Compare them in full whenever any label consumer is live.
+            if inline.bracket.is_none() && inline.tail.is_none() && inline.header_link.is_none() {
+                let start = state.find(", label: ").unwrap();
+                let end = state.find(", label_delimiters: ").unwrap();
+                state.replace_range(start..end, ", label: <dormant scratch>");
+            }
+            state.replacen("root_paragraph: true", "root_paragraph: false", 1)
+        }
+        assert_eq!(syntax(publisher), syntax(observer), "{event}");
         assert_eq!(
             publisher.can_isolate_line(),
             observer.can_isolate_line(),
@@ -1891,6 +1934,143 @@ mod tests {
         ledger.append("failed\n").unwrap();
         ledger.finish();
         assert!(ledger.work().root_eligibility_bytes > 0);
+    }
+
+    #[test]
+    fn container_observer_keeps_first_leaf_and_never_revives_ended_scopes() {
+        fn key(doc: &Document) -> (crate::BlockId, crate::ContainerId) {
+            let active = doc.container_eligibility.as_ref().unwrap();
+            (active.first, active.scope)
+        }
+        for ending in ["\n", "\r\n"] {
+            let mut doc = Document::new();
+            doc.append(&format!("> **a{ending}")).unwrap();
+            let first = key(&doc);
+            doc.append(&format!("> b**{ending}")).unwrap();
+            assert_eq!(key(&doc), first);
+            assert_ne!(doc.current.unwrap(), first.0);
+            doc.append(&format!(">{ending}")).unwrap();
+            assert!(doc.container_eligibility.is_none());
+            doc.append(&format!("> *new{ending}")).unwrap();
+            let next = key(&doc);
+            assert_eq!(next.1, first.1);
+            assert_ne!(next.0, first.0);
+            doc.append(&format!("> > # child{ending}")).unwrap();
+            assert!(doc.container_eligibility.is_none());
+            doc.append(&format!("> back*{ending}")).unwrap();
+            assert_eq!(key(&doc).1, first.1);
+            assert_ne!(key(&doc).0, next.0);
+            doc.finish();
+            assert!(doc.container_eligibility.is_none());
+
+            for boundary in ["# head", "===", "---", "```", "$$", "[^f]: text"] {
+                let mut doc = Document::new();
+                doc.append(&format!("> ordinary{ending}")).unwrap();
+                doc.append(&format!("> {boundary}{ending}")).unwrap();
+                assert!(doc.container_eligibility.is_none(), "{boundary}");
+            }
+        }
+        let mut doc = Document::new();
+        doc.append("- first\n").unwrap();
+        let first = key(&doc);
+        doc.append("- sibling\n").unwrap();
+        assert_ne!(key(&doc).0, first.0);
+        assert_ne!(key(&doc).1, first.1);
+        doc.append("  > nested\n").unwrap();
+        assert_ne!(key(&doc).1, first.1);
+        doc.append("\nroot\n").unwrap();
+        assert!(doc.container_eligibility.is_none());
+        assert!(doc.root_eligibility.is_some());
+    }
+
+    #[test]
+    fn container_observer_waits_for_definition_owner_and_deduplicates_virtual_groups() {
+        for prefix in [">\t", " >\t", "   >\t"] {
+            let mut doc = Document::new();
+            doc.append(&format!("{prefix}[r\n")).unwrap();
+            let observer = &doc.container_eligibility.as_ref().unwrap().observer;
+            assert!(observer.cursor.is_none());
+            assert!(observer.last_virtual_tab.is_none());
+            assert_eq!(doc.work.container_eligibility_bytes, 0);
+            doc.append("> label]: /u\n").unwrap();
+            assert!(doc.container_eligibility.is_none());
+            assert_eq!(doc.work.container_eligibility_bytes, 0);
+
+            let mut fallback = Document::new();
+            fallback.append(&format!("{prefix}[r\n")).unwrap();
+            fallback.append("> bad]\n").unwrap();
+            assert!(fallback.work.container_eligibility_bytes > 0);
+            fallback.finish();
+        }
+        for columns in 1..=3 {
+            let mut observer = Eligibility::container();
+            let mut total = Work::default();
+            let source = "\ta\n\tb";
+            // A virtual-only event cannot consume or advance the raw cursor.
+            observer.virtual_spaces(source, 0, columns, &mut total);
+            assert!(observer.cursor.is_none());
+            observer.virtual_spaces(source, 0, columns, &mut total);
+            assert_eq!(total.container_eligibility_bytes, u64::from(columns));
+            observer.feed(source, Span::new(1, 3), 0, &mut total);
+            observer.virtual_spaces(source, 3, columns, &mut total);
+            observer.feed(source, Span::new(4, 5), 0, &mut total);
+            let once = total;
+            observer.virtual_spaces(source, 3, columns, &mut total);
+            observer.feed(source, Span::new(4, 5), 0, &mut total);
+            assert_eq!(total, once);
+            assert_eq!(
+                total.container_eligibility_bytes,
+                3 + 2 * u64::from(columns)
+            );
+            assert_eq!(total.inline_bytes, 0);
+            assert_eq!(total.root_eligibility_bytes, 0);
+        }
+    }
+
+    #[test]
+    fn actual_container_observer_mirrors_header_reuse_cancel_finish_and_all_live_state() {
+        for prefix in ["> ", ">\t", " >\t", "   >\t", "- "] {
+            let next = if prefix == "- " { "  " } else { prefix };
+            for prior in [
+                "*old", "**old", "_old", "~~old", "`old``a", "$old", "[old *a", "[old", "plain",
+            ] {
+                for row in [
+                    "end* ",
+                    "end*and ",
+                    "end** ",
+                    "end_ ",
+                    "end~~ ",
+                    "end` ",
+                    "end`` ",
+                    "end$ ",
+                    "end][key] ",
+                    "end][] ",
+                    "end](u 't') ",
+                    "end](bad title) ",
+                    "*",
+                    "end`[new] ",
+                    "中🙂 &amp; \\* _a_ ~~b~~ ",
+                ] {
+                    for decision in ["-|-", "wrong"] {
+                        for ending in ["\n", "\r\n"] {
+                            let source = format!(
+                                "{prefix}{prior}{ending}{next}{row}{} |b{ending}{next}{decision}{ending}",
+                                "x".repeat(1025)
+                            );
+                            // These use the real producers, not a second event
+                            // grammar. Each mirrored event compares every live
+                            // Inline field, including all Destination state.
+                            let mut stream = crate::Utf8Document::new();
+                            for chunk in source.as_bytes().chunks(127) {
+                                stream.append(chunk).unwrap();
+                            }
+                            stream.finish();
+                            assert!(stream.document().container_eligibility.is_none());
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
