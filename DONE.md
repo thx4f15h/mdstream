@@ -2799,3 +2799,18 @@ README当前说明、对应TODO及示例同步；完整普通lexer回退、未�
 最终均经项目 `nix develop`：`cargo check --workspace --all-targets`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check` 通过；针对性 nextest 230/230；`cargo nextest run --workspace --all-targets --no-fail-fast` 与 `--release` 各1822/1822；`cargo test --workspace --doc` 76/76，`cargo doc --workspace --no-deps` 通过。13个相关 release 示例通过，包括新增 `source_tail_folding`，以及 source/folding/batch/paragraph/container/auto/rows/budget/display/excerpt/stream。58份既有 fixture 与 HEAD 原字节一致，`git diff --check` 通过。新测试不依赖本机路径或外部证据，不写期望；完整验证前已冻结源码，验证后仅文档同步。
 
 按既有“语法父链 + 手工叠加”语义，已准备勾选“稳定身份与范围查询”供父复审；正式确认仍由父验收提交。宽项“手工范围扩展”保持未勾选：任意未定型/语法宿主内起点、一般手工嵌套、交叉拆分/优先级、重载身份映射及 UI/软换行/媒体仍未完成。
+
+
+## 2026-11-12 每个视图独立折叠状态完整性审计
+
+逐项审计前驱 `d98b33721f61966219121350777ca52a0887d5f3` 的当前实现，未发现需要修复的运行时缺口；本项只更新 README/TODO 并追加本记录，生产代码、既有测试、fixtures/data/scripts 均保持原字节。已准备将“每个视图独立保存状态”唯一 checkbox 勾选，39→38，待父独立复审、接受并提交后正式确认，其它 38 条未完成要求保持。
+
+当前七族 Heading/Code/Math/Table/Container/TableRows/Source 均保存视图本地选择，实际遮蔽与祖先/Source 叠加独立；父收起再展开不改子选择，Subtree 显式递归改写。覆盖根/容器内标题与代码/数学/表格、Quote/List/Item/任务、固定行号，以及 Source 固定、live 根尾、封口、已封闭/开放顶层与容器段落、自动长度注册。语法默认值只初始化后续 new_* 首次识别，Setext/表格晚确认不漏；改变策略不覆盖既有默认/explicit 选择，双视图策略互不影响。Rows 与手工 Source 初始展开，自动段落只在预算任务准入时收起；段落改型/余文消失撤销旧注册，不把选择移交给新语法。Source 保留最内层包含语法父及原 Subtree/Focus 范围语义，不建几何父树。预览中的显式/批量修改更新 saved choice，reset/resize 保留默认值、注册、选择与预览，退出按当前范围恢复。
+
+本项新运行：复用 35 项判别力测试，debug/release 各 35/35（各跳过 1787，非新 full）；仓库外独立区间联合/意愿模型在 debug/release 各 6/6，覆盖七族 11 候选的全部 2048 种选择、跨族 preview/toggle/reset/Subtree、两视图逐 Unicode 字符新增/晚确认与策略切换、各 Source 注册模式及自动段落准入。一次外部 probe 错把跨两个兄弟块的 Source 父预期为首个 Code，按现有“包含整个包络的最内层语法节点”文档修正为内层 Heading；初始源码、失败/修正日志均保留，未改生产实现或旧 oracle。
+
+2001 轮七族操作在 392 tiles 上，高度/依赖/检查点 arena 的节点数、capacity_bytes 和 allocation_calls 在预热后稳定；失效检查点 payload 实测每缓存位置一份，drop 后全部释放，Measurement 为固定 80 字节 Copy 值，未由视图保存历史。另在仓库外逐字复制源码、仅追加两个只读统计 getter，2001 轮注册/移除、toggle/preview/reset 后各实际 map/set 长度、容器/章节 Vec 长度与容量稳定；结束时注册/收起/预览均为空，稀疏索引分别保留 len/capacity=6/8、3/4。保留容量及每位置旧 checkpoint payload 与逐操作历史快照分别记账；未将逻辑 count 代替实际历史容器审计。
+
+此前完整门禁沿用父已接受的 task031 `parent-acceptance.json`：debug/release 各1822、doc76、13个示例；这些是前驱结果，本项未重复 full/doc/check/clippy/fmt/docbuild。项目 `nix develop` 与 `cargo metadata` 定位真实 target；完整 argv/cwd/退出码/唯一 O_EXCL 日志及 SHA、合同映射、最终源文件冻结与受保护文件校验位于 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-032/implementation/` 的 `audit.md`、`validation.json`。实际生产字节未改，零依赖、forbid unsafe、O(n log n)/O(n)、共享 Budget 及无历史/子树初始化扫描保持。
+
+本条覆盖全部已实现折叠候选；媒体/图片详情、显示行数/字素及对象截断、未支持容器语法、一般手工嵌套/交叉/reload 和 UI 仍由原后续条目约束，没有以新空实现或移走需求清空待办。未提交、推送、派生代理或执行下一项。
