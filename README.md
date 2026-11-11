@@ -739,7 +739,7 @@ assert!(!doc.fold_candidate(FoldId::Table(TableId(0))).unwrap().open);
 
 同一时间仍只有一张开放表格，整表折叠、默认收起、临时展开、导航和 TablePreview 直接复用现有接口；折叠父节点为确切作用域的当前章节，若尚无本地标题则为该容器（根作用域无标题时无父节点）。摘要的源码总上限和共享 Budget **包含隐藏容器前缀**；千层前缀也不能免费越过。正文追加只消费新字节，不遍历祖先；长分隔行也只匹配一次有界容器前缀，后续按字节更新状态。空间不复制祖先链或创建空单元格矩阵，全库保持累计 O(n log n)、空间 O(n)。`container_bytes` 包含分隔行优先级检查，`table_candidate_bytes` 统计长分隔行探测字节。
 
-`cargo run -p mdstream-core -r --example container_tables` 演示流式确认、兄弟边界、默认整表收起和小预算摘要。`crates/mdstream-core/tests/container_tables.rs` 与折叠测试覆盖 UTF-8 全切点/逐前缀、独立范围模型、千层/百万字追加、超宽稀疏表、隐藏前缀预算和单占位跳过正文。实际表格排版及行范围折叠仍见 TODO。
+`cargo run -p mdstream-core -r --example container_tables` 演示流式确认、兄弟边界、按源码位置查询最内层表格候选及其所属条目父节点、默认整表收起和小预算摘要。`crates/mdstream-core/tests/container_tables.rs` 与折叠测试覆盖 UTF-8 全切点/逐前缀、独立范围模型、千层/百万字追加、超宽稀疏表、隐藏前缀预算和单占位跳过正文。实际表格排版及行范围折叠仍见 TODO。
 
 ## 表格、任务列表与图片
 

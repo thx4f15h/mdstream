@@ -27,10 +27,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scope = doc.block(table.block).unwrap().container.unwrap();
     assert_eq!(doc.container(scope).unwrap().depth, 3);
     assert_eq!(table.source.end, doc.source().find("> - sibling").unwrap());
-    assert_eq!(
-        doc.fold_candidate(FoldId::Table(id)).unwrap().parent,
-        Some(FoldId::Heading(HeadingId(0)))
-    );
+    // The table is innermost even at the shared table/item opener.
+    let candidate = doc.fold_candidate_at(table.source.start).unwrap();
+    assert_eq!(candidate.id, FoldId::Table(id));
+    // "Data" belongs to the quote scope; this item has no local heading.
+    assert_eq!(candidate.parent, Some(FoldId::Container(scope)));
     let mut preview = TablePreview::new(
         &doc,
         id,
