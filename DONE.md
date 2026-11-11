@@ -2557,3 +2557,9 @@ README 当前说明和本任务对应 TODO 已同步，只新增此窄项勾选�
 - 仅关闭 TODO `494b98378962`「折叠增量与版本」。现有 `FoldChange { version, source }`、单节点/批量版本语义、区间遮蔽和后缀惰性失效已满足要求；旧测量、布局 pass、视口继续位置及后续 checkpoint 验证依赖，无关前缀 ticket 仍可复用。本次无源码/测试改动；README「基础折叠」已有准确说明，保持原文。
 - 复核空 EOF、开放/晚确认边界、UTF-8 分块、稳定身份/源码映射、共享预算及百万字/十亿 tile 工作计数。运行 `nix develop -c cargo nextest run -p mdstream-core --test folding --test fold_batch --test containers --test container_folding --test fold_preview --test checkpoints --test layout --test cache_search --no-fail-fast`，103/103 通过；另选现有 `paragraph_folding` 边界失效测试和 `layout::folding_tests` 数组/十亿 tile 模型，4/4 通过。
 - 逐条契约映射、基线、Cargo target、完整命令/退出状态/日志保存于 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-011/`（`audit.md`、`results.tsv` 及各 `.log`）。文档测试 75/75、文档构建、fmt 及范围/diff 检查通过；按任务单文档审计例外未重跑源码未变的全套。其它折叠与排版 TODO、按键/图标/动画/终端 UI 继续保留。
+
+## 2026-11-11 零高度来源与折叠独立性审计交付
+
+- 仅关闭 TODO `4376f565c4c1`「区分不同来源的零高度」。语法隐藏由 Document 的标注/可绘制索引保留，暂测零值及有效性由基础高度和 `HeightState` 表达，人为折叠由视图选择和独立区间遮蔽表达；`expire` 复活基础零估计时，可见高度仅纳入未遮蔽部分，父折叠移除后仍保留子遮蔽。resize、晚引用和表格列宽变化可重置/过期基础布局，折叠选择不变。本次无源码/测试改动；README「共享预算与增量缓存」「基础折叠」现有说明准确，保持原文。
+- `nix develop -c cargo nextest run -p mdstream-core --test estimates --test folding --test container_folding --test container_sections --test layout --no-fail-fast`：79/79 通过。另选 `layout::folding_tests` 两个数组/十亿 tile 模型、`frame` 七项及 `container_definitions::late_definitions_invalidate_dependencies_and_layout_without_changing_fold_state`：10/10 通过。证据覆盖旧零测量后失效、父子交替折叠/展开、空代码及语法隐藏、同 tile 多边界与占位归属、resize/晚引用/列宽增长、UTF-8 分块/EOF、稳定 ID/源码区间、共享预算及百万字隐藏区跳过。
+- 文档测试 75/75、文档构建、fmt、release `folding` 示例及范围/diff 检查通过。完整命令、退出状态和日志、逐条状态/模型/复杂度映射及最终改动哈希保存于 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-012/`（`commands.jsonl`、`audit.md`、`final.diff`、`final-hashes.json`）。按任务单文档审计例外未重跑源码未变的全套 debug/release/lint；其它折叠边界、开放范围、可见性预算及终端排版/UI TODO 保留。
