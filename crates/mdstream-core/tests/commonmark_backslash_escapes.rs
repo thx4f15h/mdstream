@@ -382,7 +382,7 @@ fn backslash_projection_rejects_unscored_structure_and_styles() {
         "[*em*](url)\n",
         "[`code`](url)\n",
         "*`code`*\n",
-        "[a](<two words>)\n",
+        "[a](<two\twords>)\n",
         "<https://a.test/`x>\n",
         "[^a]\n\n[^a]: footnote\n",
     ] {
@@ -391,6 +391,10 @@ fn backslash_projection_rejects_unscored_structure_and_styles() {
             "accepted unscored input {source:?}"
         );
     }
+    assert_eq!(
+        project(&parse("[a](<two words>)\n")),
+        "<p><a href=\"two%20words\">a</a></p>\n"
+    );
 }
 
 #[test]

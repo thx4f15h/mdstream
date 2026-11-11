@@ -22,8 +22,13 @@ fn escape(ch: char, html: &mut String) {
 }
 
 fn url(ch: char, html: &mut String) {
-    // Keep the chapters' narrow URL scope: only UTF-8 and backslash encoding
-    // are added. Existing percent escapes and URI punctuation pass unchanged.
+    // A decoded U+0020 has the same URI spelling for every destination.
+    if ch == ' ' {
+        html.push_str("%20");
+        return;
+    }
+    // Keep the chapters' other narrow URL rules: UTF-8 and backslash encoding.
+    // Existing percent escapes and URI punctuation pass unchanged.
     assert!(!ch.is_ascii_control() && !ch.is_ascii_whitespace());
     assert!(
         !matches!(ch, '`' | '<' | '>' | '"'),

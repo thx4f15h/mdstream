@@ -326,6 +326,7 @@ impl Containers {
                     crate::block::Line::Blank
                     | crate::block::Line::Heading { .. }
                     | crate::block::Line::Definition { .. }
+                    | crate::block::Line::DefinitionStart { .. }
                     | crate::block::Line::FootnoteDefinition { .. }
                     | crate::block::Line::Setext(_)
                     | crate::block::Line::FenceOpen { .. }
@@ -386,6 +387,87 @@ impl Containers {
         accepted.then_some(prefix.pos)
     }
 
+    /// Match the same explicit path for a reference target continuation. Unlike
+    /// table delimiters, its payload may have four or more indentation columns.
+    /// New containers and leaves that interrupt the candidate's paragraph win.
+    pub fn definition_prefix(
+        &self,
+        source: &str,
+        span: Span,
+        scope: Option<ContainerId>,
+        work: &mut Work,
+    ) -> Option<usize> {
+        let prefix = self
+            .delimiter_cursor(source, span, scope, false, work)
+            .or_else(|_| self.delimiter_cursor(source, span, scope, true, work))
+            .ok()?;
+        // Structural classification admits a complete partial-tab path even
+        // when the original byte-aligned spelling also matched. Keep that
+        // spelling for the target, but do not let it conceal a new structure.
+        let mut structure = if prefix.split_tabs {
+            prefix
+        } else {
+            match self.delimiter_cursor(source, span, scope, true, work) {
+                Ok(structure) => structure,
+                Err((mut missing, Some(Active::List { list, .. }))) if missing.partial => {
+                    // A partial ancestor can expose a sibling before the old
+                    // Item's indentation. That changes identity even for an
+                    // ordered start other than 1. Same-marker empty siblings
+                    // also replace the Item; other empty markers stay lazy.
+                    let inspected = missing.inspected;
+                    missing.complete = true;
+                    let sibling = missing.spaces() <= 3
+                        && missing.marker().is_some_and(|marker| {
+                            marker.end < missing.end
+                                || self.nodes[list.0].kind
+                                    == (ContainerKind::List {
+                                        marker: marker.kind,
+                                    })
+                        });
+                    work.container_bytes += missing.inspected - inspected;
+                    if sibling {
+                        return None;
+                    }
+                    prefix
+                }
+                Err(_) => prefix,
+            }
+        };
+        let inspected = structure.inspected;
+        // The caller only confirms complete bounded physical lines. Matching
+        // the old path alone does not exclude a new nested Quote/List. Reuse
+        // the same marker and paragraph interruption rules as line(), without
+        // mutating containers or classifying any old candidate text.
+        structure.complete = true;
+        let new_container = structure.spaces() <= 3
+            && (structure.quote()
+                || structure
+                    .marker()
+                    .is_some_and(|marker| marker.interrupts_paragraph(true, structure.end)));
+        work.container_bytes += structure.inspected - inspected;
+        if new_container {
+            return None;
+        }
+        // Use the same partial-tab boundary for leaf priority as partial_prefix.
+        // The byte-aligned target cursor can overstate indentation and conceal
+        // a heading, Setext underline, rule or fence within three columns.
+        let payload = Span::new(structure.pos, span.end);
+        work.classified_bytes += payload.len() as u64;
+        matches!(
+            crate::block::classify_indented(
+                source,
+                payload,
+                true,
+                None,
+                true,
+                structure.virtual_spaces as u8,
+                ((structure.column + structure.virtual_spaces) % 4) as u8,
+            ),
+            crate::block::Line::Text | crate::block::Line::Indented { .. }
+        )
+        .then_some(prefix.pos)
+    }
+
     /// A footnote path and its four-column continuation indent may split tabs.
     /// Return the final byte endpoint and its residual columns; failed partial
     /// probes preserve the original path/blank spelling.
@@ -399,8 +481,8 @@ impl Containers {
         for split_tabs in [true, false] {
             let mut prefix = match self.delimiter_cursor(source, span, scope, split_tabs, work) {
                 Ok(prefix) => prefix,
-                Err(true) => continue,
-                Err(false) => return None,
+                Err((prefix, _)) if prefix.partial => continue,
+                Err(_) => return None,
             };
             let start = prefix.pos;
             let inspected = prefix.inspected;
@@ -415,8 +497,8 @@ impl Containers {
         None
     }
 
-    // On a path mismatch, report whether a tab was split: only such probes
-    // can differ from the original spelling and need a fallback path walk.
+    // On a path mismatch, retain the cursor and first missing frame. A split
+    // tab can differ from the old spelling and expose a sibling list marker.
     fn delimiter_cursor<'a>(
         &self,
         source: &'a str,
@@ -424,28 +506,29 @@ impl Containers {
         scope: Option<ContainerId>,
         split_tabs: bool,
         work: &mut Work,
-    ) -> Result<Prefix<'a>, bool> {
-        if scope != self.inner() {
-            return Err(false);
-        }
+    ) -> Result<Prefix<'a>, (Prefix<'a>, Option<Active>)> {
         let mut prefix = Prefix::new(source, span, false);
+        if scope != self.inner() {
+            return Err((prefix, None));
+        }
         prefix.split_tabs = split_tabs;
-        let mut matched = true;
+        let mut missing = None;
         for frame in &self.active {
             work.container_steps += 1;
-            matched = match *frame {
+            let matched = match *frame {
                 Active::Quote(_) => prefix.quote(),
                 Active::List { content_indent, .. } => prefix.consume_indent(content_indent),
             };
             if !matched {
+                missing = Some(*frame);
                 break;
             }
         }
         work.container_bytes += prefix.inspected;
-        if matched {
-            Ok(prefix)
+        if missing.is_some() {
+            Err((prefix, missing))
         } else {
-            Err(prefix.partial)
+            Ok(prefix)
         }
     }
 
@@ -946,8 +1029,7 @@ impl Containers {
                 // bounded lines prove emptiness; the parsed number is already
                 // final even for a long line. Siblings replaced their Item
                 // above, and new containers have a different identity.
-                if ((complete && marker.end == prefix.end)
-                    || marker.number.is_some_and(|number| number != 1))
+                if !marker.interrupts_paragraph(complete, prefix.end)
                     && ((paragraph.is_some() && paragraph == self.inner())
                         || (root_paragraph && self.inner().is_none()))
                 {
@@ -1028,6 +1110,12 @@ struct Marker {
     end: usize,
     column: usize,
     code_spaces: Option<u8>,
+}
+
+impl Marker {
+    fn interrupts_paragraph(&self, complete: bool, end: usize) -> bool {
+        (!complete || self.end < end) && self.number.is_none_or(|number| number == 1)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1195,6 +1283,7 @@ impl<'a> Prefix<'a> {
             crate::block::Line::Text
             | crate::block::Line::Indented { .. }
             | crate::block::Line::Definition { .. } => true,
+            crate::block::Line::DefinitionStart { .. } => true,
             _ => false,
         }
     }
@@ -1281,7 +1370,8 @@ impl<'a> Prefix<'a> {
                     | crate::block::Line::FenceOpen { .. }
                     | crate::block::Line::Heading { .. }
                     | crate::block::Line::FootnoteDefinition { .. } => true,
-                    crate::block::Line::Definition { label, .. } => {
+                    crate::block::Line::Definition { label, .. }
+                    | crate::block::Line::DefinitionStart { label } => {
                         // Match intern's rejection without allocating or
                         // mutating symbols in this speculative prefix probe.
                         probe.inspected += label.len() as u64;

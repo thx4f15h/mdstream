@@ -72,7 +72,7 @@ fn failed_pending_and_window_candidates_keep_existing_boundaries() {
         "[r\\]]: <open",
         "[r\\]]: /a 'open",
         "[r\\]]: /a 'title' extra",
-        "[r\\]]:\n/url",
+        "[r\\]]:\n\n/url",
         "[r\\\n]]: /no",
         "[^r\\]]: /no",
     ] {

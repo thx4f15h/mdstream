@@ -180,14 +180,14 @@ enum Assessment {
 // A changed result must be reviewed, even if it now matches upstream.
 fn assessment(number: usize) -> Assessment {
     match number {
-        192 | 194 | 200 | 202..=207 | 210 | 214..=216 | 218 => Assessment::Supported,
+        192 | 194 | 198 | 200 | 202..=207 | 210 | 214..=216 | 218 => Assessment::Supported,
         193 => Assessment::Unsupported {
-            reason: "multi-line reference definitions are not recognized",
-            observed: "<p>foo:</p>\n<pre><code>  /url  \n       'the title'  \n</code></pre>\n<p>foo</p>\n",
+            reason: "next-line destination is recognized; independent title line remains indented code",
+            observed: "<pre><code>       'the title'  \n</code></pre>\n<p><a href=\"/url\">foo</a></p>\n",
         },
         195 => Assessment::Unsupported {
-            reason: "multi-line reference definitions are not recognized",
-            observed: "<p>Foo bar:\n&lt;my url&gt;\n'title'</p>\n<p>Foo bar</p>\n",
+            reason: "next-line destination is recognized; independent title line remains prose",
+            observed: "<p>'title'</p>\n<p><a href=\"my%20url\">Foo bar</a></p>\n",
         },
         196 => Assessment::Unsupported {
             reason: "multi-line reference definitions are not recognized",
@@ -196,10 +196,6 @@ fn assessment(number: usize) -> Assessment {
         197 => Assessment::DeliberateDifference {
             reason: "unresolved references retain public labels with hidden brackets",
             observed: "<p>foo: /url 'title</p>\n<p>with blank line'</p>\n<p>foo</p>\n",
-        },
-        198 => Assessment::Unsupported {
-            reason: "multi-line reference definitions are not recognized",
-            observed: "<p>foo:\n/url</p>\n<p>foo</p>\n",
         },
         199 => Assessment::DeliberateDifference {
             reason: "unresolved references retain public labels with hidden brackets",
@@ -278,6 +274,38 @@ fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
 }
 
 #[test]
+fn next_line_definition_official_targets_keep_independent_title_lines_outside() {
+    for (number, destination, visible_title) in
+        [(193, "/url", "'the title'"), (195, "my url", "'title'")]
+    {
+        let &(_, markdown, _) = REFERENCE_DEFINITION_CASES
+            .iter()
+            .find(|c| c.0 == number)
+            .unwrap();
+        let doc = parse(markdown);
+        assert_eq!(doc.links().len(), 1);
+        assert_eq!(doc.link_destination(LinkId(0)), Some(destination));
+        assert_eq!(doc.link_title(LinkId(0)), None);
+        assert_eq!(
+            doc.text(doc.references()[0].destination.unwrap()),
+            Some(destination)
+        );
+        let text: String = doc
+            .display_runs_in(Span::new(0, markdown.len()))
+            .unwrap()
+            .filter(|r| !r.style.contains(Style::HIDDEN))
+            .map(|r| r.text)
+            .collect();
+        assert!(text.contains(visible_title));
+    }
+    let &(_, markdown, html) = REFERENCE_DEFINITION_CASES
+        .iter()
+        .find(|c| c.0 == 198)
+        .unwrap();
+    check_case(198, markdown, html, &parse(markdown));
+}
+
+#[test]
 fn pinned_commonmark_reference_definitions_report() {
     assert_eq!(REFERENCE_DEFINITION_CASES.len(), 27);
     let mut counts = [0; 3];
@@ -292,9 +320,9 @@ fn pinned_commonmark_reference_definitions_report() {
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [14, 7, 6]);
+    assert_eq!(counts, [15, 7, 5]);
     eprintln!(
-        "CommonMark 0.31.2 Link reference definitions (192–218): 14 supported, 7 deliberate differences, 6 unsupported; other sections not scored by this test"
+        "CommonMark 0.31.2 Link reference definitions (192–218): 15 supported, 7 deliberate differences, 5 unsupported; other sections not scored by this test"
     );
 }
 

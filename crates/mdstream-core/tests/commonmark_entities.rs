@@ -493,8 +493,7 @@ fn entity_projection_rejects_unscored_structure_styles_and_urls() {
         "- a\n\n- b\n",
         "- a\n  b\n",
         "- ```\n  x\n  ```\n",
-        "[a](<two words>)\n",
-        "[a](/x&#32;y)\n",
+        "[a](/x&#9;y)\n",
         "[a](/x&#10;y)\n",
         "[a](/x&quot;y)\n",
         "[^a]\n\n[^a]: footnote\n",
@@ -503,6 +502,15 @@ fn entity_projection_rejects_unscored_structure_styles_and_urls() {
             std::panic::catch_unwind(|| project(&parse(source))).is_err(),
             "accepted unscored input {source:?}"
         );
+    }
+    for (source, expected) in [
+        (
+            "[a](<two words>)\n",
+            "<p><a href=\"two%20words\">a</a></p>\n",
+        ),
+        ("[a](/x&#32;y)\n", "<p><a href=\"/x%20y\">a</a></p>\n"),
+    ] {
+        assert_eq!(project(&parse(source)), expected);
     }
 }
 

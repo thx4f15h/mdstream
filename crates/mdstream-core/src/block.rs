@@ -31,6 +31,9 @@ pub(crate) enum Line {
         destination: Span,
         title: Option<Span>,
     },
+    DefinitionStart {
+        label: Span,
+    },
     Setext(u8),
     FenceOpen {
         fence: Fence,
@@ -400,6 +403,33 @@ fn definition(source: &str, start: usize, end: usize) -> Option<Line> {
     while a < b && source.as_bytes()[b - 1].is_ascii_whitespace() {
         b -= 1;
     }
+    let label = Span::new(start + 1, start + close);
+    if a == b {
+        return (text[close + 2..].iter().all(|b| matches!(b, b' ' | b'\t'))
+            && label.len() <= crate::references::MAX_LABEL_BYTES
+            && source[label.range()].chars().any(|c| !c.is_whitespace()))
+        .then_some(Line::DefinitionStart { label });
+    }
+    let (destination, title) = definition_target(source, Span::new(a, b))?;
+    Some(Line::Definition {
+        label,
+        destination,
+        title,
+    })
+}
+
+/// A complete bounded physical target line; all offsets borrow original source.
+/// Leading indentation on this continuation is horizontal whitespace, including
+/// four or more columns. Independent title lines remain outside this parser.
+pub(crate) fn definition_target(source: &str, span: Span) -> Option<(Span, Option<Span>)> {
+    let mut a = span.start;
+    let mut b = body_end(source, span);
+    while a < b && matches!(source.as_bytes()[a], b' ' | b'\t') {
+        a += 1;
+    }
+    while a < b && matches!(source.as_bytes()[b - 1], b' ' | b'\t') {
+        b -= 1;
+    }
     if a == b {
         return None;
     }
@@ -416,11 +446,7 @@ fn definition(source: &str, start: usize, end: usize) -> Option<Line> {
     else {
         return None;
     };
-    Some(Line::Definition {
-        label: Span::new(start + 1, start + close),
-        destination,
-        title,
-    })
+    Some((destination, title))
 }
 
 /// Caller has already removed up to three indentation columns and the physical LF.
