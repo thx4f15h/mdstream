@@ -28,13 +28,7 @@ impl Publishing<'_> {
         self.annotate(span, style, link, None);
     }
 
-    fn annotate(
-        &mut self,
-        span: Span,
-        style: Style,
-        link: Option<LinkId>,
-        gate: Option<crate::SymbolId>,
-    ) {
+    fn annotate(&mut self, span: Span, style: Style, link: Option<LinkId>, gate: Option<LinkId>) {
         if span.is_empty() {
             return;
         }
@@ -48,9 +42,9 @@ impl Publishing<'_> {
                 ChangeKind::Structure
             },
         );
-        if let Some(symbol) = gate {
+        if let Some(id) = gate {
             self.annotations
-                .hide_when_resolved(span, symbol, self.update.revision);
+                .hide_when_resolved(span, id, self.update.revision);
         } else {
             self.annotations
                 .apply(span, style, link, self.update.revision);
@@ -71,9 +65,9 @@ impl Publishing<'_> {
         self.mark(span, Style::HIDDEN, None);
     }
 
-    fn marker(&mut self, span: Span, symbol: Option<crate::SymbolId>) {
-        if let Some(symbol) = symbol {
-            self.annotate(span, Style::default(), None, Some(symbol));
+    fn marker(&mut self, span: Span, gate: Option<LinkId>) {
+        if let Some(id) = gate {
+            self.annotate(span, Style::default(), None, Some(id));
         } else {
             self.hide(span);
         }
@@ -114,6 +108,9 @@ impl Publishing<'_> {
             let first = &mut self.references.entries[symbol.0].first_use;
             *first = Some(first.map_or(info.source.start, |old| old.min(info.source.start)));
         }
+        // Only a previously published shortcut supplies the visible-label witness.
+        // Do not infer syntax ownership from the label annotation.
+        let qualified = candidate.link.is_some();
         let id = match candidate.link {
             Some(id) => {
                 self.links[id.0] = target;
@@ -135,7 +132,8 @@ impl Publishing<'_> {
             Some(id),
         );
         let gate = match (target, suffix) {
-            (LinkTarget::Reference(symbol), None) => Some(symbol),
+            (LinkTarget::Reference(_), None) => Some(id),
+            (LinkTarget::Reference(_), Some(_)) if qualified => Some(id),
             _ => None,
         };
         self.marker(Span::new(candidate.open, candidate.open + 1), gate);
@@ -144,7 +142,7 @@ impl Publishing<'_> {
             self.marker(Span::new(image, image + 1), gate);
         }
         if let Some(suffix) = suffix {
-            self.hide(suffix);
+            self.marker(suffix, gate);
         }
         id
     }

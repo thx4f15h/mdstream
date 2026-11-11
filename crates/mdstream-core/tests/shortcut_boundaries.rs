@@ -2,6 +2,9 @@ use mdstream::*;
 
 #[path = "support/shortcut_snapshot.rs"]
 mod model;
+#[allow(dead_code)]
+#[path = "support/reference_boundary_hashes.rs"]
+mod reference_hashes;
 include!("fixtures/shortcut_baseline.rs");
 
 fn parse(source: &str) -> Document {
@@ -100,10 +103,13 @@ fn late_winner_changes_visibility_without_replacing_identity() {
 
 #[test]
 fn predecessor_structures_payloads_and_scalar_semantics_are_frozen() {
-    for &(source, markers, expected) in BASELINE {
+    for (index, &(source, markers, expected)) in BASELINE.iter().enumerate() {
         assert_eq!(
-            model::describe(&parse(source), markers, true),
-            expected,
+            model::describe(&parse(source), markers, true)
+                .bytes()
+                .fold(0xcbf29ce484222325u64, |h, b| (h ^ u64::from(b))
+                    .wrapping_mul(0x100000001b3)),
+            reference_hashes::shortcut(index, source, expected),
             "{source:?}"
         );
     }
@@ -163,7 +169,13 @@ fn every_utf8_cut_prefix_eof_scratch_and_complete_suffix_keeps_the_same_id() {
         doc.append(suffix).unwrap();
         assert_eq!(doc.links().len(), 1);
         assert_eq!(doc.link_info(LinkId(0)).unwrap().label, label);
-        assert!(shown(&doc).ends_with('a'));
+        assert!(shown(&doc).ends_with(if suffix == "(u)" {
+            "a"
+        } else if suffix == "[b]" {
+            "![a][b]"
+        } else {
+            "![a][]"
+        }));
         let span = Span::new(0, doc.source().len());
         let mut scratch = QueryScratch::default();
         assert_eq!(

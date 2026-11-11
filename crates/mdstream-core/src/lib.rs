@@ -405,10 +405,12 @@ impl Document {
         if !self.source.is_char_boundary(offset) {
             return None;
         }
-        self.annotations
-            .next_visible_resolving(offset, self.source.len(), |s| {
-                self.references.entries[s.0].destination.is_some()
-            })
+        self.annotations.next_visible_resolving(
+            offset,
+            self.source.len(),
+            &self.references.entries,
+            &self.links,
+        )
     }
 
     /// First text OR drawable object. Unlike next_visible, this cannot skip an
@@ -3070,12 +3072,14 @@ impl<'a> Iterator for Runs<'a> {
             None => (None, self.end),
         };
         let (span, mut first) = self.pending.take().or_else(|| self.marks.next())?;
-        first.style = first.effective_style(&self.document.references.entries);
+        first.style =
+            first.effective_style(&self.document.references.entries, &self.document.links);
         let mut end = span.end.min(limit);
         self.pending = (span.end > end).then_some((span, first));
         while end < limit {
             let (span, mut mark) = self.marks.next()?;
-            mark.style = mark.effective_style(&self.document.references.entries);
+            mark.style =
+                mark.effective_style(&self.document.references.entries, &self.document.links);
             if mark.style != first.style
                 || mark.link != first.link
                 || mark.emphasis_depth != first.emphasis_depth

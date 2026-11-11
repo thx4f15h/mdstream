@@ -264,8 +264,8 @@ fn assessment(number: usize) -> Assessment {
             Assessment::Supported
         }
         545 => Assessment::DeliberateDifference {
-            reason: "raw reference-label spelling is preserved; unresolved full references hide their syntax",
-            observed: "<p>bar</p>\n",
+            reason: "raw reference-label spelling and the opaque unresolved suffix are preserved",
+            observed: "<p>[bar][foo\\!]</p>\n",
         },
         _ => panic!("unclassified upstream example {number}"),
     }

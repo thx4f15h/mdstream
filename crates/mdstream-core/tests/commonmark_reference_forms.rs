@@ -267,11 +267,11 @@ fn assessment(number: usize) -> Assessment {
     match number {
         553..=568 | 570 => Assessment::Supported,
         569 | 571 => Assessment::DeliberateDifference {
-            reason: "an unresolved full reference consumes its suffix and hides brackets; the suffix is not replayed as a new label",
+            reason: "an unresolved full reference preserves its consumed suffix literally; the suffix is not replayed as a new label",
             observed: if number == 569 {
-                "<p>foo<a href=\"/url\">baz</a></p>\n"
+                "<p>[foo][bar]<a href=\"/url\">baz</a></p>\n"
             } else {
-                "<p>foo<a href=\"/url1\">baz</a></p>\n"
+                "<p>[foo][bar]<a href=\"/url1\">baz</a></p>\n"
             },
         },
         _ => panic!("unclassified upstream example {number}"),

@@ -2,6 +2,9 @@ use mdstream::*;
 #[path = "support/container_eligibility_cases.rs"]
 mod corpus;
 #[allow(dead_code)]
+#[path = "support/reference_boundary_hashes.rs"]
+mod reference_hashes;
+#[allow(dead_code)]
 #[path = "support/shortcut_hashes.rs"]
 mod shortcut_hashes;
 #[path = "support/snapshot.rs"]
@@ -66,10 +69,16 @@ fn container_eligibility_preserves_head_snapshots_and_every_old_work_counter() {
                     BASELINE[index]
                 };
                 let expected = (
-                    shortcut_hashes::source(
-                        d.document().source(),
+                    reference_hashes::container(
+                        bytes,
+                        case,
+                        end,
                         bytewise,
-                        shortcut_hashes::container(case, end, bytewise, expected.0),
+                        shortcut_hashes::source(
+                            d.document().source(),
+                            bytewise,
+                            shortcut_hashes::container(case, end, bytewise, expected.0),
+                        ),
                     ),
                     expected.1,
                 );

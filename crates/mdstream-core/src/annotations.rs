@@ -1,4 +1,4 @@
-use crate::{LinkId, Reference, Span, Style, SymbolId};
+use crate::{LinkId, LinkTarget, Reference, Span, Style};
 use std::num::NonZeroUsize;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -7,18 +7,18 @@ pub(crate) struct Mark {
     pub emphasis_depth: usize,
     pub strong_depth: usize,
     pub link: Option<LinkId>,
-    pub conditional_hide: Option<SymbolId>,
+    pub hide_when_target_available: Option<LinkId>,
     pub revision: u64,
     // Several link rewrites may occur in one append/revision.
     serial: u64,
 }
 
 impl Mark {
-    pub fn effective_style(self, references: &[Reference]) -> Style {
+    pub fn effective_style(self, references: &[Reference], links: &[LinkTarget]) -> Style {
         if !self.style.contains(Style::HIDDEN)
-            && self
-                .conditional_hide
-                .is_some_and(|s| references[s.0].destination.is_some())
+            && self.hide_when_target_available.is_some_and(|id| {
+                target_available(id, references, links, &mut VisibilityWork::default())
+            })
         {
             self.style.union(Style::HIDDEN)
         } else {
@@ -28,9 +28,11 @@ impl Mark {
 
     fn merge(self, other: Self) -> Self {
         // Only one published bracket owns any marker byte. Reused first-cell
-        // candidates keep that owner; complete suffixes only add permanent
-        // HIDDEN. Unpublished header observers never install a gate.
-        let conditional_hide = match (self.conditional_hide, other.conditional_hide) {
+        // candidates and qualified reference suffixes keep that stable ID. Unpublished header observers never install a gate.
+        let hide_when_target_available = match (
+            self.hide_when_target_available,
+            other.hide_when_target_available,
+        ) {
             (Some(a), Some(b)) => {
                 assert_eq!(a, b, "overlapping shortcut marker owners");
                 Some(a)
@@ -47,7 +49,7 @@ impl Mark {
             emphasis_depth: self.emphasis_depth + other.emphasis_depth,
             strong_depth: self.strong_depth + other.strong_depth,
             link,
-            conditional_hide,
+            hide_when_target_available,
             revision: self.revision.max(other.revision),
             serial: self.serial.max(other.serial),
         }
@@ -107,11 +109,11 @@ impl Annotations {
         );
     }
 
-    pub fn hide_when_resolved(&mut self, span: Span, symbol: SymbolId, revision: u64) {
+    pub fn hide_when_resolved(&mut self, span: Span, id: LinkId, revision: u64) {
         self.apply_mark(
             span,
             Mark {
-                conditional_hide: Some(symbol),
+                hide_when_target_available: Some(id),
                 revision,
                 ..Mark::default()
             },
@@ -170,23 +172,29 @@ impl Annotations {
 
     #[cfg(test)]
     pub fn next_visible(&self, offset: usize, end: usize) -> Option<usize> {
-        self.next_visible_resolving(offset, end, |_| false)
+        self.next_visible_resolving(offset, end, &[], &[])
     }
 
     pub fn next_visible_resolving(
         &self,
         offset: usize,
         end: usize,
-        mut resolved: impl FnMut(SymbolId) -> bool,
+        references: &[Reference],
+        links: &[LinkTarget],
     ) -> Option<usize> {
-        self.visible_query(offset, end, &mut resolved, &mut VisibilityWork::default())
+        self.visible_query(
+            offset,
+            end,
+            (references, links),
+            &mut VisibilityWork::default(),
+        )
     }
 
     fn visible_query(
         &self,
         offset: usize,
         end: usize,
-        resolved: &mut impl FnMut(SymbolId) -> bool,
+        targets: (&[Reference], &[LinkTarget]),
         work: &mut VisibilityWork,
     ) -> Option<usize> {
         if offset >= end {
@@ -199,7 +207,7 @@ impl Annotations {
             self.root,
             Span::new(0, self.capacity),
             Span::new(offset, end),
-            resolved,
+            targets,
             work,
         )
         .or_else(|| (self.capacity < end).then_some(self.capacity))
@@ -210,7 +218,7 @@ impl Annotations {
         id: usize,
         span: Span,
         query: Span,
-        resolved: &mut impl FnMut(SymbolId) -> bool,
+        targets: (&[Reference], &[LinkTarget]),
         work: &mut VisibilityWork,
     ) -> Option<usize> {
         work.node();
@@ -219,9 +227,9 @@ impl Annotations {
         if self.nodes[id].hidden || offset >= hi || end <= lo {
             return None;
         }
-        if let Some(symbol) = self.nodes[id].tag.conditional_hide {
-            work.symbol();
-            if resolved(symbol) {
+        if let Some(owner) = self.nodes[id].tag.hide_when_target_available {
+            work.gate();
+            if target_available(owner, targets.0, targets.1, work) {
                 return None;
             }
         }
@@ -233,7 +241,7 @@ impl Annotations {
             if offset < stop && start < end {
                 let found = match self.nodes[id].child(side) {
                     Some(child) => {
-                        self.find_visible(child, Span::new(start, stop), query, resolved, work)
+                        self.find_visible(child, Span::new(start, stop), query, targets, work)
                     }
                     None => Some(start.max(offset)),
                 };
@@ -355,6 +363,10 @@ struct VisibilityWork {
     #[cfg(test)]
     nodes: usize,
     #[cfg(test)]
+    gates: usize,
+    #[cfg(test)]
+    links: usize,
+    #[cfg(test)]
     symbols: usize,
 }
 
@@ -365,10 +377,40 @@ impl VisibilityWork {
             self.nodes += 1;
         }
     }
+    fn gate(&mut self) {
+        #[cfg(test)]
+        {
+            self.gates += 1;
+        }
+    }
+    fn link(&mut self) {
+        #[cfg(test)]
+        {
+            self.links += 1;
+        }
+    }
     fn symbol(&mut self) {
         #[cfg(test)]
         {
             self.symbols += 1;
+        }
+    }
+}
+
+// Gate owners follow the object's current target, including same-ID upgrades.
+// Callers short-circuit permanent hiding before entering this predicate.
+fn target_available(
+    id: LinkId,
+    references: &[Reference],
+    links: &[LinkTarget],
+    work: &mut VisibilityWork,
+) -> bool {
+    work.link();
+    match links[id.0] {
+        LinkTarget::Direct(_) | LinkTarget::Email(_) => true,
+        LinkTarget::Reference(symbol) => {
+            work.symbol();
+            references[symbol.0].destination.is_some()
         }
     }
 }
@@ -529,7 +571,7 @@ mod tests {
                         (!doc
                             .annotations
                             .at(at)
-                            .effective_style(&doc.references.entries)
+                            .effective_style(&doc.references.entries, &doc.links)
                             .contains(Style::HIDDEN))
                         .then_some(at)
                     })
@@ -539,7 +581,7 @@ mod tests {
                     let actual = doc.annotations.visible_query(
                         at,
                         doc.source.len(),
-                        &mut |_| true,
+                        (&doc.references.entries, &doc.links),
                         &mut work,
                     );
                     assert_eq!(actual, visible.iter().copied().find(|&p| p >= at));
@@ -559,9 +601,15 @@ mod tests {
         doc.append("\n\n[a]: /u\n").unwrap();
         for at in [0, 2, 6, 70_002, 139_999] {
             let mut work = VisibilityWork::default();
-            doc.annotations
-                .visible_query(at, doc.source.len(), &mut |_| true, &mut work);
-            assert!(work.symbols <= 3);
+            doc.annotations.visible_query(
+                at,
+                doc.source.len(),
+                (&doc.references.entries, &doc.links),
+                &mut work,
+            );
+            assert!(work.gates <= 4 * (doc.source.len().ilog2() as usize + 2));
+            assert_eq!(work.links, work.gates);
+            assert_eq!(work.symbols, work.links);
             assert!(work.nodes <= 12 * (doc.source.len().ilog2() as usize + 2));
         }
     }
@@ -569,35 +617,225 @@ mod tests {
     #[test]
     fn permanent_hiding_masks_gates_and_never_reads_the_old_symbol() {
         let mut tree = Annotations::default();
-        tree.hide_when_resolved(Span::new(1, 2), SymbolId(999), 1);
+        tree.hide_when_resolved(Span::new(1, 2), LinkId(999), 1);
         tree.apply(Span::new(0, 1_000_000), Style::HIDDEN, None, 2);
-        assert_eq!(tree.at(1).effective_style(&[]), Style::HIDDEN);
+        assert_eq!(tree.at(1).effective_style(&[], &[]), Style::HIDDEN);
         let mut work = VisibilityWork::default();
         assert_eq!(
-            tree.visible_query(
-                0,
-                1_000_001,
-                &mut |_| panic!("masked symbol read"),
-                &mut work
-            ),
+            tree.visible_query(0, 1_000_001, (&[], &[]), &mut work),
             Some(1_000_000)
         );
         assert_eq!(work.symbols, 0);
+        assert_eq!(work.gates, 0);
+        assert_eq!(work.links, 0);
         assert!(work.nodes <= 64);
         // No dynamic resolved bit is written into the permanent hidden summary.
         let mut tree = Annotations::default();
-        tree.hide_when_resolved(Span::new(0, 1), SymbolId(0), 1);
-        assert_eq!(tree.next_visible_resolving(0, 2, |_| true), Some(1));
-        assert_eq!(tree.next_visible_resolving(0, 2, |_| false), Some(0));
+        tree.hide_when_resolved(Span::new(0, 1), LinkId(0), 1);
+        assert_eq!(
+            tree.next_visible_resolving(0, 2, &[], &[LinkTarget::Direct(Span::new(0, 0))]),
+            Some(1)
+        );
+        assert_eq!(
+            tree.next_visible_resolving(
+                0,
+                2,
+                &[Reference {
+                    label: "a".into(),
+                    destination: None,
+                    title: None,
+                    revision: 0,
+                    first_use: None
+                }],
+                &[LinkTarget::Reference(crate::SymbolId(0))]
+            ),
+            Some(0)
+        );
         assert!(!tree.nodes[tree.root].hidden);
+    }
+
+    #[test]
+    fn stable_gate_reads_only_current_target_and_direct_never_reads_symbols() {
+        let mut doc = crate::Document::new();
+        doc.append("[a][b]\n\n[a]: /a\n").unwrap();
+        let LinkTarget::Reference(b) = doc.links[0] else {
+            panic!()
+        };
+        let a = crate::SymbolId(0);
+        let mark = doc.annotations.at(0);
+        assert_eq!(mark.hide_when_target_available, Some(LinkId(0)));
+        for target in [
+            LinkTarget::Reference(a),
+            LinkTarget::Reference(b),
+            LinkTarget::Direct(Span::new(0, 0)),
+            LinkTarget::Email(Span::new(0, 0)),
+        ] {
+            let mut work = VisibilityWork::default();
+            let references = if matches!(target, LinkTarget::Reference(_)) {
+                &doc.references.entries[..]
+            } else {
+                &[]
+            };
+            let hidden = target_available(LinkId(0), references, &[target], &mut work);
+            assert_eq!(hidden, target != LinkTarget::Reference(b));
+            assert_eq!(work.links, 1);
+            assert_eq!(
+                work.symbols,
+                usize::from(matches!(target, LinkTarget::Reference(_)))
+            );
+            assert_eq!(
+                mark.effective_style(references, &[target])
+                    .contains(Style::HIDDEN),
+                hidden
+            );
+            assert_eq!(
+                doc.annotations
+                    .next_visible_resolving(0, 6, references, &[target]),
+                Some(usize::from(hidden))
+            );
+        }
+        assert!(!doc.annotations.nodes[doc.annotations.root].hidden);
+        assert_eq!(Mark::default().effective_style(&[], &[]), Style::default());
+    }
+
+    #[test]
+    fn qualified_full_witnesses_and_long_suffixes_bound_all_visibility_lookups() {
+        let labels = [
+            "a", "中🙂", "*a*", "a\\]", "\\\n", "\\\r\n", "` `", "$ $", "** **",
+        ];
+        for prefix in ["", "> ", "- ", "# ", "| "] {
+            for label in labels {
+                let mut doc = crate::Document::new();
+                doc.append(&format!(
+                    "{prefix}[{label}][{}]![{label}][]***\n",
+                    "b".repeat(999)
+                ))
+                .unwrap();
+                doc.finish();
+                for info in &doc.link_info {
+                    assert!(
+                        doc.annotations
+                            .segments(info.label)
+                            .any(|(_, m)| !m.style.contains(Style::HIDDEN))
+                    );
+                }
+                for reference in &mut doc.references.entries {
+                    reference.destination = Some(Span::new(0, 0));
+                }
+                let visible: Vec<_> = doc
+                    .source
+                    .char_indices()
+                    .filter_map(|(at, _)| {
+                        (!doc
+                            .annotations
+                            .at(at)
+                            .effective_style(&doc.references.entries, &doc.links)
+                            .contains(Style::HIDDEN))
+                        .then_some(at)
+                    })
+                    .collect();
+                for (at, _) in doc.source.char_indices() {
+                    let mut work = VisibilityWork::default();
+                    let next = doc.annotations.visible_query(
+                        at,
+                        doc.source.len(),
+                        (&doc.references.entries, &doc.links),
+                        &mut work,
+                    );
+                    assert_eq!(next, visible.iter().copied().find(|&v| v >= at));
+                    let height = doc.source.len().next_power_of_two().ilog2() as usize + 1;
+                    assert!(work.nodes <= 12 * height);
+                    assert!(work.gates <= 4 * height);
+                    assert_eq!((work.links, work.symbols), (work.gates, work.gates));
+                }
+            }
+        }
+        let mut doc = crate::Document::new();
+        let mut source = String::new();
+        for i in 0..20_000 {
+            source.push_str(&format!("[a][b{i}]"));
+        }
+        doc.append(&source).unwrap();
+        doc.append("\n\n").unwrap();
+        doc.append(&"x".repeat(1_000_000)).unwrap();
+        let before = doc.work();
+        for _ in 0..1000 {
+            doc.append("x").unwrap();
+        }
+        assert_eq!(doc.work().inline_bytes - before.inline_bytes, 1000);
+        assert_eq!(doc.work().tree_visits, before.tree_visits);
+        for reference in &mut doc.references.entries {
+            reference.destination = Some(Span::new(0, 0));
+        }
+        assert_eq!(doc.links.len(), 20_000);
+        for info in doc.link_info.iter().step_by(37) {
+            for at in [info.source.start, info.label.end, info.source.end - 1] {
+                let mut work = VisibilityWork::default();
+                let next = doc.annotations.visible_query(
+                    at,
+                    doc.source.len(),
+                    (&doc.references.entries, &doc.links),
+                    &mut work,
+                );
+                assert_eq!(next, doc.next_visible(at));
+                let height = doc.source.len().next_power_of_two().ilog2() as usize + 1;
+                assert!(work.nodes <= 12 * height);
+                assert!(work.gates <= 4 * height);
+                assert_eq!((work.links, work.symbols), (work.gates, work.gates));
+            }
+        }
+        // Nonqualified empty full objects keep permanent aggregation. No target
+        // lookup is allowed even with twenty thousand distinct owners.
+        let mut empty = crate::Document::new();
+        let mut source = String::new();
+        for i in 0..20_000 {
+            source.push_str(&format!("[][b{i}]"));
+        }
+        empty.append(&source).unwrap();
+        empty.finish();
+        let mut work = VisibilityWork::default();
+        assert_eq!(
+            empty
+                .annotations
+                .visible_query(0, source.len(), (&[], &[]), &mut work),
+            None
+        );
+        assert_eq!((work.gates, work.links, work.symbols), (0, 0, 0));
+        assert!(work.nodes <= 64);
+    }
+
+    #[test]
+    fn suffix_range_work_depends_on_tree_height_not_suffix_length_or_999() {
+        for n in [1, 999, 65535, 1_048_575] {
+            let mut tree = Annotations::default();
+            tree.hide_when_resolved(Span::new(0, 1), LinkId(0), 1);
+            tree.hide_when_resolved(Span::new(2, n + 3), LinkId(0), 1);
+            let before = tree.visits;
+            let mut work = VisibilityWork::default();
+            assert_eq!(
+                tree.visible_query(
+                    2,
+                    n + 4,
+                    (&[], &[LinkTarget::Direct(Span::new(0, 0))]),
+                    &mut work
+                ),
+                Some(n + 3)
+            );
+            let height = (n + 4).next_power_of_two().ilog2() as usize + 1;
+            assert!(work.nodes <= 12 * height);
+            assert!(work.gates <= 4 * height);
+            assert_eq!(work.gates, work.links);
+            assert_eq!(work.symbols, 0);
+            assert_eq!(tree.visits, before);
+        }
     }
 
     #[test]
     #[should_panic(expected = "overlapping shortcut marker owners")]
     fn different_marker_owners_are_an_internal_invariant_violation() {
         let mut tree = Annotations::default();
-        tree.hide_when_resolved(Span::new(0, 1), SymbolId(0), 1);
-        tree.hide_when_resolved(Span::new(0, 1), SymbolId(1), 1);
+        tree.hide_when_resolved(Span::new(0, 1), LinkId(0), 1);
+        tree.hide_when_resolved(Span::new(0, 1), LinkId(1), 1);
     }
 
     #[test]
@@ -605,9 +843,7 @@ mod tests {
         type LegacyMark = (Style, usize, usize, Option<LinkId>, u64, u64);
         let mark = std::mem::size_of::<Mark>();
         let frame = std::mem::size_of::<Frame>();
-        assert!(
-            mark <= std::mem::size_of::<LegacyMark>() + std::mem::size_of::<Option<SymbolId>>()
-        );
+        assert!(mark <= std::mem::size_of::<LegacyMark>() + std::mem::size_of::<Option<LinkId>>());
         assert_eq!(
             frame,
             mark + std::mem::size_of::<Span>() + std::mem::size_of::<Option<usize>>()

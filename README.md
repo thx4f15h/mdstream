@@ -3371,7 +3371,7 @@ nix develop -c cargo nextest run --test commonmark_lists
 
 新增 [CommonMark 0.31.2 Links 样例 553–571](https://spec.commonmark.org/0.31.2/#example-553) 的离线评分，共 **19 例：17 支持、2 刻意差异、0 未支持**。覆盖 collapsed/shortcut 引用、标签内样式、转义 opener、相邻括号和直接/full/collapsed 后缀优先级。553–571 与其它三个子集共同覆盖全部官方 Links 样例评分；完整 Links 兼容性继续保留待办。
 
-553–568、570 匹配官方 HTML；564 已由下方[标签左边界隔离](#已发布标签左边界的强调隔离)修复。569/571 保留既有 full 引用后缀立即消费、未定义引用隐藏括号且不重新解析后缀的方言，后续定义仍可解析同一对象，不能据此宣称完整失败回退已实现。
+553–568、570 匹配官方 HTML；564 已由下方[标签左边界隔离](#已发布标签左边界的强调隔离)修复。569/571 仍选择 full 后缀目标且不将已消费后缀重新解析为下一标签；本次合格完整引用现保留未解析的真实括号与后缀，但仍不匹配官方目标选择，分类保持两例刻意差异。
 
 官方输入/HTML 原样固定在 `tests/fixtures/commonmark_reference_forms.rs`，离线生成器 `scripts/generate_commonmark_reference_forms.py` 固定 SHA-256 与章节成员；独立观察不参与输出。投影只读取公开块、对象范围、显示样式和核心目标/title 解码游标，不补括号、不重新解析 Markdown；输出层只做 HTML/URI 编码，未评分结构和叠加行内样式明确拒绝。
 
@@ -3768,8 +3768,19 @@ raw title 直接借用连续真实源码，CRLF 计两个 title/suffix 字节；
 
 已发布的 shortcut Link/Image 在原引用未定义时显示真实 `[]`/`!` 边界；例如 `[*a*]` 显示带强调的 `[a]`，失败后缀 `![a](u '&amp;'&amp;)` 显示 `![a](u '&'&)`。label 内部的样式、深度、LinkId 和源码映射保持。首个获胜定义隐藏原符号的边界，不替换对象或扫描历史使用；duplicate 和仅 title 续行不触发该可见性变化。候选 Image 仍有对象回调，destination 为 None 表示未解析。
 
-私有条件 annotation 与永久 HIDDEN 分开；永久隐藏优先。完整 Direct/full/collapsed 后缀仍在原 ID 上永久隐藏语法，完整引用的旧选择保持。Runs、scratch/display、raw LayoutPass、可见位置查找和基于 display 的搜索/摘要均读取有效样式；SourceSearch 和 raw summary 保留源码。晚定义另发 Visibility，因此 references_affect_size=false 也会使旧测量失效。
+私有条件 annotation 与永久 HIDDEN 分开；永久隐藏优先。条件 owner 现为稳定 LinkId，读取该对象当前目标，已解析 a 升级到未解析 b 时原 marker 可重新显示。Direct 与未先发布合法 shortcut 的完整 full 仍永久隐藏；已有 shortcut 的 full/collapsed 完整升级见下节，引用目标选择保持。Runs、scratch/display、raw LayoutPass、可见位置查找和基于 display 的搜索/摘要均读取有效样式；SourceSearch 和 raw summary 保留源码。晚定义另发 Visibility，因此 references_affect_size=false 也会使旧测量失效。
 
 当前离线统计（支持/刻意差异/未支持）：定义章 **26/1/0**；Links 482–511 **27/1/2**、512–538 **19/3/5**、539–552 **13/1/0**、553–571 **17/2/0**；Images **20/0/2**；实体章 **16/0/1**。以上替代前文各历史交付时的计数。官方输入/HTML、生成器及评分投影不变；full/collapsed 回选、完整失败 lexer、HTML、嵌套图片与其余宽 TODO 仍未交付。
 
-`tests/shortcut_boundaries.rs` 和私有 annotation 回归覆盖真实前驱快照、typed marker/ID/映射、UTF-8/EOF、hard LF/全空格 code/math、微预算、late winner/策略失效、FoldView、百万字追加及两万旧对象。条件标记只占原 marker 的至多三个 ASCII 字节；每个合法 shortcut label 保留 base-visible scalar，配合永久隐藏树汇总使 next_visible 保持 O(log n)。没有新 boundary/uses 索引或旧正文回扫，累计 O(n log n)、空间 O(n)、零运行时依赖和禁止 unsafe 保持。
+`tests/shortcut_boundaries.rs` 和私有 annotation 回归覆盖真实前驱快照、typed marker/ID/映射、UTF-8/EOF、hard LF/全空格 code/math、微预算、late winner/策略失效、FoldView、百万字追加及两万旧对象。纯 shortcut 的条件标记只占原 marker 的至多三个 ASCII 字节；下节合格完整升级还覆盖整个后缀。每个合法 shortcut label 保留 base-visible scalar，配合永久隐藏树汇总使 next_visible 保持 O(log n)。没有新 boundary/uses 索引或旧正文回扫，累计 O(n log n)、空间 O(n)、零运行时依赖和禁止 unsafe 保持。
+
+
+## 已有 shortcut 对象的未解析完整引用边界（2026-11-12）
+
+仅传入 Publishing.complete_link 时已有合法 shortcut LinkId 的 full/collapsed Reference 升级扩展字面边界：`[a][b]`、`[a][]`、`![*a*][b]` 未解析时分别显示 `[a][b]`、`[a][]`、带强调的 `![a][b]`；当前目标首个定义后隐藏原 `[]`/`!` 与整个后缀。标签内的样式、深度、ID、原始映射和 LinkInfo 源域保持。后缀继续 opaque raw，例如 `[a][*b*&amp;\!]` 的后缀不新增实体解码或语法对象。
+
+资格在取得/复用 id 前保存，不从 label.link 推断。空/纯空白/超长/非法 shortcut 标签的完整 full（包括 `[][b]`、`![][b]`）保持原永久隐藏；空 collapsed、失败或未完成后缀、Direct、HTML、嵌套及 full 目标回选继续保持各自既有边界。569/571 不重新解析 `[bar]`，545 的 suffix 保留原始反斜线；本次三份相关官方子集统计没有改类，不能据此宣称完整标准回退已支持。
+
+稳定 LinkId gate 只做当前目标的常数次读取；永久隐藏先短路，Direct/Email 不查旧符号。范围标注及 successor 沿用区间树 O(log n)，不缓存动态 resolved 汇总、不扫描历史 uses；合格标签的可见 witness 阻止跨任意多个条件对象。空 full 继续由永久隐藏汇总跳过。累计 O(n log n)、空间 O(n)、原共享预算与无额外渐进 query scratch 保持。
+
+`tests/reference_boundaries.rs`、`tests/reference_consumers.rs` 及私有 annotation/cache 测试覆盖实际前驱 40 例、全 UTF-8 切点/前缀 EOF、同 ID 三类升级、定义先后/重复/title、原始映射、容器/真实表头、0/1/6 与零 query/object/dependency、marker-only/suffix-only tile、策略全 false 的失效，以及 999 字节后缀、两万不同 owner 与百万字工作计数。旧夹具（含 shortcut 大 baseline）保持原字节，只加精确 source/key/oldhash 增量；独立 scalar 比较覆盖 8,144 行旧 root/container 与 915 行 shortcut 快照，非目标和完整 resolved 的精确 run 保持。

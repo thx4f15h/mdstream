@@ -2771,3 +2771,18 @@ README当前说明、对应TODO及示例同步；完整普通lexer回退、未�
 原99份 fixture/生成脚本逐字保留，七个评分 project 原字节不变。父反馈要求恢复的旧 rs oracle 与八份完整 txt 派生副本均已归档；仓库恢复原 include_str 回退，仅用精确 case/end/mode 或夹具/索引/完整输入 hash/旧行 hash 的增量表覆盖 shortcut 目标，其余继续验证旧值。普通测试不写期望、不依赖本机路径。
 
 最终 check --workspace --all-targets、针对性 nextest、完整 debug/release nextest --workspace --all-targets --no-fail-fast（各1796通过）、doc（76通过）、doc build、clippy -D warnings、fmt、七项离线夹具和四个相关 release 示例均 exit0；git diff --check 通过。完整命令/退出状态/唯一日志与父反馈处理证据见 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-029/implementation/commands.jsonl`、`consumer-audit.md`、`final-oracle-integrity.json` 和 `final-validation.json`。README/TODO 仅同步本 shortcut 窄项及直接受影响的当前统计；完整 full/collapsed 回选、失败 lexer、HTML、嵌套图片、窗口与其它宽需求继续保留。未提交或推送。
+
+
+## 2026-11-12 已有 shortcut 对象的未解析完整引用边界交付
+
+仅 `Publishing.complete_link` 入参已有合法 shortcut `candidate.link` 的 full/collapsed Reference 完整升级恢复原 `[]`/`!` 与整个 opaque suffix 的字面边界；当前目标首赢后隐藏。私有 gate owner 改为稳定 LinkId，已解析 a→未解析 b 仍复用原身份，Direct/Email 与永久 HIDDEN 先短路且不读取旧符号。标签的样式/深度/link/raw mapping、原 LinkInfo 源域/first_use/title gaps、通知顺序与 dirty 范围保持；不改 grammar、observer、SourceOwner、ParagraphKey 或评分投影，不新增公共字段、依赖、unsafe、uses 索引或动态 hidden summary。
+
+范围标注和 successor 沿用区间树 O(log n)；已有 shortcut 标签提供 base-visible witness，空/空白/超限/非法 shortcut 标签的完整 full 保持永久隐藏与聚合跳过。累计 O(n log n)、空间 O(n)、原共享预算及 scratch 渐进空间保持。`[][b]`、`![][b]`、空 collapsed、失败 lexer、HTML、嵌套及 full 目标回选均未扩展；宽 TODO 保留。569/571 仍消费 `[bar]` 并选择 bar，不重作下一标签；545 的 opaque suffix 保留原始反斜线。官方输入/HTML/生成器/project 均未改，相关分类仍为 539–552 13/1/0、553–571 17/2/0、Images 20/0/2（支持/刻意差异/未支持）。
+
+新实际前驱小 baseline 为 40 例；524 个 UTF-8 split 与 524 个 prefix EOF 对照、六例四阶段的 208 个独立 typed scalar 真值覆盖 full/collapsed/image/Unicode/escape/opaque。原 root/container 8,144 行与 shortcut 915 行经独立 scalar/结构比较，只接受资格语法 HIDDEN 与自然 run 合并差异；完整 resolved、Direct 与非目标精确快照保持。旧 fixtures（含 task29 大 baseline）、数据、生成器和 task29 增量文件共 106 个原文件保持字节，只加 source/key/oldhash 精确增量。普通测试不写预期、不依赖本机或证据路径；外部冻结/诊断 driver 仅在证据目录。
+
+新增与复用回归覆盖定义先后/重复/title-only、同 ID 三类升级、UTF-8/EOF、999/1000 原标签和 suffix、容器/真实表头确认失败/独立 cell、source mapping、raw/scratch/display、Layout/Fold、search/heading/excerpt/table/anchors、共用 0/1/6 和零 query/object/dependency、marker-only/suffix-only tile 当前 b 依赖、全 false policy 旧 ticket 与 stale 零消耗拒绝。私有节点/gate/link/symbol 计数覆盖真实 999 字节后缀、全空格 code/math/hard LF/CRLF witness、两万不同 owner、百万字追加、空 full 聚合短路及不以 999 为常数的百万字合成区间；晚 winner mutation 不随历史 uses 数线性增长。
+
+本轮新功能验证（全部经项目 nix develop，target 来自 cargo metadata）：check --workspace --all-targets；针对性 nextest 48/48 与私有计数/cache 12/12；完整 debug/release nextest --workspace --all-targets --no-fail-fast 各 1808/1808；doc 76/76、docbuild、clippy -D warnings、fmt 均通过。9 项 CommonMark 与 3 项 GFM 离线生成器 --check、10 份独立分类报告，以及 container_links/link_headers/closed_link_headers/link_suffix_headers/inherited_headers/display 六个 release examples 通过。最终全套前冻结 463 个项目文件（386 个 Rust 文件），全套后只有本 DONE 追加，源码哈希保持。
+
+证据目录：`/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-030/implementation`。`commands.jsonl` 保存真实 argv/退出码/完整日志路径/SHA；`source-frozen.json`、`source-verification.json` 与 `validation.json` 关联源码及最终结果。早期红测/编译/夹具失败保留；初期日志命名冲突的 007/010 明确排除验收，已修复为原子预留，最终全套日志唯一。父设计验收仅作为前驱，本轮日志另证实现。未提交、推送、reset、清理、派生代理或执行下一项。

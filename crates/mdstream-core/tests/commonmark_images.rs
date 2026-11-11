@@ -539,7 +539,10 @@ fn image_late_definitions_preserve_ids_raw_spans_and_first_definition() {
     let links = doc.links().to_vec();
     let infos: Vec<_> = (0..3).map(|i| *doc.link_info(LinkId(i)).unwrap()).collect();
     assert_eq!(metadata_snapshot(&doc), vec![None; 3]);
-    assert_eq!(project(&doc), "<p>![Foo]</p>\n<p>Foo</p>\n<p>a</p>\n");
+    assert_eq!(
+        project(&doc),
+        "<p>![Foo]</p>\n<p>![Foo][]</p>\n<p>![a][Foo]</p>\n"
+    );
     doc.append("[FOO]: /a&amp;b 't&amp;'\n").unwrap();
     let revision = doc.references()[0].revision;
     for (i, info) in infos.iter().enumerate() {

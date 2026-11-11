@@ -1,5 +1,8 @@
 use mdstream::*;
 #[allow(dead_code)]
+#[path = "support/reference_boundary_hashes.rs"]
+mod reference_hashes;
+#[allow(dead_code)]
 #[path = "support/shortcut_hashes.rs"]
 mod shortcut_hashes;
 #[path = "support/snapshot.rs"]
@@ -127,16 +130,22 @@ fn root_eligibility_preserves_real_head_snapshots_including_utf8_and_prefix_eof(
             for bytewise in [false, true] {
                 assert_eq!(
                     observed(&source.as_bytes()[..end], bytewise),
-                    shortcut_hashes::root(
+                    reference_hashes::root(
+                        &source.as_bytes()[..end],
                         case,
                         end,
                         bytewise,
-                        match (case, end) {
-                            // Exact complete sources above, not an LF exemption.
-                            (4, 11) => 0xc578db03a65f9c0e,
-                            (4, 12) => 0x239d8b333a6535cb,
-                            _ => BASELINE[index],
-                        }
+                        shortcut_hashes::root(
+                            case,
+                            end,
+                            bytewise,
+                            match (case, end) {
+                                // Exact complete sources above, not an LF exemption.
+                                (4, 11) => 0xc578db03a65f9c0e,
+                                (4, 12) => 0x239d8b333a6535cb,
+                                _ => BASELINE[index],
+                            }
+                        )
                     ),
                     "case={case} end={end} bytewise={bytewise}"
                 );
