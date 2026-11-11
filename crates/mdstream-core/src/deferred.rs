@@ -1,6 +1,10 @@
 //! Owned, bounded physical sources awaiting either confirmation or ordinary replay.
 //! No text, historical containers, or published inline objects are copied here.
-use crate::{BLOCK_LOOKAHEAD, BlockId, ContainerId, MAX_LABEL_BYTES, Span};
+use crate::{BLOCK_LOOKAHEAD, BlockId, ContainerId, MAX_LABEL_BYTES, MAX_LINK_SUFFIX_BYTES, Span};
+
+// Each open label/title source contributes at least one real byte to its
+// phase's bound. Add the closing-label, target and final physical sources.
+const MAX_DEFERRED_SOURCES: usize = MAX_LABEL_BYTES + MAX_LINK_SUFFIX_BYTES + 4;
 
 // Spans alone do not authorize consumption. This non-Clone right moves from a
 // header to a definition ledger and is retired by exactly one consuming path.
@@ -70,7 +74,7 @@ impl DeferredSources {
             || fragment.raw.start > fragment.raw.end
             || fragment.virtual_spaces > 3
             || (fragment.virtual_spaces > 0 && fragment.raw.start == fragment.source.start)
-            || self.fragments.len() >= MAX_LABEL_BYTES + 3
+            || self.fragments.len() >= MAX_DEFERRED_SOURCES
         {
             return Err(fragment);
         }
@@ -778,6 +782,82 @@ mod tests {
     }
 
     #[test]
+    fn root_title_failures_replay_once_against_real_ordinary_controls() {
+        let mut cases = 0;
+        for independent in [false, true] {
+            for indent in ["", " ", "   ", "    ", "\t", " \t", "        "] {
+                for middle in ["plain", "x|y", "x\\|y", "`x|y`", "$x|y$", "[s]: /stay-text"] {
+                    for trigger in [
+                        "",
+                        " \t",
+                        "===",
+                        "---",
+                        "***",
+                        "# h",
+                        "~~~",
+                        "$$",
+                        "> quote",
+                        "- item",
+                        "1. item",
+                        "    code",
+                        "\tcode",
+                        "-|-",
+                        "' bad",
+                        "unclosed",
+                        "[new]: /url",
+                        "(bad)",
+                    ] {
+                        let head = if independent { "[r]: /url\n" } else { "" };
+                        let opener = if independent {
+                            "'first\n"
+                        } else {
+                            "[r]: /url 'first\n"
+                        };
+                        let tail = format!("{opener}{middle}\n{indent}{trigger}\n");
+                        let source = format!("{head}{tail}");
+                        let actual = parse(&source);
+                        // Disable only the initial admission in the production
+                        // pipeline. All classification, tables, Inline and IDs
+                        // are from the real ordinary parser, not a second model.
+                        let control = if independent {
+                            let mut doc = Document::new();
+                            doc.append(head).unwrap();
+                            doc.seal_definition_title(&mut Update::default());
+                            doc.append(&tail).unwrap();
+                            doc.finish();
+                            doc
+                        } else {
+                            ordinary_control(&source)
+                        };
+                        assert_eq!(
+                            support::snapshot(&actual),
+                            support::snapshot(&control),
+                            "{source:?}"
+                        );
+                        assert_mapping_and_budget(&actual);
+                        cases += 1;
+                    }
+                }
+            }
+        }
+        eprintln!("root title actual ordinary controls: {cases}");
+        // Replay cannot restart a new definition, even when it looks valid in
+        // isolation. The blank trigger itself is still consumed exactly once.
+        for independent in [false, true] {
+            let head = if independent {
+                "[r]: /url\n'first\n"
+            } else {
+                "[r]: /url 'first\n"
+            };
+            let doc = parse(&format!("{head}[s]: /must-stay-text\n\n"));
+            assert!(!doc.references().iter().any(|r| {
+                r.destination
+                    .is_some_and(|s| doc.text(s) == Some("/must-stay-text"))
+            }));
+        }
+    }
+
+    #[test]
     fn deferred_ledger_bounds_order_and_constant_admission_work() {
         fn fragment(start: usize, end: usize) -> DeferredFragment {
             DeferredFragment::from_payload(
@@ -791,15 +871,15 @@ mod tests {
         assert!(ledger.push(fragment(0, 1)).is_err());
         assert!(ledger.push(fragment(2, 3)).is_err());
         assert!(ledger.push(fragment(1, BLOCK_LOOKAHEAD + 5)).is_err());
-        for i in 1..MAX_LABEL_BYTES + 3 {
+        for i in 1..MAX_DEFERRED_SOURCES {
             assert!(ledger.push(fragment(i, i + 1)).is_ok());
         }
         assert!(
             ledger
-                .push(fragment(MAX_LABEL_BYTES + 3, MAX_LABEL_BYTES + 4))
+                .push(fragment(MAX_DEFERRED_SOURCES, MAX_DEFERRED_SOURCES + 1))
                 .is_err()
         );
-        assert_eq!(ledger.confirm(), Span::new(0, MAX_LABEL_BYTES + 3));
+        assert_eq!(ledger.confirm(), Span::new(0, MAX_DEFERRED_SOURCES));
         for depth in [0, 32, 128, 970] {
             let prefix = ">".repeat(depth);
             let mut doc = Document::new();

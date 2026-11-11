@@ -117,6 +117,11 @@ fn next_line_title_failures_keep_published_target_and_ordinary_block_semantics()
                 "'first\nsecond'\n",
                 "\"\"x\n",
             ] {
+                if first.is_empty() && matches!(tail, "'unclosed\n'\n" | "'first\nsecond'\n") {
+                    // Root title bodies now continue across physical lines.
+                    // Container scope still exercises the original failure path.
+                    continue;
+                }
                 let head = if target_next {
                     format!("{first}[r]:\n{next}/url    \n")
                 } else {

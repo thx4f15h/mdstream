@@ -170,21 +170,13 @@ enum Assessment {
         reason: &'static str,
         observed: &'static str,
     },
-    Unsupported {
-        reason: &'static str,
-        observed: &'static str,
-    },
 }
 
 // Frozen observations are separate from the unchanged upstream oracle.
 // A changed result must be reviewed, even if it now matches upstream.
 fn assessment(number: usize) -> Assessment {
     match number {
-        192..=195 | 198 | 200 | 202..=208 | 210 | 214..=218 => Assessment::Supported,
-        196 => Assessment::Unsupported {
-            reason: "multi-line reference definitions are not recognized",
-            observed: "<p>foo: /url '\ntitle\nline1\nline2\n'</p>\n<p>foo</p>\n",
-        },
+        192..=196 | 198 | 200 | 202..=208 | 210 | 214..=218 => Assessment::Supported,
         197 => Assessment::DeliberateDifference {
             reason: "unresolved references retain public labels with hidden brackets",
             observed: "<p>foo: /url 'title</p>\n<p>with blank line'</p>\n<p>foo</p>\n",
@@ -228,8 +220,7 @@ fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
     link_metadata::snapshot(doc);
     match assessment(number) {
         Assessment::Supported => assert_eq!(actual, expected, "example {number}"),
-        Assessment::DeliberateDifference { observed, .. }
-        | Assessment::Unsupported { observed, .. } => {
+        Assessment::DeliberateDifference { observed, .. } => {
             assert_ne!(
                 actual, expected,
                 "example {number} now matches upstream; review classification"
@@ -310,14 +301,13 @@ fn pinned_commonmark_reference_definitions_report() {
         let (category, label, reason) = match assessment(number) {
             Assessment::Supported => (0, "supported", "matches upstream"),
             Assessment::DeliberateDifference { reason, .. } => (1, "deliberate difference", reason),
-            Assessment::Unsupported { reason, .. } => (2, "unsupported", reason),
         };
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [19, 7, 1]);
+    assert_eq!(counts, [20, 7, 0]);
     eprintln!(
-        "CommonMark 0.31.2 Link reference definitions (192–218): 19 supported, 7 deliberate differences, 1 unsupported; other sections not scored by this test"
+        "CommonMark 0.31.2 Link reference definitions (192–218): 20 supported, 7 deliberate differences, 0 unsupported; other sections not scored by this test"
     );
 }
 
@@ -557,4 +547,13 @@ fn multiline_label_official_208_matches_original_html() {
         doc.blocks()[0].source,
         Span::new(0, markdown.find("bar").unwrap())
     );
+}
+
+#[test]
+fn root_multiline_title_official_196_matches_original_html() {
+    let &(_, markdown, html) = REFERENCE_DEFINITION_CASES
+        .iter()
+        .find(|c| c.0 == 196)
+        .unwrap();
+    assert_eq!(project(&parse(markdown)), html);
 }

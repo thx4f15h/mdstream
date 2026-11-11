@@ -31,6 +31,10 @@ pub(crate) enum Line {
         destination: Span,
         title: Option<Span>,
     },
+    DefinitionTitle {
+        label: Span,
+        parser: crate::destination::Destination,
+    },
     DefinitionStart {
         label: Span,
     },
@@ -436,12 +440,18 @@ fn definition(source: &str, start: usize, end: usize) -> Option<Line> {
             && source[label.range()].chars().any(|c| !c.is_whitespace()))
         .then_some(Line::DefinitionStart { label });
     }
-    let (destination, title) = definition_target(source, Span::new(a, b))?;
-    Some(Line::Definition {
-        label,
-        destination,
-        title,
-    })
+    if let Some((destination, title)) = definition_target(source, Span::new(a, b)) {
+        return Some(Line::Definition {
+            label,
+            destination,
+            title,
+        });
+    }
+    (label.len() <= crate::MAX_LABEL_BYTES
+        && source[label.range()].chars().any(|c| !c.is_whitespace()))
+    .then(|| definition_open_title(source, Span::new(a, end), false))
+    .flatten()
+    .map(|parser| Line::DefinitionTitle { label, parser })
 }
 
 /// A complete bounded physical target line; all offsets borrow original source.
@@ -473,6 +483,40 @@ pub(crate) fn definition_target(source: &str, span: Span) -> Option<(Span, Optio
         return None;
     };
     Some((destination, title))
+}
+
+// An unclosed title parser, never a partially published destination. The
+// caller decides whether root scope permits retaining its physical sources.
+pub(crate) fn definition_open_title(
+    source: &str,
+    span: Span,
+    standalone: bool,
+) -> Option<crate::destination::Destination> {
+    let end = body_end(source, span);
+    let bytes = source.as_bytes();
+    let start = (span.start..end).find(|&pos| !matches!(bytes[pos], b' ' | b'\t'))?;
+    let mut parser = if standalone {
+        if !matches!(bytes[start], b'\'' | b'"' | b'(') {
+            return None;
+        }
+        crate::destination::Destination::title(start, bytes[start])
+    } else {
+        crate::destination::Destination::new(start)
+    };
+    for (pos, &byte) in bytes
+        .iter()
+        .enumerate()
+        .take(end)
+        .skip(start + usize::from(standalone))
+    {
+        if !matches!(
+            parser.byte(byte, pos),
+            crate::destination::Progress::Pending
+        ) {
+            return None;
+        }
+    }
+    parser.open_title().then_some(parser)
 }
 
 /// Exactly one complete physical title line, retaining its original spelling.

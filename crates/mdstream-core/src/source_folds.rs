@@ -35,7 +35,7 @@ impl Document {
         }
         let mut end = self.line_start;
         if let Some(candidate) = &self.definition_candidate {
-            end = end.min(candidate.sources.start());
+            end = end.min(self.blocks[candidate.block.0].source.start);
         }
         if let Some(candidate) = &self.definition_title_candidate {
             end = end.min(self.blocks[candidate.block.0].source.start);

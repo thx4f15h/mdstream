@@ -175,9 +175,12 @@ struct StreamingLine {
     table: bool,
 }
 
-// No inline/link object is published while these bounded sources are undecided.
+// No new inline/link object is published for these undecided bounded sources.
 // The first ordinary block preserves paragraph/lazy eligibility through replay.
 enum DefinitionLabel {
+    PublishedTitle {
+        owner: Option<SymbolId>,
+    },
     Target(Span),
     Multiline {
         raw: String,
@@ -190,6 +193,12 @@ struct DefinitionCandidate {
     block: BlockId,
     label: DefinitionLabel,
     sources: DeferredSources,
+    title: Option<DefinitionTitleBody>,
+}
+
+struct DefinitionTitleBody {
+    parser: destination::Destination,
+    columns: Option<usize>,
 }
 
 // The target is already published. Only its first definition owns the symbol;
@@ -923,11 +932,10 @@ impl Document {
     }
 
     fn probe_long_delimiter(&mut self, span: Span, update: &mut Update) -> bool {
-        if self
-            .definition_candidate
-            .as_ref()
-            .is_some_and(|candidate| matches!(candidate.label, DefinitionLabel::Multiline { .. }))
-        {
+        if self.definition_candidate.as_ref().is_some_and(|candidate| {
+            candidate.title.is_some()
+                || matches!(candidate.label, DefinitionLabel::Multiline { .. })
+        }) {
             // The growing trigger hit its physical window. Replay before the
             // ordinary long-delimiter probe so it sees the last real header.
             self.flush_definition_candidate(update);
@@ -999,7 +1007,15 @@ impl Document {
 
     fn flush_definition_candidate(&mut self, update: &mut Update) {
         if let Some(candidate) = self.definition_candidate.take() {
-            self.replay_deferred(candidate.sources, update);
+            if matches!(candidate.label, DefinitionLabel::PublishedTitle { .. }) {
+                self.blocks[candidate.block.0].state = SyntaxState::Sealed;
+                update.changed_blocks.start = update.changed_blocks.start.min(candidate.block.0);
+                for fragment in candidate.sources.into_fragments() {
+                    self.commit_line_mode(fragment.source, true, true, false, update);
+                }
+            } else {
+                self.replay_deferred(candidate.sources, update);
+            }
         }
     }
 
@@ -1085,6 +1101,26 @@ impl Document {
                 block::definition_title(&self.source, content)
             });
         let Some(title) = title else {
+            if complete
+                && self.blocks[block.0].container.is_none()
+                && let Some(parser) = block::definition_open_title(&self.source, span, true)
+                && let Some(title) = self.definition_title_body(span, parser)
+            {
+                self.blocks[block.0].state = SyntaxState::Growing;
+                self.definition_candidate = Some(DefinitionCandidate {
+                    block,
+                    label: DefinitionLabel::PublishedTitle {
+                        owner: candidate.owner,
+                    },
+                    sources: DeferredSources::new(
+                        block,
+                        None,
+                        DeferredFragment::from_payload(span, span, 0, SourceOwner::new()),
+                    ),
+                    title: Some(title),
+                });
+                return true;
+            }
             return false;
         };
         let loosened_start = update.loosened_lists.len();
@@ -1133,6 +1169,107 @@ impl Document {
                 owner: winner.then_some(symbol),
             });
         }
+    }
+
+    // Called only on a new bounded physical source. Earlier parser state and
+    // summaries are retained; neither title bytes nor old ancestors are reread.
+    fn definition_title_body(
+        &mut self,
+        span: Span,
+        mut parser: destination::Destination,
+    ) -> Option<DefinitionTitleBody> {
+        for pos in block::body_end(&self.source, span)..span.end {
+            self.work.classified_bytes += 1;
+            if !matches!(
+                parser.definition_title_byte(self.source.as_bytes()[pos], pos),
+                destination::Progress::Pending
+            ) {
+                return None;
+            }
+        }
+        let mut summary = table::HeaderSummary::default();
+        summary.feed(&self.source[span.range()], &mut self.work);
+        Some(DefinitionTitleBody {
+            parser,
+            columns: summary.columns(),
+        })
+    }
+
+    fn retain_definition_title(&mut self, span: Span, parser: destination::Destination) -> bool {
+        let Some(title) = self.definition_title_body(span, parser) else {
+            return false;
+        };
+        let candidate = self.definition_candidate.as_mut().unwrap();
+        if candidate
+            .sources
+            .push(DeferredFragment::from_payload(
+                span,
+                span,
+                0,
+                SourceOwner::new(),
+            ))
+            .is_err()
+        {
+            return false;
+        }
+        candidate.title = Some(title);
+        true
+    }
+
+    fn resolve_definition_title_body(
+        &mut self,
+        span: Span,
+        complete: bool,
+        update: &mut Update,
+    ) -> bool {
+        let columns = self
+            .definition_candidate
+            .as_ref()
+            .unwrap()
+            .title
+            .as_ref()
+            .unwrap()
+            .columns;
+        if !complete
+            || self
+                .containers
+                .continuation_source(&self.source, span, None, false, columns, &mut self.work)
+                .is_none()
+        {
+            self.flush_definition_candidate(update);
+            return false;
+        }
+        let mut title = self
+            .definition_candidate
+            .as_mut()
+            .unwrap()
+            .title
+            .take()
+            .unwrap();
+        let end = block::body_end(&self.source, span);
+        for pos in span.start..end {
+            self.work.classified_bytes += 1;
+            if !matches!(
+                title
+                    .parser
+                    .definition_title_byte(self.source.as_bytes()[pos], pos),
+                destination::Progress::Pending
+            ) {
+                self.flush_definition_candidate(update);
+                return false;
+            }
+        }
+        if let destination::Progress::Complete { destination, title } =
+            title.parser.finish_definition()
+        {
+            self.confirm_definition_candidate(span, destination, title, false, update);
+            return true;
+        }
+        if self.retain_definition_title(span, title.parser) {
+            return true;
+        }
+        self.flush_definition_candidate(update);
+        false
     }
 
     fn resolve_multiline_label(&mut self, span: Span, complete: bool, update: &mut Update) -> bool {
@@ -1217,6 +1354,13 @@ impl Document {
             {
                 target = block::definition_target(&self.source, suffix);
                 if target.is_none() {
+                    if scope.is_none()
+                        && let Some(parser) =
+                            block::definition_open_title(&self.source, suffix, false)
+                        && self.retain_definition_title(span, parser)
+                    {
+                        return true;
+                    }
                     self.flush_definition_candidate(update);
                     return false;
                 }
@@ -1269,6 +1413,20 @@ impl Document {
                 block::definition_target(&self.source, content)
             });
         let Some((destination, title)) = target else {
+            if complete
+                && self.blocks[block.0].container.is_none()
+                && let Some(start) =
+                    self.containers
+                        .definition_prefix(&self.source, span, None, &mut self.work)
+            {
+                let content = Span::new(start, span.end);
+                self.work.classified_bytes += content.len() as u64;
+                if let Some(parser) = block::definition_open_title(&self.source, content, false)
+                    && self.retain_definition_title(span, parser)
+                {
+                    return true;
+                }
+            }
             self.flush_definition_candidate(update);
             return false;
         };
@@ -1288,8 +1446,25 @@ impl Document {
         self.table_header = None;
         let block = candidate.block;
         let retained = candidate.sources.confirm();
+        if let DefinitionLabel::PublishedTitle { owner } = candidate.label {
+            self.blocks[block.0].source.end = span.end;
+            self.blocks[block.0].state = SyntaxState::Sealed;
+            update.changed_blocks.start = update.changed_blocks.start.min(block.0);
+            update.change(self.blocks[block.0].source, ChangeKind::Structure);
+            self.mark(Span::new(retained.start, span.end), Style::HIDDEN, update);
+            if let Some(symbol) = owner {
+                self.references
+                    .define_title(symbol, title.unwrap(), self.revision);
+                update.references_changed.push(symbol);
+                if let Some(start) = self.references.entries[symbol.0].first_use {
+                    update.change(Span::new(start, self.source.len()), ChangeKind::Reference);
+                }
+            }
+            return;
+        }
         debug_assert_eq!(retained.start, self.blocks[block.0].source.start);
         let label = match &candidate.label {
+            DefinitionLabel::PublishedTitle { .. } => unreachable!(),
             DefinitionLabel::Target(label) => &self.source[label.range()],
             DefinitionLabel::Multiline { raw, closed, .. } => {
                 debug_assert!(closed);
@@ -1340,6 +1515,14 @@ impl Document {
         self.work.classified_bytes += span.len() as u64;
         self.containers.end = span.end;
         self.headings.parsed_end = span.end;
+        if self
+            .definition_candidate
+            .as_ref()
+            .is_some_and(|c| c.title.is_some())
+            && self.resolve_definition_title_body(span, complete, update)
+        {
+            return;
+        }
         if self.resolve_definition_title(span, complete, update) {
             return;
         }
@@ -1417,6 +1600,7 @@ impl Document {
                 Line::Indented { .. }
                     | Line::Text
                     | Line::Blank
+                    | Line::DefinitionTitle { .. }
                     | Line::DefinitionStart { .. }
                     | Line::DefinitionLabel { .. }
             );
@@ -1557,6 +1741,7 @@ impl Document {
                     | Line::Indented { .. }
                     | Line::Rule
                     | Line::Definition { .. }
+                    | Line::DefinitionTitle { .. }
                     | Line::DefinitionStart { .. }
                     | Line::DefinitionLabel { .. }
                     | Line::FootnoteDefinition { .. }) => leaf,
@@ -1604,6 +1789,23 @@ impl Document {
                 return;
             }
             self.close_current(update);
+        }
+        let mut candidate_title = None;
+        if let Line::DefinitionTitle { label, parser } = classification {
+            if definitions && self.containers.inner().is_none() {
+                candidate_title = self.definition_title_body(span, parser);
+            }
+            classification = if candidate_title.is_some() {
+                Line::DefinitionStart { label }
+            } else {
+                container_line
+                    .as_ref()
+                    .map_or(Line::Text, |line| Line::Container {
+                        prefix: line.prefix,
+                        kind: line.kind.clone(),
+                    })
+            };
+            table_text = true;
         }
         let mut candidate_label = match classification {
             Line::DefinitionStart { label } | Line::DefinitionLabel { label } => {
@@ -1722,6 +1924,7 @@ impl Document {
                 self.definition_candidate = Some(DefinitionCandidate {
                     block: block.unwrap(),
                     label,
+                    title: candidate_title,
                     sources: DeferredSources::new(
                         block.unwrap(),
                         header.container,
@@ -1977,6 +2180,7 @@ impl Document {
                 self.new_block(span, BlockKind::ThematicBreak, update)
             }
             Line::Definition { .. }
+            | Line::DefinitionTitle { .. }
             | Line::DefinitionStart { .. }
             | Line::DefinitionLabel { .. }
             | Line::FootnoteDefinition { .. } => unreachable!(),
@@ -2002,6 +2206,7 @@ impl Document {
             self.definition_candidate = Some(DefinitionCandidate {
                 block: id,
                 label,
+                title: candidate_title,
                 sources: DeferredSources::new(
                     id,
                     self.blocks[id.0].container,

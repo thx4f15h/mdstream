@@ -326,6 +326,7 @@ impl Containers {
                     crate::block::Line::Blank
                     | crate::block::Line::Heading { .. }
                     | crate::block::Line::Definition { .. }
+                    | crate::block::Line::DefinitionTitle { .. }
                     | crate::block::Line::DefinitionStart { .. }
                     | crate::block::Line::DefinitionLabel { .. }
                     | crate::block::Line::FootnoteDefinition { .. }
@@ -1431,6 +1432,7 @@ impl<'a> Prefix<'a> {
             // Keep the classifier's nonparagraph mode for Setext/rule priority.
             crate::block::Line::Text
             | crate::block::Line::Indented { .. }
+            | crate::block::Line::DefinitionTitle { .. }
             | crate::block::Line::Definition { .. } => true,
             crate::block::Line::DefinitionStart { .. }
             | crate::block::Line::DefinitionLabel { .. } => true,
@@ -1517,6 +1519,7 @@ impl<'a> Prefix<'a> {
                     ((probe.column + probe.virtual_spaces) % 4) as u8,
                 ) {
                     crate::block::Line::Text
+                    | crate::block::Line::DefinitionTitle { .. }
                     | crate::block::Line::DefinitionLabel { .. }
                     | crate::block::Line::FenceOpen { .. }
                     | crate::block::Line::Heading { .. }

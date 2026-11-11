@@ -156,6 +156,29 @@ impl Destination {
         }
     }
 
+    pub fn open_title(&self) -> bool {
+        matches!(self.stage, Stage::Title(_))
+    }
+
+    // Only a root definition body opts in. Inline suffixes and destinations
+    // retain byte()'s physical-line rejection and the same raw byte limits.
+    pub fn definition_title_byte(&mut self, byte: u8, pos: usize) -> Progress {
+        if matches!(byte, b'\n' | b'\r') && self.open_title() {
+            if pos - self.start >= MAX_LINK_SUFFIX_BYTES {
+                return Progress::Invalid;
+            }
+            let title = self.title.as_mut().unwrap();
+            title.end = pos + 1;
+            self.escaped = false;
+            return if title.len() <= MAX_LINK_TITLE_BYTES {
+                Progress::Pending
+            } else {
+                Progress::Invalid
+            };
+        }
+        self.byte(byte, pos)
+    }
+
     fn complete(&self) -> Progress {
         Progress::Complete {
             destination: self.destination,
@@ -168,5 +191,68 @@ impl Destination {
             Stage::Bare(0) | Stage::AfterDestination | Stage::AfterTitle => self.complete(),
             _ => Progress::Invalid,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn definition_body_opt_in_keeps_destination_title_and_suffix_byte_limits() {
+        for byte in *b"\n\r" {
+            assert!(matches!(
+                Destination::new(0).definition_title_byte(byte, 0),
+                Progress::Invalid
+            ));
+            assert!(matches!(
+                Destination::title(0, b'\'').byte(byte, 1),
+                Progress::Invalid
+            ));
+        }
+        for size in [MAX_DESTINATION_BYTES, MAX_DESTINATION_BYTES + 1] {
+            let mut parser = Destination::new(0);
+            let mut valid = true;
+            for pos in 0..size {
+                valid &= matches!(parser.definition_title_byte(b'x', pos), Progress::Pending);
+            }
+            assert_eq!(valid, size == MAX_DESTINATION_BYTES);
+        }
+        let mut parser = Destination::title(0, b'\'');
+        for pos in 1..=MAX_LINK_TITLE_BYTES {
+            assert!(matches!(
+                parser.definition_title_byte(b'\n', pos),
+                Progress::Pending
+            ));
+        }
+        assert!(matches!(
+            parser.definition_title_byte(b'x', MAX_LINK_TITLE_BYTES + 1),
+            Progress::Invalid
+        ));
+        // A short, closed title with a long whitespace suffix must still stop
+        // at the suffix bound independently of its title's size and newlines.
+        let mut parser = Destination::title(0, b'\'');
+        assert!(matches!(
+            parser.definition_title_byte(b'\n', 1),
+            Progress::Pending
+        ));
+        assert!(matches!(
+            parser.definition_title_byte(b'\'', 2),
+            Progress::Pending
+        ));
+        for pos in 3..MAX_LINK_SUFFIX_BYTES {
+            assert!(matches!(
+                parser.definition_title_byte(b' ', pos),
+                Progress::Pending
+            ));
+        }
+        assert!(matches!(
+            parser.finish_definition(),
+            Progress::Complete { .. }
+        ));
+        assert!(matches!(
+            parser.definition_title_byte(b' ', MAX_LINK_SUFFIX_BYTES),
+            Progress::Invalid
+        ));
     }
 }

@@ -9,6 +9,7 @@ impl Document {
     /// Reads only the committed title span (without its delimiters). Reference
     /// titles map to the winning definition, not to the link's use site. Raw
     /// `link_title` text, destination/URL and label semantics remain unchanged.
+    /// Physical CRLF emits one LF mapped to both source bytes; LF is retained.
     /// No trimming, inline parsing or recursive decoding is performed. The
     /// borrow prevents document changes while the cursor is alive.
     ///
@@ -27,7 +28,7 @@ impl Document {
     /// ```
     pub fn decoded_link_title(&self, id: LinkId) -> Option<LinkTitle<'_>> {
         Some(LinkTitle {
-            inner: CodeInfo::new(self.source(), self.link_title_span(id)?),
+            inner: CodeInfo::title(self.source(), self.link_title_span(id)?),
         })
     }
 }
@@ -54,8 +55,9 @@ impl LinkTitle<'_> {
 
     /// Uses the same charging and resumable probe contract as
     /// [`CodeInfo::advance`]. Each scalar/escape costs a query, an object and its
-    /// source bytes. Entity probes charge inspected bytes incrementally and a
-    /// query; successful emission charges output bytes, a query and an object.
+    /// source bytes (including both bytes of a normalized CRLF). Entity probes
+    /// charge inspected bytes incrementally and a query; successful emission
+    /// charges output bytes, a query and an object.
     /// A probe may exhaust budget without emitting or advancing source_position.
     /// Six bytes, one query and one object per fresh frame guarantee progress.
     /// Output is atomic, and calls after completion are free.

@@ -2623,3 +2623,24 @@ README 当前说明和本任务对应 TODO 已同步，只新增此窄项勾选�
 官方 208/541 直接匹配未改 HTML：定义章为 19 支持/7 刻意差异/1 未支持，标签子集为 8/6/0，其余冻结观察不变。实际普通管线结构对照：208 从普通 1 Block/1 Link 转为定义及正文 2 Block/0 Link；541 从 3 Block/2 Link 转为 3 Block/1 Link，保留正文链接原始范围，定义源码包络分别为 0..14 和 0..18。官方输入/HTML、全部生成器、评分 project 算法和输出编码 helper 未改，离线固定 SHA-256 校验通过。
 
 本单元证据目录：`/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-017/multiline-labels/`。`MODEL.md` 为先于实现的成功/未完成/失败/回流及累计复杂度模型，`commands.jsonl` 保存真实命令、退出状态、完整日志路径与日志哈希，`RESULT.json` 汇总最终验证，`integrity.json`/`patch.diff` 保存源码哈希、受保护文件/投影核验和含父基础的最终补丁。check、定向 nextest、完整 debug/release nextest、doc/docbuild、clippy -D warnings、fmt、相关离线夹具与示例/diff 检查均见该证据。未提交、推送、reset、清理或修改主机/用户配置，交父会话独立验收及提交。
+
+
+## 2026-11-11 引用定义根作用域多行 title 正文交付
+
+仅交付 TODO `886b346f94f4` 的根作用域窄项：单/多行 label、目标位于闭合 label 行或紧接下一行，单/双引号及括号 title 可在目标同行或独立下一行开启并跨有界物理行。复用 Destination 的转义/括号语法、真实普通结构/表格资格和共享暂存来源消费权；不扩展容器方言、行内后缀、字面失败回退或原长度/窗口限制。宽 TODO 保持未勾选，明确保留 Quote/List/嵌套容器内多行 title 及去前缀元数据来源读取。
+
+同行未闭合 title 确认前不发布定义或幽灵 LinkId；独立 title 失败/EOF 保留已发布目标，仅将暂存 title 来源迭代回普通流程一次。重复定义不覆盖赢家，已有完整/空 title 不吸收后续行。根 title Span 借用真实原源，保留 LF/CRLF、缩进、实体及转义；title 解码游标按原始双字节映射输出归一 LF。暂存片段上限按 `MAX_LABEL_BYTES + MAX_LINK_SUFFIX_BYTES + 4` 证明，合法 4096 字节/超过 1002 条来源不被标签上限误拒；逐行窗口、4096 title/目标与 suffix 上限各自保留。扫描仅处理新字节与一次失败回流，晚定义/补 title 不遍历旧用法，累计 O(n log n)/O(n)、零运行时依赖和 forbid unsafe 保持。
+
+新 title 集成九项、私有实际普通流程 1512 组对照及 Destination 界限测试覆盖 UTF-8 全切点/逐前缀 EOF、入口/Unicode/转义/坏闭合/坏尾缀/空白/结构与真表格中断、首定义所有权、稳定身份、原始/显示切片、共享零/六字节预算、Growing/Sealed、source_fold_limit、固定/开放 source fold、Update 重建/合并、FoldView.apply 和 ticket 失效。百万字失败尾部后逐字追加 1000 字节仅增加 1000 inline 字节，classified/container 计数不增长；两万旧引用及 4096 条历史定义后追加重复多行 title，inline 不增长、tree_visits 增量 41，所有 LinkInfo 保持。
+
+官方 196 直接匹配原 HTML；定义章 **20/7/0**，引用标签 **8/6/0**、引用形式 **17/2/0**，其余冻结观察保持。官方输入/HTML、生成器、project 算法与元数据输出 helper 均未修改，哈希核验见 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-018/implementation/unchanged-oracles.json`。基线核心两项/官方 196 红测与 CRLF 映射红测均保留；旧 next_line_titles 的两种根跨行成功输入移出失败列表，容器对应输入仍验证基线失败。
+
+全部 Cargo 命令在项目 nix develop 中执行，target 来自 cargo metadata。最终 check --workspace --all-targets、针对性 88 项、完整 debug/release nextest 各 1649 项、75 doc、docbuild（RUSTDOCFLAGS=-Dwarnings）、clippy --workspace --all-targets -- -D warnings、fmt、三份相关固定离线夹具、release stream 示例及 diff 检查通过。命令/状态/完整日志、模型/界限证明、源码哈希和最终补丁位于 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-018/implementation/`；未提交或推送。容器内多行 title、510、完整回退/容器与窗口放宽继续待办。
+
+### 2026-11-11 task18 容器普通文本基线修复
+
+独立复审发现新增 `Line::DefinitionTitle` 遗漏原普通容器文本资格，导致缺失前缀的 Quote/List lazy 正文错误发布根定义，以及部分 tab 丢失显示空格映射。先保存两项真实失败，再仅在 `containers.rs` 的已有路径 partial、lazy 和新 Quote partial-tab 三处判定加入该变体。根多行 title 实现保持，容器多行 title 仍未交付，宽 TODO 保留。
+
+新增四项集成回归覆盖两最小反例、嵌套/引号/括号/普通控制、UTF-8 全字节切点/逐前缀 EOF、LinkId/BlockId/ContainerId、tab 原始 replacement、共享零/六字节显示预算，以及百万字历史后 1000 次候选的累计工作计数。复用实际基线与原审查探针，600 组快照无差异；新增 1836 组 Quote/List/嵌套、不同 tab 余量、有/无目标、三种 title 定界的整块/逐字/UTF-8 切点及每前缀 EOF 均与真实基线一致；根 288 组入口/解码与 0/1/6 预算/所有权、180 组真实表格观察保持。无新扫描、缓冲、依赖或 unsafe，累计 O(n log n)/O(n) 不变。
+
+本次生产源码修复是重跑完整验证的理由；check、针对性及完整 debug/release nextest、doc/docbuild、clippy、fmt、离线夹具/示例和 diff 的真实命令、退出状态、完整日志，以及新源码哈希、完整/本次补丁统一保存在 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-018/fix-container-regressions/`，以 `commands.jsonl` 和 `validation.json` 为准。原 implementation/review 证据未改；保留父工作树全部原改动，未提交/推送。

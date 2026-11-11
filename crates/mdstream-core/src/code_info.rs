@@ -48,6 +48,7 @@ pub struct CodeInfo<'a> {
     probe: Probe,
     decoded: [u8; 8],
     literal: bool,
+    normalize_crlf: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -67,6 +68,14 @@ impl<'a> CodeInfo<'a> {
             probe: Probe::Start,
             decoded: [0; 8],
             literal: false,
+            normalize_crlf: false,
+        }
+    }
+
+    pub(crate) fn title(source: &'a str, remaining: Span) -> Self {
+        Self {
+            normalize_crlf: true,
+            ..Self::new(source, remaining)
         }
     }
 
@@ -185,7 +194,8 @@ impl<'a> CodeInfo<'a> {
         let escaped = !self.literal
             && text.as_bytes()[0] == b'\\'
             && text.as_bytes().get(1).is_some_and(u8::is_ascii_punctuation);
-        let len = if escaped {
+        let crlf = self.normalize_crlf && text.starts_with("\r\n");
+        let len = if escaped || crlf {
             2
         } else {
             text.chars().next().unwrap().len_utf8()
@@ -203,7 +213,7 @@ impl<'a> CodeInfo<'a> {
         self.probe = Probe::Start;
         Ok(Some(CodeInfoChunk {
             source,
-            text: &text[usize::from(escaped)..len],
+            text: &text[usize::from(escaped || crlf)..len],
         }))
     }
 }
