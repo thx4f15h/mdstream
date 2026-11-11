@@ -24,8 +24,9 @@ impl SourceFoldId {
 
 impl Document {
     /// Conservative end of the source prefix eligible for fixed source folds.
-    /// Pending lines, the current leaf, table probes and the entire possible
-    /// container Setext title are excluded. Closing them advances this bound;
+    /// Pending lines, definitions awaiting a possible title, the current leaf,
+    /// table probes and the entire possible container Setext title are excluded.
+    /// Closing them advances this bound;
     /// finish makes all source eligible. O(1), without inspecting body bytes.
     /// This is a fold-topology boundary, not a promise of final inline styles.
     pub fn source_fold_limit(&self) -> usize {
@@ -33,6 +34,9 @@ impl Document {
             return self.source().len();
         }
         let mut end = self.line_start;
+        if let Some(candidate) = &self.definition_title_candidate {
+            end = end.min(self.blocks[candidate.block.0].source.start);
+        }
         if let Some(id) = self.current {
             end = end.min(self.blocks[id.0].source.start);
         }

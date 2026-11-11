@@ -182,6 +182,13 @@ struct DefinitionCandidate {
     virtual_spaces: u8,
 }
 
+// The target is already published. Only its first definition owns the symbol;
+// duplicates may consume a title without changing any reference metadata.
+struct DefinitionTitleCandidate {
+    block: BlockId,
+    owner: Option<SymbolId>,
+}
+
 #[derive(Default)]
 pub struct Document {
     id: DocumentId,
@@ -199,6 +206,7 @@ pub struct Document {
     streaming_header: Option<table::StreamingHeader>,
     table_delimiter: Option<table::DelimiterCandidate>,
     definition_candidate: Option<DefinitionCandidate>,
+    definition_title_candidate: Option<DefinitionTitleCandidate>,
     // First leaf and content envelope of the current container text sequence.
     // Setext confirmation never merges leaves or reparses their inline content.
     container_title: Option<(BlockId, Span)>,
@@ -641,6 +649,7 @@ impl Document {
             );
         }
         self.flush_definition_candidate(update);
+        self.seal_definition_title(update);
         self.flush_table_header(update);
         self.close_current(update);
         let closed_start = update.closed_containers.len();
@@ -985,6 +994,89 @@ impl Document {
         }
     }
 
+    fn seal_definition_title(&mut self, update: &mut Update) -> Option<DefinitionTitleCandidate> {
+        let candidate = self.definition_title_candidate.take()?;
+        self.blocks[candidate.block.0].state = SyntaxState::Sealed;
+        update.changed_blocks.start = update.changed_blocks.start.min(candidate.block.0);
+        Some(candidate)
+    }
+
+    fn resolve_definition_title(
+        &mut self,
+        span: Span,
+        complete: bool,
+        update: &mut Update,
+    ) -> bool {
+        let Some(candidate) = self.seal_definition_title(update) else {
+            return false;
+        };
+        let block = candidate.block;
+        let title = complete
+            .then(|| {
+                self.containers.definition_prefix(
+                    &self.source,
+                    span,
+                    self.blocks[block.0].container,
+                    &mut self.work,
+                )
+            })
+            .flatten()
+            .and_then(|start| {
+                let content = Span::new(start, span.end);
+                self.work.classified_bytes += content.len() as u64;
+                block::definition_title(&self.source, content)
+            });
+        let Some(title) = title else {
+            return false;
+        };
+        let loosened_start = update.loosened_lists.len();
+        self.containers
+            .observe_payload(false, span.start, &mut self.work, update);
+        for index in loosened_start..update.loosened_lists.len() {
+            let list = self.containers.get(update.loosened_lists[index]).unwrap();
+            self.mark(list.source, Style::default(), update);
+        }
+        self.blocks[block.0].source.end = span.end;
+        update.change(self.blocks[block.0].source, ChangeKind::Structure);
+        self.mark(span, Style::HIDDEN, update);
+        if let Some(symbol) = candidate.owner {
+            self.references.define_title(symbol, title, self.revision);
+            update.references_changed.push(symbol);
+            if let Some(start) = self.references.entries[symbol.0].first_use {
+                update.change(Span::new(start, self.source.len()), ChangeKind::Reference);
+            }
+        }
+        true
+    }
+
+    fn finish_definition(
+        &mut self,
+        block: BlockId,
+        symbol: SymbolId,
+        destination: Span,
+        title: Option<Span>,
+        update: &mut Update,
+    ) {
+        let winner = self
+            .references
+            .define(symbol, destination, title, self.revision);
+        if winner {
+            update.references_changed.push(symbol);
+            if let Some(start) = self.references.entries[symbol.0].first_use {
+                update.change(Span::new(start, self.source.len()), ChangeKind::Reference);
+            }
+        }
+        self.close_current(update);
+        if title.is_none() {
+            // This growing definition has no paragraph/inline eligibility.
+            self.blocks[block.0].state = SyntaxState::Growing;
+            self.definition_title_candidate = Some(DefinitionTitleCandidate {
+                block,
+                owner: winner.then_some(symbol),
+            });
+        }
+    }
+
     fn resolve_definition_candidate(
         &mut self,
         span: Span,
@@ -1037,16 +1129,7 @@ impl Document {
         let whole = self.blocks[block.0].source;
         update.change(whole, ChangeKind::Structure);
         self.mark(whole, Style::HIDDEN, update);
-        if self
-            .references
-            .define(symbol, destination, title, self.revision)
-        {
-            update.references_changed.push(symbol);
-            if let Some(start) = self.references.entries[symbol.0].first_use {
-                update.change(Span::new(start, self.source.len()), ChangeKind::Reference);
-            }
-        }
-        self.close_current(update);
+        self.finish_definition(block, symbol, destination, title, update);
         true
     }
 
@@ -1060,6 +1143,9 @@ impl Document {
         self.work.classified_bytes += span.len() as u64;
         self.containers.end = span.end;
         self.headings.parsed_end = span.end;
+        if self.resolve_definition_title(span, complete, update) {
+            return;
+        }
         // Joint definition/header candidates wait for the ordinary table
         // confirmation below, including its exact path and partial-leaf rules.
         if self.table_header.is_none()
@@ -1464,18 +1550,9 @@ impl Document {
                 .references
                 .intern(&self.source[label.range()], &mut self.work)
             {
-                self.new_block(span, BlockKind::Definition { symbol }, update);
+                let block = self.new_block(span, BlockKind::Definition { symbol }, update);
                 self.mark(span, Style::HIDDEN, update);
-                if self
-                    .references
-                    .define(symbol, destination, title, self.revision)
-                {
-                    update.references_changed.push(symbol);
-                    if let Some(start) = self.references.entries[symbol.0].first_use {
-                        update.change(Span::new(start, self.source.len()), ChangeKind::Reference);
-                    }
-                }
-                self.close_current(update);
+                self.finish_definition(block, symbol, destination, title, update);
                 return;
             }
             // An invalid normalized label is ordinary text in its original

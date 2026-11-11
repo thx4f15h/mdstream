@@ -744,11 +744,11 @@ fn next_line_failures_preserve_lazy_paths_and_existing_block_priorities() {
         assert_eq!(doc.blocks()[0].container, doc.blocks()[1].container);
         assert!(visible(&doc).contains("r:\n/url"));
     }
-    // Independent title lines and labels spanning lines stay outside this unit.
+    // A complete independent title now extends this already valid target.
     let doc = parse("[r]:\n/url\n'outside'\n\n[r]\n");
     assert_eq!(definitions(&doc), 1);
-    assert_eq!(doc.link_title(LinkId(0)), None);
-    assert!(visible(&doc).contains("'outside'"));
+    assert_eq!(doc.link_title(LinkId(0)), Some("outside"));
+    assert!(!visible(&doc).contains("'outside'"));
 }
 
 #[test]
@@ -847,7 +847,14 @@ fn next_line_confirmation_and_fallback_invalidate_layout_and_exclude_fixed_folds
                 if confirmed {
                     assert_eq!(definitions(&doc), 1);
                     assert!(doc.links().is_empty());
-                    assert_eq!(doc.source_fold_limit(), doc.source().len());
+                    assert_eq!(
+                        doc.source_fold_limit(),
+                        if tail == "2. 'title'\n" {
+                            doc.source().len()
+                        } else {
+                            block.source.start
+                        }
+                    );
                     assert!(view.fold_candidate(&doc, fold).unwrap().is_none());
                 } else if !doc.tables().is_empty() {
                     assert_eq!(definitions(&doc), 0);

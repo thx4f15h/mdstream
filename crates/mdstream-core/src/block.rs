@@ -420,7 +420,7 @@ fn definition(source: &str, start: usize, end: usize) -> Option<Line> {
 
 /// A complete bounded physical target line; all offsets borrow original source.
 /// Leading indentation on this continuation is horizontal whitespace, including
-/// four or more columns. Independent title lines remain outside this parser.
+/// four or more columns. Independent title lines use definition_title instead.
 pub(crate) fn definition_target(source: &str, span: Span) -> Option<(Span, Option<Span>)> {
     let mut a = span.start;
     let mut b = body_end(source, span);
@@ -447,6 +447,29 @@ pub(crate) fn definition_target(source: &str, span: Span) -> Option<(Span, Optio
         return None;
     };
     Some((destination, title))
+}
+
+/// Exactly one complete physical title line, retaining its original spelling.
+pub(crate) fn definition_title(source: &str, span: Span) -> Option<Span> {
+    let end = body_end(source, span);
+    let bytes = source.as_bytes();
+    let start = (span.start..end).find(|&pos| !matches!(bytes[pos], b' ' | b'\t'))?;
+    if !matches!(bytes[start], b'\'' | b'"' | b'(') {
+        return None;
+    }
+    let mut parser = crate::destination::Destination::title(start, bytes[start]);
+    for (offset, &byte) in bytes[start + 1..end].iter().enumerate() {
+        if !matches!(
+            parser.byte(byte, start + 1 + offset),
+            crate::destination::Progress::Pending
+        ) {
+            return None;
+        }
+    }
+    match parser.finish_definition() {
+        crate::destination::Progress::Complete { title, .. } => title,
+        _ => None,
+    }
 }
 
 /// Caller has already removed up to three indentation columns and the physical LF.

@@ -180,15 +180,7 @@ enum Assessment {
 // A changed result must be reviewed, even if it now matches upstream.
 fn assessment(number: usize) -> Assessment {
     match number {
-        192 | 194 | 198 | 200 | 202..=207 | 210 | 214..=216 | 218 => Assessment::Supported,
-        193 => Assessment::Unsupported {
-            reason: "next-line destination is recognized; independent title line remains indented code",
-            observed: "<pre><code>       'the title'  \n</code></pre>\n<p><a href=\"/url\">foo</a></p>\n",
-        },
-        195 => Assessment::Unsupported {
-            reason: "next-line destination is recognized; independent title line remains prose",
-            observed: "<p>'title'</p>\n<p><a href=\"my%20url\">Foo bar</a></p>\n",
-        },
+        192..=195 | 198 | 200 | 202..=207 | 210 | 214..=218 => Assessment::Supported,
         196 => Assessment::Unsupported {
             reason: "multi-line reference definitions are not recognized",
             observed: "<p>foo: /url '\ntitle\nline1\nline2\n'</p>\n<p>foo</p>\n",
@@ -224,10 +216,6 @@ fn assessment(number: usize) -> Assessment {
         213 => Assessment::DeliberateDifference {
             reason: "definitions cannot interrupt prose; unresolved references still hide brackets",
             observed: "<p>Foo\nbar: /baz</p>\n<p>bar</p>\n",
-        },
-        217 => Assessment::Unsupported {
-            reason: "multi-line title becomes prose, which also prevents the next definition",
-            observed: "<p>&quot;bar&quot;\nbaz: /baz-url</p>\n<p><a href=\"/foo-url\" title=\"foo\">foo</a>,\n<a href=\"/bar-url\">bar</a>,\nbaz</p>\n",
         },
         _ => panic!("unclassified upstream example {number}"),
     }
@@ -274,18 +262,20 @@ fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
 }
 
 #[test]
-fn next_line_definition_official_targets_keep_independent_title_lines_outside() {
-    for (number, destination, visible_title) in
-        [(193, "/url", "'the title'"), (195, "my url", "'title'")]
-    {
-        let &(_, markdown, _) = REFERENCE_DEFINITION_CASES
+fn next_line_definition_official_titles_match_unchanged_html() {
+    for (number, destination, title) in [(193, "/url", "the title"), (195, "my url", "title")] {
+        let &(_, markdown, html) = REFERENCE_DEFINITION_CASES
             .iter()
             .find(|c| c.0 == number)
             .unwrap();
         let doc = parse(markdown);
         assert_eq!(doc.links().len(), 1);
         assert_eq!(doc.link_destination(LinkId(0)), Some(destination));
-        assert_eq!(doc.link_title(LinkId(0)), None);
+        assert_eq!(doc.link_title(LinkId(0)), Some(title));
+        assert_eq!(
+            doc.references()[0].title.and_then(|s| doc.text(s)),
+            Some(title)
+        );
         assert_eq!(
             doc.text(doc.references()[0].destination.unwrap()),
             Some(destination)
@@ -296,13 +286,22 @@ fn next_line_definition_official_targets_keep_independent_title_lines_outside() 
             .filter(|r| !r.style.contains(Style::HIDDEN))
             .map(|r| r.text)
             .collect();
-        assert!(text.contains(visible_title));
+        assert!(!text.contains(title));
+        assert_eq!(project(&doc), html);
     }
     let &(_, markdown, html) = REFERENCE_DEFINITION_CASES
         .iter()
         .find(|c| c.0 == 198)
         .unwrap();
     check_case(198, markdown, html, &parse(markdown));
+    let &(_, markdown, html) = REFERENCE_DEFINITION_CASES
+        .iter()
+        .find(|c| c.0 == 217)
+        .unwrap();
+    let doc = parse(markdown);
+    assert_eq!(project(&doc), html);
+    assert_eq!(doc.link_title(LinkId(1)), Some("bar"));
+    assert_eq!(doc.link_destination(LinkId(2)), Some("/baz-url"));
 }
 
 #[test]
@@ -320,9 +319,9 @@ fn pinned_commonmark_reference_definitions_report() {
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [15, 7, 5]);
+    assert_eq!(counts, [18, 7, 2]);
     eprintln!(
-        "CommonMark 0.31.2 Link reference definitions (192–218): 15 supported, 7 deliberate differences, 5 unsupported; other sections not scored by this test"
+        "CommonMark 0.31.2 Link reference definitions (192–218): 18 supported, 7 deliberate differences, 2 unsupported; other sections not scored by this test"
     );
 }
 

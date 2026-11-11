@@ -2589,3 +2589,25 @@ README 当前说明和本任务对应 TODO 已同步，只新增此窄项勾选�
 
 - 第三处窄修复（联合表头资格）：先红测复现 `>\t[r|s]:\n>\t  -|-\n` 与 `- [r|s]:\n\t  -|-\n`；等长普通表头对照不形成表格，原字面分隔行检查却误拒绝目标。联合候选现经过既有根/容器表格确认分支，仅在表格不成立时读取目标，直接复用 `partial_leaf`、实际路径及 lazy 资格，不另建表格/容器规则；已观察的容器 payload 不重复记账。普通空格路径和至多三列部分 tab 的表格优先级保留。16380 组根/Quote/List/嵌套、space/tab/物理列宽、Unicode/普通/转义管道标签、合法/非法/不同列数分隔行、同目标行 title、LF/CRLF/EOF 的等长普通表头对照通过；扩展全切点/逐前缀/EOF、稳定 ID/目标与 title 原始区间、真实 FoldView.apply/ticket 失效、共享显示/元数据预算、双组百万字及两万旧引用工作计数。候选固定 Span/BlockId、不发布可撤销 LinkId、逐行分类窗口、累计 O(n log n)/O(n)、零运行时依赖及禁止 unsafe 不变。
 - 联合表头资格最终验证：本项目 `nix develop` 下 check、相关专项 163/163、完整 debug/release nextest 各 1607/1607、文档测试 75 项、doc 构建、clippy `-D warnings`、fmt、三个 release 示例、七组离线夹具、82 个官方输入/HTML/生成器/manifest 与三个 project 正文不变检查、原父叶块探针及 diff 检查通过。完整命令/状态/日志、先红后绿、模型与复杂度说明、最终补丁/文件及日志哈希在 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-015/fix-header-eligibility/`。本次只修改 task15 的表头资格问题，官方 198 支持及本章 15/7/5、输出 U+0020 通用编码授权边界、原宽 TODO 和 40 条未完成项保持；未开始 task16、未提交或推送，由新独立审查会话验收及父运行器提交。
+
+
+## 2026-11-11 引用定义独立下一物理行完整 title 交付
+
+对应 TODO `c6c77e9d8146` 的 task16 窄项：块起始处已发布有效目标、且目标行无 title 时，仅接收紧接下一物理行的完整单/双引号或括号 title，含空 title；目标可来自标签同一行或紧接下一行，定义至多三条物理行。根与既有完整显式路径、水平缩进超过三列、partial tab、Unicode、转义/实体原始 Span、LF/CRLF/EOF 保持。
+
+目标确认后定义保持 Growing，单独持有 BlockId 与可选获胜 SymbolId，不保留段落/Setext 或 Inline 资格。成功扩展原块包络并密封，只由首定义更新符号/title/revision 与引用范围；重复定义可消费自身合法 title 而不覆盖胜者，已有 title（包括空 title）不再吸收第二行。失败、空行、坏尾缀、缺失路径/新兄弟、未闭合或超窗只结束候选，目标不撤销，当前行走原普通块流程。待决固定折叠边界停在定义起点，确认/失败/EOF 后解除。
+
+实现复用既有完整容器路径及 Destination 状态机，每条有界 title 行只扫描常数次，新增分类/路径工作真实计数；超窗不重试，不回扫旧正文、引用或祖先历史。首定义目标与 title 分两次发布，元数据修订相应递增；通知沿用当前符号及 first_use 起保守区间。核心零运行时依赖、forbid unsafe、累计 O(n log n)、空间 O(n) 与共享预算保持。
+
+`tests/next_line_titles.rs` 八项回归：2100 组成功模型及独立普通块失败对照；首定义无 title 时重复定义仍不能补写（含空目标）、已有空 title 停止、两/三物理行；UTF-8 任意字节切分、逐标量前缀/EOF；稳定 BlockId/LinkId/ContainerId、原始源码/切片与解码；pending source_fold_limit/固定注册、真实 FoldView.apply/过期 ticket；共享六字节显示/目标/title 微预算；分类窗口边界、970 层百万字失败增长及两万旧引用工作量。既有下一行目标、叶块优先级与联合表头模型保持。原深250层路径工作250→750、重复定义路径3→5是新增有界 title 探测的真实收费，断言保留线性上界。
+
+官方 193、195、217 原投影直接匹配原 HTML，章节为 **18 支持、7 刻意差异、2 未支持**。196/208 原观察及其它章节评分保持；官方夹具、生成器、project、通用 U+0020 输出编码 helper、Cargo/Nix 结构均经哈希审计保持。title 正文本身跨行（196）、标签跨行（208/541）、行内后缀跨行（510）、分类窗口/元数据/999 原始标签字节限制放宽、完整容器及字面失败回退仍待办；原宽 TODO 保持未完成。
+
+验证全部 exit 0（Cargo 均经本项目 `nix develop`，target 取 metadata）：
+
+- `cargo check --workspace --all-targets`；针对性 nextest 的 next_line_titles/next_line_definitions/container_definitions/commonmark_reference_definitions 共 53 项。
+- `cargo nextest run --workspace --all-targets --no-fail-fast` 及增加 `--release` 的完整验证，各 **1615/1615**。最后补充所有权反例后再次通过最终全套。
+- `cargo test --doc --workspace` 共 **75** 项；`cargo doc --workspace --no-deps`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo fmt --all -- --check`。
+- reference_definitions/reference_labels/reference_forms/inline_links/images/block_quotes/list_items/lists/tabs 九组离线生成器 `--check`；`cargo run --release -p mdstream-core --example` 的 container_definitions、stream、source_folding；官方评分单独报告及保护项审计。
+
+完整命令、退出状态、红测与最终日志、状态/复杂度模型、独立观察审阅、最终补丁及 SHA-256 均在 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-016/implementation/`；索引 `commands.jsonl`，最终主证据 `check-final-ownership.log`、`targeted-final.log`、`debug-final.log`、`release-final.log`、`doc-tests.log`、`doc-build.log`、`clippy-final.log`、`fmt-final-check.log`、`official-report.log`、`protected-inputs.json`、`final.patch`、`final.patch.sha256`。只交付本项，未提交/推送，交父会话独立审查。

@@ -81,6 +81,15 @@ impl References {
         self.revision = revision;
         true
     }
+
+    /// Only the winning definition may retain a continuation capability.
+    pub fn define_title(&mut self, id: SymbolId, title: Span, revision: u64) {
+        let entry = &mut self.entries[id.0];
+        debug_assert!(entry.destination.is_some() && entry.title.is_none());
+        entry.title = Some(title);
+        entry.revision += 1;
+        self.revision = revision;
+    }
 }
 
 #[cfg(test)]

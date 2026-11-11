@@ -351,11 +351,11 @@ fn nested_list_definition_prefixes_are_linear_and_symbol_history_adds_no_refresh
     assert_eq!(doc.blocks()[0].container, doc.blocks()[1].container);
     assert_eq!(
         doc.work().container_steps - before.container_steps,
-        depth as u64
+        3 * depth as u64
     );
-    // The leaf/tab probe checks the supplied whitespace once, then the
-    // unchanged matcher scans it once; neither walks history or rescans per level.
-    assert!(doc.work().container_bytes - before.container_bytes < 4 * depth as u64 + 64);
+    // The title probe matches both byte-aligned and partial-tab paths before
+    // ordinary classification. Each pass is linear in this supplied prefix.
+    assert!(doc.work().container_bytes - before.container_bytes < 8 * depth as u64 + 64);
     doc.append("outside\n").unwrap();
     doc.append(
         &(0..4096)
@@ -376,7 +376,7 @@ fn nested_list_definition_prefixes_are_linear_and_symbol_history_adds_no_refresh
     assert_eq!(update.footnotes_changed, [symbol]);
     assert_eq!(doc.work().label_bytes - before.label_bytes, 1);
     assert_eq!(doc.work().footnote_steps - before.footnote_steps, 3);
-    assert_eq!(doc.work().container_steps - before.container_steps, 3);
+    assert_eq!(doc.work().container_steps - before.container_steps, 5);
     assert_eq!(doc.work().inline_bytes, before.inline_bytes);
     assert!(doc.work().classified_bytes - before.classified_bytes < 100);
 }

@@ -47,6 +47,15 @@ impl Destination {
         }
     }
 
+    /// A standalone definition title, after its validated opening delimiter.
+    pub fn title(start: usize, open: u8) -> Self {
+        Self {
+            stage: Stage::Title(if open == b'(' { b')' } else { open }),
+            title: Some(Span::new(start + 1, start + 1)),
+            ..Self::new(start)
+        }
+    }
+
     pub fn byte(&mut self, byte: u8, pos: usize) -> Progress {
         // Also bound whitespace and unfinished candidates, without rescanning.
         if pos - self.start >= MAX_LINK_SUFFIX_BYTES || matches!(byte, b'\n' | b'\r') {
