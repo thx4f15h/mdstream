@@ -180,7 +180,7 @@ enum Assessment {
 // A changed result must be reviewed, even if it now matches upstream.
 fn assessment(number: usize) -> Assessment {
     match number {
-        192..=195 | 198 | 200 | 202..=207 | 210 | 214..=218 => Assessment::Supported,
+        192..=195 | 198 | 200 | 202..=208 | 210 | 214..=218 => Assessment::Supported,
         196 => Assessment::Unsupported {
             reason: "multi-line reference definitions are not recognized",
             observed: "<p>foo: /url '\ntitle\nline1\nline2\n'</p>\n<p>foo</p>\n",
@@ -196,10 +196,6 @@ fn assessment(number: usize) -> Assessment {
         201 => Assessment::DeliberateDifference {
             reason: "unresolved references retain public labels with hidden brackets",
             observed: "<p>foo: &lt;bar&gt;(baz)</p>\n<p>foo</p>\n",
-        },
-        208 => Assessment::Unsupported {
-            reason: "multi-line reference definitions are not recognized",
-            observed: "<p>\nfoo\n: /url\nbar</p>\n",
         },
         209 => Assessment::DeliberateDifference {
             reason: "unresolved references retain public labels with hidden brackets",
@@ -319,9 +315,9 @@ fn pinned_commonmark_reference_definitions_report() {
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [18, 7, 2]);
+    assert_eq!(counts, [19, 7, 1]);
     eprintln!(
-        "CommonMark 0.31.2 Link reference definitions (192–218): 18 supported, 7 deliberate differences, 2 unsupported; other sections not scored by this test"
+        "CommonMark 0.31.2 Link reference definitions (192–218): 19 supported, 7 deliberate differences, 1 unsupported; other sections not scored by this test"
     );
 }
 
@@ -544,4 +540,21 @@ fn definition_projection_rejects_unscored_structure_and_styles() {
             "accepted unscored input {source:?}"
         );
     }
+}
+
+#[test]
+fn multiline_label_official_208_matches_original_html() {
+    let &(_, markdown, html) = REFERENCE_DEFINITION_CASES
+        .iter()
+        .find(|c| c.0 == 208)
+        .unwrap();
+    let doc = parse(markdown);
+    assert_eq!(project(&doc), html);
+    assert_eq!(doc.links().len(), 0);
+    assert_eq!(doc.blocks().len(), 2);
+    assert!(matches!(doc.blocks()[0].kind, BlockKind::Definition { .. }));
+    assert_eq!(
+        doc.blocks()[0].source,
+        Span::new(0, markdown.find("bar").unwrap())
+    );
 }

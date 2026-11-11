@@ -83,6 +83,8 @@ impl Table {
 }
 
 pub(crate) struct HeaderCandidate {
+    // None only while the definition ledger owns this header source.
+    pub owner: Option<crate::deferred::SourceOwner>,
     pub block: Option<BlockId>,
     pub source: Span,
     pub content: Span,

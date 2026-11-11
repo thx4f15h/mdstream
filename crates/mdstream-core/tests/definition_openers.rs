@@ -189,10 +189,14 @@ fn bounded_window_length_and_literal_context_rules_stay_intact() {
         "```\n[r\\[]: /no\n```\n",
         "$$\n[r\\[]: /no\n$$\n",
         "[^r[x]: note\n",
-        "[r\\[\nx]: /no\n",
+        "[r[\nx]: /no\n",
     ] {
         assert_eq!(definitions(&parse(source)), 0);
     }
+    // An escaped opener remains raw matching data across physical lines.
+    let multiline = parse("[r\\[\nx]: /no\n");
+    assert_eq!(definitions(&multiline), 1);
+    assert_eq!(multiline.references()[0].label, "r\\[ x");
     // An opener in the destination or title is outside the label scanner.
     assert_eq!(definitions(&parse("[r]: /[x 't['\n")), 1);
 }

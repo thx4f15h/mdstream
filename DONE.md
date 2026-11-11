@@ -2611,3 +2611,15 @@ README 当前说明和本任务对应 TODO 已同步，只新增此窄项勾选�
 - reference_definitions/reference_labels/reference_forms/inline_links/images/block_quotes/list_items/lists/tabs 九组离线生成器 `--check`；`cargo run --release -p mdstream-core --example` 的 container_definitions、stream、source_folding；官方评分单独报告及保护项审计。
 
 完整命令、退出状态、红测与最终日志、状态/复杂度模型、独立观察审阅、最终补丁及 SHA-256 均在 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-016/implementation/`；索引 `commands.jsonl`，最终主证据 `check-final-ownership.log`、`targeted-final.log`、`debug-final.log`、`release-final.log`、`doc-tests.log`、`doc-build.log`、`clippy-final.log`、`fmt-final-check.log`、`official-report.log`、`protected-inputs.json`、`final.patch`、`final.patch.sha256`。只交付本项，未提交/推送，交父会话独立审查。
+
+## 2026-11-11 引用定义跨物理行标签交付
+
+完成块起始处跨物理行定义标签及既有完整显式 Quote/List/嵌套/部分 tab 路径。闭合标签同一行紧接冒号，目标在闭合行或紧接下一行，之后可有独立下一行完整 title。真实去前缀标签内容保留 LF/CRLF、缩进与转义，统一限 999 个原始字节，虚拟列不伪造源字节；完整 Unicode folding/空白归一、首定义优先及目标/title 借用 Span 保持。196 的多行 title 正文、510 的跨行行内后缀、完整容器/字面失败回退和长度/窗口放宽仍保留待办，两个宽 TODO 未勾选。
+
+复用已验收的非 Clone 延迟来源账本和生产回流入口，语法仅追加新行数据，不提前发布需要撤销的 LinkId/后续物理叶块/容器/标题。确认消耗全来源并保留首 BlockId/ContainerId；失败先取走候选，再迭代单次回流。共享表头失败时先归还消费权，保留下一行原有 tab/code/lazy 资格；中间表头 delimiter 到来前回流旧普通来源，由真实表格流程确认。闭合标签行含管道但无目标的三列部分 tab 表格、四列目标例外与普通空格原表格优先级分别有测试。pending 固定 source fold、开放段落注册的确认/回退、真实 FoldView.apply/ticket、合并 Update 和共享六字节显示/元数据预算均核验。
+
+新增 9 项集成测试、3 项私有生产管线对照及 208/541 两项官方直验，另更新 3 处直接相关旧观察：待定首块 Growing、首次回流的 3 个原字节、原先未支持的跨行转义标签。4445 组失败/结构/表格/lazy 普通对照、UTF-8 每切点/逐前缀 EOF/字节解码、999/超限及 LF/CRLF、元数据/原始映射和旧对象身份通过。969 层/500 片段成功输入为 486008 个物理字节、999 个标签字节；失败尾部覆盖深度 0/32/128/970 和百万字，随后 1000 次单字节追加仅增加 1000 inline visits，classification/container 计数不增长。两万旧引用与 4096 历史定义后只更新当前符号和区间，重复定义不覆写赢家。每个新物理字节/有界片段只常数次扫描和至多一次普通回流；累计 O(n log n)、空间 O(n)、零运行时依赖及 forbid unsafe 保持。
+
+官方 208/541 直接匹配未改 HTML：定义章为 19 支持/7 刻意差异/1 未支持，标签子集为 8/6/0，其余冻结观察不变。实际普通管线结构对照：208 从普通 1 Block/1 Link 转为定义及正文 2 Block/0 Link；541 从 3 Block/2 Link 转为 3 Block/1 Link，保留正文链接原始范围，定义源码包络分别为 0..14 和 0..18。官方输入/HTML、全部生成器、评分 project 算法和输出编码 helper 未改，离线固定 SHA-256 校验通过。
+
+本单元证据目录：`/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-017/multiline-labels/`。`MODEL.md` 为先于实现的成功/未完成/失败/回流及累计复杂度模型，`commands.jsonl` 保存真实命令、退出状态、完整日志路径与日志哈希，`RESULT.json` 汇总最终验证，`integrity.json`/`patch.diff` 保存源码哈希、受保护文件/投影核验和含父基础的最终补丁。check、定向 nextest、完整 debug/release nextest、doc/docbuild、clippy -D warnings、fmt、相关离线夹具与示例/diff 检查均见该证据。未提交、推送、reset、清理或修改主机/用户配置，交父会话独立验收及提交。

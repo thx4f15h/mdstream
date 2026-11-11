@@ -255,20 +255,12 @@ enum Assessment {
         reason: &'static str,
         observed: &'static str,
     },
-    Unsupported {
-        reason: &'static str,
-        observed: &'static str,
-    },
 }
 
 // Frozen observations are separate from the verbatim upstream oracle.
 fn assessment(number: usize) -> Assessment {
     match number {
-        539 | 540 | 544 | 549..=552 => Assessment::Supported,
-        541 => Assessment::Unsupported {
-            reason: "reference definition labels cannot span physical lines",
-            observed: "<p>Foo\nbar: /url</p>\n<p>Baz</p>\n",
-        },
+        539..=541 | 544 | 549..=552 => Assessment::Supported,
         542 => Assessment::DeliberateDifference {
             reason: "unresolved shortcut references retain hidden brackets before a spaced reference",
             observed: "<p>foo <a href=\"/url\" title=\"title\">bar</a></p>\n",
@@ -308,8 +300,7 @@ fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
     metadata_snapshot(doc);
     match assessment(number) {
         Assessment::Supported => assert_eq!(actual, expected, "example {number}"),
-        Assessment::DeliberateDifference { observed, .. }
-        | Assessment::Unsupported { observed, .. } => {
+        Assessment::DeliberateDifference { observed, .. } => {
             assert_ne!(
                 actual, expected,
                 "example {number} now matches upstream; review classification"
@@ -347,14 +338,13 @@ fn pinned_commonmark_reference_labels_report() {
         let (category, label, reason) = match assessment(number) {
             Assessment::Supported => (0, "supported", "matches upstream"),
             Assessment::DeliberateDifference { reason, .. } => (1, "deliberate difference", reason),
-            Assessment::Unsupported { reason, .. } => (2, "unsupported", reason),
         };
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [7, 6, 1]);
+    assert_eq!(counts, [8, 6, 0]);
     eprintln!(
-        "CommonMark 0.31.2 Links subset (539–552): 7 supported, 6 deliberate differences, 1 unsupported; 482–538 and 553–571 outside this score"
+        "CommonMark 0.31.2 Links subset (539–552): 8 supported, 6 deliberate differences, 0 unsupported; 482–538 and 553–571 outside this score"
     );
 }
 
@@ -798,4 +788,21 @@ fn late_definitions_preserve_normalized_symbols_identity_and_first_definition() 
         assert_eq!(doc.references()[symbol.0], winners[i]);
         assert_eq!(doc.link_info(LinkId(i)), Some(&infos[i]));
     }
+}
+
+#[test]
+fn multiline_label_official_541_matches_original_html() {
+    let &(_, markdown, html) = REFERENCE_LABEL_CASES.iter().find(|c| c.0 == 541).unwrap();
+    let doc = parse(markdown);
+    assert_eq!(project(&doc), html);
+    assert_eq!(doc.links().len(), 1);
+    assert_eq!(doc.link_destination(LinkId(0)), Some("/url"));
+    assert_eq!(
+        doc.references()
+            .iter()
+            .filter(|r| r.destination.is_some())
+            .count(),
+        1
+    );
+    assert_eq!(doc.references()[0].label, "foo bar");
 }

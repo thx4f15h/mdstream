@@ -34,6 +34,9 @@ pub(crate) enum Line {
     DefinitionStart {
         label: Span,
     },
+    DefinitionLabel {
+        label: Span,
+    },
     Setext(u8),
     FenceOpen {
         fence: Fence,
@@ -65,6 +68,16 @@ pub(crate) fn body_end(source: &str, span: Span) -> usize {
         }
     }
     end
+}
+
+// Only bounded physical prefix bytes, shared by ordinary commit and its probe.
+pub(crate) fn prefix_column(source: &str, prefix: Span, work: &mut crate::Work) -> u8 {
+    let mut column = 0;
+    for &byte in &source.as_bytes()[prefix.range()] {
+        work.classified_bytes += 1;
+        column = if byte == b'\t' { 0 } else { (column + 1) % 4 };
+    }
+    column
 }
 
 pub(crate) fn classify(
@@ -379,6 +392,17 @@ impl Atx {
     }
 }
 
+// Called only on new bounded physical label bytes. A real line ending resets
+// backslash parity; it is retained in the raw key, never in container prefixes.
+pub(crate) fn unescaped_bracket(text: &[u8]) -> Option<usize> {
+    let mut escaped = false;
+    text.iter().position(|&byte| {
+        let bracket = matches!(byte, b'[' | b']') && !escaped;
+        escaped = byte == b'\\' && !escaped;
+        bracket
+    })
+}
+
 fn definition(source: &str, start: usize, end: usize) -> Option<Line> {
     let text = &source.as_bytes()[start..end];
     if text.first() != Some(&b'[') || text.get(1) == Some(&b'^') {
@@ -386,12 +410,14 @@ fn definition(source: &str, start: usize, end: usize) -> Option<Line> {
     }
     // Find the first unescaped bracket after the opener in this bounded line. Keep
     // the raw label spelling for reference matching and source offsets.
-    let mut escaped = false;
-    let close = 1 + text[1..].iter().position(|&byte| {
-        let bracket = matches!(byte, b'[' | b']') && !escaped;
-        escaped = byte == b'\\' && !escaped;
-        bracket
-    })?;
+    let Some(bracket) = unescaped_bracket(&text[1..]) else {
+        return (text.len() - 1 <= crate::references::MAX_LABEL_BYTES).then_some(
+            Line::DefinitionLabel {
+                label: Span::new(start + 1, end),
+            },
+        );
+    };
+    let close = bracket + 1;
     if text[close] != b']' || close <= 1 || text.get(close + 1) != Some(&b':') {
         return None;
     }

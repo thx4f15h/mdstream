@@ -25,6 +25,7 @@ mod cache;
 mod checkpoints;
 mod code_info;
 mod containers;
+mod deferred;
 mod destination;
 mod display;
 mod display_search;
@@ -146,6 +147,7 @@ pub fn apply_layout_update_with_policy<S>(
 
 use annotations::Annotations;
 use block::{Fence, Line};
+use deferred::{DeferredFragment, DeferredSources, SourceOwner};
 use inline::{Effects, Inline};
 use references::References;
 use std::fmt;
@@ -173,13 +175,21 @@ struct StreamingLine {
     table: bool,
 }
 
-// A single bounded first line, not an inline/link object. Its growing ordinary
-// block preserves paragraph/lazy eligibility until the next physical line.
+// No inline/link object is published while these bounded sources are undecided.
+// The first ordinary block preserves paragraph/lazy eligibility through replay.
+enum DefinitionLabel {
+    Target(Span),
+    Multiline {
+        raw: String,
+        closed: bool,
+        columns: Option<usize>,
+    },
+}
+
 struct DefinitionCandidate {
     block: BlockId,
-    label: Span,
-    payload: Span,
-    virtual_spaces: u8,
+    label: DefinitionLabel,
+    sources: DeferredSources,
 }
 
 // The target is already published. Only its first definition owns the symbol;
@@ -605,7 +615,7 @@ impl Document {
                     && self.source.is_char_boundary(cursor);
                 if newline || limit {
                     let span = Span::new(self.line_start, cursor);
-                    if !newline && self.probe_long_delimiter(span) {
+                    if !newline && self.probe_long_delimiter(span, update) {
                         continue;
                     }
                     self.commit_line(span, newline, true, update);
@@ -912,7 +922,16 @@ impl Document {
         }
     }
 
-    fn probe_long_delimiter(&mut self, span: Span) -> bool {
+    fn probe_long_delimiter(&mut self, span: Span, update: &mut Update) -> bool {
+        if self
+            .definition_candidate
+            .as_ref()
+            .is_some_and(|candidate| matches!(candidate.label, DefinitionLabel::Multiline { .. }))
+        {
+            // The growing trigger hit its physical window. Replay before the
+            // ordinary long-delimiter probe so it sees the last real header.
+            self.flush_definition_candidate(update);
+        }
         let Some(header) = &self.table_header else {
             return false;
         };
@@ -980,18 +999,57 @@ impl Document {
 
     fn flush_definition_candidate(&mut self, update: &mut Update) {
         if let Some(candidate) = self.definition_candidate.take() {
-            // A pipe-bearing label also owns the existing table-header probe.
-            // Its fallback will consume that same source through feed_header.
-            if self.table_header.is_some() {
-                return;
-            }
-            self.feed_header_content(candidate.payload, candidate.virtual_spaces, update);
-            self.mark(
-                self.blocks[candidate.block.0].source,
-                Style::default(),
-                update,
-            );
+            self.replay_deferred(candidate.sources, update);
         }
+    }
+
+    // The candidate has already been taken. No fragment can reacquire definition
+    // eligibility, and the triggering line is still owned by commit_line's caller.
+    fn replay_deferred(&mut self, sources: DeferredSources, update: &mut Update) {
+        let parsed_end = self.headings.parsed_end;
+        let container_end = self.containers.end;
+        let first = sources.block;
+        debug_assert_eq!(self.blocks[first.0].container, sources.scope);
+        let mut fragments = sources.into_fragments();
+        let fragment = fragments.next().unwrap();
+        if let Some(mut header) = self.table_header.take() {
+            debug_assert_eq!(header.block, Some(first));
+            debug_assert_eq!(header.source, fragment.source);
+            debug_assert_eq!(header.parsed_end, header.content.start);
+            debug_assert!(header.owner.is_none());
+            // Restore the ordinary header's sole consumption right. Its next
+            // line must classify with the same pending-header context as prose,
+            // including tab/code/lazy priority; later replay may confirm it.
+            header.owner = Some(fragment.owner);
+            self.table_header = Some(header);
+        } else {
+            self.feed_fragment(fragment, update);
+            if self.blocks[first.0].container.is_some() {
+                self.end_container_text(first);
+            }
+        }
+        self.mark(self.blocks[first.0].source, Style::default(), update);
+        for fragment in fragments {
+            // Reuse actual header/Setext/container/inline qualification. The
+            // recorded raw span is for a future successful label consumer;
+            // ordinary replay classifies each full physical source once.
+            self.commit_line_mode(fragment.source, true, true, false, update);
+        }
+        self.containers.end = self.containers.end.max(container_end);
+        self.headings.parsed_end = self.headings.parsed_end.max(parsed_end);
+    }
+
+    fn feed_fragment(&mut self, fragment: DeferredFragment, update: &mut Update) {
+        if fragment.virtual_spaces > 0 {
+            let mut parser = std::mem::take(&mut self.inline);
+            parser.virtual_spaces(
+                fragment.raw.start - 1,
+                fragment.virtual_spaces,
+                &mut self.effects(update),
+            );
+            self.inline = parser;
+        }
+        self.feed(fragment.raw, update);
     }
 
     fn seal_definition_title(&mut self, update: &mut Update) -> Option<DefinitionTitleCandidate> {
@@ -1077,6 +1135,113 @@ impl Document {
         }
     }
 
+    fn resolve_multiline_label(&mut self, span: Span, complete: bool, update: &mut Update) -> bool {
+        let candidate = self.definition_candidate.as_ref().unwrap();
+        let DefinitionLabel::Multiline {
+            closed, columns, ..
+        } = candidate.label
+        else {
+            unreachable!()
+        };
+        let scope = candidate.sources.scope;
+        if !complete {
+            self.flush_definition_candidate(update);
+            return false;
+        }
+        if closed {
+            // Check the real table path before the target-only indentation
+            // exception. Partial-tab leaves reject four residual columns.
+            let delimiter = columns.is_some_and(|columns| {
+                self.containers
+                    .reference_table_prefix(&self.source, span, scope, &mut self.work)
+                    .is_some_and(|start| {
+                        let content = Span::new(start, span.end);
+                        self.work.classified_bytes += content.len() as u64;
+                        table::delimiter(&self.source, content, columns).is_some()
+                    })
+            });
+            if delimiter {
+                self.flush_definition_candidate(update);
+                return false;
+            }
+            return self.resolve_definition_candidate(span, complete, false, update);
+        }
+        // A previous pipe line is an ordinary pending header, including its
+        // different tab/code qualification. Only the new physical prefix is read.
+        let ordinary = self.containers.continuation_source(
+            &self.source,
+            span,
+            scope,
+            false,
+            columns,
+            &mut self.work,
+        );
+        let Some((_, raw, virtual_spaces)) = ordinary else {
+            self.flush_definition_candidate(update);
+            return false;
+        };
+        self.work.classified_bytes += raw.len() as u64;
+        let bracket = block::unescaped_bracket(&self.source.as_bytes()[raw.range()]);
+        let end = bracket.map_or(raw.end, |offset| raw.start + offset);
+        let candidate = self.definition_candidate.as_mut().unwrap();
+        let DefinitionLabel::Multiline {
+            raw: label,
+            closed,
+            columns,
+        } = &mut candidate.label
+        else {
+            unreachable!()
+        };
+        let valid = label.len() + end - raw.start <= MAX_LABEL_BYTES
+            && bracket.is_none_or(|_| {
+                self.source.as_bytes()[end] == b']'
+                    && end + 1 < block::body_end(&self.source, raw)
+                    && self.source.as_bytes()[end + 1] == b':'
+            });
+        if !valid {
+            self.flush_definition_candidate(update);
+            return false;
+        }
+        label.push_str(&self.source[raw.start..end]);
+        let mut target = None;
+        if bracket.is_some() {
+            *closed = true;
+            if !label.chars().any(|c| !c.is_whitespace()) {
+                self.flush_definition_candidate(update);
+                return false;
+            }
+            let suffix = Span::new(end + 2, block::body_end(&self.source, raw));
+            if !self.source.as_bytes()[suffix.range()]
+                .iter()
+                .all(|b| matches!(b, b' ' | b'\t'))
+            {
+                target = block::definition_target(&self.source, suffix);
+                if target.is_none() {
+                    self.flush_definition_candidate(update);
+                    return false;
+                }
+            }
+        }
+        if let Some((destination, title)) = target {
+            self.confirm_definition_candidate(span, destination, title, false, update);
+            return true;
+        }
+        let mut summary = table::HeaderSummary::default();
+        summary.feed(&self.source[raw.range()], &mut self.work);
+        *columns = summary.columns();
+        let fragment = DeferredFragment {
+            source: span,
+            raw,
+            virtual_spaces,
+            owner: SourceOwner::new(),
+        };
+        if candidate.sources.push(fragment).is_err() {
+            self.flush_definition_candidate(update);
+            return false;
+        }
+        true
+    }
+
     fn resolve_definition_candidate(
         &mut self,
         span: Span,
@@ -1107,12 +1272,34 @@ impl Document {
             self.flush_definition_candidate(update);
             return false;
         };
+        self.confirm_definition_candidate(span, destination, title, payload_observed, update);
+        true
+    }
+
+    fn confirm_definition_candidate(
+        &mut self,
+        span: Span,
+        destination: Span,
+        title: Option<Span>,
+        payload_observed: bool,
+        update: &mut Update,
+    ) {
         let candidate = self.definition_candidate.take().unwrap();
         self.table_header = None;
+        let block = candidate.block;
+        let retained = candidate.sources.confirm();
+        debug_assert_eq!(retained.start, self.blocks[block.0].source.start);
+        let label = match &candidate.label {
+            DefinitionLabel::Target(label) => &self.source[label.range()],
+            DefinitionLabel::Multiline { raw, closed, .. } => {
+                debug_assert!(closed);
+                raw.as_str()
+            }
+        };
         let symbol = self
             .references
-            .intern(&self.source[candidate.label.range()], &mut self.work)
-            .expect("candidate label was validated in its bounded first line");
+            .intern(label, &mut self.work)
+            .expect("candidate raw label was validated before confirmation");
         // A container header has already observed this line in commit_line.
         if !payload_observed {
             let loosened_start = update.loosened_lists.len();
@@ -1130,7 +1317,6 @@ impl Document {
         update.change(whole, ChangeKind::Structure);
         self.mark(whole, Style::HIDDEN, update);
         self.finish_definition(block, symbol, destination, title, update);
-        true
     }
 
     fn commit_line(
@@ -1140,10 +1326,29 @@ impl Document {
         allow_long_header: bool,
         update: &mut Update,
     ) {
+        self.commit_line_mode(span, complete, allow_long_header, true, update);
+    }
+
+    fn commit_line_mode(
+        &mut self,
+        span: Span,
+        complete: bool,
+        allow_long_header: bool,
+        definitions: bool,
+        update: &mut Update,
+    ) {
         self.work.classified_bytes += span.len() as u64;
         self.containers.end = span.end;
         self.headings.parsed_end = span.end;
         if self.resolve_definition_title(span, complete, update) {
+            return;
+        }
+        if self
+            .definition_candidate
+            .as_ref()
+            .is_some_and(|candidate| matches!(candidate.label, DefinitionLabel::Multiline { .. }))
+            && self.resolve_multiline_label(span, complete, update)
+        {
             return;
         }
         // Joint definition/header candidates wait for the ordinary table
@@ -1169,8 +1374,9 @@ impl Document {
             if self.resolve_definition_candidate(span, complete, false, update) {
                 return;
             }
-            let root_header = self.table_header.take().unwrap();
-            self.feed_header(root_header, update);
+            if let Some(root_header) = self.table_header.take() {
+                self.feed_header(root_header, update);
+            }
         }
         let previous_title = self.container_title.or_else(|| {
             header.as_ref().map(|h| {
@@ -1208,7 +1414,11 @@ impl Document {
             // Other missing prefixes or siblings seal the old block.
             let root_markers = matches!(
                 classification,
-                Line::Indented { .. } | Line::Text | Line::Blank | Line::DefinitionStart { .. }
+                Line::Indented { .. }
+                    | Line::Text
+                    | Line::Blank
+                    | Line::DefinitionStart { .. }
+                    | Line::DefinitionLabel { .. }
             );
             let new_start = self.containers.len();
             let closed_start = update.closed_containers.len();
@@ -1298,14 +1508,11 @@ impl Document {
                     if self.fence.is_some_and(|fence| fence.byte != b'$') || tab_indent {
                         // Only this bounded physical prefix, never old text or
                         // ancestor nodes. Reuse the result for body de-indent.
-                        for &byte in &self.source.as_bytes()[span.start..inner.start] {
-                            self.work.classified_bytes += 1;
-                            fence_column = if byte == b'\t' {
-                                0
-                            } else {
-                                (fence_column + 1) % 4
-                            };
-                        }
+                        fence_column = block::prefix_column(
+                            &self.source,
+                            Span::new(span.start, inner.start),
+                            &mut self.work,
+                        );
                     }
                     if let Some(fence) = self.fence {
                         block::classify_fenced(
@@ -1351,6 +1558,7 @@ impl Document {
                     | Line::Rule
                     | Line::Definition { .. }
                     | Line::DefinitionStart { .. }
+                    | Line::DefinitionLabel { .. }
                     | Line::FootnoteDefinition { .. }) => leaf,
                     _ => Line::Container {
                         prefix: line.prefix,
@@ -1382,8 +1590,9 @@ impl Document {
             if self.resolve_definition_candidate(span, complete, true, update) {
                 return;
             }
-            let header = self.table_header.take().unwrap();
-            self.feed_header(header, update);
+            if let Some(header) = self.table_header.take() {
+                self.feed_header(header, update);
+            }
         }
         if let Some(block) = self.current
             && let BlockKind::Table { id } = self.blocks[block.0].kind
@@ -1396,21 +1605,37 @@ impl Document {
             }
             self.close_current(update);
         }
-        let candidate_label = if let Line::DefinitionStart { label } = classification {
-            table_text = true;
-            classification = container_line
-                .as_ref()
-                .map_or(Line::Text, |line| Line::Container {
-                    prefix: line.prefix,
-                    kind: line.kind.clone(),
-                });
-            Some(label)
-        } else {
-            None
+        let mut candidate_label = match classification {
+            Line::DefinitionStart { label } | Line::DefinitionLabel { label } => {
+                let open = matches!(classification, Line::DefinitionLabel { .. });
+                table_text = true;
+                classification =
+                    container_line
+                        .as_ref()
+                        .map_or(Line::Text, |line| Line::Container {
+                            prefix: line.prefix,
+                            kind: line.kind.clone(),
+                        });
+                if !definitions || (open && span.end - label.start > MAX_LABEL_BYTES) {
+                    None
+                } else if open {
+                    Some(DefinitionLabel::Multiline {
+                        raw: self.source[label.start..span.end].to_owned(),
+                        closed: false,
+                        columns: None,
+                    })
+                } else {
+                    Some(DefinitionLabel::Target(label))
+                }
+            }
+            _ => None,
         };
         let mut summary = table::HeaderSummary::default();
         if table_text && (complete || allow_long_header) {
             summary.feed(&self.source[content.range()], &mut self.work);
+        }
+        if let Some(DefinitionLabel::Multiline { columns, .. }) = &mut candidate_label {
+            *columns = summary.columns();
         }
         // Emphasis openers and separable close-only pairs may be retained while
         // probing. Other inherited pairs cancel with their original semantics.
@@ -1468,7 +1693,7 @@ impl Document {
                 self.display
                     .spaces(Span::new(content.start, content.start + 1), virtual_spaces);
             }
-            let header = table::HeaderCandidate {
+            let mut header = table::HeaderCandidate {
                 block,
                 source: span,
                 content,
@@ -1479,6 +1704,7 @@ impl Document {
                 paragraph_end,
                 paragraph_tail,
                 virtual_spaces,
+                owner: Some(SourceOwner::new()),
             };
             self.mark(span, Style::default(), update);
             self.mark(Span::new(span.start, content.start), Style::HIDDEN, update);
@@ -1496,8 +1722,16 @@ impl Document {
                 self.definition_candidate = Some(DefinitionCandidate {
                     block: block.unwrap(),
                     label,
-                    payload: header.content,
-                    virtual_spaces: header.virtual_spaces,
+                    sources: DeferredSources::new(
+                        block.unwrap(),
+                        header.container,
+                        DeferredFragment::from_payload(
+                            span,
+                            header.content,
+                            header.virtual_spaces,
+                            header.owner.take().unwrap(),
+                        ),
+                    ),
                 });
             }
             if self.inline.header_crossed() {
@@ -1744,6 +1978,7 @@ impl Document {
             }
             Line::Definition { .. }
             | Line::DefinitionStart { .. }
+            | Line::DefinitionLabel { .. }
             | Line::FootnoteDefinition { .. } => unreachable!(),
         };
         // A classification change invalidates provisional raw runs, even without
@@ -1767,8 +2002,16 @@ impl Document {
             self.definition_candidate = Some(DefinitionCandidate {
                 block: id,
                 label,
-                payload,
-                virtual_spaces,
+                sources: DeferredSources::new(
+                    id,
+                    self.blocks[id.0].container,
+                    DeferredFragment::from_payload(
+                        span,
+                        payload,
+                        virtual_spaces,
+                        SourceOwner::new(),
+                    ),
+                ),
             });
             // Nothing has entered Inline yet. A failed candidate consumes this
             // source once before classifying its successor; success never does.
@@ -2025,7 +2268,27 @@ impl Document {
         }
     }
 
-    fn feed_header(&mut self, header: table::HeaderCandidate, update: &mut Update) {
+    fn feed_header(&mut self, mut header: table::HeaderCandidate, update: &mut Update) {
+        if let Some(candidate) = self.definition_candidate.take() {
+            debug_assert_eq!(header.block, Some(candidate.block));
+            self.table_header = Some(header);
+            self.replay_deferred(candidate.sources, update);
+            self.flush_table_header(update);
+        } else {
+            let owner = header
+                .owner
+                .take()
+                .expect("header owns its unconsumed source");
+            self.feed_owned_header(header, owner, update);
+        }
+    }
+
+    fn feed_owned_header(
+        &mut self,
+        header: table::HeaderCandidate,
+        _owner: SourceOwner,
+        update: &mut Update,
+    ) {
         self.cancel_header(update);
         if let Some(line_break) = header.leading_break {
             line_break.commit(&mut self.effects(update));
@@ -2065,7 +2328,14 @@ impl Document {
         columns: Vec<Alignment>,
         update: &mut Update,
     ) {
-        self.definition_candidate = None;
+        if let Some(candidate) = self.definition_candidate.take() {
+            debug_assert_eq!(header.block, Some(candidate.block));
+            debug_assert!(header.owner.is_none());
+            candidate.sources.confirm();
+        } else {
+            // The header's own right is retired by table confirmation.
+            debug_assert!(header.owner.is_some());
+        }
         let id = TableId(self.tables.len());
         let first_cell = if header.parsed_end > header.content.start {
             let mut inline = std::mem::take(&mut self.inline);

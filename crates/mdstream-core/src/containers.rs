@@ -327,6 +327,7 @@ impl Containers {
                     | crate::block::Line::Heading { .. }
                     | crate::block::Line::Definition { .. }
                     | crate::block::Line::DefinitionStart { .. }
+                    | crate::block::Line::DefinitionLabel { .. }
                     | crate::block::Line::FootnoteDefinition { .. }
                     | crate::block::Line::Setext(_)
                     | crate::block::Line::FenceOpen { .. }
@@ -387,6 +388,43 @@ impl Containers {
         accepted.then_some(prefix.pos)
     }
 
+    // A closed multi-line label must preserve the ordinary table decision
+    // before trying a target. Match real partial-tab leaf priority first;
+    // byte-aligned spaces keep the existing delimiter indentation dialect.
+    pub fn reference_table_prefix(
+        &self,
+        source: &str,
+        span: Span,
+        scope: Option<ContainerId>,
+        work: &mut Work,
+    ) -> Option<usize> {
+        if scope.is_some()
+            && let Some(line) = self.partial_prefix(source, span, Some(true), false, true, work)
+        {
+            if line.new_container || line.lazy || line.indented {
+                return None;
+            }
+            let raw = Span::new(line.prefix, span.end);
+            let column =
+                crate::block::prefix_column(source, Span::new(span.start, raw.start), work);
+            work.classified_bytes += raw.len() as u64;
+            return matches!(
+                crate::block::classify_indented(
+                    source,
+                    raw,
+                    true,
+                    None,
+                    true,
+                    line.virtual_spaces,
+                    column,
+                ),
+                crate::block::Line::Text
+            )
+            .then_some(raw.start);
+        }
+        self.delimiter_prefix(source, span, scope, work)
+    }
+
     /// Match the same explicit path for a reference target continuation. Unlike
     /// table delimiters, its payload may have four or more indentation columns.
     /// New containers and leaves that interrupt the candidate's paragraph win.
@@ -397,17 +435,124 @@ impl Containers {
         scope: Option<ContainerId>,
         work: &mut Work,
     ) -> Option<usize> {
-        let prefix = self
-            .delimiter_cursor(source, span, scope, false, work)
-            .or_else(|_| self.delimiter_cursor(source, span, scope, true, work))
-            .ok()?;
+        self.continuation_source(source, span, scope, true, None, work)
+            .map(|(target, _, _)| target)
+    }
+
+    // Probe a bounded new physical source in the existing paragraph. Target
+    // keeps its established indentation exception; ordinary sources require
+    // actual Text and stop before a real delimiter for the preceding header.
+    // Offsets/columns are metadata: only ledger admission grants consumption.
+    pub fn continuation_source(
+        &self,
+        source: &str,
+        span: Span,
+        scope: Option<ContainerId>,
+        target: bool,
+        header_columns: Option<usize>,
+        work: &mut Work,
+    ) -> Option<(usize, Span, u8)> {
+        if span.len() > crate::BLOCK_LOOKAHEAD + 3 {
+            return None;
+        }
+        let partial = (!target && scope.is_some())
+            .then(|| {
+                self.partial_prefix(
+                    source,
+                    span,
+                    Some(true),
+                    header_columns.is_none(),
+                    true,
+                    work,
+                )
+            })
+            .flatten();
+        if partial
+            .as_ref()
+            .is_some_and(|line| line.indented || line.lazy)
+        {
+            return None;
+        }
+        let partial_structure = partial.as_ref().is_some_and(|line| line.new_container);
+        let (target_start, raw, virtual_spaces, column) =
+            if let Some(line) = partial.filter(|line| !line.new_container) {
+                // The ordinary pipeline commits a matched partial path before its
+                // byte-aligned quote-code fallback. Preserve that same priority.
+                let raw = Span::new(line.prefix, span.end);
+                let tab_indent = source.as_bytes()[raw.range()]
+                    .iter()
+                    .take(4)
+                    .take_while(|&&b| matches!(b, b' ' | b'\t'))
+                    .any(|&b| b == b'\t');
+                let column = if tab_indent {
+                    crate::block::prefix_column(source, Span::new(span.start, raw.start), work)
+                } else {
+                    0
+                };
+                (line.prefix, raw, line.virtual_spaces, column)
+            } else {
+                let (prefix, structure) = self.continuation_cursors(
+                    source,
+                    span,
+                    scope,
+                    !target && !partial_structure,
+                    work,
+                )?;
+                (
+                    prefix.pos,
+                    Span::new(structure.pos, span.end),
+                    structure.virtual_spaces as u8,
+                    ((structure.column + structure.virtual_spaces) % 4) as u8,
+                )
+            };
+        work.classified_bytes += raw.len() as u64;
+        let leaf = if !target && scope.is_none() {
+            crate::block::classify(source, raw, true, None, true)
+        } else {
+            crate::block::classify_indented(source, raw, true, None, true, virtual_spaces, column)
+        };
+        if !matches!(leaf, crate::block::Line::Text)
+            && !(target && matches!(leaf, crate::block::Line::Indented { .. }))
+        {
+            return None;
+        }
+        if !target && let Some(columns) = header_columns {
+            work.classified_bytes += raw.len() as u64;
+            if crate::table::delimiter(source, raw, columns).is_some() {
+                return None;
+            }
+        }
+        Some((target_start, raw, virtual_spaces))
+    }
+
+    // Both target and ordinary-source probes use this atomic, read-only path
+    // check. It rejects new scopes/siblings/lazy spelling without creating IDs.
+    fn continuation_cursors<'a>(
+        &self,
+        source: &'a str,
+        span: Span,
+        scope: Option<ContainerId>,
+        ordinary: bool,
+        work: &mut Work,
+    ) -> Option<(Prefix<'a>, Prefix<'a>)> {
+        let prefix = if ordinary {
+            // partial_prefix has already declined this line. The real normal
+            // pipeline now uses the byte-aligned path, possibly falling back
+            // to lazy text; it must not gain a new split-path interpretation.
+            self.path_cursor(source, span, scope, false, true, work)
+                .ok()?
+        } else {
+            self.path_cursor(source, span, scope, false, false, work)
+                .or_else(|_| self.path_cursor(source, span, scope, true, false, work))
+                .ok()?
+        };
         // Structural classification admits a complete partial-tab path even
         // when the original byte-aligned spelling also matched. Keep that
         // spelling for the target, but do not let it conceal a new structure.
-        let mut structure = if prefix.split_tabs {
+        let mut structure = if ordinary || prefix.split_tabs {
             prefix
         } else {
-            match self.delimiter_cursor(source, span, scope, true, work) {
+            match self.path_cursor(source, span, scope, true, ordinary, work) {
                 Ok(structure) => structure,
                 Err((mut missing, Some(Active::List { list, .. }))) if missing.partial => {
                     // A partial ancestor can expose a sibling before the old
@@ -448,24 +593,7 @@ impl Containers {
         if new_container {
             return None;
         }
-        // Use the same partial-tab boundary for leaf priority as partial_prefix.
-        // The byte-aligned target cursor can overstate indentation and conceal
-        // a heading, Setext underline, rule or fence within three columns.
-        let payload = Span::new(structure.pos, span.end);
-        work.classified_bytes += payload.len() as u64;
-        matches!(
-            crate::block::classify_indented(
-                source,
-                payload,
-                true,
-                None,
-                true,
-                structure.virtual_spaces as u8,
-                ((structure.column + structure.virtual_spaces) % 4) as u8,
-            ),
-            crate::block::Line::Text | crate::block::Line::Indented { .. }
-        )
-        .then_some(prefix.pos)
+        Some((prefix, structure))
     }
 
     /// A footnote path and its four-column continuation indent may split tabs.
@@ -507,16 +635,37 @@ impl Containers {
         split_tabs: bool,
         work: &mut Work,
     ) -> Result<Prefix<'a>, (Prefix<'a>, Option<Active>)> {
+        self.path_cursor(source, span, scope, split_tabs, false, work)
+    }
+
+    fn path_cursor<'a>(
+        &self,
+        source: &'a str,
+        span: Span,
+        scope: Option<ContainerId>,
+        split_tabs: bool,
+        ordinary: bool,
+        work: &mut Work,
+    ) -> Result<Prefix<'a>, (Prefix<'a>, Option<Active>)> {
         let mut prefix = Prefix::new(source, span, false);
         if scope != self.inner() {
             return Err((prefix, None));
         }
         prefix.split_tabs = split_tabs;
         let mut missing = None;
-        for frame in &self.active {
+        for (depth, frame) in self.active.iter().enumerate() {
             work.container_steps += 1;
             let matched = match *frame {
-                Active::Quote(_) => prefix.quote(),
+                Active::Quote(_) => {
+                    // The ordinary pipeline gives a terminal quote's real
+                    // tab-containing four-column code prefix priority over
+                    // text. Targets retain their established exception.
+                    if ordinary && depth + 1 == self.active.len() && prefix.quote_code().is_some() {
+                        work.container_bytes += prefix.inspected;
+                        return Err((prefix, Some(*frame)));
+                    }
+                    prefix.quote()
+                }
                 Active::List { content_indent, .. } => prefix.consume_indent(content_indent),
             };
             if !matched {
@@ -1283,7 +1432,8 @@ impl<'a> Prefix<'a> {
             crate::block::Line::Text
             | crate::block::Line::Indented { .. }
             | crate::block::Line::Definition { .. } => true,
-            crate::block::Line::DefinitionStart { .. } => true,
+            crate::block::Line::DefinitionStart { .. }
+            | crate::block::Line::DefinitionLabel { .. } => true,
             _ => false,
         }
     }
@@ -1367,6 +1517,7 @@ impl<'a> Prefix<'a> {
                     ((probe.column + probe.virtual_spaces) % 4) as u8,
                 ) {
                     crate::block::Line::Text
+                    | crate::block::Line::DefinitionLabel { .. }
                     | crate::block::Line::FenceOpen { .. }
                     | crate::block::Line::Heading { .. }
                     | crate::block::Line::FootnoteDefinition { .. } => true,

@@ -30,7 +30,18 @@ fn direct_labels_preserve_source_envelopes_and_physical_leaf_identity() {
         for marker in ["[", "!["] {
             let mut doc = Document::new();
             doc.append(&format!("{first}{marker}**中\r\n")).unwrap();
-            let block = doc.blocks()[0].clone();
+            let mut block = doc.blocks()[0].clone();
+            // A possible multi-line definition retains its first leaf until
+            // the missing colon rejects it; source, scope and identity stay.
+            assert_eq!(
+                block.state,
+                if marker == "[" {
+                    SyntaxState::Growing
+                } else {
+                    SyntaxState::Sealed
+                }
+            );
+            block.state = SyntaxState::Sealed;
             doc.append(&format!("{next}🙂** &amp; `a\r\n{next}b`](<a b> '说明')\n"))
                 .unwrap();
             doc.finish();
@@ -492,12 +503,18 @@ fn deep_million_byte_labels_only_consume_new_payload_and_close_by_range() {
 fn many_lazy_lines_and_late_definitions_do_not_scan_ancestors_or_old_references() {
     let mut doc = Document::new();
     doc.append(&format!("{}[a\n", ">".repeat(1000))).unwrap();
+    let pending = doc.work();
+    // Missing explicit prefixes reject the definition once. The first raw
+    // `[a\n` enters Inline here, alongside this two-byte lazy source.
+    doc.append("x\n").unwrap();
+    assert_eq!(doc.work().inline_bytes - pending.inline_bytes, 5);
+    assert_eq!(doc.work().container_steps - pending.container_steps, 2);
     let before = doc.work();
-    for _ in 0..4096 {
+    for _ in 0..4095 {
         doc.append("x\n").unwrap();
     }
-    assert_eq!(doc.work().inline_bytes - before.inline_bytes, 8192);
-    assert_eq!(doc.work().container_steps - before.container_steps, 4096);
+    assert_eq!(doc.work().inline_bytes - before.inline_bytes, 8190);
+    assert_eq!(doc.work().container_steps - before.container_steps, 4095);
     doc.append("end](u)\n").unwrap();
     assert_eq!(doc.links().len(), 1);
     let mut doc = Document::new();
