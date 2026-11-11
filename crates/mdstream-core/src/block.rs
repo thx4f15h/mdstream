@@ -486,7 +486,7 @@ pub(crate) fn definition_target(source: &str, span: Span) -> Option<(Span, Optio
 }
 
 // An unclosed title parser, never a partially published destination. The
-// caller decides whether root scope permits retaining its physical sources.
+// caller decides whether the scope permits retaining its physical sources.
 pub(crate) fn definition_open_title(
     source: &str,
     span: Span,

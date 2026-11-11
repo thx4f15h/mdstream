@@ -2644,3 +2644,16 @@ README 当前说明和本任务对应 TODO 已同步，只新增此窄项勾选�
 新增四项集成回归覆盖两最小反例、嵌套/引号/括号/普通控制、UTF-8 全字节切点/逐前缀 EOF、LinkId/BlockId/ContainerId、tab 原始 replacement、共享零/六字节显示预算，以及百万字历史后 1000 次候选的累计工作计数。复用实际基线与原审查探针，600 组快照无差异；新增 1836 组 Quote/List/嵌套、不同 tab 余量、有/无目标、三种 title 定界的整块/逐字/UTF-8 切点及每前缀 EOF 均与真实基线一致；根 288 组入口/解码与 0/1/6 预算/所有权、180 组真实表格观察保持。无新扫描、缓冲、依赖或 unsafe，累计 O(n log n)/O(n) 不变。
 
 本次生产源码修复是重跑完整验证的理由；check、针对性及完整 debug/release nextest、doc/docbuild、clippy、fmt、离线夹具/示例和 diff 的真实命令、退出状态、完整日志，以及新源码哈希、完整/本次补丁统一保存在 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-018/fix-container-regressions/`，以 `commands.jsonl` 和 `validation.json` 为准。原 implementation/review 证据未改；保留父工作树全部原改动，未提交/推送。
+
+
+## 2026-11-11 引用定义容器多行 title 正文无虚拟余量交付
+
+交付宽待办 815e11602d83 的窄项：既有 Quote/List/嵌套显式路径中，单/多行 label、两种目标入口、目标同行或独立下一行开启 title 均可接续多行正文。仅新增正文续行限定去结构前缀后的 `virtual_spaces == 0`，允许前缀内已完全消耗的 tab；label/目标/开启行原部分 tab 能力保持。正文含部分 tab 余量的语义和映射仍未交付，510、完整字面回退/容器及窗口放宽继续保留宽待办。
+
+原始 title 仍借用真实 Source Span 包络，闭合行仅有定界符时的前缀也包含在内。解析时按序追加结构前缀间隙，获胜定义按 SymbolId O(1) 定位，固定大小解码游标只借用索引；按共享预算逐段跳过，保留语义缩进、实体、转义及 LF/CRLF 原源映射，实体产生的 CR/LF 不再归一。title4096 与 suffix 上限独立按去结构前缀后的真实语法字节计数，逐物理行窗口和来源片段上限保持。定义前缀探测返回目标偏移、准确 raw Span 和虚拟列，避免将部分 tab 余量算作字节或丢掉开启行首个真实字符。
+
+同行开放 title 完整合法前不发布可撤销定义/LinkId；独立 title 失败保留目标，仅回流自己的来源。首定义、已有空 title、版本、稳定 BlockId/LinkId/ContainerId/LinkInfo、增量通知、Growing/Sealed、固定/开放 source fold、真实 FoldView.apply/ticket、Update 重建/merge 保持。只保留当前候选或获胜定义的间隙；重复定义不积累持久垃圾，来源单次迭代回流。没有增长候选/旧正文/祖先回扫，没有评分投影补齐，累计 O(n log n)、空间 O(n)、核心零运行时依赖与 forbid unsafe 保持。
+
+先保存真实红测与 148 份完整普通基线快照，最终逐字对照通过；672 组成功模型、768 组真实普通流程失败对照、UTF-8 所有切点/逐前缀 EOF、0/1/6 字节及 query/object 预算、部分 tab 原始映射、title/suffix/逐行窗口、百万字物理包络/失败尾部、两万旧引用和 4096 条定义/重复定义计数均通过。全部 `Line::DefinitionTitle` 直接消费者已按普通文本、lazy、partial-tab、表头及实际语法角色核对，task18 分类修复保持。
+
+项目 `nix develop` 下 check --workspace --all-targets、针对性 nextest、完整 debug/release nextest --workspace --all-targets --no-fail-fast（各 1664 项）、doc（75 项）、RUSTDOCFLAGS=-D warnings docbuild、clippy -D warnings、fmt --check、stream release 示例及 diff 检查通过。固定 SHA-256 官方来源的 27/14/19 例离线生成器逐字核验通过；定义章 20/7/0、引用标签 8/6/0、collapsed/shortcut 17/2/0 及其它冻结观察保持。官方 input/HTML、生成器、project 算法、输出 helper、依赖清单均未改。完整模型、命令/退出状态、日志、源码哈希、基线探针与完整补丁保存在 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-019/implementation/`；本会话未提交或推送，由父运行器复审与提交。

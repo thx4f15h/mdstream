@@ -25,7 +25,8 @@ pub(crate) enum Progress {
 }
 
 /// One pass over a destination and optional title, starting after `(` or `:`.
-/// Spans retain escapes verbatim. Only single-line suffixes are accepted.
+/// Spans retain escapes verbatim. Inline suffixes remain single-line; only
+/// definition titles opt into line endings and known structural prefix gaps.
 pub(crate) struct Destination {
     pub start: usize,
     stage: Stage,
@@ -33,6 +34,8 @@ pub(crate) struct Destination {
     title: Option<Span>,
     escaped: bool,
     separated: bool,
+    // Only definition title continuations can exclude structural source bytes.
+    title_prefix_bytes: usize,
 }
 
 impl Destination {
@@ -44,6 +47,7 @@ impl Destination {
             title: None,
             escaped: false,
             separated: false,
+            title_prefix_bytes: 0,
         }
     }
 
@@ -58,7 +62,9 @@ impl Destination {
 
     pub fn byte(&mut self, byte: u8, pos: usize) -> Progress {
         // Also bound whitespace and unfinished candidates, without rescanning.
-        if pos - self.start >= MAX_LINK_SUFFIX_BYTES || matches!(byte, b'\n' | b'\r') {
+        if pos - self.start - self.title_prefix_bytes >= MAX_LINK_SUFFIX_BYTES
+            || matches!(byte, b'\n' | b'\r')
+        {
             return Progress::Invalid;
         }
         if matches!(self.stage, Stage::Before) {
@@ -148,7 +154,7 @@ impl Destination {
         if self.destination.len() > MAX_DESTINATION_BYTES
             || self
                 .title
-                .is_some_and(|span| span.len() > MAX_LINK_TITLE_BYTES)
+                .is_some_and(|span| span.len() - self.title_prefix_bytes > MAX_LINK_TITLE_BYTES)
         {
             Progress::Invalid
         } else {
@@ -160,23 +166,34 @@ impl Destination {
         matches!(self.stage, Stage::Title(_))
     }
 
-    // Only a root definition body opts in. Inline suffixes and destinations
+    // Only a definition body opts in. Inline suffixes and destinations
     // retain byte()'s physical-line rejection and the same raw byte limits.
     pub fn definition_title_byte(&mut self, byte: u8, pos: usize) -> Progress {
         if matches!(byte, b'\n' | b'\r') && self.open_title() {
-            if pos - self.start >= MAX_LINK_SUFFIX_BYTES {
+            if pos - self.start - self.title_prefix_bytes >= MAX_LINK_SUFFIX_BYTES {
                 return Progress::Invalid;
             }
             let title = self.title.as_mut().unwrap();
             title.end = pos + 1;
             self.escaped = false;
-            return if title.len() <= MAX_LINK_TITLE_BYTES {
+            return if title.len() - self.title_prefix_bytes <= MAX_LINK_TITLE_BYTES {
                 Progress::Pending
             } else {
                 Progress::Invalid
             };
         }
         self.byte(byte, pos)
+    }
+
+    // Called once per matched zero-remainder continuation prefix. Keep the raw
+    // envelope, including the prefix of a delimiter-only closing line, while
+    // title and suffix limits count only real syntax bytes.
+    pub fn title_prefix(&mut self, prefix: Span) {
+        debug_assert!(self.open_title());
+        let title = self.title.as_mut().unwrap();
+        debug_assert_eq!(title.end, prefix.start);
+        title.end = prefix.end;
+        self.title_prefix_bytes += prefix.len();
     }
 
     fn complete(&self) -> Progress {
@@ -197,6 +214,65 @@ impl Destination {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn structural_title_gaps_do_not_spend_title_or_suffix_byte_limits() {
+        for prefix_len in [0, 1, 1_000_000] {
+            // Exercise the independently bounded suffix, with both its target
+            // and title at their limits; physical windows remain a caller rule.
+            let logical = format!(
+                "{} 'a\n{}'",
+                "d".repeat(MAX_DESTINATION_BYTES),
+                "x".repeat(MAX_LINK_TITLE_BYTES - 2)
+            );
+            let split = MAX_DESTINATION_BYTES + 4;
+            let mut parser = Destination::new(0);
+            for (pos, byte) in logical.bytes().enumerate() {
+                if pos == split {
+                    parser.title_prefix(Span::new(pos, pos + prefix_len));
+                }
+                let physical = pos + if pos >= split { prefix_len } else { 0 };
+                assert!(matches!(
+                    parser.definition_title_byte(byte, physical),
+                    Progress::Pending
+                ));
+            }
+            let Progress::Complete {
+                title: Some(title), ..
+            } = parser.finish_definition()
+            else {
+                panic!("complete")
+            };
+            assert_eq!(title.len(), MAX_LINK_TITLE_BYTES + prefix_len);
+            for pos in logical.len()..MAX_LINK_SUFFIX_BYTES {
+                assert!(matches!(
+                    parser.definition_title_byte(b' ', pos + prefix_len),
+                    Progress::Pending
+                ));
+            }
+            assert!(matches!(
+                parser.definition_title_byte(b' ', MAX_LINK_SUFFIX_BYTES + prefix_len),
+                Progress::Invalid
+            ));
+
+            let mut parser = Destination::title(0, b'\'');
+            assert!(matches!(
+                parser.definition_title_byte(b'\n', 1),
+                Progress::Pending
+            ));
+            parser.title_prefix(Span::new(2, 2 + prefix_len));
+            for pos in 2..=MAX_LINK_TITLE_BYTES {
+                assert!(matches!(
+                    parser.definition_title_byte(b'x', pos + prefix_len),
+                    Progress::Pending
+                ));
+            }
+            assert!(matches!(
+                parser.definition_title_byte(b'x', MAX_LINK_TITLE_BYTES + 1 + prefix_len),
+                Progress::Invalid
+            ));
+        }
+    }
 
     #[test]
     fn definition_body_opt_in_keeps_destination_title_and_suffix_byte_limits() {

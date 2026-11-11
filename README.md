@@ -2988,11 +2988,11 @@ nix develop -c cargo nextest run --workspace --test info_entities --test code_in
 
 `Document::decoded_link_title(LinkId)` 在 O(1) 时间创建 `LinkTitle` 借用游标；直接链接、图片和已解析引用均可读取。无效 ID、未定义引用和缺失 title 返回 `None`，显式空 title 返回已完成的游标。引用遵守全局首定义优先，源码映射指向获胜定义的 title，可能位于链接使用点之外；新定义到来后创建的游标可读到 title，借用期间文档不能追加。
 
-`advance(&mut Budget)` 返回 `LinkTitleChunk { source, text }`，解码 ASCII 标点反斜线转义和分号终止的命名/数字实体，规则与 `code_info` 相同。完整实体或转义对映射到原始全部字节；普通字符借用源码，实体借用游标固定缓冲，文本只在下一步之前有效。反斜线优先，失败/不完整候选保留字面；不递归、不 trim、不解析行内 Markdown，实体产生的引号、括号、LF 和 tab 只作为输出内容。原始 `link_title`、`LinkInfo.title`、引用定义区间、`link_destination` 和 `link_url` 均保持原语义。
+`advance(&mut Budget)` 返回 `LinkTitleChunk { source, text }`，解码 ASCII 标点反斜线转义和分号终止的命名/数字实体，规则与 `code_info` 相同。完整实体或转义对映射到原始全部字节；普通字符借用源码，实体借用游标固定缓冲，文本只在下一步之前有效。反斜线优先，失败/不完整候选保留字面；不递归、不 trim、不解析行内 Markdown，实体产生的引号、括号、LF 和 tab 只作为输出内容。原始 `link_title` 和 `Reference.title` 借用真实源码包络，包含多行 title 内的容器前缀；解码读取只跳过解析时索引的结构前缀，保留语义缩进，将真实 CRLF 映射为一个 LF。`LinkInfo.title`、引用定义区间、`link_destination` 和 `link_url` 均保持原语义。
 
-每个普通字符/转义消耗一次 query/object 和其源码字节数；实体探测消耗一次 query 并逐字节扣除扫描预算，成功输出另收一次 query/object 和输出字节。探测可能在没有输出、`source_position()` 不变时消耗预算，进度和已解码结果保存在游标内；输出本身原子消费。每帧六字节、一次 query/object 保证可继续，到达结尾免费返回 `Ok(None)`。固定大小零分配游标直接复用 info 解码器，读取总成本 O(title 字节数)，不访问标签、正文、历史使用点或祖先；解析时不增加持久状态，累计追加 O(n log n)、空间 O(n) 保持。
+每个普通字符/转义消耗一次 query/object 和其源码字节数；实体探测消耗一次 query 并逐字节扣除扫描预算，成功输出另收一次 query/object 和输出字节。探测可能在没有输出、`source_position()` 不变时消耗预算，进度和已解码结果保存在游标内；输出本身原子消费。每帧六字节、一次 query/object 保证可继续，到达结尾免费返回 `Ok(None)`。固定大小零分配游标直接复用 info 解码器，读取总成本 O(title 字节数)，不访问标签、正文、历史使用点或祖先；容器 title 的前缀间隙在解析时按序建立，只保留当前候选或获胜定义的索引；累计追加 O(n log n)、空间 O(n) 保持。
 
-只读取已提交的 title，保持单物理行、直接 title 最多 4096 字节、引用定义共享分类窗口和失败候选既有方言。目标解码见下节；URL 编码/过滤、多行 title 和完整失败回退继续待办。官方 Backslash escapes / Entity 评分已接入核心目标/title 读取，22–23、32–33 匹配官方期望；原始借用接口保持，详见上方章节评分。
+只读取已提交的 title；直接 title 仍限单物理行，引用定义多行正文见后续小节。4096 字节 title 上限和逐物理行分类窗口保持，容器结构前缀不计入 title/suffix 语法字节。跳过间隙逐段收取 query 和源码字节预算，需有 object 余量；`source_position()` 可在没有输出时前进，0/1/6 字节预算均可恢复，CRLF 输出仍原子消费。目标解码见下节；URL 编码/过滤、title 正文的部分 tab 余量及完整失败回退继续待办。官方 Backslash escapes / Entity 评分已接入核心目标/title 读取，22–23、32–33 匹配官方期望；原始借用接口保持，详见上方章节评分。
 
 `tests/link_title.rs` 七项回归覆盖 1440 组独立实体/转义/容器/直接与引用/图片/行尾模型、753 组 ASCII 模型、UTF-8 全切点与逐前缀/EOF、晚定义与首定义优先、空/缺失 title、原始 URL、跨 tile 完整映射、零预算和共享六字节恢复，以及长度/分类窗口边界。980 层百万字正文后千次追加与两万旧引用的晚定义验收保持工作计数边界，读取成本只取决于 title。
 
@@ -3279,7 +3279,7 @@ nix develop -c cargo nextest run --test commonmark_lists
 | 支持 | 192–196、198、200、202–208、210、214–218 | 根作用域多行 title、跨物理行标签、单行定义、紧接下一行目标及空目标、独立下一行完整 title、标签转义右括号、目标/title 转义解码、晚定义与首定义优先、Unicode 大小写、标题/引用作用域及全局符号 |
 | 刻意差异 | 197、199、201、209、211、212 | 无效定义或代码中的定义不生效，但后续未定义引用仍按既有方言隐藏方括号；投影不补回括号 |
 | 刻意差异 | 213 | 定义已不再中断段落；未定义引用仍隐藏方括号 |
-| 未支持 | 无 | 本章无未支持样例；容器内多行 title 和更完整引用语法仍待办 |
+| 未支持 | 无 | 本章无未支持样例；容器多行 title 正文的部分 tab 余量和更完整引用语法仍待办 |
 
 官方 Markdown/HTML 逐字保存在独立夹具中，保留 CC BY-SA 4.0 来源、版本及 SHA-256；离线生成器拒绝非固定来源及章节成员变化。当前差异观察独立保存，核心输出改变时必须审查分类，不能自动改写官方期望。
 
@@ -3634,7 +3634,7 @@ run 等待后继标量或 EOF 再定长；未完成/失败外层不贡献深度�
 
 目标先发布，定义块保持 Growing；待决 title 只记录原 BlockId 及首定义所有权，不进入行内解析，不产生 Markdown 对象或段落/Setext 资格。确认后扩展同一块的原始 source 包络，title Span 排除定界符并保留转义、实体和 Unicode 原文；原 getter 与共享预算解码游标保持既有语义。首定义独占符号更新，重复定义可消费合法 title 而不覆盖目标/title；已有 title（包括空 title）不再吸收第二行。
 
-空行、坏尾缀、缺失祖先、新兄弟、未闭合 title 或超窗都只结束候选，保留已发布目标，当前行按原普通块语义解析；容器内仍不拼接下一行 title 正文；根作用域续接见下方子项。待决期间 `source_fold_limit` 停在定义起点，固定范围注册被拒绝；成功、失败或 EOF 后解除，真实 FoldView 更新与旧测量 ticket 校验保持。每条有界 title 行仅常数次扫描，新增工作计入分类/容器计数，超窗不重试；确认只更新当前符号及增量区间，不遍历历史引用。累计追加 O(n log n)、空间 O(n)、核心零运行时依赖与禁止 unsafe 保持。
+空行、坏尾缀、缺失祖先、新兄弟、未闭合 title 或超窗都只结束候选，保留已发布目标，当前行按原普通块语义解析；根作用域及容器内无虚拟余量的正文续接见下方独立子项。待决期间 `source_fold_limit` 停在定义起点，固定范围注册被拒绝；成功、失败或 EOF 后解除，真实 FoldView 更新与旧测量 ticket 校验保持。每条有界 title 行仅常数次扫描，新增工作计入分类/容器计数，超窗不重试；确认只更新当前符号及增量区间，不遍历历史引用。累计追加 O(n log n)、空间 O(n)、核心零运行时依赖与禁止 unsafe 保持。
 
 `tests/next_line_titles.rs` 八项回归覆盖 2100 组成功模型、失败普通块对照、所有权/已有空 title、UTF-8 全切点与逐前缀 EOF、稳定对象/原始映射、固定折叠及 FoldView、共享六字节显示和目标/title 解码、窗口边界、970 层百万字失败尾部及两万旧引用。官方 193/195/217 直接匹配原 HTML，完整章节当前 20/7/0（根作用域多行 title 的 196 已支持）；208/541 的跨行标签已支持；196 的根作用域多行 title 已由下方子项交付；容器内 title 正文跨行、510 的跨行行内后缀、完整容器/字面回退及窗口放宽继续待办。官方输入/HTML、生成器、评分投影和输出编码 helper 均未改。见[交付记录](DONE.md#2026-11-11-引用定义独立下一物理行完整-title-交付)。
 
@@ -3660,6 +3660,17 @@ run 等待后继标量或 EOF 再定长；未完成/失败外层不贡献深度�
 
 原 999 字节 label、4096 字节 title/目标和 suffix 上限保持。暂存片段上限为 `MAX_LABEL_BYTES + MAX_LINK_SUFFIX_BYTES + 4`：未闭合 label/title 每个物理片段至少贡献一个受限的真实字节，加上闭合 label、目标及末行常数余量；合法长 title 不受旧 1002 片段界限误限。每字节仅常数次扫描、失败至多一次回流，晚定义/补 title 只通知当前符号与区间，不遍历旧用法。累计 O(n log n)、空间 O(n)、核心零运行时依赖与禁止 unsafe 保持。
 
-容器中的未闭合 title 起始行继续沿用普通正文资格，包括缺失前缀的 lazy 延续、已有路径的 partial tab 和新 Quote 的 tab 余量；保留原 LinkId/BlockId/ContainerId 与 tab→显示空格的原始映射。600 组原基线快照及 1836 组容器/UTF-8 分块/逐前缀 EOF 对照保持一致，未扩展容器多行 title 语法。
+容器中的未闭合 title 起始行继续沿用普通正文资格，包括缺失前缀的 lazy 延续、已有路径的 partial tab 和新 Quote 的 tab 余量；保留原 LinkId/BlockId/ContainerId 与 tab→显示空格的原始映射。本根作用域子项交付时，600 组原基线快照及 1836 组容器/UTF-8 分块/逐前缀 EOF 对照保持一致；后续容器多行 title 的窄扩展见下节。
 
-`tests/multiline_definition_titles.rs`、私有真实普通流程对照及 Destination 界限测试覆盖入口/Unicode、UTF-8 全切点/逐前缀 EOF、空白/坏尾缀/结构和表格边界、原始/显示映射、共享预算、稳定身份、Growing/Sealed、真实 source fold/Update 合并及 ticket 失效、4096 字节与超过 1002 条来源、百万字失败尾部、两万旧引用和 4096 条历史定义。官方 196 直接匹配原 HTML，定义章 **20/7/0**；其余观察保持，官方输入/HTML、生成器、评分 project 与输出 helper 未改。证据见 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-018/implementation/` 和[交付记录](DONE.md#2026-11-11-引用定义根作用域多行-title-正文交付)。容器内多行 title 及去前缀元数据、510、完整字面回退/容器和窗口放宽仍待办。
+`tests/multiline_definition_titles.rs`、私有真实普通流程对照及 Destination 界限测试覆盖入口/Unicode、UTF-8 全切点/逐前缀 EOF、空白/坏尾缀/结构和表格边界、原始/显示映射、共享预算、稳定身份、Growing/Sealed、真实 source fold/Update 合并及 ticket 失效、4096 字节与超过 1002 条来源、百万字失败尾部、两万旧引用和 4096 条历史定义。官方 196 直接匹配原 HTML，定义章 **20/7/0**；其余观察保持，官方输入/HTML、生成器、评分 project 与输出 helper 未改。证据见 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-018/implementation/` 和[交付记录](DONE.md#2026-11-11-引用定义根作用域多行-title-正文交付)。容器内无虚拟余量的多行 title 及去前缀元数据见下节；正文的部分 tab 余量、510、完整字面回退/容器和窗口放宽仍待办。
+
+
+## 引用定义容器多行 title 正文（续行无虚拟余量）
+
+既有 Quote/List/嵌套完整显式路径内，title 正文可跨有界物理行；复用单/多行 label、两种目标入口及目标同行/独立下一行开启 title。仅新增的正文续行要求去前缀后 `virtual_spaces == 0`；路径可含已完全消耗的 tab，label、目标和 title 开启行保留原有部分 tab 能力。缺前缀 lazy、新兄弟/容器、真实叶块和表格边界仍由普通管线决定；正文含部分 tab 余量时回退，未启用该语法。
+
+原始 `Reference.title` / `link_title` 是去定界符的真实源码包络，内部容器前缀也留在包络中，包括仅有闭合定界符的末行前缀。解析时追加有序间隙索引；`decoded_link_title` 在 O(1) 时间借用获胜定义的索引，按共享预算逐段跳过结构前缀，保留真实缩进、实体、转义和换行。实际 CRLF 原子归一为 LF，实体产生的 CR/LF 不再次归一。title4096 和 suffix 上限分别按去结构前缀后的真实语法字节计算，逐物理行窗口保持；长物理包络不会因 `Span.len()` 被误拒，虚拟列不计为字节。
+
+同行开放 title 在完整合法前不发布定义或需撤销的 LinkId；独立 title 失败保留已确认目标，仅回流自己的来源。来源单次迭代回流、索引 O(1) 追加且只保留当前/获胜定义，重复定义不积累间隙；读取不访问祖先、旧正文或历史引用。首定义、稳定身份、版本和增量通知、Growing/Sealed、source fold 边界及真实 FoldView 更新保持。累计 O(n log n)、空间 O(n)、核心零运行时依赖与禁止 unsafe 保持。
+
+`tests/container_multiline_titles.rs` 及私有普通流程/来源/长度回归覆盖 672 组成功模型、768 组普通回退对照、148 份真实基线快照、UTF-8 全切点/逐前缀 EOF、0/1/6 字节及 query/object 预算、原始映射、折叠/Update、百万字包络和失败尾部、两万旧引用与 4096 条定义。官方输入/HTML、生成器、评分投影保持，定义章 **20/7/0**、引用标签 **8/6/0**、collapsed/shortcut **17/2/0**。证据见 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-019/implementation/`。正文含部分 tab 余量的语义及映射、510、完整字面回退/容器和窗口放宽继续见 TODO。

@@ -382,10 +382,14 @@ fn root_title_owners_duplicates_existing_titles_and_scope_boundaries() {
                     .iter()
                     .filter(|r| r.destination.is_some())
                     .count(),
-                usize::from(independent),
+                usize::from(independent || next != ">\t"),
                 "{source:?}"
             );
-            assert!(doc.references().iter().all(|r| r.title.is_none()));
+            let expected = (next != ">\t").then(|| format!("a\n{next}b"));
+            assert_eq!(
+                doc.references()[0].title.and_then(|s| doc.text(s)),
+                expected.as_deref()
+            );
             assert_eq!(
                 doc.container_count(),
                 parse(&source.replace("'a", "xa")).container_count()

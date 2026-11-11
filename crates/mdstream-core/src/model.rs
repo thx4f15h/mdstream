@@ -184,6 +184,8 @@ pub struct LinkInfo {
 pub struct Reference {
     pub label: String,
     pub destination: Option<Span>,
+    /// Original title envelope without delimiters, including internal container
+    /// prefixes. The decoded title cursor omits indexed structural prefixes.
     pub title: Option<Span>,
     pub revision: u64,
     pub first_use: Option<usize>,

@@ -6,7 +6,8 @@ impl Document {
     /// Returns None for an invalid ID, unresolved reference or absent title.
     /// An explicitly empty title returns a completed cursor.
     ///
-    /// Reads only the committed title span (without its delimiters). Reference
+    /// Reads only the committed title span (without its delimiters), skipping
+    /// indexed structural container prefixes inside the raw source envelope. Reference
     /// titles map to the winning definition, not to the link's use site. Raw
     /// `link_title` text, destination/URL and label semantics remain unchanged.
     /// Physical CRLF emits one LF mapped to both source bytes; LF is retained.
@@ -27,8 +28,12 @@ impl Document {
     /// assert_eq!(doc.link_title(LinkId(0)), Some("a\\+b &ouml;"));
     /// ```
     pub fn decoded_link_title(&self, id: LinkId) -> Option<LinkTitle<'_>> {
+        let gaps = match self.links.get(id.0)? {
+            crate::LinkTarget::Reference(symbol) => &self.references.title_gaps[symbol.0][..],
+            _ => &[],
+        };
         Some(LinkTitle {
-            inner: CodeInfo::title(self.source(), self.link_title_span(id)?),
+            inner: CodeInfo::title(self.source(), self.link_title_span(id)?, gaps),
         })
     }
 }
@@ -48,7 +53,7 @@ pub struct LinkTitle<'a> {
 }
 
 impl LinkTitle<'_> {
-    /// First source byte not emitted; an entity probe may have inspected ahead.
+    /// First source byte not emitted or skipped; a paused probe may inspect ahead.
     pub fn source_position(&self) -> usize {
         self.inner.source_position()
     }
@@ -59,6 +64,9 @@ impl LinkTitle<'_> {
     /// charge inspected bytes incrementally and a query; successful emission
     /// charges output bytes, a query and an object.
     /// A probe may exhaust budget without emitting or advancing source_position.
+    /// Structural prefix gaps cost one query and their source bytes, charged
+    /// incrementally; a nonzero object allowance is required. Skipping may
+    /// advance source_position without emitting. Semantic indentation is kept.
     /// Six bytes, one query and one object per fresh frame guarantee progress.
     /// Output is atomic, and calls after completion are free.
     pub fn advance(

@@ -12,6 +12,8 @@ pub const MAX_LABEL_BYTES: usize = 999;
 pub(crate) struct References {
     names: BTreeMap<String, SymbolId>,
     pub entries: Vec<Reference>,
+    // Parallel to entries: O(1) lookup, retained only for winning definitions.
+    pub title_gaps: Vec<Vec<Span>>,
     pub revision: u64,
 }
 
@@ -61,6 +63,7 @@ impl References {
             revision: 0,
             first_use: None,
         });
+        self.title_gaps.push(Vec::new());
         Some(id)
     }
 
@@ -69,6 +72,7 @@ impl References {
         id: SymbolId,
         destination: Span,
         title: Option<Span>,
+        gaps: Vec<Span>,
         revision: u64,
     ) -> bool {
         let entry = &mut self.entries[id.0];
@@ -77,16 +81,18 @@ impl References {
         }
         entry.destination = Some(destination);
         entry.title = title;
+        self.title_gaps[id.0] = gaps;
         entry.revision += 1;
         self.revision = revision;
         true
     }
 
     /// Only the winning definition may retain a continuation capability.
-    pub fn define_title(&mut self, id: SymbolId, title: Span, revision: u64) {
+    pub fn define_title(&mut self, id: SymbolId, title: Span, gaps: Vec<Span>, revision: u64) {
         let entry = &mut self.entries[id.0];
         debug_assert!(entry.destination.is_some() && entry.title.is_none());
         entry.title = Some(title);
+        self.title_gaps[id.0] = gaps;
         entry.revision += 1;
         self.revision = revision;
     }

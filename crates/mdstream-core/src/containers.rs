@@ -435,9 +435,8 @@ impl Containers {
         span: Span,
         scope: Option<ContainerId>,
         work: &mut Work,
-    ) -> Option<usize> {
+    ) -> Option<(usize, Span, u8)> {
         self.continuation_source(source, span, scope, true, None, work)
-            .map(|(target, _, _)| target)
     }
 
     // Probe a bounded new physical source in the existing paragraph. Target

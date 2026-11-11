@@ -199,6 +199,7 @@ struct DefinitionCandidate {
 struct DefinitionTitleBody {
     parser: destination::Destination,
     columns: Option<usize>,
+    gaps: Vec<Span>,
 }
 
 // The target is already published. Only its first definition owns the symbol;
@@ -438,6 +439,8 @@ impl Document {
     }
 
     /// Resolve inline or late-defined reference titles without copying text.
+    /// Returns the original source envelope, including internal container
+    /// prefixes. [`Document::decoded_link_title`] omits those structural gaps.
     pub fn link_title(&self, id: LinkId) -> Option<&str> {
         self.text(self.link_title_span(id)?)
     }
@@ -1085,7 +1088,7 @@ impl Document {
             return false;
         };
         let block = candidate.block;
-        let title = complete
+        let prefix = complete
             .then(|| {
                 self.containers.definition_prefix(
                     &self.source,
@@ -1094,17 +1097,17 @@ impl Document {
                     &mut self.work,
                 )
             })
-            .flatten()
-            .and_then(|start| {
-                let content = Span::new(start, span.end);
-                self.work.classified_bytes += content.len() as u64;
-                block::definition_title(&self.source, content)
-            });
+            .flatten();
+        let title = prefix.and_then(|(start, _, _)| {
+            let content = Span::new(start, span.end);
+            self.work.classified_bytes += content.len() as u64;
+            block::definition_title(&self.source, content)
+        });
         let Some(title) = title else {
-            if complete
-                && self.blocks[block.0].container.is_none()
-                && let Some(parser) = block::definition_open_title(&self.source, span, true)
-                && let Some(title) = self.definition_title_body(span, parser)
+            if let Some((start, raw, virtual_spaces)) = prefix
+                && let Some(parser) =
+                    block::definition_open_title(&self.source, Span::new(start, span.end), true)
+                && let Some(title) = self.definition_title_body(span, raw, parser)
             {
                 self.blocks[block.0].state = SyntaxState::Growing;
                 self.definition_candidate = Some(DefinitionCandidate {
@@ -1114,8 +1117,13 @@ impl Document {
                     },
                     sources: DeferredSources::new(
                         block,
-                        None,
-                        DeferredFragment::from_payload(span, span, 0, SourceOwner::new()),
+                        self.blocks[block.0].container,
+                        DeferredFragment {
+                            source: span,
+                            raw,
+                            virtual_spaces,
+                            owner: SourceOwner::new(),
+                        },
                     ),
                     title: Some(title),
                 });
@@ -1134,7 +1142,8 @@ impl Document {
         update.change(self.blocks[block.0].source, ChangeKind::Structure);
         self.mark(span, Style::HIDDEN, update);
         if let Some(symbol) = candidate.owner {
-            self.references.define_title(symbol, title, self.revision);
+            self.references
+                .define_title(symbol, title, Vec::new(), self.revision);
             update.references_changed.push(symbol);
             if let Some(start) = self.references.entries[symbol.0].first_use {
                 update.change(Span::new(start, self.source.len()), ChangeKind::Reference);
@@ -1149,11 +1158,12 @@ impl Document {
         symbol: SymbolId,
         destination: Span,
         title: Option<Span>,
+        gaps: Vec<Span>,
         update: &mut Update,
     ) {
         let winner = self
             .references
-            .define(symbol, destination, title, self.revision);
+            .define(symbol, destination, title, gaps, self.revision);
         if winner {
             update.references_changed.push(symbol);
             if let Some(start) = self.references.entries[symbol.0].first_use {
@@ -1176,6 +1186,7 @@ impl Document {
     fn definition_title_body(
         &mut self,
         span: Span,
+        raw: Span,
         mut parser: destination::Destination,
     ) -> Option<DefinitionTitleBody> {
         for pos in block::body_end(&self.source, span)..span.end {
@@ -1188,30 +1199,39 @@ impl Document {
             }
         }
         let mut summary = table::HeaderSummary::default();
-        summary.feed(&self.source[span.range()], &mut self.work);
+        summary.feed(&self.source[raw.range()], &mut self.work);
         Some(DefinitionTitleBody {
             parser,
             columns: summary.columns(),
+            gaps: Vec::new(),
         })
     }
 
-    fn retain_definition_title(&mut self, span: Span, parser: destination::Destination) -> bool {
-        let Some(title) = self.definition_title_body(span, parser) else {
+    fn retain_definition_title(
+        &mut self,
+        span: Span,
+        raw: Span,
+        virtual_spaces: u8,
+        parser: destination::Destination,
+        gaps: Vec<Span>,
+    ) -> bool {
+        let Some(mut title) = self.definition_title_body(span, raw, parser) else {
             return false;
         };
         let candidate = self.definition_candidate.as_mut().unwrap();
         if candidate
             .sources
-            .push(DeferredFragment::from_payload(
-                span,
-                span,
-                0,
-                SourceOwner::new(),
-            ))
+            .push(DeferredFragment {
+                source: span,
+                raw,
+                virtual_spaces,
+                owner: SourceOwner::new(),
+            })
             .is_err()
         {
             return false;
         }
+        title.gaps = gaps;
         candidate.title = Some(title);
         true
     }
@@ -1222,23 +1242,26 @@ impl Document {
         complete: bool,
         update: &mut Update,
     ) -> bool {
-        let columns = self
-            .definition_candidate
-            .as_ref()
-            .unwrap()
-            .title
-            .as_ref()
-            .unwrap()
-            .columns;
-        if !complete
-            || self
-                .containers
-                .continuation_source(&self.source, span, None, false, columns, &mut self.work)
-                .is_none()
-        {
+        let candidate = self.definition_candidate.as_ref().unwrap();
+        let columns = candidate.title.as_ref().unwrap().columns;
+        let scope = candidate.sources.scope;
+        let continuation = complete
+            .then(|| {
+                self.containers.continuation_source(
+                    &self.source,
+                    span,
+                    scope,
+                    false,
+                    columns,
+                    &mut self.work,
+                )
+            })
+            .flatten()
+            .filter(|&(_, _, virtual_spaces)| virtual_spaces == 0);
+        let Some((_, raw, virtual_spaces)) = continuation else {
             self.flush_definition_candidate(update);
             return false;
-        }
+        };
         let mut title = self
             .definition_candidate
             .as_mut()
@@ -1246,8 +1269,13 @@ impl Document {
             .title
             .take()
             .unwrap();
+        let prefix = Span::new(span.start, raw.start);
+        title.parser.title_prefix(prefix);
+        if !prefix.is_empty() {
+            title.gaps.push(prefix);
+        }
         let end = block::body_end(&self.source, span);
-        for pos in span.start..end {
+        for pos in raw.start..end {
             self.work.classified_bytes += 1;
             if !matches!(
                 title
@@ -1259,13 +1287,16 @@ impl Document {
                 return false;
             }
         }
-        if let destination::Progress::Complete { destination, title } =
-            title.parser.finish_definition()
+        if let destination::Progress::Complete {
+            destination,
+            title: title_span,
+        } = title.parser.finish_definition()
         {
-            self.confirm_definition_candidate(span, destination, title, false, update);
+            self.definition_candidate.as_mut().unwrap().title = Some(title);
+            self.confirm_definition_candidate(span, destination, title_span, false, update);
             return true;
         }
-        if self.retain_definition_title(span, title.parser) {
+        if self.retain_definition_title(span, raw, virtual_spaces, title.parser, title.gaps) {
             return true;
         }
         self.flush_definition_candidate(update);
@@ -1354,10 +1385,14 @@ impl Document {
             {
                 target = block::definition_target(&self.source, suffix);
                 if target.is_none() {
-                    if scope.is_none()
-                        && let Some(parser) =
-                            block::definition_open_title(&self.source, suffix, false)
-                        && self.retain_definition_title(span, parser)
+                    if let Some(parser) = block::definition_open_title(&self.source, suffix, false)
+                        && self.retain_definition_title(
+                            span,
+                            raw,
+                            virtual_spaces,
+                            parser,
+                            Vec::new(),
+                        )
                     {
                         return true;
                     }
@@ -1397,7 +1432,7 @@ impl Document {
             return false;
         };
         let block = candidate.block;
-        let target = complete
+        let prefix = complete
             .then(|| {
                 self.containers.definition_prefix(
                     &self.source,
@@ -1406,23 +1441,18 @@ impl Document {
                     &mut self.work,
                 )
             })
-            .flatten()
-            .and_then(|start| {
-                let content = Span::new(start, span.end);
-                self.work.classified_bytes += content.len() as u64;
-                block::definition_target(&self.source, content)
-            });
+            .flatten();
+        let target = prefix.and_then(|(start, _, _)| {
+            let content = Span::new(start, span.end);
+            self.work.classified_bytes += content.len() as u64;
+            block::definition_target(&self.source, content)
+        });
         let Some((destination, title)) = target else {
-            if complete
-                && self.blocks[block.0].container.is_none()
-                && let Some(start) =
-                    self.containers
-                        .definition_prefix(&self.source, span, None, &mut self.work)
-            {
+            if let Some((start, raw, virtual_spaces)) = prefix {
                 let content = Span::new(start, span.end);
                 self.work.classified_bytes += content.len() as u64;
                 if let Some(parser) = block::definition_open_title(&self.source, content, false)
-                    && self.retain_definition_title(span, parser)
+                    && self.retain_definition_title(span, raw, virtual_spaces, parser, Vec::new())
                 {
                     return true;
                 }
@@ -1446,6 +1476,7 @@ impl Document {
         self.table_header = None;
         let block = candidate.block;
         let retained = candidate.sources.confirm();
+        let gaps = candidate.title.map_or_else(Vec::new, |body| body.gaps);
         if let DefinitionLabel::PublishedTitle { owner } = candidate.label {
             self.blocks[block.0].source.end = span.end;
             self.blocks[block.0].state = SyntaxState::Sealed;
@@ -1454,7 +1485,7 @@ impl Document {
             self.mark(Span::new(retained.start, span.end), Style::HIDDEN, update);
             if let Some(symbol) = owner {
                 self.references
-                    .define_title(symbol, title.unwrap(), self.revision);
+                    .define_title(symbol, title.unwrap(), gaps, self.revision);
                 update.references_changed.push(symbol);
                 if let Some(start) = self.references.entries[symbol.0].first_use {
                     update.change(Span::new(start, self.source.len()), ChangeKind::Reference);
@@ -1491,7 +1522,7 @@ impl Document {
         let whole = self.blocks[block.0].source;
         update.change(whole, ChangeKind::Structure);
         self.mark(whole, Style::HIDDEN, update);
-        self.finish_definition(block, symbol, destination, title, update);
+        self.finish_definition(block, symbol, destination, title, gaps, update);
     }
 
     fn commit_line(
@@ -1792,8 +1823,8 @@ impl Document {
         }
         let mut candidate_title = None;
         if let Line::DefinitionTitle { label, parser } = classification {
-            if definitions && self.containers.inner().is_none() {
-                candidate_title = self.definition_title_body(span, parser);
+            if definitions {
+                candidate_title = self.definition_title_body(span, content, parser);
             }
             classification = if candidate_title.is_some() {
                 Line::DefinitionStart { label }
@@ -1989,7 +2020,7 @@ impl Document {
             {
                 let block = self.new_block(span, BlockKind::Definition { symbol }, update);
                 self.mark(span, Style::HIDDEN, update);
-                self.finish_definition(block, symbol, destination, title, update);
+                self.finish_definition(block, symbol, destination, title, Vec::new(), update);
                 return;
             }
             // An invalid normalized label is ordinary text in its original

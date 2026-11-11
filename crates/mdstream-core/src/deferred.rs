@@ -631,6 +631,32 @@ mod tests {
 
     #[test]
     fn deferred_raw_virtual_columns_and_target_indentation_are_distinct() {
+        // Opening/target lines keep their existing partial-tab capability.
+        // Their stored semantic source must neither invent bytes for virtual
+        // columns nor lose the first real payload byte.
+        for (source, raw) in [
+            ("> [r]: /u\n>\t'a\n", "'a\n"),
+            ("> [r]:\n>\t/u 'a\n", "/u 'a\n"),
+            ("> [r\n>\t中]: /u 'a\n", "中]: /u 'a\n"),
+        ] {
+            let mut doc = Document::new();
+            doc.append(source).unwrap();
+            let fragment = doc
+                .definition_candidate
+                .as_ref()
+                .unwrap()
+                .sources
+                .fragments
+                .last()
+                .unwrap();
+            assert_eq!(&doc.source[fragment.raw.range()], raw);
+            assert_eq!(fragment.virtual_spaces, 2);
+            doc.append("> b'\n").unwrap();
+            assert_eq!(
+                doc.references.entries[0].title.and_then(|s| doc.text(s)),
+                Some("a\n> b")
+            );
+        }
         for (head, text, expected_raw, spaces) in [
             (">\t[r]:\n", ">\t中🙂\n", "中🙂\n", 2),
             ("- [r]:\n", "\t中🙂\n", "中🙂\n", 2),
@@ -854,6 +880,103 @@ mod tests {
                 r.destination
                     .is_some_and(|s| doc.text(s) == Some("/must-stay-text"))
             }));
+        }
+    }
+
+    #[test]
+    fn container_title_failures_match_actual_ordinary_pipeline() {
+        let mut cases = 0;
+        for (first, next) in [
+            ("> ", "> "),
+            ("- ", "  "),
+            ("> - ", ">   "),
+            ("- > ", "  > "),
+            ("- - ", "\t"),
+            (">\t", ">\t"),
+        ] {
+            for independent in [false, true] {
+                for middle in ["plain", "a|b", "`a|b`", "[s]: /stay-text"] {
+                    for trigger in [
+                        "",
+                        " \t",
+                        "===",
+                        "---",
+                        "***",
+                        "# h",
+                        "~~~",
+                        "$$",
+                        "> quote",
+                        "- sibling",
+                        "1. item",
+                        "    code",
+                        "\tcode",
+                        "-|-",
+                        "' bad",
+                        "(bad)",
+                    ] {
+                        let head = if independent {
+                            format!("{first}[r]: /u\n")
+                        } else {
+                            String::new()
+                        };
+                        let opener = if independent {
+                            format!("{next}'first\n")
+                        } else {
+                            format!("{first}[r]: /u 'first\n")
+                        };
+                        let tail = format!("{opener}{next}{middle}\n{next}{trigger}\n");
+                        let source = format!("{head}{tail}");
+                        let actual = parse(&source);
+                        let control = if independent {
+                            let mut doc = Document::new();
+                            doc.append(&head).unwrap();
+                            doc.seal_definition_title(&mut Update::default());
+                            doc.append(&tail).unwrap();
+                            doc.finish();
+                            doc
+                        } else {
+                            ordinary_control(&source)
+                        };
+                        assert_eq!(
+                            support::snapshot(&actual),
+                            support::snapshot(&control),
+                            "{source:?}"
+                        );
+                        assert_mapping_and_budget(&actual);
+                        cases += 1;
+                    }
+                }
+            }
+        }
+        eprintln!("{cases} container title failures against actual ordinary pipeline");
+    }
+
+    #[test]
+    fn duplicate_container_titles_retain_only_winning_prefix_gaps() {
+        for independent in [false, true] {
+            let gap = if independent { "\n> " } else { " " };
+            let mut doc = Document::new();
+            doc.append(&format!("[r]\n\n> [r]: /u{gap}'a\n> b'\n"))
+                .unwrap();
+            assert_eq!(doc.references.title_gaps.len(), 1);
+            let winning = doc.references.title_gaps[0].clone();
+            for _ in 0..4096 {
+                doc.append(&format!("\n> [r]: /ignored{gap}'c\n> d'\n"))
+                    .unwrap();
+                assert_eq!(doc.references.title_gaps.len(), 1);
+                assert_eq!(doc.references.title_gaps[0], winning);
+                assert!(doc.definition_candidate.is_none());
+            }
+            doc.finish();
+            assert_eq!(
+                doc.references
+                    .title_gaps
+                    .iter()
+                    .map(Vec::len)
+                    .sum::<usize>(),
+                1
+            );
+            assert_eq!(doc.link_title(LinkId(0)), Some("a\n> b"));
         }
     }
 

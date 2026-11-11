@@ -49,6 +49,7 @@ pub struct CodeInfo<'a> {
     decoded: [u8; 8],
     literal: bool,
     normalize_crlf: bool,
+    gaps: &'a [Span],
 }
 
 #[derive(Clone, Copy)]
@@ -69,12 +70,14 @@ impl<'a> CodeInfo<'a> {
             decoded: [0; 8],
             literal: false,
             normalize_crlf: false,
+            gaps: &[],
         }
     }
 
-    pub(crate) fn title(source: &'a str, remaining: Span) -> Self {
+    pub(crate) fn title(source: &'a str, remaining: Span, gaps: &'a [Span]) -> Self {
         Self {
             normalize_crlf: true,
+            gaps,
             ..Self::new(source, remaining)
         }
     }
@@ -108,6 +111,26 @@ impl<'a> CodeInfo<'a> {
         &mut self,
         budget: &mut Budget,
     ) -> Result<Option<CodeInfoChunk<'_>>, Completion> {
+        while let Some(gap) = self.gaps.first()
+            && self.remaining.start >= gap.start
+        {
+            debug_assert!(self.remaining.start < gap.end && gap.end <= self.remaining.end);
+            let available = budget.remaining();
+            if available.queries == 0 || available.objects == 0 || available.bytes == 0 {
+                return Err(Completion::BudgetExhausted);
+            }
+            let bytes = (gap.end - self.remaining.start).min(available.bytes);
+            let charged = budget.charge(WorkLimit {
+                queries: 1,
+                bytes,
+                ..WorkLimit::default()
+            });
+            debug_assert!(charged);
+            self.remaining.start += bytes;
+            if self.remaining.start == gap.end {
+                self.gaps = &self.gaps[1..];
+            }
+        }
         if self.remaining.is_empty() {
             return Ok(None);
         }
