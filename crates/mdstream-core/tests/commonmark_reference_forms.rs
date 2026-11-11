@@ -260,20 +260,12 @@ enum Assessment {
         reason: &'static str,
         observed: &'static str,
     },
-    Unsupported {
-        reason: &'static str,
-        observed: &'static str,
-    },
 }
 
 // Frozen observations are separate from the verbatim upstream oracle.
 fn assessment(number: usize) -> Assessment {
     match number {
-        553..=563 | 565..=568 | 570 => Assessment::Supported,
-        564 => Assessment::Unsupported {
-            reason: "emphasis pairs across the shortcut label boundary instead of respecting link precedence",
-            observed: "<p><a href=\"/url\"><em>foo</em></a></p>\n",
-        },
+        553..=568 | 570 => Assessment::Supported,
         569 | 571 => Assessment::DeliberateDifference {
             reason: "an unresolved full reference consumes its suffix and hides brackets; the suffix is not replayed as a new label",
             observed: if number == 569 {
@@ -297,8 +289,7 @@ fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
     metadata_snapshot(doc);
     match assessment(number) {
         Assessment::Supported => assert_eq!(actual, expected, "example {number}"),
-        Assessment::DeliberateDifference { observed, .. }
-        | Assessment::Unsupported { observed, .. } => {
+        Assessment::DeliberateDifference { observed, .. } => {
             assert_ne!(
                 actual, expected,
                 "example {number} now matches upstream; review classification"
@@ -336,14 +327,13 @@ fn pinned_commonmark_reference_forms_report() {
         let (category, label, reason) = match assessment(number) {
             Assessment::Supported => (0, "supported", "matches upstream"),
             Assessment::DeliberateDifference { reason, .. } => (1, "deliberate difference", reason),
-            Assessment::Unsupported { reason, .. } => (2, "unsupported", reason),
         };
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [16, 2, 1]);
+    assert_eq!(counts, [17, 2, 0]);
     eprintln!(
-        "CommonMark 0.31.2 Links subset (553–571): 16 supported, 2 deliberate differences, 1 unsupported; 482–552 outside this score"
+        "CommonMark 0.31.2 Links subset (553–571): 17 supported, 2 deliberate differences, 0 unsupported; 482–552 outside this score"
     );
 }
 
@@ -796,5 +786,25 @@ fn late_definitions_preserve_reference_forms_precedence_and_first_definition() {
     assert_eq!(
         project(&doc),
         "<p><a href=\"/first&amp;\" title=\"t*\"><em>Foo</em></a> <a href=\"/first&amp;\" title=\"t*\"><em>Foo</em></a> <a href=\"/first&amp;\" title=\"t*\">shown</a> <a href=\"/direct\" title=\"d\">Foo</a> <a href=\"/resolved\">foo</a><a href=\"/last\">baz</a></p>\n"
+    );
+}
+
+#[test]
+fn left_boundary_observation_matches_the_verbatim_upstream_html() {
+    let number = 564;
+    let &(_, markdown, expected) = REFERENCE_FORM_CASES.iter().find(|c| c.0 == number).unwrap();
+    let doc = parse(markdown);
+    let observed = project(&doc);
+    eprintln!("example {number} independent observation: {observed:?}");
+    assert_eq!(observed, expected);
+    let info = doc.link_info(LinkId(0)).unwrap();
+    let runs: Vec<_> = doc.runs_in(info.label).unwrap().collect();
+    assert!(
+        runs.iter()
+            .all(|r| r.emphasis_depth == 0 && r.strong_depth == 0)
+    );
+    assert!(
+        runs.iter()
+            .any(|r| r.text.contains('*') && !r.style.contains(Style::HIDDEN))
     );
 }

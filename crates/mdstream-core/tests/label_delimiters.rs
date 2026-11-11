@@ -35,6 +35,99 @@ fn depths(doc: &Document, text: &str) -> (usize, usize, bool) {
 }
 
 #[test]
+fn published_labels_reject_outer_closers_and_preserve_local_and_enclosing_pairs() {
+    let mut cases = 0;
+    for marker in ["*", "_", "**", "__", "***", "___", "****", "____"] {
+        for image in ["", "!"] {
+            for suffix in ["(u)", "[r]", "[]", ""] {
+                let label = format!("签{marker}");
+                let source =
+                    format!("p {marker}前 {image}[{label}]{suffix} 后\n\n[r]: /u\n[{label}]: /u\n");
+                let doc = parse(&source);
+                assert_eq!(depths(&doc, "前"), (0, 0, false), "{source:?}");
+                assert_eq!(depths(&doc, "签"), (0, 0, false), "{source:?}");
+                assert_eq!(visible(&doc), format!("p {marker}前 {label} 后\n\n"));
+                let source = format!(
+                    "p {marker}前 {image}[签{marker} **中** _文_]{suffix} 后{marker}\n\n[r]: /u\n"
+                );
+                let doc = parse(&source);
+                let outer = (marker.len() % 2, marker.len() / 2, false);
+                assert_eq!(depths(&doc, "前"), outer, "{source:?}");
+                assert_eq!(depths(&doc, "签"), outer, "{source:?}");
+                assert_eq!(depths(&doc, "后"), outer, "{source:?}");
+                assert_eq!(
+                    depths(&doc, "中"),
+                    (outer.0, outer.1 + 1, false),
+                    "{source:?}"
+                );
+                assert_eq!(
+                    depths(&doc, "文"),
+                    (outer.0 + 1, outer.1, false),
+                    "{source:?}"
+                );
+                cases += 1;
+            }
+        }
+    }
+    // The first two bytes of the closer satisfy a local strong opener; its
+    // remainder must not consume the outside emphasis opener.
+    for marker in ["*", "_"] {
+        let source =
+            format!("p {marker}前 [{marker}{marker}中{marker}{marker}{marker}](u) 后{marker}");
+        let doc = parse(&source);
+        assert_eq!(visible(&doc), format!("p 前 中{marker} 后"));
+        assert_eq!(depths(&doc, "中"), (1, 1, false));
+        assert_eq!(depths(&doc, "后"), (1, 0, false));
+    }
+    eprintln!("{cases} independent left-boundary models plus partial consumption");
+}
+
+#[test]
+fn unpublished_labels_release_summaries_as_ordinary_emphasis_once() {
+    for marker in ["*", "_", "**", "__"] {
+        let expected = (marker.len() % 2, marker.len() / 2, false);
+        for tail in ["", " [new](u)", " <https://x>"] {
+            let source = format!("p {marker}前 [签{marker}{tail}");
+            let doc = parse(&source);
+            assert_eq!(depths(&doc, "前"), expected, "{source:?}");
+            assert_eq!(depths(&doc, "签"), expected, "{source:?}");
+        }
+        for suffix in ["(u)", "[r]", "", "(bad z", "[missing"] {
+            let source = format!(
+                "p {marker}前 [签{}{marker}]{suffix}\n\n[r]: /u\n",
+                "x".repeat(1100)
+            );
+            let published = matches!(suffix, "(u)" | "[r]");
+            let doc = parse(&source);
+            assert_eq!(doc.links().len(), usize::from(published));
+            for size in [1, 7, 1024] {
+                let mut streaming = Utf8Document::new();
+                for bytes in source.as_bytes().chunks(size) {
+                    streaming.append(bytes).unwrap();
+                }
+                streaming.finish();
+                assert_eq!(
+                    support::snapshot(streaming.document()),
+                    support::snapshot(&doc),
+                    "{marker} {suffix} chunks {size}"
+                );
+            }
+            assert_eq!(
+                depths(&doc, "签"),
+                if published { (0, 0, false) } else { expected },
+                "{marker} {suffix}"
+            );
+        }
+        for suffix in ["", "(bad z", "[missing]", "[]"] {
+            let source = format!("p {marker}前 [签{marker}]{suffix}");
+            let doc = parse(&source);
+            assert_eq!(doc.links().len(), 1);
+            assert_eq!(depths(&doc, "签"), (0, 0, false), "{source:?}");
+        }
+    }
+}
+
+#[test]
 fn published_labels_end_unmatched_openers_but_keep_outer_and_confirmed_styles() {
     let mut cases = 0;
     for (outer, expected) in [
@@ -105,71 +198,77 @@ fn unfinished_failed_and_overlong_labels_have_explicit_boundaries() {
 
 #[test]
 fn source_mapping_ids_late_definitions_and_consumers_share_the_frame_budget() {
-    let mut doc = Document::new();
-    doc.append(&format!(
-        "p {} [签 *中😀][r]* {}",
-        "x".repeat(1024),
-        "z".repeat(64)
-    ))
-    .unwrap();
-    let id = LinkId(0);
-    let info = *doc.link_info(id).unwrap();
-    let block = doc.block_at(info.source.start).unwrap();
-    assert_eq!(doc.text(info.label), Some("签 *中😀"));
-    assert_eq!(doc.text(info.source), Some("[签 *中😀][r]"));
-    assert_eq!(depths(&doc, "中"), (0, 0, false));
-    doc.append("\n\n[r]: /目标&amp; \"标&amp;题\"\n").unwrap();
-    doc.finish();
-    assert_eq!(*doc.link_info(id).unwrap(), info);
-    assert_eq!(doc.block_at(info.source.start), Some(block));
-    assert_eq!(doc.link_destination(id), Some("/目标&amp;"));
-    let span = info.source;
-    let mut cursor = doc.display_cursor(span).unwrap();
-    let mut peer = doc.display_cursor(span).unwrap();
-    let limit = WorkLimit {
-        bytes: 6,
-        queries: 1,
-        objects: 1,
-        ..Default::default()
-    };
-    assert_eq!(
-        cursor
-            .next(&doc, &mut Budget::new(WorkLimit::default()))
-            .unwrap(),
-        DisplayStep::BudgetExhausted
-    );
-    let mut shown = String::new();
-    while cursor.source_position() < span.end {
-        let mut budget = Budget::new(limit);
-        let DisplayStep::Run(run) = cursor.next(&doc, &mut budget).unwrap() else {
-            panic!("no progress")
+    for (label_source, label_text, link_source) in [
+        ("[签 *中😀][r]*", "签 *中😀", "[签 *中😀][r]"),
+        ("*前 [签* 中😀][r]", "签* 中😀", "[签* 中😀][r]"),
+        ("__前 [签__ 中😀][r]", "签__ 中😀", "[签__ 中😀][r]"),
+    ] {
+        let mut doc = Document::new();
+        doc.append(&format!(
+            "p {} {label_source} {}",
+            "x".repeat(1024),
+            "z".repeat(64)
+        ))
+        .unwrap();
+        let id = LinkId(0);
+        let info = *doc.link_info(id).unwrap();
+        let block = doc.block_at(info.source.start).unwrap();
+        assert_eq!(doc.text(info.label), Some(label_text));
+        assert_eq!(doc.text(info.source), Some(link_source));
+        assert_eq!(depths(&doc, "中"), (0, 0, false));
+        doc.append("\n\n[r]: /目标&amp; \"标&amp;题\"\n").unwrap();
+        doc.finish();
+        assert_eq!(*doc.link_info(id).unwrap(), info);
+        assert_eq!(doc.block_at(info.source.start), Some(block));
+        assert_eq!(doc.link_destination(id), Some("/目标&amp;"));
+        let span = info.source;
+        let mut cursor = doc.display_cursor(span).unwrap();
+        let mut peer = doc.display_cursor(span).unwrap();
+        let limit = WorkLimit {
+            bytes: 6,
+            queries: 1,
+            objects: 1,
+            ..Default::default()
         };
-        assert_eq!(doc.text(run.source), Some(run.text));
-        assert_eq!(run.replacement, None);
-        assert_eq!((run.emphasis_depth, run.strong_depth), (0, 0));
-        if !run.style.contains(Style::HIDDEN) {
-            shown.push_str(run.text);
-        }
-        let used = budget.used();
-        assert!(used.bytes <= 6 && used.queries <= 1 && used.objects <= 1);
         assert_eq!(
-            peer.next(&doc, &mut budget).unwrap(),
+            cursor
+                .next(&doc, &mut Budget::new(WorkLimit::default()))
+                .unwrap(),
             DisplayStep::BudgetExhausted
         );
-        assert_eq!(peer.source_position(), span.start);
-        assert_eq!(
-            doc.decoded_link_destination(id)
-                .unwrap()
-                .advance(&mut budget),
-            Err(Completion::BudgetExhausted)
-        );
-        assert_eq!(
-            doc.decoded_link_title(id).unwrap().advance(&mut budget),
-            Err(Completion::BudgetExhausted)
-        );
-        assert_eq!(budget.used(), used);
+        let mut shown = String::new();
+        while cursor.source_position() < span.end {
+            let mut budget = Budget::new(limit);
+            let DisplayStep::Run(run) = cursor.next(&doc, &mut budget).unwrap() else {
+                panic!("no progress")
+            };
+            assert_eq!(doc.text(run.source), Some(run.text));
+            assert_eq!(run.replacement, None);
+            assert_eq!((run.emphasis_depth, run.strong_depth), (0, 0));
+            if !run.style.contains(Style::HIDDEN) {
+                shown.push_str(run.text);
+            }
+            let used = budget.used();
+            assert!(used.bytes <= 6 && used.queries <= 1 && used.objects <= 1);
+            assert_eq!(
+                peer.next(&doc, &mut budget).unwrap(),
+                DisplayStep::BudgetExhausted
+            );
+            assert_eq!(peer.source_position(), span.start);
+            assert_eq!(
+                doc.decoded_link_destination(id)
+                    .unwrap()
+                    .advance(&mut budget),
+                Err(Completion::BudgetExhausted)
+            );
+            assert_eq!(
+                doc.decoded_link_title(id).unwrap().advance(&mut budget),
+                Err(Completion::BudgetExhausted)
+            );
+            assert_eq!(budget.used(), used);
+        }
+        assert_eq!(shown, label_text);
     }
-    assert_eq!(shown, "签 *中😀");
 }
 
 #[test]
@@ -265,7 +364,8 @@ fn deep_containers_million_byte_labels_and_history_have_linear_cumulative_work()
     assert_eq!(depths(&doc, "尾"), (0, 0, false));
     assert_eq!(*doc.link_info(LinkId(4095)).unwrap(), history);
     let work = doc.work();
-    assert!(work.delimiter_steps - after.delimiter_steps <= 4110);
+    // Resolve each deferred summary, push its opener, then discard at the edge.
+    assert!(work.delimiter_steps - after.delimiter_steps <= 3 * 4096 + 14);
     assert!(work.inline_bytes <= doc.source().len() as u64);
     assert!(work.delimiter_steps <= 3 * doc.source().len() as u64);
     assert!(work.delimiter_search_steps <= 6 * work.delimiter_steps);
@@ -286,6 +386,13 @@ fn all_utf8_splits_prefixes_and_eof_preserve_label_boundaries() {
     for seed in [String::new(), format!("{}\n", "x".repeat(1024))] {
         for tail in [
             "[签 *中😀](u)*\r\n",
+            "*前 [签*😀](u) 后*\r\n",
+            "__前 [签__ _中_😀][r] 后__\n\n[r]: /u\n",
+            "*前 [**中***😀][] 后*\n",
+            "_前 [签_😀](bad z",
+            "**前 [签**😀",
+            "*前 [签*😀 [new](u)",
+            "*前 [签*😀 <https://x>",
             "**前 [签 _中][r] 后** 尾_\n\n[r]: /u\n",
             "![签 ~~中][] 尾~~\n",
             "> - [签 *中\n>   文](u)*\n",
@@ -332,4 +439,153 @@ fn all_utf8_splits_prefixes_and_eof_preserve_label_boundaries() {
             }
         }
     }
+}
+
+#[test]
+fn inherited_left_closers_resolve_only_after_header_confirmation() {
+    for marker in ["*", "_", "**", "__"] {
+        for prefix in ["", "> ", "- "] {
+            let continuation = if prefix == "- " { "  " } else { prefix };
+            for ending in ["-|-\n", "wrong\n", ""] {
+                for suffix in ["", "(u)", "[r]"] {
+                    let source = format!(
+                        "{prefix}p {marker}前 [签{marker}\n{continuation}末 _中_]{suffix} {}|b\n{continuation}{ending}",
+                        "x".repeat(1100)
+                    );
+                    let doc = parse(&source);
+                    let table = ending == "-|-\n";
+                    assert_eq!(
+                        doc.tables().len(),
+                        usize::from(table),
+                        "{marker} {prefix} {suffix} {ending:?}"
+                    );
+                    assert_eq!(doc.links().len(), usize::from(!table || suffix == "[r]"));
+                    let prior = if table {
+                        (marker.len() % 2, marker.len() / 2, false)
+                    } else {
+                        (0, 0, false)
+                    };
+                    assert_eq!(
+                        depths(&doc, "前"),
+                        prior,
+                        "{marker:?} {prefix:?} {suffix:?} {ending:?}"
+                    );
+                    assert_eq!(
+                        depths(&doc, "签"),
+                        prior,
+                        "{marker:?} {prefix:?} {suffix:?} {ending:?}"
+                    );
+                    assert_eq!(depths(&doc, "中"), (1, 0, false));
+                    let mut streamed = Utf8Document::new();
+                    for bytes in source.as_bytes().chunks(7) {
+                        streamed.append(bytes).unwrap();
+                    }
+                    streamed.finish();
+                    assert_eq!(
+                        support::snapshot(streamed.document()),
+                        support::snapshot(&doc)
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn many_outside_openers_cannot_be_searched_or_consumed_by_label_closers() {
+    for size in [1024, 4096, 16384] {
+        let source = format!(
+            "p {}前 [签 {}中](u) 后*",
+            "*a _b ".repeat(size),
+            "字* 字_ ".repeat(size)
+        );
+        let doc = parse(&source);
+        assert_eq!(depths(&doc, "前"), (1, 0, false));
+        assert_eq!(depths(&doc, "签"), (1, 0, false));
+        assert_eq!(depths(&doc, "后"), (1, 0, false));
+        let work = doc.work();
+        assert!(work.inline_bytes <= source.len() as u64);
+        assert!(work.delimiter_steps <= 3 * source.len() as u64);
+        assert!(work.delimiter_search_steps <= 6 * work.delimiter_steps);
+        assert!(work.tree_visits <= 24 * source.len() as u64 * usize::BITS as u64);
+        assert!(doc.annotation_arena_stats().nodes <= 4 * source.len());
+    }
+}
+
+fn check_replaced_inherited_label(replacement: &str) {
+    let mut failures = Vec::new();
+    for marker in ["*", "_", "**", "__"] {
+        let styled = (marker.len() % 2, marker.len() / 2, false);
+        for padding in [0, 1100] {
+            for ending in ["-|-\n", "wrong\n", ""] {
+                let table = ending == "-|-\n";
+                for (prior, row, old_depth, end_depth) in [
+                    (
+                        format!("p {marker}before [inside{marker}\n"),
+                        format!("{replacement} end"),
+                        styled,
+                        (0, 0, false),
+                    ),
+                    (
+                        format!("p [old {marker}inside\n"),
+                        format!("{replacement} end{marker}"),
+                        if table { (0, 0, false) } else { styled },
+                        if table { (0, 0, false) } else { styled },
+                    ),
+                    (
+                        format!("p {marker}before [inside{marker}\n"),
+                        format!("{marker}cell{marker} {replacement} end"),
+                        styled,
+                        (0, 0, false),
+                    ),
+                    (
+                        format!("p {marker}before [inside!{marker}?\n"),
+                        format!("{replacement} end"),
+                        styled,
+                        (0, 0, false),
+                    ),
+                ] {
+                    let source = format!("{prior}{row} {}|b\n{ending}", "x".repeat(padding));
+                    let doc = parse(&source);
+                    // The model keeps pairs wholly in the old prose, while a
+                    // confirmed first cell cannot close an old prose opener.
+                    if doc.tables().len() != usize::from(table)
+                        || depths(&doc, "inside") != old_depth
+                        || depths(&doc, "end") != end_depth
+                        || (prior.contains("before") && depths(&doc, "before") != styled)
+                        || (row.contains("cell") && depths(&doc, "cell") != styled)
+                    {
+                        failures.push(format!(
+                            "{prior:?} {row:?} padding={padding} ending={ending:?}: tables={}, inside={:?}, end={:?}",
+                            doc.tables().len(), depths(&doc, "inside"), depths(&doc, "end")
+                        ));
+                    }
+                    assert_eq!(doc.links().len(), 1);
+                    let info = doc.link_info(LinkId(0)).unwrap();
+                    assert_eq!(doc.text(info.source), Some(replacement));
+                    let snapshot = support::snapshot(&doc);
+                    for size in [1, 7] {
+                        let mut streamed = Utf8Document::new();
+                        for bytes in source.as_bytes().chunks(size) {
+                            streamed.append(bytes).unwrap();
+                        }
+                        streamed.finish();
+                        assert_eq!(support::snapshot(streamed.document()), snapshot);
+                    }
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn replaced_inherited_label_by_bracket_preserves_summary_line_boundaries() {
+    check_replaced_inherited_label("[new](u)");
+    check_replaced_inherited_label("[new签😀](u)");
+}
+
+#[test]
+fn replaced_inherited_label_by_autolink_preserves_summary_line_boundaries() {
+    check_replaced_inherited_label("<https://x>");
 }

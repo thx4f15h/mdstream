@@ -144,6 +144,13 @@ struct Run {
     before: Option<char>,
 }
 
+// Source/flanking summaries only. An unresolved label must not consume outer
+// openers before its publication is known; no body bytes or stack are copied.
+struct LabelDelimiter {
+    run: Run,
+    next: Option<char>,
+}
+
 #[derive(Clone, Copy)]
 struct Code {
     open: Span,
@@ -385,6 +392,9 @@ pub(crate) struct Inline {
     // labels remain unbounded source envelopes; never keep their whole text.
     label: Vec<u8>,
     label_overflow: bool,
+    label_delimiters: Vec<LabelDelimiter>,
+    // Prefix from the preceding line, resolved as prose on header success.
+    header_label_delimiters: usize,
     bang: Option<usize>,
     tail: Option<Tail>,
     escape: Option<usize>,
@@ -470,6 +480,7 @@ impl Inline {
         debug_assert!(self.header_link.is_none());
         debug_assert!(self.header_link_suffix.is_none());
         self.header_floor = self.stack.len();
+        self.header_label_delimiters = self.label_delimiters.len();
         self.header_crossed = false;
         self.header_bracket = self.bracket.map(|b| b.open);
         self.header_opaque = self.code.is_some() || self.math.is_some();
@@ -545,6 +556,7 @@ impl Inline {
         self.header_floor = 0;
         self.header_crossed = false;
         self.header_bracket = None;
+        self.header_label_delimiters = 0;
         self.header_opaque = false;
     }
 
@@ -557,6 +569,24 @@ impl Inline {
     pub fn confirm_header(&mut self, effects: &mut Effects<'_>) -> bool {
         debug_assert!(!self.header_crossed);
         self.code_fallback.confirm_header(effects);
+        let inherited_label = self.header_link.is_some()
+            || self
+                .bracket
+                .is_some_and(|b| Some(b.open) == self.header_bracket);
+        if inherited_label {
+            // The old label fails at the preceding line, which remains ordinary
+            // prose. Resolve that prefix before discarding its remaining openers;
+            // the current row's summaries belong to the independent first cell.
+            effects.work.delimiter_steps +=
+                (self.label_delimiters.len() - self.header_label_delimiters) as u64;
+            let current = self
+                .label_delimiters
+                .split_off(self.header_label_delimiters);
+            self.header_floor = 0;
+            self.resolve_label_delimiters(None, effects);
+            self.header_floor = self.stack.len();
+            self.label_delimiters = current;
+        }
         // In an independent cell a full reference suffix is itself a shortcut.
         // Its inert label has no other local effects or pending delimiter state.
         // Publish it before any later cell objects, without replaying the row.
@@ -609,6 +639,9 @@ impl Inline {
             self.bracket = None;
         }
         self.clear_header();
+        if inherited_label {
+            self.resolve_label_delimiters(None, effects);
+        }
         true
     }
 
@@ -867,10 +900,12 @@ impl Inline {
                 .bracket
                 .is_some_and(|b| b.image.is_none() && b.open + 1 == pos) =>
             {
+                self.resolve_label_delimiters(None, effects);
                 self.footnote = self.bracket.take().map(|b| b.open);
             }
             b'&' => self.entity = Some(pos),
             b'<' => {
+                self.resolve_label_delimiters(None, effects);
                 self.autolink = Some(pos);
                 self.bracket = None;
             }
@@ -878,6 +913,7 @@ impl Inline {
             b'*' | b'_' | b'~' | b'`' | b'$' => self.start_run(byte, pos),
             b'!' => self.bang = Some(pos),
             b'[' => {
+                self.resolve_label_delimiters(None, effects);
                 self.label.clear();
                 self.label_overflow = false;
                 self.bracket = Some(Bracket {
@@ -923,11 +959,33 @@ impl Inline {
         candidate
     }
 
-    /// A published label cannot lend unmatched openers to following text.
-    /// Source order identifies the suffix even if an earlier crossing pair
-    /// already consumed an outer opener. Each delimiter is popped once; no
-    /// label/body replay or saved stack is needed. Pre-label openers survive.
+    // Resolve each summary once, preserving allocation across candidates. The
+    // optional boundary rejects outside openers only for stars/underscores;
+    // tilde's existing independent dialect is unchanged.
+    fn resolve_label_delimiters(&mut self, open: Option<usize>, effects: &mut Effects<'_>) {
+        let inherited = std::mem::take(&mut self.header_label_delimiters);
+        if inherited != 0 {
+            // A replacement can release the old line's summaries before the
+            // header decision. Its pairs are ordinary prose, and its remaining
+            // openers still precede the independent first cell.
+            self.header_floor = 0;
+        }
+        let mut pending = std::mem::take(&mut self.label_delimiters);
+        for (index, delimiter) in pending.drain(..).enumerate() {
+            effects.work.delimiter_steps += 1;
+            self.finish_delimiter(delimiter.run, delimiter.next, open, effects);
+            if index + 1 == inherited {
+                self.header_floor = self.stack.len();
+            }
+        }
+        self.label_delimiters = pending;
+    }
+
+    /// A published label can neither consume outside emphasis openers nor lend
+    /// unmatched openers to following text. Each summary/delimiter is processed
+    /// once; no label/body replay or saved stack is needed.
     fn end_label(&mut self, open: usize, effects: &mut Effects<'_>) {
+        self.resolve_label_delimiters(Some(open), effects);
         while self.stack.last().is_some_and(|d| d.source.start > open) {
             let delimiter = self.stack.pop().unwrap();
             self.last[delimiter.kind] = delimiter.previous;
@@ -1002,6 +1060,20 @@ impl Inline {
             }
             return;
         }
+        if self.bracket.is_some() {
+            self.label_delimiters.push(LabelDelimiter { run, next });
+        } else {
+            self.finish_delimiter(run, next, None, effects);
+        }
+    }
+
+    fn finish_delimiter(
+        &mut self,
+        run: Run,
+        next: Option<char>,
+        label_open: Option<usize>,
+        effects: &mut Effects<'_>,
+    ) {
         if run.byte == b'~' && run.source.len() > 2 {
             return;
         }
@@ -1053,7 +1125,11 @@ impl Inline {
                     {
                         continue;
                     }
-                    newest = newest.max(self.last[bucket]);
+                    if let Some(index) = self.last[bucket]
+                        && label_open.is_none_or(|open| self.stack[index].source.start > open)
+                    {
+                        newest = newest.max(Some(index));
+                    }
                 }
                 newest
             };
@@ -1227,13 +1303,17 @@ impl Inline {
         }
     }
 
-    fn seal_candidate(&self, candidate: Candidate, effects: &mut Effects<'_>) {
+    fn seal_candidate(&mut self, candidate: Candidate, effects: &mut Effects<'_>) {
+        if self.header_link.is_none() {
+            self.resolve_label_delimiters(None, effects);
+        }
         if let Some(id) = candidate.link {
             effects.link_info[id.0].state = SyntaxState::Sealed;
         }
     }
 
     pub fn finish(&mut self, effects: &mut Effects<'_>) {
+        self.cancel_header(effects);
         self.raw_content = None;
         self.raw_cr = None;
         if let Some(tail) = &self.tail {
@@ -1245,6 +1325,7 @@ impl Inline {
             self.seal_candidate(candidate, effects);
         }
         self.finish_run(None, effects);
+        self.resolve_label_delimiters(None, effects);
         if self.code.is_some() {
             self.code_fallback.commit(effects);
         }
@@ -1266,13 +1347,127 @@ impl Inline {
         self.line_break = None;
         self.autolink = None;
         self.entity = None;
-        self.cancel_header(effects);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{Document, LinkId};
+
+    #[test]
+    fn label_summaries_track_runs_reuse_storage_and_wait_for_confirmation() {
+        let mut doc = Document::new();
+        doc.append(&format!("p {} *前 [签* _中_ ", "x".repeat(1024)))
+            .unwrap();
+        assert_eq!(doc.inline.label_delimiters.len(), 3);
+        let capacity = doc.inline.label_delimiters.capacity();
+        let before = doc.work();
+        for _ in 0..1000 {
+            doc.append("中😀body").unwrap();
+            assert_eq!(doc.inline.label_delimiters.len(), 3);
+            assert_eq!(doc.inline.label_delimiters.capacity(), capacity);
+        }
+        assert_eq!(doc.work().delimiter_steps, before.delimiter_steps);
+        assert_eq!(
+            doc.work().delimiter_search_steps,
+            before.delimiter_search_steps
+        );
+        assert_eq!(doc.work().tree_visits, before.tree_visits);
+        doc.append("](u) ").unwrap();
+        assert!(doc.inline.label_delimiters.is_empty());
+        assert_eq!(doc.inline.label_delimiters.capacity(), capacity);
+        for _ in 0..1000 {
+            doc.append("[签* _中_](u) ").unwrap();
+            assert!(doc.inline.label_delimiters.is_empty());
+            assert_eq!(doc.inline.label_delimiters.capacity(), capacity);
+        }
+        let mut unfinished = Document::new();
+        unfinished
+            .append(&format!("p {} *前 [签* ", "x".repeat(1024)))
+            .unwrap();
+        let at = unfinished.source().find('签').unwrap();
+        assert_eq!(
+            unfinished
+                .runs_in(crate::Span::new(at, at + 3))
+                .unwrap()
+                .next()
+                .unwrap()
+                .emphasis_depth,
+            0
+        );
+        unfinished.finish();
+        assert_eq!(
+            unfinished
+                .runs_in(crate::Span::new(at, at + 3))
+                .unwrap()
+                .next()
+                .unwrap()
+                .emphasis_depth,
+            1
+        );
+        assert!(unfinished.inline.label_delimiters.is_empty());
+    }
+
+    #[test]
+    fn replaced_inherited_summaries_resolve_once_and_retain_the_line_floor() {
+        for count in [64, 1024, 4096] {
+            for replacement in ["[new](u)", "<https://x>"] {
+                for ending in ["-|-\n", "wrong\n", ""] {
+                    let mut doc = Document::new();
+                    doc.append(&format!("p [old {}*inside\n", "_a_ ".repeat(count)))
+                        .unwrap();
+                    doc.append(&format!("_cell_ {} ", "x".repeat(1100)))
+                        .unwrap();
+                    assert_eq!(doc.inline.header_label_delimiters, 2 * count + 1);
+                    assert_eq!(doc.inline.label_delimiters.len(), 2 * count + 3);
+                    let capacity = doc.inline.label_delimiters.capacity();
+                    let before = doc.work();
+                    for _ in 0..100 {
+                        doc.append("body").unwrap();
+                    }
+                    assert_eq!(doc.inline.label_delimiters.len(), 2 * count + 3);
+                    assert_eq!(doc.inline.label_delimiters.capacity(), capacity);
+                    assert_eq!(doc.work().delimiter_steps, before.delimiter_steps);
+                    assert_eq!(
+                        doc.work().delimiter_search_steps,
+                        before.delimiter_search_steps
+                    );
+
+                    doc.append(&format!(" {replacement} end* ")).unwrap();
+                    assert!(doc.inline.label_delimiters.is_empty());
+                    assert_eq!(doc.inline.label_delimiters.capacity(), capacity);
+                    assert_eq!(doc.inline.header_label_delimiters, 0);
+                    assert_eq!(doc.inline.header_pairs.len(), 1);
+                    assert!(!doc.inline.header_crossed);
+                    // One resolution per summary, one push/pop per local pair,
+                    // and constant work for the replacement and crossing pair.
+                    assert!(
+                        doc.work().delimiter_steps - before.delimiter_steps
+                            <= 4 * count as u64 + 24
+                    );
+                    let resolved = doc.work();
+                    for _ in 0..100 {
+                        doc.append("body").unwrap();
+                    }
+                    assert_eq!(doc.work().delimiter_steps, resolved.delimiter_steps);
+                    assert_eq!(
+                        doc.work().delimiter_search_steps,
+                        resolved.delimiter_search_steps
+                    );
+                    doc.append(&format!("|b\n{ending}")).unwrap();
+                    doc.finish();
+                    assert_eq!(doc.tables().len(), usize::from(ending == "-|-\n"));
+                    let work = doc.work();
+                    let bytes = doc.source().len() as u64;
+                    assert!(work.inline_bytes <= bytes);
+                    assert!(work.delimiter_steps <= 3 * bytes);
+                    assert!(work.delimiter_search_steps <= 6 * work.delimiter_steps);
+                    assert!(work.tree_visits <= 24 * bytes * usize::BITS as u64);
+                    assert!(doc.annotation_arena_stats().nodes <= 4 * bytes as usize);
+                }
+            }
+        }
+    }
 
     #[test]
     fn failed_code_journal_storage_tracks_runs_and_is_reused() {

@@ -2521,3 +2521,33 @@ CommonMark 213 已不再建立定义，但未定义引用隐藏括号，继续�
 TODO 直接修订原完成条目和两处剩余范围描述，README 原章节及摘要同步移除过时 32 串限制；没有新增完成复选项或删除任何真实未完成需求，44 个未完成复选项完整保留。旧 DONE 全部保留，原条目文本另存本单元 todo-original-lines.md。
 
 最终验证全部在本项目 nix develop 环境执行，target 由 cargo metadata 获取：cargo check --workspace --all-targets；针对性 nextest 80/80；完整 debug/release cargo nextest run --workspace --all-targets --no-fail-fast 各 1,570/1,570；cargo test --doc --workspace 75/75；cargo clippy --workspace --all-targets -- -D warnings、cargo fmt --all -- --check、离线生成数据/固定夹具及 git diff --check 全部通过。release 示例 code_fallback、code_headers、closed_code_headers、display、budget、stream 和 syntax_fuzz 的 seed 305419896 / 256 cases 均退出 0。设计/累计界限、红测和中间失败、逐项官方审查、完整命令/退出状态与日志、最后代码哈希保存于 /home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-009/，命令索引 commands.tsv。本轮只实现和验证，未提交、推送、reset、清理、派生代理或改动主机/用户配置、其它工作树、运行器及账本。
+
+
+## 2026-11-11 已发布标签左边界的强调隔离交付
+
+第 10 单元仅交付单候选 direct/full/collapsed/shortcut 标签的左边界；标签内部 `*`/`_` closer 不消费外部 opener，保留标签内配对、单/双及部分消费、外层包围配对和第 8 单元的右边界。`annotations.rs` 无需撤销或改写标注，核心仍零运行时依赖、禁止 unsafe。
+
+失败模型先固定为：合法有界 shortcut 在 `]` 发布，即便未定义也沿用隐藏括号方言，失败显式后缀不取消已发布对象；不能发布 shortcut 的长/空白标签等待成功显式后缀，失败/EOF 才作为普通正文处理分隔符。未闭合或被新括号/自动链接起始替换的候选同样按普通正文处理；后缀保持既有不重放规则。确认前暂存 run 的区间及前后标量，尚不发布对应样式，因此失败后仍允许普通正文跨括号配对。
+
+原反例 `*[foo*](/uri)` 的外部 opener 在旧实现中已被消费，追加式标注无法撤销。新增红测先观察到外部/标签深度为 1（`red-left-boundary.log`，退出 100），随后核心改为：候选只记录分隔符摘要，成功时固定六个分类头查询排除标签外 opener，失败时普通配对一次，之后沿用原栈尾清退。代码/数学候选继续原路径，波浪号保持原配对方言。晚表头确认时前一行摘要作为原段落处理，当前行摘要交给独立首单元格；失败才发布继承标签。摘要处理及一次移交计入 `Work.delimiter_steps`，每个摘要仅配对一次，栈入/出与部分消费按原 run 摊还；无增长正文/标签回扫或外部栈复制，累计 O(n log n)、空间 O(n)，容量跨候选复用。
+
+十项 `label_delimiters` 回归及一项内部存储回归覆盖：64 组左边界模型（每组分别验证阻断及内外合法配对）和部分消费；原 144 组右边界模型；108 组左边界晚表头；未闭合、失败/未完成后缀、超限标签；全部短例 UTF-8 切点、逐字节前缀/EOF 与长标签 1/7/1024 字节分块；晚定义前后稳定 LinkId/块身份/源码区间与六字节显示/目标/title 共享预算；970 层容器、百万字标签、4096 历史对象、4096 内部 opener、最多 32768 个外部 opener 和大量重复候选的累计计数/存储约束。长正文追加不增加已存摘要数、容量、分隔符搜索或标注树访问。
+
+独立观察后，官方 521/534/564 及同规则的 473/474 匹配原 HTML；523 的新观察为 `<p>*foo bar* baz</p>`，仍属未定义 shortcut 隐藏括号差异。三份报告分别为 512–538 **18 支持/4 刻意差异/5 未支持**、553–571 **17/2/0**、460–481 **12/0/10**；强调全章八份旧投影合计 **106/0/26**。更新观察、分类与汇总，四份相关投影算法逐字核对保持，68 个相关官方 Markdown/HTML 经独立读取器与固定 SHA-256 核验；夹具和生成器未改。原以错误跨界为拒绝条件的投影测试改用真正歧义的样式顺序反例，并锁定已修复例的公开结果，不向投影补语义。
+
+验证均在本项目 `nix develop` 下执行；target 从 `cargo metadata --no-deps --format-version 1` 获取。命令、退出码及完整日志位于 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-010`，汇总见 `verification.json`：
+
+- `cargo check --workspace --all-targets`：通过。
+- 针对性 `cargo nextest run --test label_delimiters --test commonmark_link_labels --test commonmark_reference_forms --test commonmark_emphasis_final --test commonmark_emphasis_partial --test single_tilde --lib --no-fail-fast`：86/86 通过。
+- `cargo nextest run --workspace --all-targets --no-fail-fast` 及对应 `--release`：各 1578/1578 通过。
+- `cargo test --doc --workspace`、`cargo doc --workspace --no-deps`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`：通过。clippy 初次指出单例观察测试的冗余循环，简化后复核通过，原失败日志保留。
+- `cargo run --release -p mdstream-core --example label_delimiters` 与 `--example emphasis_runs`：通过。
+- 三份相关生成器 `--check`、独立 68 例/投影核对、六项独立观察与三类报告、官方输入/生成器/依赖未变及 `git diff --check`：通过。
+
+README 当前说明和本任务对应 TODO 已同步，只新增此窄项勾选；原三个宽项仍未勾选。419、嵌套链接/图片、多候选、跨行定义/后缀、完整字面失败回退、不可隔离晚表头的一般确认/撤销、混合样式顺序与 UI 保留后续。本单元未提交或推送，由新审查会话验收和父运行器提交。
+
+本单元首次父审修正：未发布的继承标签被新括号或自动链接起始替换时，旧实现以当前 `header_floor` 处理所有暂存摘要，误把旧行内部配对隔离，或将旧行 opener 当作首格本地 opener；双向分隔符还会错误拒绝长表头。两个新增红测均失败（`parent-fix1-red-all-models.log`，退出 100），复现强调丢失、跨段落/表格强调及表头误拒绝。修复只在原摘要处理循环中使用已有旧行前缀长度：先以普通正文边界处理旧行摘要，再用剩余栈长度恢复当前行继承边界；每个摘要仍只处理一次，无额外正文扫描、摘要复制或放宽表头探测。
+
+新增两项公开回归覆盖 288 组新括号/自动链接替换模型，含 `*`/`_` 单双、旧行局部配对、旧行 opener、旧行双向分隔符、当前行局部配对、0/1100 字节填充、表头确认/失败/EOF，以及整段和 1/7 字节分块（含 UTF-8）快照、LinkId 和源码区间。一项内部回归覆盖 18 组 64/1024/4096 规模摘要：旧行摘要单次释放、当前行边界恢复、跨行配对单独暂存、摘要容量复用，释放前后各 100 次正文追加不增加分隔符处理或搜索；同时核对累计工作、标注树访问和空间界限。既有身份、晚定义、原始映射和共享预算回归继续通过。
+
+本次修正后的最终验证取代上方初次验证计数：`cargo check --workspace --all-targets` 通过；原专项另加 `tables`、`partial_table_tabs`、`pending_table_tabs` 后 **111/111** 通过；完整 debug/release `cargo nextest run [--release] --workspace --all-targets --no-fail-fast` 各 **1581/1581** 通过。doc 测试/构建、clippy `-D warnings`、fmt、两个 release 示例、三份离线生成器、独立官方夹具/投影及三类报告复核、依赖/官方输入未变和 diff 检查均通过。仍使用项目 `nix develop` 及 metadata 给出的 target；完整命令、退出码和日志使用同目录 `parent-fix1` 前缀保留，最终哈希与计数更新到 `verification.json`，原验证快照保留为 `parent-fix1-prior-verification.json`。三类报告仍为 **18/4/5、17/2/0、12/0/10**；真实未完成项仍为 **44**，本次未新增交付项、未进入第 11 项、未提交或推送。

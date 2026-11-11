@@ -204,7 +204,7 @@ enum Assessment {
 // Rejected is counted as unsupported; it never supplies repaired HTML.
 fn assessment(number: usize) -> Assessment {
     match number {
-        460 | 462 | 469..=472 | 478..=481 => Assessment::Supported,
+        460 | 462 | 469..=474 | 478..=481 => Assessment::Supported,
         461 | 463 => Assessment::Unsupported {
             reason: "public emphasis bit does not preserve same-style nested depth",
             observed: "<p><em>foo</em></p>\n",
@@ -215,9 +215,6 @@ fn assessment(number: usize) -> Assessment {
         },
         467 | 468 => Assessment::Rejected {
             reason: "public depths record both styles, but simultaneous starts leave their order unspecified",
-        },
-        473 | 474 => Assessment::Rejected {
-            reason: "emphasis crosses the link label boundary, hiding literal delimiters and leaving a nonuniform syntax envelope",
         },
         475 => Assessment::Unsupported {
             reason: "raw HTML is outside project requirements; its contents retain inline parsing",
@@ -231,63 +228,24 @@ fn assessment(number: usize) -> Assessment {
     }
 }
 
-fn check_rejected_scope(number: usize, doc: &Document) {
-    assert!(std::panic::catch_unwind(|| project(doc)).is_err());
-    let offset = match number {
-        473 => 0,
-        474 => 4,
-        _ => unreachable!(),
-    };
+fn check_left_boundary_scope(number: usize, doc: &Document) {
+    let offset = if number == 473 { 0 } else { 4 };
     let delimiter = if number == 473 { "*" } else { "_" };
-    let hidden = doc
+    let outside = doc
         .display_runs_in(Span::new(0, 1))
         .unwrap()
         .next()
         .unwrap();
-    assert_eq!(hidden.text, delimiter);
-    assert_eq!(hidden.style, Style::HIDDEN);
-    let mut expected = vec![(Span::new(0, 1), delimiter, Style::HIDDEN, None)];
-    if offset != 0 {
-        expected.push((Span::new(1, 5), "foo ", Style::EMPHASIS, None));
-    }
-    expected.extend([
-        (
-            Span::new(1 + offset, 2 + offset),
-            "[",
-            Style::HIDDEN.union(Style::EMPHASIS),
-            None,
-        ),
-        (
-            Span::new(2 + offset, 5 + offset),
-            "bar",
-            Style::EMPHASIS,
-            Some(LinkId(0)),
-        ),
-        (
-            Span::new(5 + offset, 6 + offset),
-            delimiter,
-            Style::HIDDEN,
-            Some(LinkId(0)),
-        ),
-        (
-            Span::new(6 + offset, 13 + offset),
-            "](/url)",
-            Style::HIDDEN,
-            None,
-        ),
-        (
-            Span::new(13 + offset, 14 + offset),
-            "\n",
-            Style::default(),
-            None,
-        ),
-    ]);
-    let actual: Vec<_> = doc
-        .display_runs_in(Span::new(0, doc.source().len()))
+    assert_eq!(outside.text, delimiter);
+    assert_eq!(outside.style, Style::default());
+    for run in doc
+        .display_runs_in(Span::new(2 + offset, 6 + offset))
         .unwrap()
-        .map(|r| (r.source, r.text, r.style, r.link))
-        .collect();
-    assert_eq!(actual, expected);
+    {
+        assert_eq!((run.emphasis_depth, run.strong_depth), (0, 0));
+        assert!(!run.style.contains(Style::HIDDEN));
+        assert_eq!(run.link, Some(LinkId(0)));
+    }
     let info = doc.link_info(LinkId(0)).unwrap();
     assert_eq!(info.source, Span::new(1 + offset, 13 + offset));
     assert_eq!(info.label, Span::new(2 + offset, 6 + offset));
@@ -308,12 +266,8 @@ fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
     match assessment(number) {
         Assessment::Supported => assert_eq!(project(doc), expected, "example {number}"),
         Assessment::Rejected { .. } => {
-            if matches!(number, 467 | 468) {
-                assert!(std::panic::catch_unwind(|| project(doc)).is_err());
-                partial_emphasis::check(number, doc);
-            } else {
-                check_rejected_scope(number, doc);
-            }
+            assert!(std::panic::catch_unwind(|| project(doc)).is_err());
+            partial_emphasis::check(number, doc);
         }
         Assessment::Unsupported { observed, .. } => {
             let actual = project(doc);
@@ -354,9 +308,9 @@ fn pinned_commonmark_emphasis_final_report() {
         counts[category] += 1;
         eprintln!("example {number}: category {category} — {reason}");
     }
-    assert_eq!(counts, [10, 0, 12]);
+    assert_eq!(counts, [12, 0, 10]);
     eprintln!(
-        "CommonMark 0.31.2 Emphasis subset 460–481: 10 supported, 0 deliberate differences, 12 unsupported; chapter scoring complete, compatibility incomplete"
+        "CommonMark 0.31.2 Emphasis subset 460–481: 12 supported, 0 deliberate differences, 10 unsupported; chapter scoring complete, compatibility incomplete"
     );
 }
 
@@ -667,5 +621,17 @@ fn late_precedence_closure_preserves_block_and_link_identity() {
         } else {
             assert_eq!(project(&doc), format!("<p>{content}!</p>\n"));
         }
+    }
+}
+
+#[test]
+fn left_boundary_observation_matches_the_verbatim_upstream_html() {
+    for number in [473, 474] {
+        let &(_, markdown, expected) = EMPHASIS_CASES.iter().find(|c| c.0 == number).unwrap();
+        let doc = parse(markdown);
+        let observed = project(&doc);
+        eprintln!("example {number} independent observation: {observed:?}");
+        assert_eq!(observed, expected);
+        check_left_boundary_scope(number, &doc);
     }
 }

@@ -395,6 +395,10 @@ fn emphasis_partial_mapping_slices_and_six_byte_budget() {
 
 #[test]
 fn nesting_projection_preserves_visible_runs_and_rejects_ambiguous_order() {
+    assert_eq!(
+        project(&parse("*foo [bar*](/url)\n")),
+        "<p>*foo <a href=\"/url\">bar*</a></p>\n"
+    );
     for (source, expected) in [
         ("", ""),
         (
@@ -450,7 +454,7 @@ fn nesting_projection_preserves_visible_runs_and_rejects_ambiguous_order() {
         "`code`\n",
         "~~s~~\n",
         "$m$\n",
-        "*foo [bar*](/url)\n",
+        "***[foo](/url)***\n",
         "[r]\n\n[r]: /url\n",
         "![a](/x)\n",
         "[r]: /x\n",

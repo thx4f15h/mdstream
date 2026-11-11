@@ -344,7 +344,7 @@ enum Assessment {
 // Frozen observations are reviewed separately from the verbatim upstream oracle.
 fn assessment(number: usize) -> Assessment {
     match number {
-        514..=516 | 518..=519 | 522 | 525..=527 | 529..=530 | 532..=533 | 535 | 537..=538 => {
+        514..=516 | 518..=519 | 521..=522 | 525..=527 | 529..=530 | 532..=535 | 537..=538 => {
             Assessment::Supported
         }
         512 => Assessment::Unsupported {
@@ -363,13 +363,9 @@ fn assessment(number: usize) -> Assessment {
             reason: "the inner link replaces the outer image candidate",
             observed: "<p>![[<a href=\"uri1\">foo</a>](uri2)](uri3)</p>\n",
         },
-        521 => Assessment::Unsupported {
-            reason: "emphasis crosses the direct link label boundary",
-            observed: "<p><a href=\"/uri\"><em>foo</em></a></p>\n",
-        },
         523 => Assessment::DeliberateDifference {
-            reason: "unresolved shortcut references keep hidden brackets even inside emphasis",
-            observed: "<p><em>foo bar</em> baz</p>\n",
+            reason: "unresolved shortcut references hide brackets and isolate label emphasis",
+            observed: "<p>*foo bar* baz</p>\n",
         },
         524 => Assessment::DeliberateDifference {
             reason: "raw HTML is outside the project dialect and stays literal",
@@ -382,10 +378,6 @@ fn assessment(number: usize) -> Assessment {
         531 => Assessment::Unsupported {
             reason: "an inner image replaces the outer full reference candidate",
             observed: "<p>[<img src=\"moon.jpg\" alt=\"moon\" />]<a href=\"/uri\">ref</a></p>\n",
-        },
-        534 => Assessment::Unsupported {
-            reason: "emphasis crosses the full reference label opener",
-            observed: "<p><a href=\"/uri\"><em>foo</em></a></p>\n",
         },
         536 => Assessment::DeliberateDifference {
             reason: "raw HTML is literal and does not suppress reference recognition",
@@ -450,9 +442,9 @@ fn pinned_commonmark_link_labels_report() {
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [16, 4, 7]);
+    assert_eq!(counts, [18, 4, 5]);
     eprintln!(
-        "CommonMark 0.31.2 Links subset (512–538): 16 supported, 4 deliberate differences, 7 unsupported; 482–511 and 539–571 outside this score"
+        "CommonMark 0.31.2 Links subset (512–538): 18 supported, 4 deliberate differences, 5 unsupported; 482–511 and 539–571 outside this score"
     );
 }
 
@@ -894,5 +886,26 @@ fn late_definitions_resolve_existing_label_objects_without_rebuilding_outer_cand
             assert_eq!(doc.text(infos[0].label), Some("bar"));
             assert_eq!(doc.text(infos[1].label), Some("ref"));
         }
+    }
+}
+
+#[test]
+fn left_boundary_observation_matches_the_verbatim_upstream_html() {
+    for number in [521, 534] {
+        let &(_, markdown, expected) = LINK_LABEL_CASES.iter().find(|c| c.0 == number).unwrap();
+        let doc = parse(markdown);
+        let observed = project(&doc);
+        eprintln!("example {number} independent observation: {observed:?}");
+        assert_eq!(observed, expected);
+        let info = doc.link_info(LinkId(0)).unwrap();
+        let runs: Vec<_> = doc.runs_in(info.label).unwrap().collect();
+        assert!(
+            runs.iter()
+                .all(|r| r.emphasis_depth == 0 && r.strong_depth == 0)
+        );
+        assert!(
+            runs.iter()
+                .any(|r| r.text.contains('*') && !r.style.contains(Style::HIDDEN))
+        );
     }
 }
