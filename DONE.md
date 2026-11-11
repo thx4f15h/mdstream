@@ -2551,3 +2551,9 @@ README 当前说明和本任务对应 TODO 已同步，只新增此窄项勾选�
 新增两项公开回归覆盖 288 组新括号/自动链接替换模型，含 `*`/`_` 单双、旧行局部配对、旧行 opener、旧行双向分隔符、当前行局部配对、0/1100 字节填充、表头确认/失败/EOF，以及整段和 1/7 字节分块（含 UTF-8）快照、LinkId 和源码区间。一项内部回归覆盖 18 组 64/1024/4096 规模摘要：旧行摘要单次释放、当前行边界恢复、跨行配对单独暂存、摘要容量复用，释放前后各 100 次正文追加不增加分隔符处理或搜索；同时核对累计工作、标注树访问和空间界限。既有身份、晚定义、原始映射和共享预算回归继续通过。
 
 本次修正后的最终验证取代上方初次验证计数：`cargo check --workspace --all-targets` 通过；原专项另加 `tables`、`partial_table_tabs`、`pending_table_tabs` 后 **111/111** 通过；完整 debug/release `cargo nextest run [--release] --workspace --all-targets --no-fail-fast` 各 **1581/1581** 通过。doc 测试/构建、clippy `-D warnings`、fmt、两个 release 示例、三份离线生成器、独立官方夹具/投影及三类报告复核、依赖/官方输入未变和 diff 检查均通过。仍使用项目 `nix develop` 及 metadata 给出的 target；完整命令、退出码和日志使用同目录 `parent-fix1` 前缀保留，最终哈希与计数更新到 `verification.json`，原验证快照保留为 `parent-fix1-prior-verification.json`。三类报告仍为 **18/4/5、17/2/0、12/0/10**；真实未完成项仍为 **44**，本次未新增交付项、未进入第 11 项、未提交或推送。
+
+## 2026-11-11 折叠增量与版本契约审计交付
+
+- 仅关闭 TODO `494b98378962`「折叠增量与版本」。现有 `FoldChange { version, source }`、单节点/批量版本语义、区间遮蔽和后缀惰性失效已满足要求；旧测量、布局 pass、视口继续位置及后续 checkpoint 验证依赖，无关前缀 ticket 仍可复用。本次无源码/测试改动；README「基础折叠」已有准确说明，保持原文。
+- 复核空 EOF、开放/晚确认边界、UTF-8 分块、稳定身份/源码映射、共享预算及百万字/十亿 tile 工作计数。运行 `nix develop -c cargo nextest run -p mdstream-core --test folding --test fold_batch --test containers --test container_folding --test fold_preview --test checkpoints --test layout --test cache_search --no-fail-fast`，103/103 通过；另选现有 `paragraph_folding` 边界失效测试和 `layout::folding_tests` 数组/十亿 tile 模型，4/4 通过。
+- 逐条契约映射、基线、Cargo target、完整命令/退出状态/日志保存于 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-011/`（`audit.md`、`results.tsv` 及各 `.log`）。文档测试 75/75、文档构建、fmt 及范围/diff 检查通过；按任务单文档审计例外未重跑源码未变的全套。其它折叠与排版 TODO、按键/图标/动画/终端 UI 继续保留。
