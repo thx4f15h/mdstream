@@ -39,14 +39,53 @@ const NON_TARGETS: &[&str] = &[
 
 #[test]
 fn non_target_snapshots_match_real_prechange_baseline() {
-    let mut actual = String::new();
-    for source in NON_TARGETS {
-        actual.push_str(&format!("{:?}\n", support::snapshot(&parse(source))));
+    let baseline: Vec<_> = include_str!("fixtures/root_link_suffix_baseline.txt")
+        .lines()
+        .collect();
+    assert_eq!(baseline.len(), NON_TARGETS.len());
+    for (source, expected) in NON_TARGETS.iter().zip(baseline) {
+        let doc = parse(source);
+        if *source == "[a](u 't\nrest')\n" {
+            // This exact historical non-target is now a valid title body.
+            // Retain the old fixture and independently assert its new model.
+            assert_eq!(doc.links(), [LinkTarget::Direct(Span::new(4, 5))]);
+            assert_eq!(doc.link_destination(LinkId(0)), Some("u"));
+            assert_eq!(doc.link_title(LinkId(0)), Some("t\nrest"));
+            assert_eq!(
+                doc.link_info(LinkId(0)),
+                Some(&LinkInfo {
+                    kind: LinkKind::Link,
+                    label: Span::new(1, 2),
+                    source: Span::new(0, 15),
+                    title: Some(Span::new(7, 13)),
+                    state: SyntaxState::Sealed,
+                })
+            );
+            let shown: String = doc
+                .display_runs_in(Span::new(0, source.len()))
+                .unwrap()
+                .filter(|r| !r.style.contains(Style::HIDDEN))
+                .map(|r| r.text)
+                .collect();
+            assert_eq!(shown, "a\n");
+            assert_eq!(
+                doc.references(),
+                [Reference {
+                    label: "a".into(),
+                    destination: None,
+                    title: None,
+                    revision: 0,
+                    first_use: Some(0)
+                }]
+            );
+        } else {
+            assert_eq!(
+                format!("{:?}", support::snapshot(&doc)),
+                expected,
+                "{source:?}"
+            );
+        }
     }
-    assert_eq!(
-        actual,
-        include_str!("fixtures/root_link_suffix_baseline.txt")
-    );
 }
 
 #[test]

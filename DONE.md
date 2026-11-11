@@ -2694,3 +2694,18 @@ README 当前说明和本任务对应 TODO 已同步，只新增此窄项勾选�
 本轮独立复审发现：根候选已接纳 LF 后，旧 RootDeferred 标志会泄漏到新 Quote/List 的长行表头探测，`new_container_text` 关闭旧段落并删除观察器后触发 expect panic，无需 pipe。最小修复让模式与保留当前根块共用真实作用域条件，不删除 expect、不跳过源、不捕获 panic，也不改变根资格、SourceOwner 双游标或 first-pipe 路径。六个独立反例在修复前全红，修复后通过。新增 `root_suffix_scope` 的 11 项回归含 1260 份 6605b24 冻结对照：840 份未完/失败完整快照，420 份成功新根前缀独立断言升级后核对全部容器字段/绝对映射/身份。Link/Image、LF/CRLF、1023/1024/1025 字节与长行、Quote/List/嵌套/partial-tab/lazy/真实块/新根、无 pipe/有 pipe、分隔确认/失败、UTF-8 每字节/逐字符/逐前缀 EOF、共享 0/1/6 预算及两万旧对象均覆盖。新容器后追加 1000 字节，publisher/summary 各恰计 1000，旧根观察/label/树访问增量为零。
 
 原开发与收尾证据只读保留在本任务 `implementation/` 和 `close-opaque-boundary/`；其中原 1690 runtime 日志不代表本轮修复后的 runtime。修复后在项目 `nix develop` 内重新验证：`cargo check --workspace --all-targets`；定向 nextest **142/142**；完整 debug 与 release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1704/1704**；doc **75**、docbuild、clippy `-D warnings`、fmt；五份离线官方 fixture、五份评分报告、五个 release 示例、1260 份作用域快照原始文本 diff 与源码/旧 fixture/原 DONE 前缀核对，均通过。额外运行的 `container_tables` 示例在第 30 行仍用旧折叠父节点期望而退出 101，6605b24 冻结库运行相同原示例也以相同断言退出 101；源码未改，该既有示例问题另交父流程，不扩大本轮修复范围。target 来自 cargo metadata。命令、退出状态、完整日志、模型/consumer audit、全局 source 哈希与补丁见 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-022/fix-scope-transition/`。未提交、未推送，交父流程复审与提交。
+
+
+## 2026-11-11 根段落直接链接与图片的多行 title 正文交付
+
+仅实际根普通段落的直接链接/图片 title 正文允许多条 LF/CRLF，复用原三定界、组件分隔、稳定 ID/原引用和首次使用信息；目标正文保持单物理行。`Destination::root_byte` 接入既有 title-body 消费与 CRLF 验证，真实缩进及 closing-only 行的空格保留在原始借用 Span，已有 `LinkTitle`/`CodeInfo` 游标原子归一 CRLF 并保留源码映射。label 999、目标/title 4096、suffix 8256 的原始字节界限不变，行内 streaming 不套用定义逐行窗口。
+
+沿用原 RootEligibility 的旧单行 grammar、分歧标志、真实 root_continuation 限定的 RootDeferred 和 SourceOwner 双游标；本次不修改分类枚举/消费者或作用域基础。完整 suffix 才原子升级原 LinkId/Image；失败/EOF 保留已消费 opaque raw 前缀，拒绝字节普通词法一次，不回扫、重放、回滚或补发公开对象。新正文内实体、反斜线、代码/强调和链接标记的失败显示变化有逐例模型；完整字面回退与容器内后缀/title 正文、目标跨行、HTML 和其它宽需求继续保留，不能视为完整 CommonMark 兼容性。
+
+新增 `tests/root_title_bodies.rs` 17 项覆盖 1440 组独立成功模型、三定界/转义/多正文行与三组件组合、LF/CRLF/单独 CR、实体产生 LF、空白/真实块/Setext/table 优先级、UTF-8 每字节/每切点/逐前缀 EOF、raw metadata/SourceDisplay、CodeInfo/目标/title/显示共享 0/1/6 与 query/object 预算、原 ID/ReferenceInfo/首定义/Update 合并、真实 FoldView/open/fixed/ticket/reader、原长度界限、2000 正文行、千次追加/百万尾及两万旧对象/晚定义真实 Work（含资格观察）。累计 O(n log n)、空间 O(n)、零 runtime 依赖与 forbid unsafe 保持，无每 append 硬时延承诺。
+
+真实 `47d95a8` 基线：新正文前缀进入长 Quote/List/嵌套/partial-tab 等路径的 864 份结构/身份/映射冻结对照保持。新增 120 个晚 pipe 完整输入中，88 个全快照保持，12 个新合法 title、20 个 opaque 失败变化均按精确输入独立断言 metadata/display，全部表格决策仍与原 HEAD 对照。历史 48+24 表格、1260 scope、资格 corpus 和原 fixture 逐字节保持；旧 24 非目标只有 `[a](u 't\nrest')\n` 是新合法输入，独立更新预期，另三个旧 negative 输入 `[r](/url 'a\nb')`、对应图片及 1024 字节段落后的 `[a](url "two\nlines")` 保留输入并明确断言新对象/显示。没有泛化跳过 LF 或批量采用当前输出作 oracle。
+
+官方原 Markdown/HTML、生成器、评分 project/helper 均未改；Links 四子集 22/6/2、18/4/5、8/6/0、17/2/0 和 Images 19/1/2 的独立观察及分类保持。README 当前概览/详细/解码/评分/组件换行节已同步，并增加根 title 正文节；TODO 仅新增本窄项完成标记，宽 TODO 保留。
+
+最终验证全在项目 `nix develop` 内运行：`cargo check --workspace --all-targets`；专项 nextest 219/219；`cargo nextest run --workspace --all-targets --no-fail-fast` debug 1721/1721、release 1721/1721；`cargo test --workspace --doc`；`cargo doc --workspace --no-deps`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo fmt --all -- --check`。8 份固定 spec 离线生成器 --check、官方报告、container_tables/link_suffix_headers/stream 三示例、工作计数专项和 diff 检查均通过。初始红测/旧 negative 发现与修正、完整命令/退出码/日志、模型/全 source 差异/冻结源码哈希和 patch 均存 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-024/implementation/`，索引 `commands.jsonl`、`validation.json`；未提交或推送，交父流程独立验收。

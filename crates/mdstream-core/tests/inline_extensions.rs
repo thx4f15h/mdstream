@@ -77,8 +77,33 @@ fn malformed_and_oversized_suffixes_do_not_become_direct_links() {
         format!("[a](url '{}')", "x".repeat(MAX_LINK_TITLE_BYTES + 1)),
     ] {
         let doc = parse(&source);
-        assert_eq!(doc.link_destination(LinkId(0)), None, "{source}");
-        assert_eq!(doc.link_title(LinkId(0)), None);
+        if source == "[a](url \"two\nlines\")" {
+            // This exact former malformed suffix is now a root title body.
+            let base = mdstream::BLOCK_LOOKAHEAD;
+            assert_eq!(doc.links().len(), 1);
+            assert_eq!(doc.link_destination(LinkId(0)), Some("url"));
+            assert_eq!(doc.link_title(LinkId(0)), Some("two\nlines"));
+            assert_eq!(
+                doc.link_info(LinkId(0)),
+                Some(&mdstream::LinkInfo {
+                    kind: LinkKind::Link,
+                    label: Span::new(base + 1, base + 2),
+                    source: Span::new(base, base + source.len()),
+                    title: Some(Span::new(base + 9, base + 18)),
+                    state: mdstream::SyntaxState::Sealed,
+                })
+            );
+            let shown: String = doc
+                .display_runs_in(Span::new(base, doc.source().len()))
+                .unwrap()
+                .filter(|r| !r.style.contains(Style::HIDDEN))
+                .map(|r| r.text)
+                .collect();
+            assert_eq!(shown, "a");
+        } else {
+            assert_eq!(doc.link_destination(LinkId(0)), None, "{source}");
+            assert_eq!(doc.link_title(LinkId(0)), None);
+        }
         assert_eq!(doc.work().inline_bytes, doc.source().len() as u64);
     }
     let doc = parse(&format!(

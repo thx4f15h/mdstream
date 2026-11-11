@@ -407,12 +407,42 @@ fn root_title_owners_duplicates_existing_titles_and_scope_boundaries() {
                 .iter()
                 .any(|b| matches!(b.kind, BlockKind::Definition { .. }))
         );
-        assert!(
-            doc.links()
-                .iter()
-                .enumerate()
-                .all(|(i, _)| doc.link_title(LinkId(i)).is_none())
-        );
+        if matches!(source, "[r](/url 'a\nb')\n" | "![r](/url 'a\nb')\n") {
+            // These exact former non-targets are now legal root direct bodies,
+            // still not definitions. Keep their new object/display oracle explicit.
+            let image = usize::from(source.starts_with('!'));
+            assert_eq!(doc.links().len(), 1);
+            assert_eq!(doc.link_destination(LinkId(0)), Some("/url"));
+            assert_eq!(doc.link_title(LinkId(0)), Some("a\nb"));
+            assert_eq!(
+                doc.link_info(LinkId(0)),
+                Some(&LinkInfo {
+                    kind: if image == 0 {
+                        LinkKind::Link
+                    } else {
+                        LinkKind::Image
+                    },
+                    label: Span::new(image + 1, image + 2),
+                    source: Span::new(0, source.len() - 1),
+                    title: Some(Span::new(image + 10, image + 13)),
+                    state: SyntaxState::Sealed,
+                })
+            );
+            let shown: String = doc
+                .display_runs_in(Span::new(0, source.len()))
+                .unwrap()
+                .filter(|r| !r.style.contains(Style::HIDDEN))
+                .map(|r| r.text)
+                .collect();
+            assert_eq!(shown, "r\n");
+        } else {
+            assert!(
+                doc.links()
+                    .iter()
+                    .enumerate()
+                    .all(|(i, _)| doc.link_title(LinkId(i)).is_none())
+            );
+        }
     }
 }
 

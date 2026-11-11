@@ -25,8 +25,8 @@ pub(crate) enum Progress {
 }
 
 /// One pass over a destination and optional title, starting after `(` or `:`.
-/// Spans retain escapes verbatim. Root inline component gaps and definition
-/// title bodies have separate opt-ins for physical line endings.
+/// Spans retain escapes verbatim. Root inline suffixes and definition title
+/// bodies have separate opt-ins for physical line endings.
 pub(crate) struct Destination {
     pub start: usize,
     stage: Stage,
@@ -185,7 +185,19 @@ impl Destination {
             if byte != b'\n' {
                 return Progress::Invalid;
             }
-        } else if !matches!(byte, b'\n' | b'\r') {
+        }
+        if self.open_title() {
+            // Root prose omits up to three leading spaces from each feed.
+            // The raw title still owns those bytes, even on a closer-only line.
+            let title = self.title.as_mut().unwrap();
+            title.end = pos;
+            if title.len() > MAX_LINK_TITLE_BYTES {
+                return Progress::Invalid;
+            }
+            self.gap_carriage = byte == b'\r';
+            return self.definition_title_byte(byte, pos);
+        }
+        if !matches!(byte, b'\n' | b'\r') {
             return self.byte(byte, pos);
         }
         if self.escaped
@@ -215,8 +227,8 @@ impl Destination {
         Progress::Pending
     }
 
-    // Only a definition body opts in. Inline suffixes and destinations
-    // retain byte()'s physical-line rejection and the same raw byte limits.
+    // Title bodies alone opt in. Root suffixes additionally validate CRLF;
+    // independent inline contexts retain byte()'s physical-line rejection.
     pub fn definition_title_byte(&mut self, byte: u8, pos: usize) -> Progress {
         if matches!(byte, b'\n' | b'\r') && self.open_title() {
             if pos - self.start - self.title_prefix_bytes >= MAX_LINK_SUFFIX_BYTES {
