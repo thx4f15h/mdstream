@@ -918,6 +918,53 @@ pub struct FoldView<S = ()> {
     preview: Option<(FoldId, bool)>,
 }
 
+/// Owns the entire view while its checkpoint arena is compacted. Heights,
+/// masks, defaults and choices are moved, never copied. No mutable view is
+/// accessible until finish, preventing queries/updates/toggles during maintenance.
+pub struct FoldViewCompaction<S> {
+    view: FoldView<S>,
+    task: crate::CheckpointCompaction<S>,
+}
+
+impl<S> FoldViewCompaction<S> {
+    pub fn stats(&self) -> crate::CheckpointCompactionStats {
+        self.task.stats()
+    }
+
+    /// The document must remain at the captured revision. Retired payloads are
+    /// returned to the host, whose destructors are not preempted by Budget.
+    pub fn advance(
+        &mut self,
+        document: &Document,
+        budget: &mut Budget,
+        retired: &mut Vec<S>,
+    ) -> Result<crate::Completion, LayoutError> {
+        self.view.check(document)?;
+        Ok(self.task.advance(budget, retired))
+    }
+
+    /// Restore only this owned view and its original checkpoint identity/tokens.
+    /// An unfinished task or a mismatched document/revision returns the task
+    /// unchanged. Do not append/finish the document during maintenance.
+    #[allow(clippy::result_large_err)] // Preserve ownership without allocating another box.
+    pub fn finish(self, document: &Document) -> Result<FoldView<S>, Self> {
+        if self.view.check(document).is_err() {
+            return Err(self);
+        }
+        match self.task.finish() {
+            Ok(checkpoints) => {
+                let mut view = self.view;
+                view.checkpoints = checkpoints;
+                Ok(view)
+            }
+            Err(task) => Err(Self {
+                view: self.view,
+                task,
+            }),
+        }
+    }
+}
+
 impl FoldView<()> {
     pub fn new(document: &Document, estimated_rows: u64) -> Result<Self, LayoutError> {
         Self::with_state(document, estimated_rows)
@@ -951,6 +998,35 @@ impl<S> FoldView<S> {
     }
     pub fn checkpoints(&self) -> &CheckpointIndex<S> {
         &self.checkpoints
+    }
+
+    /// Borrow the single authoritative layout indexes for a trusted renderer.
+    /// Use existing measurement/Local, expire/invalidate, checkpoint insertion
+    /// and bounded drain operations. Incoming-state changes must expire heights
+    /// AND invalidate downstream checkpoints (or use insert_for_layout).
+    ///
+    /// Never rebuild/reset/suppress the heights, apply updates directly, or
+    /// take/replace either index: that bypasses fold masks and lifecycle checks.
+    /// Use FoldView::apply/reset/fold operations and into_checkpoint_compaction
+    /// instead. Measurement tickets and checkpoint tokens retain their existing
+    /// dependency/generation validation; a semantic cache key alone is insufficient.
+    pub fn layout_parts_mut(
+        &mut self,
+        document: &Document,
+    ) -> Result<(&mut HeightIndex, &mut CheckpointIndex<S>), LayoutError> {
+        self.check(document)?;
+        Ok((&mut self.heights, &mut self.checkpoints))
+    }
+
+    /// Move this view into budgeted checkpoint maintenance in O(1). The host
+    /// must hold the document revision stable until finish; no full height tree
+    /// or fold state is cloned and there is no unchecked replacement setter.
+    pub fn into_checkpoint_compaction(mut self) -> FoldViewCompaction<S> {
+        let checkpoints = std::mem::take(&mut self.checkpoints);
+        FoldViewCompaction {
+            view: self,
+            task: checkpoints.into_compaction(),
+        }
     }
     pub fn version(&self) -> u64 {
         self.version

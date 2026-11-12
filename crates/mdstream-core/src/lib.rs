@@ -34,6 +34,7 @@ mod excerpt;
 mod fold_batch;
 mod fold_intervals;
 mod fold_navigation;
+mod fold_projection;
 mod fold_ranges;
 mod folding;
 mod footnotes;
@@ -95,9 +96,10 @@ pub use fold_batch::{FoldBatch, FoldBatchAction, FoldBatchProgress};
 pub use fold_navigation::{
     FoldAnchor, FoldAnchorTarget, FoldNavigation, FoldNavigationPolicy, FoldNavigationProgress,
 };
+pub use fold_projection::{FoldProjection, FoldProjectionStep};
 pub use folding::{
     ContainerFoldFilter, FoldCandidate, FoldCandidates, FoldChange, FoldDefaults, FoldId,
-    FoldLookup, FoldPlaceholder, FoldPreviewProgress, FoldView, TableRowRange,
+    FoldLookup, FoldPlaceholder, FoldPreviewProgress, FoldView, FoldViewCompaction, TableRowRange,
 };
 pub use footnotes::{
     Footnote, FootnoteChunk, FootnoteContent, FootnoteDefinition, FootnoteId, FootnoteReference,

@@ -1600,6 +1600,72 @@ assert!(!doc.fold_candidate(item).unwrap().open);
 
 `crates/mdstream-core/tests/container_sections.rs` 用独立区间、父链和高度模型验证嵌套边界、同起点、同 tile、流式逐前缀/UTF-8 全切点、合并更新、批量、预览与表格组合。500 个开放章节和百万字正文下逐字追加没有章节索引写入；150 层交替章节/容器的导航每帧展开一个节点；4096 个关闭章节验证对数查询和节点复用。`cargo run -p mdstream-core -r --example container_sections` 演示共享尾部、预览保留子章节及精确源码恢复。实际摘要/容器排版、终端 UI 及未实现容器方言仍保留 TODO。
 
+## 折叠预扫描投影与单一布局所有权
+
+`FoldProjection::new(document, view, source)` 在显示预扫描、表格选择和块准备之前返回当前视图的可见源码几何，不读取正文、不复制视图、不回填高度。`source` 是固定的现存 UTF-8 源码切口；`next` 返回 `Text { source, tile }`、一次 `Placeholder`、逐步 `Hidden { source, candidate }`、独立 `ParagraphEnd`，以及 `Complete` / `BudgetExhausted`。Text 包含尚需由 `DisplayCursor` 处理的普通语法隐藏字节，不是已经解码的显示文本；片段止于 tile、折叠或请求边界。宿主仅为这些有界可见片段准备布局，不能再把前后最小/最大源码位置包成包含隐藏正文的连续扫描。
+
+```rust
+use mdstream::*;
+let mut doc = Document::new();
+doc.append("# A\nbody\n# B\ntail\n")?;
+let mut view = FoldView::new(&doc, 2)?;
+view.set_collapsed(&doc, FoldId::Heading(HeadingId(0)), true)?;
+let rows = view.heights().total_rows();
+let mut projection = FoldProjection::new(&doc, &view, Span::new(0, doc.source().len()))?;
+let mut placeholders = 0;
+loop {
+    let mut budget = Budget::new(WorkLimit {
+        queries: 1, objects: 1, tiles: 1, bytes: 6, recovery: 1,
+        ..Default::default()
+    });
+    match projection.next(&doc, &view, &mut budget)? {
+        FoldProjectionStep::Placeholder(p) => {
+            assert_eq!(p.candidate.id, FoldId::Heading(HeadingId(0)));
+            placeholders += 1;
+        }
+        FoldProjectionStep::Complete => break,
+        _ => {} // 留给后续预算，或交给现有显示/排版消费者。
+    }
+    assert_eq!(budget.used().bytes, 0);
+}
+assert_eq!(placeholders, 1);
+assert_eq!(view.heights().total_rows(), rows); // 没有发布临时零高度。
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+一个片段查询扣 1 query，每个事件另扣 1 query / 1 object，Text 另扣 1 tile。查询及事件可分帧，1 query / 1 object / 1 tile 的预算能够持续前进；正文 bytes 为零，摘要/显示读取仍须另外支付同帧预算。严格相交并集的后继前沿逐步返回 Hidden，不能把一个候选的 `hidden.end` 当作最终并集末端，也不能把它当作该 ID 自身的注册范围。`Hidden.source` 是本次请求实际跳过的交集；相邻组件各有占位，同起点身份沿核心消歧。起点落在隐藏区内部时不补发区外占位，直接跳到已知前沿；截止于隐藏范围内部时不虚构段尾恢复。段尾事件不增高，包括从隐藏后缀远端开始的恢复。投影与 `LayoutPass::folded` 共用私有折叠游标及原并集索引，原回调及测量合同保持。
+
+`FoldProjection::from_checkpoint(document, view, source, input, max_bytes, budget)` 接受本视图的确切输入检查点，并限制其至请求起点的源码距离。构造查询 token 扣 1 query；无检查点、超距或预算不足返回 None。宿主先恢复已有 payload，起点之前的事件只用于恢复，不画到屏幕；Text/Hidden 在恢复切口分开，恢复事件另扣 1 recovery。每次 restored `next` 先扣 1 query，支付 token 校验及固定次数的几何查询/事件工作，不重复收取 query，因此最小预算也能前进；完成或 token 失效也支付此校验费。普通任务完成可免费重复查询。两种任务均验证 Document/revision、视图身份与折叠版本；恢复额外验证实际 token，替换/失效后拒绝。普通高度测量不会使几何任务失效。错误文档、视图或折叠版本在扣费前拒绝；token 过期在付费校验后返回 `StaleContinuation`。
+
+`FoldView::layout_parts_mut(document)` 为可信渲染宿主借用同一份 `HeightIndex` 和 `CheckpointIndex<S>`，先校验文档及同步 revision。允许既有 Local/普通测量、expire/invalidate、依赖票据、检查点插入与有预算 drain；传入排版状态改变时必须共同失效下游高度与检查点，或用 `insert_for_layout`。**禁止**借此 rebuild/reset/suppress 高度、直接 apply，或 take/replace 任一索引绕过折叠 mask 与生命周期；更新、resize 和折叠操作仍经 FoldView。旧 fold 意愿下的 ticket 继续被拒绝，无依赖的普通尾部追加不必废弃旧前缀 ticket。语义 DependencyKey 不能替代布局代际。
+
+需压缩检查点时，`view.into_checkpoint_compaction()` 移动整个视图进入 `FoldViewCompaction<S>`，不复制高度树、mask 或用户状态，也不提供任意 replacement setter；期间拿不到可变视图。`advance(document, budget, retired)` 使用原检查点压缩的逐节点预算，`stats` 报告源/目标/遍历 scratch 容量；`finish(document)` 仅在完成且文档/revision 匹配时归还原视图，否则原任务由 Err 返回。宿主须在维护期间保持文档 revision 稳定，不能 append/finish；有效 payload、token、布局 ticket、折叠意愿及高度树保留。退役 payload 归宿主持有和释放，Budget 不抢占用户析构、分配器或任意回调的执行时间。
+
+```rust
+use mdstream::*;
+let mut doc = Document::new();
+doc.append("body\n")?;
+let mut view = FoldView::<u32>::with_state(&doc, 2)?;
+{
+    let (heights, checkpoints) = view.layout_parts_mut(&doc)?;
+    heights.measure_local(heights.ticket(TileId(0)).unwrap(), 1)?;
+    checkpoints.insert(TileId(0), 7)?;
+}
+let token = view.checkpoints().token(TileId(0)).unwrap();
+let mut maintenance = view.into_checkpoint_compaction();
+let mut retired = Vec::new();
+loop {
+    let mut budget = Budget::new(WorkLimit { queries: 1, objects: 1, ..Default::default() });
+    if maintenance.advance(&doc, &mut budget, &mut retired)? == Completion::Covered { break; }
+}
+let view = maintenance.finish(&doc).ok().unwrap();
+assert!(view.checkpoints().validates(token));
+assert_eq!(view.heights().height_state(TileId(0)), Some(HeightState::Local));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`fold_projection` / `fold_layout_owner` 验收独立排序并集、随机操作、源码切口、七族对象、逐 UTF-8 前缀/EOF/迟确认、恢复绑定与预算、交叉链和600层路径，并与真实 LayoutPass 对照；还验证基础高度/父子 mask 数组模型、Local/失效、有效与过期 ticket、真实析构及压缩容量。64 MiB 隐藏正文的投影仅4个事件、13字节可见片段，任务272字节，高度树节点/容量/测量未变；计数是元数据查询及实际片段/回调路径，不是 CPU load 插桩。终端的占位、字素/表格布局、选区复制、搜索、目录及 End 联动仍属于原 UI 待办，本接口不代表终端交付。
+
 ## 折叠导航与源码锚点
 
 `FoldNavigation::new` 从当前 `Navigator` 快照创建任务，接受全部 `NavAction`。目录选择用 `Heading(id)`，搜索命中或已解析链接用 `Source(offset)`；普通滚动后的起点由 `Navigator::reconcile_source` 提供。创建任务只检查身份及参数，实际索引查询在 `advance` 中计入共享 Budget。

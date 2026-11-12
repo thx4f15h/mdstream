@@ -1,3 +1,4 @@
+use crate::fold_projection::FoldCursor;
 use crate::folding::{FoldSegment, FoldState};
 use crate::{
     BlockId, Budget, Completion, Document, DocumentId, HeightIndex, LayoutError, LinkId, LinkInfo,
@@ -68,9 +69,7 @@ pub struct LayoutPass {
     approximate: bool,
     recovery_until: usize,
     folded: bool,
-    fold_segment: Option<FoldSegment>,
-    paragraph_end: Option<BlockId>,
-    ended_paragraph: Option<BlockId>,
+    fold_cursor: FoldCursor,
 }
 
 struct PreparedLayout {
@@ -149,9 +148,7 @@ impl LayoutPass {
             approximate: start.0 != 0 && !restored,
             recovery_until: start.0,
             folded: false,
-            fold_segment: None,
-            paragraph_end: None,
-            ended_paragraph: None,
+            fold_cursor: FoldCursor::default(),
         })
     }
 
@@ -338,24 +335,17 @@ impl LayoutPass {
                 sink.text(run);
                 continue;
             }
-            if let Some(block) = self.paragraph_end {
-                // A crossing union can extend the same owner's frontier over
-                // several paid steps. End its paragraph once, also when this
-                // pass starts remotely in a later extension of that union.
-                if self.ended_paragraph == Some(block) {
-                    self.paragraph_end = None;
-                    continue;
-                }
-                if !budget.charge(WorkLimit {
+            match self.fold_cursor.paragraph_end(
+                budget,
+                WorkLimit {
                     objects: 1,
                     recovery: usize::from(self.tile < self.recovery_until),
                     ..Default::default()
-                }) {
-                    return Ok(Completion::BudgetExhausted);
-                }
-                fold_event(sink, FoldEvent::ParagraphEnd(block));
-                self.paragraph_end = None;
-                self.ended_paragraph = Some(block);
+                },
+            ) {
+                Ok(Some(block)) => fold_event(sink, FoldEvent::ParagraphEnd(block)),
+                Ok(None) => {}
+                Err(()) => return Ok(Completion::BudgetExhausted),
             }
             if self.rows >= self.wanted {
                 return Ok(Completion::Covered);
@@ -390,17 +380,21 @@ impl LayoutPass {
             }
             if let Some(folds) = folds
                 && self
-                    .fold_segment
-                    .is_none_or(|segment| self.cursor >= segment.end())
+                    .fold_cursor
+                    .query(
+                        document,
+                        folds,
+                        self.cursor,
+                        budget,
+                        WorkLimit {
+                            queries: 1,
+                            recovery,
+                            ..Default::default()
+                        },
+                    )
+                    .is_err()
             {
-                if !budget.charge(WorkLimit {
-                    queries: 1,
-                    recovery,
-                    ..Default::default()
-                }) {
-                    return Ok(Completion::BudgetExhausted);
-                }
-                self.fold_segment = Some(folds.segment(document, self.cursor));
+                return Ok(Completion::BudgetExhausted);
             }
             if !self.active {
                 if !budget.charge(WorkLimit {
@@ -411,7 +405,7 @@ impl LayoutPass {
                 }) {
                     return Ok(Completion::BudgetExhausted);
                 }
-                if let Some(FoldSegment::Hidden(candidate)) = self.fold_segment
+                if let Some(FoldSegment::Hidden(candidate)) = self.fold_cursor.segment
                     && self.cursor > candidate.hidden.start
                     && candidate.hidden.end >= span.end
                 {
@@ -421,9 +415,8 @@ impl LayoutPass {
                     self.cursor = document
                         .tile(TileId(self.tile))
                         .map_or(document.source().len(), |s| s.start);
-                    if self.cursor == candidate.hidden.end {
-                        self.paragraph_end = folds.and_then(|f| f.paragraph(candidate.id));
-                    }
+                    self.fold_cursor
+                        .skipped(folds.unwrap(), candidate, self.cursor);
                     self.objects_ready = false;
                     self.object_window = None;
                     continue;
@@ -433,7 +426,7 @@ impl LayoutPass {
                 let mut next = document.next_layout_anchor(span.start);
                 // Fold placeholders are drawable even when all underlying
                 // syntax is hidden (e.g. an empty fenced code block).
-                if let Some(segment) = self.fold_segment {
+                if let Some(segment) = self.fold_cursor.segment {
                     let boundary = match segment {
                         FoldSegment::Text { end } => end,
                         FoldSegment::Hidden(c) => c.hidden.start.max(self.cursor),
@@ -457,28 +450,29 @@ impl LayoutPass {
                 sink.begin_tile(TileId(self.tile));
                 self.active = true;
             }
-            if let Some(FoldSegment::Hidden(candidate)) = self.fold_segment {
-                if self.cursor == candidate.hidden.start {
-                    if !budget.charge(WorkLimit {
+            if let Some(FoldSegment::Hidden(candidate)) = self.fold_cursor.segment {
+                let placeholder = FoldPlaceholder {
+                    candidate,
+                    owner: TileId(self.tile),
+                    paragraph: folds.and_then(|f| f.paragraph(candidate.id)),
+                };
+                match self.fold_cursor.placeholder(
+                    self.cursor,
+                    placeholder,
+                    budget,
+                    WorkLimit {
                         objects: 1,
                         recovery,
                         ..Default::default()
-                    }) {
-                        return Ok(Completion::BudgetExhausted);
-                    }
-                    fold_event(
-                        sink,
-                        FoldEvent::Placeholder(FoldPlaceholder {
-                            candidate,
-                            owner: TileId(self.tile),
-                            paragraph: folds.and_then(|f| f.paragraph(candidate.id)),
-                        }),
-                    );
+                    },
+                ) {
+                    Ok(true) => fold_event(sink, FoldEvent::Placeholder(placeholder)),
+                    Ok(false) => {}
+                    Err(()) => return Ok(Completion::BudgetExhausted),
                 }
                 self.cursor = candidate.hidden.end.min(span.end);
-                if self.cursor == candidate.hidden.end {
-                    self.paragraph_end = folds.and_then(|f| f.paragraph(candidate.id));
-                }
+                self.fold_cursor
+                    .skipped(folds.unwrap(), candidate, self.cursor);
                 self.objects_ready = false;
                 self.object_window = None;
                 continue;
@@ -576,7 +570,7 @@ impl LayoutPass {
                 .saturating_add(remaining.bytes)
                 .min(span.end)
                 .min(style_snapshot.next);
-            if let Some(segment) = self.fold_segment {
+            if let Some(segment) = self.fold_cursor.segment {
                 end = end.min(segment.end());
             }
             if let Some(info) = document.link_info(LinkId(self.object))
