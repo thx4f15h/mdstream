@@ -193,6 +193,16 @@ pub struct Reference {
     pub first_use: Option<usize>,
 }
 
+/// Payload of the ordered non-blank/non-definition block candidate index.
+/// key_bytes excludes private BTree node headers, slack and allocator overhead.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ContentBlockIndexStats {
+    /// Input-side insert/remove operations, each O(log B); not query Budget.
+    pub mutations: u64,
+    pub entries: usize,
+    pub key_bytes: usize,
+}
+
 /// Counters of actual parser work, useful for deterministic scaling tests.
 /// Tree visits count mutation traversals; view queries do not mutate statistics.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

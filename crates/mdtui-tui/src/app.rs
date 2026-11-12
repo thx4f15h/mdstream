@@ -40,6 +40,7 @@ pub enum KeyAction {
     PageDown,
     Home,
     End,
+    JumpEnd,
     FocusNext,
     FocusPrevious,
     ToggleSidebar,
@@ -67,6 +68,9 @@ pub fn action_for_key(code: KeyCode, modifiers: KeyModifiers) -> KeyAction {
         (KeyCode::PageUp, _) => KeyAction::PageUp,
         (KeyCode::PageDown, _) => KeyAction::PageDown,
         (KeyCode::Home, _) => KeyAction::Home,
+        (KeyCode::End, modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyAction::JumpEnd
+        }
         (KeyCode::End, _) => KeyAction::End,
         (KeyCode::Tab, modifiers) if modifiers.contains(KeyModifiers::SHIFT) => {
             KeyAction::FocusPrevious
@@ -153,7 +157,24 @@ impl AppState {
         action: KeyAction,
     ) -> Result<AppOutcome, StreamError> {
         let mut outcome = AppOutcome::default();
+        let previous_focus = self.focus;
         let normalized_redraw = self.normalize_focus(engine);
+        let cancel = matches!(
+            action,
+            KeyAction::LineUp
+                | KeyAction::LineDown
+                | KeyAction::PageUp
+                | KeyAction::PageDown
+                | KeyAction::Home
+                | KeyAction::HistoryBack
+                | KeyAction::HistoryForward
+        ) || (matches!(action, KeyAction::End | KeyAction::JumpEnd)
+            && self.focus == FocusTarget::Sidebar)
+            || (action == KeyAction::Activate && self.focus != FocusTarget::Body);
+        let end_cancelled = cancel && engine.pause_following();
+        if cancel {
+            self.pending_jump_from = None;
+        }
         match action {
             KeyAction::Quit => outcome.quit = true,
             KeyAction::LineUp => {
@@ -199,7 +220,7 @@ impl AppState {
                     self.scroll_up(engine, u64::MAX)?
                 };
             }
-            KeyAction::End => {
+            KeyAction::End | KeyAction::JumpEnd => {
                 outcome.redraw = if self.focus == FocusTarget::Sidebar {
                     let changed = engine.sidebar_selection_end();
                     if changed {
@@ -207,7 +228,8 @@ impl AppState {
                     }
                     changed
                 } else {
-                    self.scroll_down(engine, u64::MAX)?
+                    self.pending_jump_from = None;
+                    engine.seek_end(action == KeyAction::End)?
                 };
             }
             KeyAction::FocusNext => outcome.redraw |= self.cycle_focus(engine, true)?,
@@ -272,7 +294,12 @@ impl AppState {
             }
             KeyAction::None => {}
         }
-        outcome.redraw |= normalized_redraw;
+        if (self.focus != previous_focus || outcome.redraw)
+            && matches!(action, KeyAction::FocusNext | KeyAction::FocusPrevious)
+        {
+            outcome.redraw |= engine.pause_following();
+        }
+        outcome.redraw |= normalized_redraw || end_cancelled;
         Ok(outcome)
     }
 

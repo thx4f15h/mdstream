@@ -504,6 +504,24 @@ impl StreamEngine {
         self.force_render = true;
     }
 
+    pub fn seek_end(&mut self, follow: bool) -> Result<bool, StreamError> {
+        let changed = self.runtime.seek_end(follow)?;
+        if changed {
+            self.calibrated_frame = None;
+            self.force_render = true;
+        }
+        Ok(changed)
+    }
+
+    pub fn pause_following(&mut self) -> bool {
+        let changed = self.runtime.pause_following();
+        if changed {
+            self.calibrated_frame = None;
+            self.force_render = true;
+        }
+        changed
+    }
+
     #[must_use]
     pub fn navigation_position(&self) -> Option<HistoryPosition> {
         self.runtime.navigation_position()

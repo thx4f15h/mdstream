@@ -241,6 +241,7 @@ struct FramePaintLayout<'a> {
     sidebar: Option<&'a SidebarState>,
     focused_link: Option<LinkId>,
     notice: Option<&'a str>,
+    following: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -485,6 +486,7 @@ impl FrameRuntime {
         position: HistoryPosition,
         budget: &mut Budget,
     ) -> Result<HistoryRestoreStatus, FrameError> {
+        self.cancel_end()?;
         let target = match self.refine_target(position.source, budget)? {
             RefineTarget::Ready(target) => target,
             RefineTarget::Empty => {
@@ -542,7 +544,39 @@ impl FrameRuntime {
         })
     }
 
+    pub fn seek_end(&mut self, follow: bool) -> Result<bool, FrameError> {
+        self.pending_jump = None;
+        self.refiner = None;
+        self.reconcile_scrolled_source = true;
+        let rows = if follow {
+            self.geometry.rows.saturating_sub(1).max(1)
+        } else {
+            self.geometry.rows
+        };
+        if self.viewport.viewport_rows() != rows {
+            self.viewport.set_viewport_rows(rows)?;
+        }
+        let changed = self.viewport.seek_end(self.document.document(), follow)?;
+        if changed {
+            self.links = None;
+        }
+        Ok(changed)
+    }
+
+    pub fn pause_following(&mut self) -> bool {
+        self.viewport.pause_following()
+    }
+
+    pub fn cancel_end(&mut self) -> Result<bool, FrameError> {
+        let changed = self.viewport.cancel_end();
+        if self.viewport.viewport_rows() != self.geometry.rows {
+            self.viewport.set_viewport_rows(self.geometry.rows)?;
+        }
+        Ok(changed)
+    }
+
     pub fn scroll_down(&mut self, rows: u64) -> Result<bool, FrameError> {
+        self.cancel_end()?;
         self.pending_jump = None;
         self.refiner = None;
         let moved = self.viewport.scroll_down(self.document.document(), rows)?;
@@ -554,6 +588,7 @@ impl FrameRuntime {
     }
 
     pub fn scroll_up(&mut self, rows: u64) -> Result<bool, FrameError> {
+        self.cancel_end()?;
         self.pending_jump = None;
         self.refiner = None;
         let moved = self.viewport.scroll_up(self.document.document(), rows)?;
@@ -619,7 +654,12 @@ impl FrameRuntime {
                 .set_content_width(self.document.document(), content_width)?;
         }
         if height_changed {
-            self.viewport.set_viewport_rows(rows)?;
+            self.viewport
+                .set_viewport_rows(if self.viewport.following() {
+                    rows.saturating_sub(1).max(1)
+                } else {
+                    rows
+                })?;
         }
         if terminal_changed || width_changed {
             self.presenter.resize(rows, cols)?;
@@ -788,6 +828,7 @@ impl FrameRuntime {
                 sidebar: self.sidebar.as_ref(),
                 focused_link: self.link_focus,
                 notice: self.notice,
+                following: self.viewport.following(),
             },
             started,
         )?;
@@ -1208,6 +1249,7 @@ impl FrameRuntime {
         source: usize,
         budget: &mut Budget,
     ) -> Result<RefineJump, FrameError> {
+        self.cancel_end()?;
         match self.refine_target(source, budget)? {
             RefineTarget::Ready(target) => {
                 self.pending_jump = None;
@@ -1564,7 +1606,15 @@ impl FramePresenter {
     }
 
     fn paint_notice(&mut self, layout: FramePaintLayout<'_>) -> Result<(), FrameError> {
-        let Some(message) = layout.notice else {
+        let follow_notice = layout.following.then(|| {
+            let mut message = String::from("FOLLOW | Up/PgUp/Home: pause | Ctrl+End: once");
+            if let Some(notice) = layout.notice {
+                message.push_str(" | ");
+                message.push_str(notice);
+            }
+            message
+        });
+        let Some(message) = follow_notice.as_deref().or(layout.notice) else {
             return Ok(());
         };
         let Some(row) = self.screen.rows().checked_sub(1) else {

@@ -2981,3 +2981,17 @@ README、TODO 精准同步：核心范围扩展单独勾选，实际选区控件
 三项 64 MiB 用例全部复验：首帧读取 65,536 字节，回调 Document 查询为零；连续滚动检查点峰值 120 项 / arena 281 节点，移出 277,648 项，容量不冒充进程总堆峰值。固定 TERM/COLORTERM/LANG，以私有 tmux 从 120×40 和 80×24 启动 release CLI；50 步覆盖嵌套/未解析图片、代码释放、滚动、目录选择/跳转、双向 resize 和 q。两组退出码均为 0，退出后 capture 并清理；cell/raw ANSI/PTY 回归同步通过。
 
 与一般结构分类窗口扩展组合后再次冻结验证：全目标 check、fmt、完整 debug **2468/2468**、release **2464/2464**、doc **78/78**，生产及 TUI 全目标严格 clippy 均通过。407 份核心与 86 份 TUI Rust 文件分别保持此前冻结字节，493 份组合源在全部门禁前后哈希一致；组合证据见 `/tmp/mdtui3-codex-todo/integration-005/result.json`。
+
+## 2026-11-13 End 持续跟随与一次末尾跳转
+
+正文 `End` 开启当前输入流的持续跟随，底部一行显示 `FOLLOW`；`Ctrl+End` 固定按键时已收到的源码切口，只跳到当前末尾。上/下滚动、Home、显式标题/链接导航和历史动作退出跟随；实际焦点切换与侧栏选择暂停在已显示位置，避免为了清掉状态栏而移动正文。侧栏 End 仍只选择末标题。resize、侧栏宽度重排、输入批处理、晚确认和 finish 保留跟随意愿；重复 End、无效键和 no-op update 保留进行中的工作。自动更新不写导航 history，不新增 watcher，finish 后仍拒绝 append。
+
+末尾先用 HeightIndex 估计，再恢复最多 8 个 tile 的短窗口，按实际行倒序选择最后一屏；不足时从前一个候选续取。隐藏定义/空白由新增的有序内容候选索引跳过，长空代码 info 沿用有界 metadata promotion，不完整排版旧前缀。候选查询付一个逻辑 query/object，O(log B)；每个高度抑制、tile 回填、行选择及发布保存游标并共享调用方 Budget。源码、对象、LinkActivity、DisplayCursor、LayoutPass、深容器和唯一 memo 退休沿用既有计费。局部恢复继续标记 Local/Approximate，并保留实际行 source；自动 tail 的短窗口检查点不追加到全局历史。
+
+新增 `content_tail`、`follow_tail`、`follow_tail_pty` 共 14 项测试：独立 cell/source 与状态转移覆盖同 tile/跨 tile、批量/逐字、未 LF Unicode 长行、Setext/表格/代码/引用迟确认、暂停/EOF/空文档/隐藏尾部/空控件、resize、滚动/目录/标题/history、Ctrl+End/重新 End、无效键和 no-op。1 query / 1 object / 6 bytes 帧下，空文档、普通长段、隐藏定义尾部、多行窗口分别在第 0/1520/1411/29 步收敛；零预算不求值。64 MiB 源码的末尾定位用一帧、8 tiles，实际读取 2,573 字节；局部检查点 7 entries/65 nodes，64 次继续更新不积累全局 tail 检查点（该测试峰值 0 entries/1 node），不依赖外部维护。索引输入侧增删计数独立报告，保留全部旧 Work 冻结摘要；entry/key 字节不包含标准库 BTree 私有节点开销，不声称总堆容量。
+
+真实 CLI 的独立 portable PTY + Unix FIFO 写端持续打开，按屏幕条件/完整同步帧等待：End 后新唯一标记出现，上滚后新输入不抢位置，Ctrl+End 只跳一次，End 重入、resize 后继续跟随；写端未 EOF 时 q 约 5.5 ms 退出，恢复光标及备用屏幕。005 Reader 取消实现逐字节保持。21 个 fixture 文件与 11 个 ANSI golden 保持原字节。
+
+冻结 496 个 Rust 文件及相关编译输入后，完整 debug 2,482/release 2,478/doc 78 通过，原有各 4 个手动大规模测试继续保持默认跳过；文档构建、fmt check、生产 lib/bin 严格 clippy、TUI 全目标及新增核心测试严格 clippy 均通过。验证日志、逐命令退出码和前后 SHA 见外部 `013-prototypes/validation.json`，交付结果见 `013-result.json`。既有 `bare_autolinks.rs` 无关 bool assert lint 未修改。
+
+本项仅勾选 End 跟随需求；目录筛选/树 UI、折叠、搜索、数学/脚注实际排版、表格后续策略和其它未完项仍保留。

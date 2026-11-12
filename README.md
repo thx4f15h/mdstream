@@ -19,7 +19,7 @@ nix develop -c cargo r -r -p mdtui-tui -- README.md
 nix develop -c cargo r -r -p mdtui-tui -- --once crates/mdtui-tui/tests/fixtures/spec/images.md
 ```
 
-输入支持普通文件和 Unix FIFO；首屏不等待 EOF，写端暂停时仍可 `q` 退出。交互模式支持方向键、翻页、Home/End、`s` 目录侧栏、Tab 焦点、Enter 跳转；End 只跳到当前末尾。图片显示可点击 alt，空 alt 显示 `[image]`。详细键位、尺寸和限制见 [阅读器使用说明](crates/mdtui-tui/README.md)，来源、预算及验收见 [终端集成说明](docs/tui-integration.md)。
+输入支持普通文件和 Unix FIFO；首屏不等待 EOF，写端暂停时仍可 `q` 退出。交互模式支持方向键、翻页、Home/End、`s` 目录侧栏、Tab 焦点、Enter 跳转；正文 End 持续跟随当前输入流的末尾，Ctrl+End 只跳到当前末尾；上滚或显式导航退出跟随。图片显示可点击 alt，空 alt 显示 `[image]`。详细键位、尺寸和限制见 [阅读器使用说明](crates/mdtui-tui/README.md)，来源、预算及验收见 [终端集成说明](docs/tui-integration.md)。
 
 ## 接入
 

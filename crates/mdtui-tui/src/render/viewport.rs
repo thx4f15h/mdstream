@@ -269,6 +269,59 @@ pub struct ViewportState {
     pending_table_snapshots: HashMap<TableId, TableWidthSnapshot>,
     preparing_tables: bool,
     calibration: Option<EofCalibrationState>,
+    following: bool,
+    end_position: Option<EndPosition>,
+}
+
+// One coalesced end request, never a queue per input update. The source limit
+// freezes Ctrl+End even if another append arrives before its layout completes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EndWork {
+    pub windows: usize,
+    pub source_bytes: usize,
+    pub planned_tiles: usize,
+    pub checkpoint_entries: usize,
+    pub checkpoint_nodes: usize,
+}
+
+struct EndPosition {
+    limit: usize,
+    before: usize,
+    next_before: usize,
+    work: EndWork,
+    stats: ViewportFrameStats,
+    first: Option<FirstFrame>,
+    selection: Option<EndSelection>,
+    lines: Vec<(Anchor, SinkLine)>,
+    frame: Option<ViewportFrame>,
+}
+
+impl EndPosition {
+    fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            before: limit,
+            next_before: limit,
+            work: EndWork::default(),
+            stats: ViewportFrameStats::default(),
+            first: None,
+            selection: None,
+            lines: Vec::new(),
+            frame: None,
+        }
+    }
+}
+
+// Every suppression, measured tile, row selection and final publication is
+// independently resumable. In particular a one-query frame can make progress.
+struct EndSelection {
+    suppressed: usize,
+    segment: usize,
+    row: usize,
+    owners: Vec<(TileId, usize, u64)>,
+    line: usize,
+    found_tail: bool,
+    selected: Vec<(Anchor, SinkLine)>,
 }
 
 struct EofCalibrationState {
@@ -314,6 +367,8 @@ impl ViewportState {
             pending_table_snapshots: HashMap::new(),
             preparing_tables: false,
             calibration: None,
+            following: false,
+            end_position: None,
         })
     }
 
@@ -357,7 +412,364 @@ impl ViewportState {
             pending_table_snapshots: HashMap::new(),
             preparing_tables: false,
             calibration: None,
+            following: false,
+            end_position: None,
         })
+    }
+
+    #[must_use]
+    pub const fn following(&self) -> bool {
+        self.following
+    }
+
+    /// End retains an intention across revisions; Ctrl+End freezes this source
+    /// cut. Both first use the height estimate, then select actual laid-out rows.
+    pub fn seek_end(&mut self, document: &Document, follow: bool) -> Result<bool, ViewportError> {
+        self.check_document(document)?;
+        if follow && self.following {
+            return Ok(false);
+        }
+        let changed = self.following != follow;
+        self.following = follow;
+        let moved = self.end(document)?;
+        self.end_position = Some(EndPosition::new(document.source().len()));
+        self.render = None;
+        self.calibration = None;
+        Ok(changed || moved || !follow)
+    }
+
+    #[must_use]
+    pub fn end_work(&self) -> EndWork {
+        self.end_position
+            .as_ref()
+            .map_or(EndWork::default(), |end| end.work)
+    }
+
+    /// Pause at the displayed source cut. Focus/sidebar changes do not reflow
+    /// the body to a different top just to reclaim the status row. A subsequent
+    /// body scroll or explicit source navigation clears this frozen position.
+    pub fn pause_following(&mut self) -> bool {
+        let changed = self.following;
+        self.following = false;
+        changed
+    }
+
+    pub fn cancel_end(&mut self) -> bool {
+        let changed = self.following || self.end_position.is_some();
+        self.following = false;
+        self.end_position = None;
+        changed
+    }
+
+    fn restart_end(&mut self, document: &Document) {
+        if self.following {
+            self.end_position = Some(EndPosition::new(document.source().len()));
+        } else if let Some(end) = &self.end_position {
+            self.end_position = Some(EndPosition::new(end.limit));
+        }
+    }
+
+    fn end_frame(
+        &mut self,
+        document: &Document,
+        budget: &mut Budget,
+    ) -> Result<ViewportFrame, ViewportError> {
+        let mut end = self.end_position.take().ok_or(ViewportError::InvalidTop)?;
+        let result = self.advance_end(document, &mut end, budget);
+        self.end_position = Some(end);
+        result
+    }
+
+    fn advance_end(
+        &mut self,
+        document: &Document,
+        end: &mut EndPosition,
+        budget: &mut Budget,
+    ) -> Result<ViewportFrame, ViewportError> {
+        if let Some(frame) = &end.frame {
+            let mut frame = frame.clone();
+            frame.stats.layout_budget = budget.used();
+            return Ok(frame);
+        }
+        loop {
+            if end.first.is_none() {
+                let block = match document.previous_content_block(end.before, budget) {
+                    Ok(block) => block.and_then(|id| document.block(id)),
+                    Err(_) => return Ok(self.end_pending(budget)),
+                };
+                let Some(block) = block else {
+                    break;
+                };
+                let stop = block.source.end.min(end.before);
+                let last = document
+                    .tile_at(stop.saturating_sub(1))
+                    .ok_or(ViewportError::InvalidTop)?;
+                let want = usize::from(self.config.rows).saturating_sub(end.lines.len());
+                let estimate = self
+                    .heights
+                    .prefix_rows(last.0 + 1)
+                    .unwrap_or(0)
+                    .saturating_sub(want as u128 + u128::from(self.config.overscan_rows));
+                let estimated = self
+                    .heights
+                    .locate(estimate)
+                    .map_or(last.0, |anchor| anchor.tile.0);
+                // A small suffix bounds local recovery and scratch even at width 1.
+                let earliest = last
+                    .0
+                    .saturating_sub(self.config.max_tiles.min(8).saturating_sub(1));
+                let block_start = document
+                    .tile_at(block.source.start)
+                    .map_or(last.0, |tile| tile.0);
+                let mut start = estimated.min(block_start).max(earliest).min(last.0);
+                let mut tile_limit = last.0 - start + 1;
+                end.next_before = document.tile(TileId(start)).map_or(0, |span| span.start);
+                // FirstFrame already promotes an arbitrarily long hidden code
+                // info prefix using bounded metadata. Keep that path reachable
+                // for empty code labels without walking the old prefix tiles.
+                if let mdtui3::BlockKind::Code { info: Some(info) } = block.kind
+                    && document
+                        .tile(TileId(earliest))
+                        .is_some_and(|span| info.end >= span.start)
+                    && block_start < earliest
+                    && document
+                        .tile_at(info.end.saturating_sub(1))
+                        .is_some_and(|tile| tile.0 >= block_start.saturating_add(8))
+                {
+                    start = block_start;
+                    tile_limit = self.config.max_tiles.min(8);
+                    end.next_before = block.source.start;
+                }
+                if !budget.charge(WorkLimit {
+                    recovery: 1,
+                    ..WorkLimit::default()
+                }) {
+                    return Ok(self.end_pending(budget));
+                }
+                let mut first = FirstFrame::new(
+                    document,
+                    FirstFrameConfig {
+                        top_tile: TileId(start),
+                        tile_limit,
+                        width: self.config.width,
+                        row_limit: (8 * (TILE_BYTES + 4) + self.config.row_slack as usize) as u64,
+                    },
+                )?;
+                first.set_links(self.links.clone());
+                end.first = Some(first);
+            }
+            if end.selection.is_none() {
+                let first = end.first.as_mut().ok_or(ViewportError::InvalidTop)?;
+                let step = first.advance(document, budget)?;
+                if matches!(
+                    step.status,
+                    FirstFrameStatus::PendingScan | FirstFrameStatus::BudgetExhausted
+                ) {
+                    let mut frame = self.end_pending(budget);
+                    frame.stats.layout = first.sink_stats().unwrap_or_default();
+                    return Ok(frame);
+                }
+                if !budget.charge(WorkLimit {
+                    queries: 1,
+                    objects: 1,
+                    ..WorkLimit::default()
+                }) {
+                    return Ok(self.end_pending(budget));
+                }
+                end.selection = Some(EndSelection {
+                    suppressed: 0,
+                    segment: 0,
+                    row: 0,
+                    owners: Vec::new(),
+                    line: first.lines().len(),
+                    found_tail: false,
+                    selected: Vec::new(),
+                });
+            }
+            if !self.select_end_window(end, budget)? {
+                return Ok(self.end_pending(budget));
+            }
+            if end.lines.len() >= usize::from(self.config.rows) || end.before == 0 {
+                let mut frame = self.finish_end(document, end);
+                frame.stats.layout_budget = budget.used();
+                end.frame = Some(frame.clone());
+                return Ok(frame);
+            }
+        }
+        let mut frame = self.finish_end(document, end);
+        frame.stats.layout_budget = budget.used();
+        end.frame = Some(frame.clone());
+        Ok(frame)
+    }
+
+    fn select_end_window(
+        &mut self,
+        end: &mut EndPosition,
+        budget: &mut Budget,
+    ) -> Result<bool, ViewportError> {
+        let first = end.first.as_ref().ok_or(ViewportError::InvalidTop)?;
+        let selection = end.selection.as_mut().ok_or(ViewportError::InvalidTop)?;
+        while let Some(range) = first.suppressed_heading_tiles().get(selection.suppressed) {
+            if !budget.charge(WorkLimit {
+                queries: 1,
+                objects: 1,
+                recovery: 1,
+                ..WorkLimit::default()
+            }) {
+                return Ok(false);
+            }
+            self.heights.suppress(range.clone())?;
+            selection.suppressed += 1;
+        }
+        while let Some(segment) = first.plan().segments.get(selection.segment) {
+            if !budget.charge(WorkLimit {
+                queries: 1,
+                objects: 1,
+                recovery: 1,
+                ..WorkLimit::default()
+            }) {
+                return Ok(false);
+            }
+            // Same height publication as sync_layout_parts, one tile at a time.
+            // Tail recovery checkpoints stay local, avoiding old-tail retention.
+            sync_tile_height(first, &mut self.heights, segment.tile)?;
+            let rows = first
+                .sink()
+                .ok_or(ViewportError::MissingLineSource)?
+                .tile_rows(segment.tile)
+                .unwrap_or(0);
+            if rows > 0 {
+                selection.owners.push((segment.tile, selection.row, rows));
+            }
+            selection.row += rows as usize;
+            selection.segment += 1;
+        }
+        let want = usize::from(self.config.rows).saturating_sub(end.lines.len());
+        while selection.line > 0 && selection.selected.len() < want {
+            if !budget.charge(WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..WorkLimit::default()
+            }) {
+                return Ok(false);
+            }
+            selection.line -= 1;
+            let line = &first.lines()[selection.line];
+            if let Some(source) = line.source {
+                if source.source.start >= end.before {
+                    continue;
+                }
+                selection.found_tail = true;
+            }
+            // Source-less spacing before a future paragraph belongs beyond a
+            // frozen Ctrl+End cut. It cannot move that jump on a later append.
+            if !selection.found_tail {
+                continue;
+            }
+            let owner = selection
+                .owners
+                .partition_point(|(_, start, _)| *start <= selection.line);
+            let &(tile, start, _) = selection
+                .owners
+                .get(owner.saturating_sub(1))
+                .ok_or(ViewportError::MissingLineSource)?;
+            selection.selected.push((
+                Anchor {
+                    tile,
+                    offset: (selection.line - start) as u64,
+                },
+                line.clone(),
+            ));
+        }
+        if !budget.charge(WorkLimit {
+            queries: 1,
+            objects: 1,
+            recovery: 1,
+            ..WorkLimit::default()
+        }) {
+            return Ok(false);
+        }
+        let mut selection = end.selection.take().ok_or(ViewportError::InvalidTop)?;
+        selection.selected.reverse();
+        selection.selected.append(&mut end.lines);
+        end.lines = selection.selected;
+        end.before = end.next_before;
+        end.work.windows += 1;
+        end.work.planned_tiles += first.plan().segments.len();
+        end.work.checkpoint_entries = end.work.checkpoint_entries.max(first.checkpoints().len());
+        end.work.checkpoint_nodes = end
+            .work
+            .checkpoint_nodes
+            .max(first.checkpoints().arena_stats().nodes);
+        let scan = first.scanner().stats();
+        end.work.source_bytes += scan.scanned_bytes
+            + scan.edge_source_bytes
+            + first
+                .sink_stats()
+                .map_or(0, |stats| stats.preparation_source_bytes);
+        end.stats = ViewportFrameStats {
+            plan_start: Some(first.plan().tile_start),
+            plan_end: Some(first.plan().tile_end),
+            planned_tiles: first.plan().segments.len(),
+            visible_tiles: first.plan().segments.len(),
+            rendered_tiles: first.processed_tiles(),
+            layout: first.sink_stats().unwrap_or_default(),
+            layout_budget: budget.used(),
+            ..ViewportFrameStats::default()
+        };
+        // Ownership of this bounded FirstFrame is released only after its
+        // measured rows have been published. The shared memo retires separately.
+        end.first = None;
+        self.links.request_retirement();
+        Ok(true)
+    }
+
+    fn end_pending(&self, budget: &Budget) -> ViewportFrame {
+        let mut frame = self.empty_frame();
+        frame.status = ViewportFrameStatus::BudgetExhausted;
+        frame.stats.layout_budget = budget.used();
+        frame
+    }
+
+    fn finish_end(&mut self, document: &Document, end: &EndPosition) -> ViewportFrame {
+        let top = end.lines.first().map(|(anchor, _)| *anchor);
+        let source = end
+            .lines
+            .first()
+            .and_then(|(_, line)| line.source)
+            .map(|source| source.source.start);
+        self.top = top;
+        self.frame_source = top.zip(source);
+        self.top_position = match (top, source) {
+            (Some(anchor), Some(source)) => {
+                if matches!(
+                    self.heights.height_state(anchor.tile),
+                    Some(mdtui3::HeightState::Measured)
+                ) {
+                    TopPosition::Exact {
+                        anchor,
+                        line_start: Some(source),
+                    }
+                } else {
+                    TopPosition::ApproximateLineStart { anchor, source }
+                }
+            }
+            (Some(anchor), None) => TopPosition::ApproximateLineStart {
+                anchor,
+                source: document.tile(anchor.tile).map_or(0, |span| span.start),
+            },
+            _ => TopPosition::Empty,
+        };
+        self.refined_top = source.is_some();
+        ViewportFrame {
+            document: document.id(),
+            revision: document.revision(),
+            lines: end.lines.iter().map(|(_, line)| line.clone()).collect(),
+            top: self.top_position,
+            rows: end.lines.len() as u16,
+            status: ViewportFrameStatus::EndOfDocument,
+            stats: end.stats,
+        }
     }
 
     pub fn shared_links(&self) -> crate::render::objects::SharedLinks {
@@ -544,6 +956,7 @@ impl ViewportState {
             return Err(ViewportError::OutOfOrderUpdate);
         }
         self.refined_top = false;
+        self.restart_end(document);
 
         let previous_revision = self.revision;
         let old_top = self.top;
@@ -699,6 +1112,23 @@ impl ViewportState {
         if !document.is_finished() {
             return Err(ViewportError::NotFinished);
         }
+        if self.end_position.is_some() {
+            let frame = self.frame(document, budget)?;
+            let ready = matches!(
+                frame.status,
+                ViewportFrameStatus::Ready | ViewportFrameStatus::EndOfDocument
+            );
+            return Ok(self.calibration_progress(
+                if ready {
+                    EofCalibrationStatus::Calibrated
+                } else {
+                    EofCalibrationStatus::BudgetExhausted
+                },
+                ready.then_some(frame),
+                ready,
+                document,
+            ));
+        }
         if self.calibration.is_none() {
             self.calibration = Some(self.new_calibration(document)?);
         }
@@ -822,6 +1252,9 @@ impl ViewportState {
         if rows == 0 {
             return Err(ViewportError::InvalidConfig);
         }
+        if let Some(end) = &self.end_position {
+            self.end_position = Some(EndPosition::new(end.limit));
+        }
         self.config.rows = rows;
         self.refined_top = false;
         self.render = None;
@@ -859,6 +1292,7 @@ impl ViewportState {
             });
         }
 
+        self.restart_end(document);
         let old_top = self.top;
         self.table_widths.retain_tables(&[]);
         self.heights.reset(CONTENT_WIDTH_RESET_ESTIMATE)?;
@@ -1009,6 +1443,9 @@ impl ViewportState {
         self.check_document(document)?;
         if self.checkpoints.maintenance_in_progress() {
             return Err(ViewportError::CheckpointMaintenanceInProgress);
+        }
+        if self.end_position.is_some() {
+            return self.end_frame(document, budget);
         }
         if self.heights.total_rows() == 0 {
             return Ok(self.empty_frame());
@@ -1772,26 +2209,42 @@ pub(crate) fn sync_layout_parts(
     heights: &mut HeightIndex,
     checkpoints: &mut RenderCheckpointStore,
 ) -> Result<(), LayoutError> {
-    let source_heights = first.heights();
+    sync_height_parts(first, heights)?;
+    for segment in &first.plan().segments {
+        if let Some(checkpoint) = first.checkpoints().exact(segment.tile) {
+            checkpoints.insert(segment.tile, *checkpoint)?;
+        }
+    }
+    Ok(())
+}
+
+fn sync_height_parts(first: &FirstFrame, heights: &mut HeightIndex) -> Result<(), LayoutError> {
     for range in first.suppressed_heading_tiles() {
         heights.suppress(range.clone())?;
     }
     for segment in &first.plan().segments {
-        if let Some(rows) = source_heights.height(segment.tile)
-            && matches!(
-                source_heights.height_state(segment.tile),
-                Some(mdtui3::HeightState::Measured | mdtui3::HeightState::Local)
-            )
-            && let Some(ticket) = heights.ticket(segment.tile)
-        {
-            if source_heights.height_state(segment.tile) == Some(mdtui3::HeightState::Local) {
-                heights.measure_local(ticket, rows)?;
-            } else {
-                heights.measure(ticket, rows)?;
-            }
-        }
-        if let Some(checkpoint) = first.checkpoints().exact(segment.tile) {
-            checkpoints.insert(segment.tile, *checkpoint)?;
+        sync_tile_height(first, heights, segment.tile)?;
+    }
+    Ok(())
+}
+
+fn sync_tile_height(
+    first: &FirstFrame,
+    heights: &mut HeightIndex,
+    tile: TileId,
+) -> Result<(), LayoutError> {
+    let source_heights = first.heights();
+    if let Some(rows) = source_heights.height(tile)
+        && matches!(
+            source_heights.height_state(tile),
+            Some(mdtui3::HeightState::Measured | mdtui3::HeightState::Local)
+        )
+        && let Some(ticket) = heights.ticket(tile)
+    {
+        if source_heights.height_state(tile) == Some(mdtui3::HeightState::Local) {
+            heights.measure_local(ticket, rows)?;
+        } else {
+            heights.measure(ticket, rows)?;
         }
     }
     Ok(())

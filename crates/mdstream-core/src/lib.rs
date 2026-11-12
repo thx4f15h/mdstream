@@ -260,6 +260,9 @@ pub struct Document {
     source: String,
     tiles: Vec<Span>,
     blocks: Vec<Block>,
+    // Source-ordered candidates, excluding blank/definition blocks.
+    content_blocks: std::collections::BTreeSet<BlockId>,
+    content_block_index_ops: u64,
     containers: containers::Containers,
     links: Vec<LinkTarget>,
     link_info: Vec<LinkInfo>,
@@ -317,6 +320,43 @@ impl Document {
     pub fn blocks(&self) -> &[Block] {
         &self.blocks
     }
+    /// Last non-blank, non-definition block starting before `end`. This is a conservative
+    /// layout candidate: whitespace, HTML and empty code still need bounded
+    /// renderer classification. No source bytes or conditional links are read.
+    /// One logical query and object pays for the O(log B) index lookup (as for
+    /// other indexed metadata queries); Err means budget exhausted.
+    pub fn previous_content_block(
+        &self,
+        end: usize,
+        budget: &mut Budget,
+    ) -> Result<Option<BlockId>, Completion> {
+        if !budget.charge(WorkLimit {
+            queries: 1,
+            objects: 1,
+            ..WorkLimit::default()
+        }) {
+            return Err(Completion::BudgetExhausted);
+        }
+        let upper = self
+            .blocks
+            .partition_point(|block| block.source.start < end);
+        Ok(self
+            .content_blocks
+            .range(..BlockId(upper))
+            .next_back()
+            .copied())
+    }
+
+    /// Logical key storage only. Standard-library BTreeSet node allocation and
+    /// allocator overhead are not observable and are excluded from key_bytes.
+    pub fn content_block_index_stats(&self) -> ContentBlockIndexStats {
+        ContentBlockIndexStats {
+            mutations: self.content_block_index_ops,
+            entries: self.content_blocks.len(),
+            key_bytes: self.content_blocks.len() * std::mem::size_of::<BlockId>(),
+        }
+    }
+
     pub fn block(&self, id: BlockId) -> Option<&Block> {
         self.blocks.get(id.0)
     }
@@ -1352,6 +1392,13 @@ impl Document {
 
     fn push_block(&mut self, span: Span, kind: BlockKind, update: &mut Update) -> BlockId {
         let id = BlockId(self.blocks.len());
+        if !matches!(
+            kind,
+            BlockKind::Blank | BlockKind::Definition { .. } | BlockKind::FootnoteDefinition { .. }
+        ) {
+            self.content_blocks.insert(id);
+            self.content_block_index_ops += 1;
+        }
         self.blocks.push(Block {
             source: span,
             kind,
@@ -2027,6 +2074,8 @@ impl Document {
                 self.mark(list.source, Style::default(), update);
             }
         }
+        self.content_blocks.remove(&block);
+        self.content_block_index_ops += 1;
         self.blocks[block.0].kind = BlockKind::Definition { symbol };
         self.blocks[block.0].source.end = span.end;
         update.changed_blocks.start = update.changed_blocks.start.min(block.0);
