@@ -20,6 +20,9 @@ const SIDEBAR_CURRENT_FLAG: u32 = 1 << 14;
 const LINK_FOCUS_FLAG: u32 = 1 << 15;
 const SIDEBAR_SELECTION_FLAG: u32 = 1 << 16;
 const IMAGE_FLAG: u32 = 1 << 17;
+const SELECTION_FLAG: u32 = 1 << 19;
+const SEARCH_FLAG: u32 = 1 << 20;
+const CURSOR_FLAG: u32 = 1 << 21;
 const LITERAL_LINK_FLAG: u32 = 1 << 18;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -48,6 +51,9 @@ impl StyleRole {
     pub const SIDEBAR: Self = Self::new(SIDEBAR_FLAG, 0);
     pub const SIDEBAR_CURRENT: Self = Self::new(SIDEBAR_CURRENT_FLAG, 0);
     pub const SIDEBAR_SELECTION: Self = Self::new(SIDEBAR_SELECTION_FLAG, 0);
+    pub const SELECTION: Self = Self::new(SELECTION_FLAG, 0);
+    pub const SEARCH: Self = Self::new(SEARCH_FLAG, 0);
+    pub const CURSOR: Self = Self::new(CURSOR_FLAG, 0);
     pub const LINK_FOCUS: Self = Self::new(LINK_FOCUS_FLAG, 0);
 
     const fn new(flags: u32, heading_level: u8) -> Self {

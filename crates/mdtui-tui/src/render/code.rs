@@ -103,7 +103,20 @@ pub(crate) fn render_code_lines(
         if remaining > 0 {
             let fit = fit_prefix(&line.text, remaining);
             for grapheme in graphemes(&line.text[..fit.end]) {
-                cursor.place(screen, row, grapheme, StyleRole::CODE, None, None)?;
+                let first = line
+                    .mappings
+                    .partition_point(|(offset, _)| *offset <= grapheme.start)
+                    .saturating_sub(1);
+                let last = line
+                    .mappings
+                    .partition_point(|(offset, _)| *offset < grapheme.end)
+                    .saturating_sub(1);
+                let source = line
+                    .mappings
+                    .get(first)
+                    .zip(line.mappings.get(last))
+                    .map(|(first, last)| mdtui3::Span::new(first.1.start, last.1.end));
+                cursor.place(screen, row, grapheme, StyleRole::CODE, None, source)?;
             }
         }
         screen.set_line_source(row, LineSource::new(line.source, block_id))?;
@@ -174,6 +187,7 @@ pub(crate) struct CodeLine {
     pub text: String,
     pub source: mdtui3::Span,
     pub end: mdtui3::Span,
+    mappings: Vec<(usize, mdtui3::Span)>,
 }
 
 pub(crate) fn code_lines(
@@ -191,6 +205,7 @@ pub(crate) fn code_lines_from_input(
 ) -> Result<Option<Vec<CodeLine>>, CodeError> {
     let mut lines = Vec::new();
     let mut text = String::new();
+    let mut mappings = Vec::new();
     let mut start = None;
     let mut end = None;
     let mut pending_cr = None;
@@ -219,6 +234,7 @@ pub(crate) fn code_lines_from_input(
                     text: std::mem::take(&mut text),
                     source: start.unwrap_or(newline),
                     end: newline,
+                    mappings: std::mem::take(&mut mappings),
                 });
                 start = None;
                 end = None;
@@ -227,13 +243,19 @@ pub(crate) fn code_lines_from_input(
             pending_cr = None;
             start.get_or_insert(source);
             end = Some(source);
+            mappings.push((text.len(), source));
             text.push(character);
         }
     }
     if !text.is_empty() || start.is_some() {
         let source = start.unwrap_or(source_fallback);
         let end = end.unwrap_or(source);
-        lines.push(CodeLine { text, source, end });
+        lines.push(CodeLine {
+            text,
+            source,
+            end,
+            mappings,
+        });
     }
     if lines.is_empty() && !saw_text {
         Ok(None)

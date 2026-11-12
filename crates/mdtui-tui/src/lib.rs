@@ -6,6 +6,7 @@ pub mod external;
 pub mod fragment;
 pub mod history;
 pub mod links;
+pub mod reading;
 pub mod render;
 pub mod screen;
 pub mod sidebar;

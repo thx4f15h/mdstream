@@ -163,6 +163,16 @@ impl AppState {
         code: KeyCode,
         modifiers: KeyModifiers,
     ) -> Result<AppOutcome, StreamError> {
+        if engine
+            .runtime_mut()
+            .reading_key(code, modifiers, self.focus == FocusTarget::Body)?
+        {
+            engine.request_render();
+            return Ok(AppOutcome {
+                redraw: true,
+                ..AppOutcome::default()
+            });
+        }
         self.handle_action(engine, action_for_key(code, modifiers))
     }
 

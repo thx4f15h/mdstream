@@ -3012,3 +3012,18 @@ End/Ctrl+End 传入同一列窗口及 min/max，稀疏输出按逻辑行偏移�
 最终冻结 500 个 Rust 文件及全部编译/测试输入，验证前后 SHA 一致：workspace debug 2507、release 2503、doc 78，专项 87、额外 64 MiB 手动 3 项全部通过。check、doc build、fmt、生产与 TUI 全目标严格 clippy 通过；workspace 全目标 clippy 仍仅为既有 `mdstream-core/tests/bare_autolinks.rs:594` 的 bool assert lint，未改该文件。私有终端实际执行 70 项操作和一次清理，覆盖两组 CLI 配置、横移/大步/边界、resize、FIFO 追加/EOF、FOLLOW 中横移、Ctrl+End 固定切口/重新跟随、图片 OSC8、q 和终端恢复。所有既有输入 fixtures 及 11 份 ANSI golden 逐文件保持；核心及依赖相对整合基线未修改。
 
 完整命令、退出码、实际计数、SHA、审查文件摘要与原始终端记录见 `/tmp/mdtui3-codex-todo/014-result.json` 及 `/tmp/mdtui3-codex-todo/014-prototypes/`。目录、折叠、选区、搜索、完整巨型字素及数学/脚注排版等原未完成需求保持未勾选。
+
+
+## 2026-11-13 终端源码选区、复制与显示搜索交互
+
+终端现在提供可实际使用的源码选区与搜索控件：v 进入光标模式，方向键按真实完整字素 cell 的来源移动，Space/Shift-方向固定并伸缩源码范围；宽字符 continuation、无来源装饰及生成的间隔不作为源码切口。选区按 Span 保存，两端实体/转义/代码/图片映射使用完整来源，跨屏、resize、追加、晚定义与 EOF 不静默改选另一段。代码正文新增逐字素映射；实体显示的分帧 source 片段使用完整 replacement 映射。纯输入/高亮复用已提交窗口，保留正文 source 锚点；跨屏移动逐帧滚动。
+
+y 复制逻辑显示投影，Y 精确复制 UTF-8 原文范围。显示投影保留实体、代码、图片 alt/空 alt 占位，表格列以 TAB 分隔、块/代码物理行/表格行用 LF，不加入终端软折行 LF；列表折行的逻辑词间空格以有预算的边界标量探测保留，单词内部和隐藏代码标记不插空格。复制复用固定 014 基线的 min/max、first_column 和选列/行窗口，真实 PTY 解码验证横移后的显示/源码字节。原 21 输入 fixture 与 11 ANSI golden 原样保留；代码行的 once SGR 分段与新的来源元数据分别处理，未放宽旧断言。
+
+两种复制都显式写出 OSC52，源码范围和显示负载最多 64 KiB，超限拒绝；读取、显示准备、编码及发送额度获取共用帧 Budget，可暂停/取消，内容或列视图变化取消显示任务。最后完整包至多 87,392 字节，实际 wire 字节归发送帧 FrameMetrics/StreamMetrics；界面只显示 clipboard request sent，不确认剪贴板实际写入。微预算不代表每帧实际输出六字节或任意 writer 的 I/O 硬时延保证。
+
+/ 编辑最多 256 UTF-8 字节的字面、区分大小写查询，Enter 明确提交；q 是查询文字、Ctrl-C 仍退出，退格按标量删除。n/N 只保留当前重叠命中；向前游标可复用时继续，向后及方向切换所需的重扫按预算进行，不保存全篇命中或每次追加重搜。revision 改变后清除旧结果并标 stale，须显式重提。DisplaySearch 新增单命中、借用共享 resolver 的最小入口；旧 memo 逐节点退役。搜索采用核心逻辑显示流，已解析/嵌套 alt 可查，空 alt 的终端占位不属于核心可查文字；标题/列表省略的普通链接标签及裁剪目标标 match not drawn，不伪造高亮。源目标的行/cell 检查也可恢复并收费，实际 cell 优先于同来源表格边框，搜索按索引显示目标列。
+
+验证：冻结 643 个仓库输入（除本追加日志 DONE.md），其中 504 个 Rust 文件，SHA-256 `175837046ff15585892e938d4a094a0f7835343337a8769385fedc3cc43d5346`；完整 workspace debug 2534、release 2530、doc 78 通过，check/all-targets、fmt、doc build、生产 lib/bins 严格 clippy、TUI all-targets 严格 clippy及新增 core 测试严格 clippy 均通过。未声称包含已知 bare_autolinks 旧测试 lint 的 workspace all-targets 严格 clippy。独立 cell/source/剪贴板字节、UTF-8 全切点、零/1 query/1 object/6 bytes、27 个新增默认验收、20k guard 取消退役、近 64 KiB UTF-8 负载与超限拒绝、2 MB 段落中部小选区、真实 FIFO PTY 与独立 tmux 全流程已验证。另跑的 64 MiB 手工验收中，31 字节中部显示选区扫描 2304 字节、累计计费 14825 work bytes；此读量与工作口径不是进程总堆或 I/O 时延。
+
+保留后续：本项没有终端折叠占位、由选区创建手工折叠、FoldAnchor 占位恢复、FoldNavigation 必要路径展开及折叠视图复制联动；对应父项继续未勾选。只整合已提交固定基线 4299276，不包含其它活跃任务。

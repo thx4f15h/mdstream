@@ -97,6 +97,7 @@ pub struct FrameMetrics {
     pub diff_rows: usize,
     pub output_bytes: usize,
     pub body_bytes: usize,
+    pub clipboard_bytes: usize,
     pub layout: LayoutSinkStats,
     pub frame_elapsed: Duration,
 }
@@ -205,6 +206,7 @@ pub struct FrameRuntime {
     navigator: Navigator,
     refiner: Option<SourceRefiner>,
     pending_jump: Option<usize>,
+    pending_search_target: Option<(usize, bool)>,
     reconcile_scrolled_source: bool,
     presenter: FramePresenter,
     geometry: FrameGeometry,
@@ -225,6 +227,11 @@ pub struct FrameRuntime {
     anchors: Option<HeadingAnchors>,
     anchor_lease: Option<crate::render::objects::LinkLease>,
     notice: Option<&'static str>,
+    reading: crate::reading::ReadingTools,
+    reading_first: bool,
+    reading_edge_scroll: bool,
+    cached_body: Option<ViewportFrame>,
+    body_dirty: bool,
 }
 
 struct SidebarState {
@@ -243,6 +250,9 @@ struct FramePaintLayout<'a> {
     notice: Option<&'a str>,
     following: bool,
     table_notice: bool,
+    selection: Option<mdtui3::Span>,
+    cursor: Option<mdtui3::Span>,
+    search: Option<mdtui3::Span>,
 }
 
 #[derive(Clone, Copy)]
@@ -318,6 +328,7 @@ impl FrameRuntime {
             navigator: Navigator::new(),
             refiner: None,
             pending_jump: None,
+            pending_search_target: None,
             reconcile_scrolled_source: true,
             presenter,
             geometry,
@@ -333,7 +344,134 @@ impl FrameRuntime {
             anchors: None,
             anchor_lease: None,
             notice: None,
+            reading: crate::reading::ReadingTools::default(),
+            reading_first: true,
+            reading_edge_scroll: false,
+            cached_body: None,
+            body_dirty: true,
         })
+    }
+
+    pub fn reading(&self) -> &crate::reading::ReadingTools {
+        &self.reading
+    }
+
+    /// Handle reading modes before the application's ordinary key bindings.
+    pub fn reading_key(
+        &mut self,
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+        body: bool,
+    ) -> Result<bool, FrameError> {
+        use crate::reading::{CopyKind, CursorMove};
+        use crossterm::event::{KeyCode, KeyModifiers};
+        let links = self.viewport.shared_links();
+        if matches!(code, KeyCode::Esc | KeyCode::Char('/'))
+            && self.pending_search_target.take().is_some()
+        {
+            self.pending_jump = None;
+            self.refiner = None;
+        }
+        if self
+            .reading
+            .input_key(code, modifiers, self.document.document(), &links)
+        {
+            return Ok(true);
+        }
+        if modifiers.contains(KeyModifiers::CONTROL) && code == KeyCode::Char('c') {
+            return Ok(false);
+        }
+        if modifiers.contains(KeyModifiers::ALT) {
+            return Ok(false);
+        }
+        if code == KeyCode::Esc {
+            self.reading.cancel(&links);
+            return Ok(true);
+        }
+        if code == KeyCode::Char('/') && !modifiers.contains(KeyModifiers::CONTROL) {
+            self.reading.start_input();
+            return Ok(true);
+        }
+        if matches!(code, KeyCode::Char('n' | 'N')) && !modifiers.contains(KeyModifiers::CONTROL) {
+            self.reading
+                .navigate(self.document.document(), &links, code == KeyCode::Char('N'));
+            return Ok(true);
+        }
+        if !body {
+            return Ok(false);
+        }
+        let area = ContentArea::new(self.content_x, self.geometry.content_width);
+        if code == KeyCode::Char('v') && !modifiers.contains(KeyModifiers::CONTROL) {
+            self.reading.selection.toggle(self.presenter.screen(), area);
+            self.pause_following();
+            return Ok(true);
+        }
+        if !self.reading.selection.active() {
+            return Ok(false);
+        }
+        if matches!(
+            code,
+            KeyCode::End | KeyCode::Home | KeyCode::Tab | KeyCode::BackTab
+        ) {
+            self.reading.selection.suspend();
+            return Ok(false);
+        }
+        match code {
+            KeyCode::Char(' ') => self.reading.selection.toggle_extension(),
+            KeyCode::Char('y' | 'Y') => self.reading.start_copy(
+                self.document.document(),
+                if code == KeyCode::Char('Y') {
+                    CopyKind::Source
+                } else {
+                    CopyKind::Visible
+                },
+                self.geometry.content_width,
+            ),
+            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
+                if !modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                let direction = match code {
+                    KeyCode::Left => CursorMove::Left,
+                    KeyCode::Right => CursorMove::Right,
+                    KeyCode::Up => CursorMove::Up,
+                    _ => CursorMove::Down,
+                };
+                self.pause_following();
+                if let Some(edge) = self.reading.selection.move_cursor(
+                    self.presenter.screen(),
+                    area,
+                    direction,
+                    modifiers.contains(KeyModifiers::SHIFT),
+                ) {
+                    let moved = if matches!(edge, CursorMove::Left | CursorMove::Up) {
+                        self.scroll_up(1)?
+                    } else {
+                        self.scroll_down(1)?
+                    };
+                    if !moved {
+                        self.reading.selection.cancel_motion();
+                    }
+                }
+            }
+            _ => return Ok(false),
+        }
+        Ok(true)
+    }
+
+    pub fn advance_reading<W: Write + ?Sized>(&mut self, writer: &mut W, budget: &mut Budget) {
+        let links = self.viewport.shared_links();
+        if let Some(source) = self.reading.advance(
+            self.document.document(),
+            &links,
+            budget,
+            writer,
+            self.viewport.table_widths_mut(),
+        ) {
+            self.viewport.pause_following();
+            self.pending_jump = Some(source);
+            self.pending_search_target = Some((source, false));
+            self.body_dirty = true;
+        }
     }
 
     #[must_use]
@@ -345,9 +483,14 @@ impl FrameRuntime {
         &mut self,
         policy: super::table_widths::TableWidthPolicy,
     ) -> Result<bool, FrameError> {
-        Ok(self
+        let changed = self
             .viewport
-            .set_table_policy(self.document.document(), policy)?)
+            .set_table_policy(self.document.document(), policy)?;
+        if changed {
+            self.body_dirty = true;
+            self.reading.view_changed();
+        }
+        Ok(changed)
     }
 
     pub fn pan_table(&mut self, delta: isize) -> Result<bool, FrameError> {
@@ -365,6 +508,8 @@ impl FrameRuntime {
             first,
         )?;
         if changed {
+            self.body_dirty = true;
+            self.reading.view_changed();
             self.reconcile_scrolled_source = true;
         }
         Ok(changed)
@@ -482,7 +627,7 @@ impl FrameRuntime {
     }
 
     pub fn has_pending_jump(&self) -> bool {
-        self.pending_jump.is_some()
+        self.pending_jump.is_some() || self.pending_search_target.is_some()
     }
 
     pub fn viewport(&self) -> &ViewportState {
@@ -516,6 +661,7 @@ impl FrameRuntime {
         position: HistoryPosition,
         budget: &mut Budget,
     ) -> Result<HistoryRestoreStatus, FrameError> {
+        self.body_dirty = true;
         self.cancel_end()?;
         let target = match self.refine_target(position.source, budget)? {
             RefineTarget::Ready(target) => target,
@@ -575,6 +721,8 @@ impl FrameRuntime {
     }
 
     pub fn seek_end(&mut self, follow: bool) -> Result<bool, FrameError> {
+        self.pending_search_target = None;
+        self.body_dirty = true;
         self.pending_jump = None;
         self.refiner = None;
         self.reconcile_scrolled_source = true;
@@ -599,13 +747,20 @@ impl FrameRuntime {
 
     pub fn cancel_end(&mut self) -> Result<bool, FrameError> {
         let changed = self.viewport.cancel_end();
-        if self.viewport.viewport_rows() != self.geometry.rows {
-            self.viewport.set_viewport_rows(self.geometry.rows)?;
+        let rows = if self.reading.status_visible() {
+            self.geometry.rows.saturating_sub(1).max(1)
+        } else {
+            self.geometry.rows
+        };
+        if self.viewport.viewport_rows() != rows {
+            self.viewport.set_viewport_rows(rows)?;
         }
         Ok(changed)
     }
 
     pub fn scroll_down(&mut self, rows: u64) -> Result<bool, FrameError> {
+        self.pending_search_target = None;
+        self.body_dirty = true;
         self.cancel_end()?;
         self.pending_jump = None;
         self.refiner = None;
@@ -618,6 +773,8 @@ impl FrameRuntime {
     }
 
     pub fn scroll_up(&mut self, rows: u64) -> Result<bool, FrameError> {
+        self.pending_search_target = None;
+        self.body_dirty = true;
         self.cancel_end()?;
         self.pending_jump = None;
         self.refiner = None;
@@ -638,6 +795,12 @@ impl FrameRuntime {
     }
 
     pub fn apply_update(&mut self, update: &Update) -> Result<(), FrameError> {
+        if self.pending_search_target.take().is_some() {
+            self.pending_jump = None;
+            self.refiner = None;
+        }
+        self.body_dirty = true;
+        self.reading.changed(self.document.document().revision());
         let document = self.document.document();
         let applied = self.viewport.apply_update(document, update)?;
         if applied.previous_revision != applied.revision {
@@ -664,9 +827,13 @@ impl FrameRuntime {
     }
 
     pub fn resize(&mut self, rows: u16, cols: u16) -> Result<FrameResize, FrameError> {
+        self.body_dirty = true;
         if rows == 0 || cols == 0 {
             return Err(FrameError::InvalidGeometry);
         }
+        let reading_source = (self.reading.selection.active() || !self.reading.query().is_empty())
+            .then(|| self.top_source())
+            .flatten();
         let previous_rows = self.geometry.rows;
         let previous_cols = self.geometry.cols;
         let previous_content_width = self.geometry.content_width;
@@ -680,6 +847,7 @@ impl FrameRuntime {
         let terminal_changed = rows != previous_rows || cols != previous_cols;
 
         if width_changed {
+            self.reading.width_changed();
             self.viewport
                 .set_content_width(self.document.document(), content_width)?;
         }
@@ -702,6 +870,13 @@ impl FrameRuntime {
         self.content_x = sidebar_width;
         self.sidebar_width = sidebar_width;
         self.sidebar_visible = sidebar_visible;
+        if (width_changed || height_changed)
+            && !self.viewport.following()
+            && let Some(source) = reading_source
+        {
+            self.pending_jump = Some(source);
+            self.refiner = None;
+        }
         if width_changed
             || x_changed
             || height_changed
@@ -726,6 +901,9 @@ impl FrameRuntime {
     }
 
     pub fn set_content_width(&mut self, width: u16) -> Result<ContentWidthChange, FrameError> {
+        if width != self.geometry.content_width {
+            self.reading.width_changed();
+        }
         if width == 0 {
             return Err(FrameError::InvalidGeometry);
         }
@@ -772,6 +950,9 @@ impl FrameRuntime {
             return Err(FrameError::InvalidGeometry);
         }
         let previous_x = self.content_x;
+        if width != self.geometry.content_width {
+            self.reading.width_changed();
+        }
         let change = self
             .viewport
             .set_content_width(self.document.document(), width)?;
@@ -779,6 +960,7 @@ impl FrameRuntime {
         self.geometry.content_width = width;
         self.content_x = content_x;
         if geometry_changed {
+            self.body_dirty = true;
             self.presenter.reset_baseline()?;
             self.sidebar = None;
             self.links = None;
@@ -792,6 +974,78 @@ impl FrameRuntime {
         budget: &mut Budget,
     ) -> Result<FrameCommit, FrameError> {
         let started = Instant::now();
+        let rows = if self.reading.status_visible() || self.viewport.following() {
+            self.geometry.rows.saturating_sub(1).max(1)
+        } else {
+            self.geometry.rows
+        };
+        if self.reading.status_visible() && self.viewport.viewport_rows() != rows {
+            self.viewport.set_viewport_rows(rows)?;
+        }
+        if self.reading_edge_scroll
+            && budget.charge(WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..WorkLimit::default()
+            })
+        {
+            self.reading_edge_scroll = false;
+            if let Some(direction) = self.reading.selection.pending_motion() {
+                let moved = if matches!(
+                    direction,
+                    crate::reading::CursorMove::Left | crate::reading::CursorMove::Up
+                ) {
+                    self.scroll_up(1)?
+                } else {
+                    self.scroll_down(1)?
+                };
+                if !moved {
+                    self.reading.selection.cancel_motion();
+                }
+            }
+        }
+        let clipboard_before = self.reading.clipboard_bytes();
+        let reading_first = self.reading_first;
+        self.reading_first = !reading_first;
+        if reading_first {
+            self.advance_reading(writer, budget);
+        }
+        let clipboard_bytes = self.reading.clipboard_bytes() - clipboard_before;
+        if let Some((source, false)) = self.pending_search_target {
+            if !budget.charge(WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..WorkLimit::default()
+            }) {
+                return Ok(FrameCommit {
+                    status: Some(ViewportFrameStatus::BudgetExhausted),
+                    bytes: clipboard_bytes,
+                    metrics: FrameMetrics {
+                        layout_budget: budget.used(),
+                        clipboard_bytes,
+                        output_bytes: clipboard_bytes,
+                        ..FrameMetrics::default()
+                    },
+                    ..FrameCommit::default()
+                });
+            }
+            let document = self.document.document();
+            if let Some(id) = document.table_at(source)
+                && let Some(table) = document.table(id)
+                && let Some(row) = table.row_at(source).and_then(|row| table.row(row))
+            {
+                let column = row.cells.partition_point(|cell| cell.source.end <= source);
+                if row
+                    .cells
+                    .get(column)
+                    .is_some_and(|cell| cell.source.start <= source)
+                    && self.viewport.set_table_first_column(document, id, column)?
+                {
+                    self.reading.view_changed();
+                }
+            }
+            self.pending_search_target = Some((source, true));
+        }
         if let Some(source) = self.pending_jump
             && matches!(
                 self.refine_source_to_top(source, budget)?,
@@ -800,15 +1054,34 @@ impl FrameRuntime {
         {
             return Ok(FrameCommit {
                 status: Some(ViewportFrameStatus::BudgetExhausted),
+                bytes: clipboard_bytes,
                 metrics: FrameMetrics {
                     layout_budget: budget.used(),
+                    clipboard_bytes,
+                    output_bytes: clipboard_bytes,
                     frame_elapsed: started.elapsed(),
                     ..FrameMetrics::default()
                 },
                 ..FrameCommit::default()
             });
         }
-        let frame = self.viewport.frame(self.document.document(), budget)?;
+        if self.pending_jump.is_none() {
+            self.pending_search_target = None;
+        }
+        let frame = if !self.body_dirty
+            && self.reading.status_visible()
+            && self
+                .cached_body
+                .as_ref()
+                .is_some_and(|frame| frame.matches(self.document.document()))
+        {
+            let mut frame = self.cached_body.as_ref().unwrap().clone();
+            frame.lines.truncate(usize::from(rows));
+            frame.rows = frame.rows.min(rows);
+            frame
+        } else {
+            self.viewport.frame(self.document.document(), budget)?
+        };
         if !matches!(
             frame.status,
             ViewportFrameStatus::Ready | ViewportFrameStatus::EndOfDocument
@@ -816,8 +1089,11 @@ impl FrameRuntime {
             return Ok(FrameCommit {
                 status: Some(frame.status),
                 rows: frame.rows,
+                bytes: clipboard_bytes,
                 metrics: FrameMetrics {
-                    layout_budget: frame.stats.layout_budget,
+                    layout_budget: budget.used(),
+                    clipboard_bytes,
+                    output_bytes: clipboard_bytes,
                     planned_tiles: frame.stats.planned_tiles,
                     visible_tiles: frame.stats.visible_tiles,
                     recovery_tiles: frame.stats.replay_tiles,
@@ -829,7 +1105,16 @@ impl FrameRuntime {
             });
         }
         self.prepare_sidebar(budget)?;
-        self.commit_frame_started(writer, &frame, started)
+        if !reading_first {
+            self.advance_reading(writer, budget);
+        }
+        let clipboard_bytes = self.reading.clipboard_bytes() - clipboard_before;
+        let mut commit = self.commit_frame_started(writer, &frame, started)?;
+        commit.metrics.layout_budget = budget.used();
+        commit.metrics.clipboard_bytes = clipboard_bytes;
+        commit.metrics.output_bytes += clipboard_bytes;
+        commit.bytes += clipboard_bytes;
+        Ok(commit)
     }
 
     pub fn commit_frame<W: Write + ?Sized>(
@@ -864,6 +1149,21 @@ impl FrameRuntime {
                     width = usize::from(self.geometry.content_width)
                 )
             });
+        let cursor_visible = self.reading.selection.cursor().is_some_and(|cursor| {
+            frame.lines.iter().flat_map(|line| &line.cells).any(|cell| {
+                cell.source
+                    .is_some_and(|source| crate::reading::overlaps(source, cursor))
+            })
+        });
+        self.reading.selection.set_visible(cursor_visible);
+        let match_visible = self.reading.current_match().is_some_and(|hit| {
+            frame.lines.iter().flat_map(|line| &line.cells).any(|cell| {
+                cell.source
+                    .is_some_and(|source| crate::reading::overlaps(source, hit.source))
+            })
+        });
+        self.reading.set_match_visible(match_visible);
+        let reading_status = self.reading.status();
         let commit = self.presenter.commit(
             writer,
             self.document.document(),
@@ -874,13 +1174,28 @@ impl FrameRuntime {
                 sidebar_width: self.sidebar_width,
                 sidebar: self.sidebar.as_ref(),
                 focused_link: self.link_focus,
-                notice: self.notice.or(table_notice.as_deref()),
+                notice: reading_status
+                    .as_deref()
+                    .or(self.notice)
+                    .or(table_notice.as_deref()),
                 following: self.viewport.following(),
-                table_notice: self.notice.is_none() && table_notice.is_some(),
+                table_notice: reading_status.is_none()
+                    && self.notice.is_none()
+                    && table_notice.is_some(),
+                selection: self.reading.selection.range(),
+                cursor: self
+                    .reading
+                    .selection
+                    .active()
+                    .then(|| self.reading.selection.cursor())
+                    .flatten(),
+                search: self.reading.current_match().map(|hit| hit.source),
             },
             started,
         )?;
         if commit.committed {
+            self.cached_body = Some(frame.clone());
+            self.body_dirty = false;
             if let Some(anchor) = frame.top.anchor()
                 && let Some(row) = self.viewport.heights().row_of(anchor)
             {
@@ -902,6 +1217,11 @@ impl FrameRuntime {
                 }
             }
             self.rebuild_link_table();
+            self.reading.selection.reproject(
+                self.presenter.screen(),
+                ContentArea::new(self.content_x, self.geometry.content_width),
+            );
+            self.reading_edge_scroll = self.reading.selection.pending_motion().is_some();
         }
         Ok(commit)
     }
@@ -1297,6 +1617,7 @@ impl FrameRuntime {
         source: usize,
         budget: &mut Budget,
     ) -> Result<RefineJump, FrameError> {
+        self.body_dirty = true;
         self.cancel_end()?;
         match self.refine_target(source, budget)? {
             RefineTarget::Ready(target) => {
@@ -1368,6 +1689,13 @@ impl FrameRuntime {
             self.refiner = None;
         }
         let shared_links = self.viewport.shared_links();
+        let table_navigation = (self.pending_search_target.is_some() && self.refiner.is_none())
+            .then(|| {
+                (
+                    self.viewport.table_widths().policy(),
+                    self.viewport.table_widths().column_positions(),
+                )
+            });
         let progress = {
             let (heights, checkpoints) = self.viewport.layout_parts_mut();
             if self.refiner.is_none() {
@@ -1377,6 +1705,16 @@ impl FrameRuntime {
                     return Ok(RefineTarget::Failed);
                 };
                 refiner.set_links(shared_links);
+                if let Some((policy, positions)) = &table_navigation {
+                    refiner
+                        .set_table_navigation(
+                            document,
+                            *policy,
+                            positions,
+                            usize::from(self.geometry.rows),
+                        )
+                        .map_err(|error| FrameError::Viewport(ViewportError::FirstFrame(error)))?;
+                }
                 self.refiner = Some(refiner);
             }
             let Ok(progress) = self.refiner.as_mut().expect("created refiner").advance(
@@ -1469,6 +1807,7 @@ impl FramePresenter {
     ) -> Result<FrameCommit, FrameError> {
         self.paint(frame, layout)?;
         self.paint_link_focus(layout)?;
+        self.paint_reading(layout)?;
         self.paint_notice(layout)?;
         let cleared = !self.first_clear_sent;
         let full_repaint = self.full_repaint;
@@ -1512,6 +1851,7 @@ impl FramePresenter {
             diff_rows: diff.rows_changed,
             output_bytes: bytes,
             body_bytes: output.bytes,
+            clipboard_bytes: 0,
             layout: frame.stats.layout,
             frame_elapsed: started.elapsed(),
         };
@@ -1653,6 +1993,48 @@ impl FramePresenter {
         Ok(())
     }
 
+    fn paint_reading(&mut self, layout: FramePaintLayout<'_>) -> Result<(), FrameError> {
+        for row in 0..self.screen.rows() {
+            for col in layout.content_x
+                ..layout
+                    .content_x
+                    .saturating_add(layout.content_width)
+                    .min(self.screen.cols())
+            {
+                let Some(cell) = self.screen.cell(row, col) else {
+                    continue;
+                };
+                if cell.is_continuation() {
+                    continue;
+                }
+                let Some(source) = cell.source() else {
+                    continue;
+                };
+                let mut style = cell.style();
+                if layout
+                    .search
+                    .is_some_and(|hit| crate::reading::overlaps(source, hit))
+                {
+                    style = style.with(StyleRole::SEARCH);
+                }
+                if layout
+                    .selection
+                    .is_some_and(|range| crate::reading::overlaps(source, range))
+                {
+                    style = style.with(StyleRole::SELECTION);
+                }
+                if layout
+                    .cursor
+                    .is_some_and(|cursor| crate::reading::overlaps(source, cursor))
+                {
+                    style = style.with(StyleRole::CURSOR);
+                }
+                self.screen.set_cell_style(row, col, style)?;
+            }
+        }
+        Ok(())
+    }
+
     fn paint_notice(&mut self, layout: FramePaintLayout<'_>) -> Result<(), FrameError> {
         let follow_notice = layout.following.then(|| {
             let mut message = String::from(if layout.table_notice {
@@ -1679,6 +2061,9 @@ impl FramePresenter {
         let width = usize::from(right.saturating_sub(layout.content_x));
         if width == 0 {
             return Ok(());
+        }
+        for col in layout.content_x..right {
+            self.screen.write_cell(row, col, Cell::blank())?;
         }
         let fit = fit_prefix(message, width);
         let mut cursor = TextCursor::new(layout.content_x);

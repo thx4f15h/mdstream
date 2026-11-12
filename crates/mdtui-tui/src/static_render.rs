@@ -132,12 +132,20 @@ fn encode_row(
         return;
     }
 
+    // Code block bytes historically group padding and body in one SGR run.
+    // Source metadata now identifies selectable glyphs without changing that
+    // raw ANSI contract; inline code in other blocks keeps source boundaries.
+    let code_row = screen
+        .line_source(row)
+        .and_then(|source| source.block)
+        .and_then(|id| document.block(id))
+        .is_some_and(|block| matches!(block.kind, BlockKind::Code { .. }));
     let mut segment = RawSegment::new(&cells[0]);
     for cell in &cells[1..end] {
         if cell.is_continuation() {
             continue;
         }
-        if segment.accepts(cell) {
+        if segment.accepts(cell, code_row) {
             segment.text.push_str(cell.text());
         } else {
             segment.write(output, document, link_mode);
@@ -164,11 +172,11 @@ impl RawSegment {
         }
     }
 
-    fn accepts(&mut self, cell: &Cell) -> bool {
+    fn accepts(&mut self, cell: &Cell, code_row: bool) -> bool {
         if self.style != cell.style() || self.link_id != cell.link_id() {
             return false;
         }
-        if self.style == StyleRole::DEFAULT {
+        if code_row || self.style == StyleRole::DEFAULT {
             self.last_source = cell.source();
             return true;
         }

@@ -1014,6 +1014,10 @@ impl StreamEngine {
                 self.record_commit(&commit);
                 return Ok(Some(commit));
             }
+            self.metrics.output_bytes = self
+                .metrics
+                .output_bytes
+                .saturating_add(commit.metrics.clipboard_bytes);
             return Ok(None);
         }
 
@@ -1045,6 +1049,10 @@ impl StreamEngine {
             self.record_commit(&commit);
             return Ok(Some(commit));
         }
+        self.metrics.output_bytes = self
+            .metrics
+            .output_bytes
+            .saturating_add(commit.metrics.clipboard_bytes);
         Ok(None)
     }
 
@@ -1056,7 +1064,10 @@ impl StreamEngine {
 
     fn record_commit(&mut self, commit: &FrameCommit) {
         self.metrics.record_frame(commit.metrics);
-        if self.runtime.sidebar_pending() {
+        if self.runtime.sidebar_pending()
+            || self.runtime.reading().pending()
+            || self.runtime.has_pending_jump()
+        {
             self.force_render = true;
         }
     }

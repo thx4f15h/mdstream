@@ -127,11 +127,37 @@ pub struct SourceRefiner {
     status: RefineStatus,
     first: FirstFrame,
     result: Option<Option<RefinedTarget>>,
+    finish_line: usize,
+    finish_cell: usize,
+    finish_started: bool,
+    finish_candidate: Option<(usize, crate::screen::LineSource)>,
+    finish_first: Option<(usize, crate::screen::LineSource)>,
+    finish_content: Option<(usize, crate::screen::LineSource)>,
 }
 
 impl SourceRefiner {
     pub fn set_links(&mut self, links: crate::render::objects::SharedLinks) {
         self.first.set_links(links);
+    }
+
+    pub(crate) fn set_table_navigation(
+        &mut self,
+        document: &Document,
+        policy: crate::render::table_widths::TableWidthPolicy,
+        positions: &[(mdtui3::TableId, usize)],
+        rows: usize,
+    ) -> Result<(), FirstFrameError> {
+        self.first.set_table_options(document, policy, positions)?;
+        if let Some(tile) = document.tile_at(self.lookup_source) {
+            self.first
+                .set_table_view(crate::render::table_window::TableView {
+                    anchor: Anchor { tile, offset: 0 },
+                    source: Some(self.lookup_source),
+                    rows,
+                    tail: None,
+                });
+        }
+        Ok(())
     }
 
     pub fn new(
@@ -258,6 +284,12 @@ impl SourceRefiner {
             status,
             first,
             result: None,
+            finish_line: 0,
+            finish_cell: 0,
+            finish_started: false,
+            finish_candidate: None,
+            finish_first: None,
+            finish_content: None,
         })
     }
 
@@ -301,7 +333,7 @@ impl SourceRefiner {
             FirstFrameStatus::PendingScan => Ok(RefineProgress::PendingScan),
             FirstFrameStatus::BudgetExhausted => Ok(RefineProgress::BudgetExhausted),
             FirstFrameStatus::Covered | FirstFrameStatus::EndOfDocument => {
-                self.finish(heights, checkpoints)
+                self.finish(heights, checkpoints, budget)
             }
         }
     }
@@ -310,6 +342,7 @@ impl SourceRefiner {
         &mut self,
         heights: &mut HeightIndex,
         checkpoints: &mut RenderCheckpointStore,
+        budget: &mut Budget,
     ) -> Result<RefineProgress, RefineError> {
         if matches!(self.status, RefineStatus::ReplayFrom { .. }) && !self.first.replay_used() {
             self.status = RefineStatus::Approximate;
@@ -317,32 +350,69 @@ impl SourceRefiner {
         let sink = self.first.sink().ok_or(RefineError::Inconsistent(
             "source refinement sink is missing",
         ))?;
-        let mut candidate = None;
-        for (index, line) in self.first.lines().iter().enumerate() {
-            let Some(source) = line.source else {
-                continue;
-            };
-            if source.block != Some(self.block) {
-                continue;
+        let lines = self.first.lines();
+        while let Some(line) = lines.get(self.finish_line) {
+            if !self.finish_started {
+                if !budget.charge(mdtui3::WorkLimit {
+                    queries: 1,
+                    objects: 1,
+                    ..Default::default()
+                }) {
+                    return Ok(RefineProgress::BudgetExhausted);
+                }
+                self.finish_started = true;
+                if let Some(source) = line
+                    .source
+                    .filter(|source| source.block == Some(self.block))
+                {
+                    self.finish_first.get_or_insert((self.finish_line, source));
+                    if source.source.start <= self.lookup_source {
+                        self.finish_candidate = Some((self.finish_line, source));
+                    }
+                }
             }
-            if source.source.start <= self.lookup_source {
-                candidate = Some((index, source));
+            if let Some(source) = line
+                .source
+                .filter(|source| source.block == Some(self.block))
+            {
+                while let Some(cell) = line.cells.get(self.finish_cell) {
+                    if !budget.charge(mdtui3::WorkLimit {
+                        queries: 1,
+                        objects: 1,
+                        ..Default::default()
+                    }) {
+                        return Ok(RefineProgress::BudgetExhausted);
+                    }
+                    self.finish_cell += 1;
+                    if let Some(mapped) = cell.source.filter(|mapped| !mapped.is_empty()) {
+                        if source.source.start <= self.lookup_source
+                            && self.lookup_source < source.source.end
+                        {
+                            self.finish_content
+                                .get_or_insert((self.finish_line, source));
+                        }
+                        if mapped.start <= self.lookup_source && self.lookup_source < mapped.end {
+                            self.finish_candidate = Some((self.finish_line, source));
+                            self.finish_content = self.finish_candidate;
+                            self.finish_line = lines.len();
+                            break;
+                        }
+                    }
+                }
             }
+            if self.finish_line == lines.len() {
+                break;
+            }
+            self.finish_line += 1;
+            self.finish_cell = 0;
+            self.finish_started = false;
         }
-        // A source target can lie in hidden opening syntax before the first
-        // visible glyph. Resolve it to this block's first prepared line without
-        // calling an unbudgeted global next_visible query.
-        let candidate = candidate.or_else(|| {
-            self.first
-                .lines()
-                .iter()
-                .enumerate()
-                .find_map(|(index, line)| {
-                    line.source
-                        .filter(|source| source.block == Some(self.block))
-                        .map(|source| (index, source))
-                })
-        });
+        // Real mapped cells take precedence over table borders sharing a row's
+        // source envelope. A clipped target falls back to that row's content.
+        let candidate = self
+            .finish_content
+            .or(self.finish_candidate)
+            .or(self.finish_first);
         let Some((line_index, line_source)) = candidate else {
             self.result = Some(None);
             return Ok(RefineProgress::NotFound);

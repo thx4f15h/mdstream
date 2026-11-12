@@ -152,6 +152,21 @@ pub const MONOKAI: Theme = Theme {
 impl Theme {
     #[must_use]
     pub fn resolve(&self, role: StyleRole) -> ResolvedStyle {
+        let mut style = self.resolve_base(role);
+        if role.contains(StyleRole::SEARCH) {
+            style.background = Some(Rgb::new(100, 75, 0));
+        }
+        if role.contains(StyleRole::SELECTION) {
+            style.background = Some(Rgb::new(35, 65, 110));
+        }
+        if role.contains(StyleRole::CURSOR) {
+            style.background = Some(Rgb::new(100, 50, 110));
+            style.bold = true;
+        }
+        style
+    }
+
+    fn resolve_base(&self, role: StyleRole) -> ResolvedStyle {
         let heading_level = role.heading_level();
         if role.contains(StyleRole::HEADING) {
             let level = heading_level.unwrap_or(1);

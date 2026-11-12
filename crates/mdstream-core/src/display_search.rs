@@ -148,10 +148,45 @@ impl DisplaySearch {
         budget: &mut Budget,
         mut emit: impl FnMut(DisplayMatch),
     ) -> Result<Completion, LayoutError> {
+        self.advance_impl(document, None, budget, |hit| {
+            emit(hit);
+            true
+        })
+    }
+
+    /// Return at most one overlapping match, borrowing the caller's shared
+    /// resolver. `Covered` means one match; `EndOfDocument` means no more hits.
+    /// Budget exhaustion preserves all pending matcher state, including UTF-8
+    /// bytes. No hit list or historical resolver is retained by this operation.
+    pub fn next_with_resolver(
+        &mut self,
+        document: &Document,
+        resolver: &mut crate::LinkResolver,
+        budget: &mut Budget,
+    ) -> Result<(Completion, Option<DisplayMatch>), LayoutError> {
+        let mut hit = None;
+        let completion = self.advance_impl(document, Some(resolver), budget, |found| {
+            hit = Some(found);
+            false
+        })?;
+        Ok((completion, hit))
+    }
+
+    fn advance_impl(
+        &mut self,
+        document: &Document,
+        mut resolver: Option<&mut crate::LinkResolver>,
+        budget: &mut Budget,
+        mut emit: impl FnMut(DisplayMatch) -> bool,
+    ) -> Result<Completion, LayoutError> {
         self.validate(document)?;
         loop {
             if self.pending_position == self.pending_len {
-                match self.cursor.next(document, budget)? {
+                let step = match resolver.as_deref_mut() {
+                    Some(resolver) => self.cursor.next_with_resolver(document, resolver, budget)?,
+                    None => self.cursor.next(document, budget)?,
+                };
+                match step {
                     DisplayStep::Run(run) => {
                         if run.style.contains(Style::HIDDEN) || run.text.is_empty() {
                             continue;
@@ -191,11 +226,13 @@ impl DisplaySearch {
             if equal {
                 self.matched += 1;
                 if complete {
-                    emit(DisplayMatch {
+                    self.matched = self.failure[self.matched - 1];
+                    if !emit(DisplayMatch {
                         display: self.display_position - self.pattern.len()..self.display_position,
                         source: Span::new(self.sources[self.next_source].start, source.end),
-                    });
-                    self.matched = self.failure[self.matched - 1];
+                    }) {
+                        return Ok(Completion::Covered);
+                    }
                 }
             }
         }

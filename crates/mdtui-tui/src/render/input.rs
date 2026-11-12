@@ -334,7 +334,7 @@ pub(crate) fn display_glyphs<'a>(parts: impl Iterator<Item = GlyphInput<'a>>) ->
         {
             first.source.start + grapheme.start - first_start
         } else {
-            first.source.start
+            first.replacement.unwrap_or(first.source).start
         };
         let mut last_index = index;
         while spans[last_index].1 < grapheme.end {
@@ -347,7 +347,7 @@ pub(crate) fn display_glyphs<'a>(parts: impl Iterator<Item = GlyphInput<'a>>) ->
         {
             last.source.start + grapheme.end - last_start
         } else {
-            last.source.end
+            last.replacement.unwrap_or(last.source).end
         };
         glyphs.push(DisplayGlyph {
             text: grapheme.text.to_owned(),
