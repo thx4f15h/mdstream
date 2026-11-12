@@ -560,6 +560,24 @@ impl TileLayoutSink {
         &self.lines
     }
 
+    /// Already prepared rows can belong to a physical tile outside the copy
+    /// window. Reading them preserves table ownership without expanding the
+    /// window across an arbitrarily large row envelope.
+    pub(crate) fn prepared_copy_row(
+        &self,
+        block: BlockId,
+        index: usize,
+    ) -> Option<(&SinkLine, bool)> {
+        let PreparedContent::Rows(rows) = &self.blocks.get(&block)?.content else {
+            return None;
+        };
+        let row = rows.get(index)?;
+        Some((
+            &row.line,
+            row.owner_tile < self.tile_start || row.owner_tile >= self.tile_end,
+        ))
+    }
+
     /// Translate an anchor's tile-local row offset using already prepared
     /// prefix geometry. A preceding paragraph may share this tile with a table.
     pub(crate) fn corrected_table_source(

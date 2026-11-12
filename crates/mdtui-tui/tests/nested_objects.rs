@@ -722,3 +722,151 @@ fn million_byte_code_failure_replay_does_not_turn_visible_image_layout_into_a_pr
         first.sink_stats().unwrap()
     );
 }
+
+#[test]
+fn conditional_styles_share_tui_memo_retirement_and_far_prefix_cache_invalidation() {
+    let mut d = doc(&format!("*{} [x* z]\n\n", "a".repeat(20_000)));
+    let links = SharedLinks::new(&d);
+    let config = FirstFrameConfig {
+        top_tile: TileId(0),
+        tile_limit: 1,
+        width: 80,
+        row_limit: 4,
+    };
+    let mut first = FirstFrame::new(&d, config).unwrap();
+    first.set_links(links.clone());
+    let limit = WorkLimit {
+        queries: 1,
+        objects: 1,
+        bytes: 6,
+        tiles: 1,
+        recovery: 1,
+        dependencies: 1,
+    };
+    let before = links.stats();
+    first
+        .advance(&d, &mut Budget::new(WorkLimit::default()))
+        .unwrap();
+    assert_eq!(links.stats(), before);
+    for _ in 0..100_000 {
+        let mut b = Budget::new(limit);
+        let status = first.advance(&d, &mut b).unwrap().status;
+        assert!(b.used().queries <= 1 && b.used().objects <= 1 && b.used().bytes <= 6);
+        if matches!(
+            status,
+            FirstFrameStatus::Covered | FirstFrameStatus::EndOfDocument
+        ) {
+            break;
+        }
+    }
+    assert_eq!(links.stats().styles.events, 4);
+    let mut screen = Screen::new(4, 80, ContentArea::new(0, 80)).unwrap();
+    first.write_to_screen(&mut screen, 0).unwrap();
+    assert_eq!(screen.cell(0, 0).unwrap().text(), "a");
+    drop(first);
+    let mut state = ViewportState::new(
+        &d,
+        ViewportConfig {
+            rows: 4,
+            ..ViewportConfig::default()
+        },
+    )
+    .unwrap();
+    let old = ready(&mut state, &d);
+    assert!(text(&old).starts_with('a'));
+    let update = d.append("[x* z]: /u\n").unwrap();
+    state.apply_update(&d, &update).unwrap();
+    assert!(!old.matches(&d));
+    let new = ready(&mut state, &d);
+    assert!(text(&new).starts_with("*a"));
+    let before = links.stats();
+    assert!(
+        !links
+            .prepare(&d, &mut Budget::new(WorkLimit::default()))
+            .unwrap()
+    );
+    assert_eq!(links.stats(), before);
+    let mut paid = 0;
+    loop {
+        let mut b = Budget::new(limit);
+        let done = links.prepare(&d, &mut b).unwrap();
+        paid += b.used().objects;
+        if done {
+            break;
+        }
+    }
+    assert_eq!(paid, before.memo_entries + before.presentation_entries);
+    assert_eq!(links.stats().memo_entries, 0);
+    // The official ANSI fixtures remain immutable; this independent conditional
+    // example exercises the actual terminal output and decoded cell grid.
+    for (source, expected) in [
+        ("*foo [bar* baz]\n", "foo [bar baz]"),
+        ("*foo [bar* baz]\n\n[bar* baz]: /u\n", "*foo bar* baz"),
+    ] {
+        let d = doc(source);
+        let ansi = mdtui_tui::static_render::render_once_ansi(
+            &d,
+            80,
+            8,
+            mdtui_tui::cli::LinkMode::Default,
+        )
+        .unwrap();
+        let mut vt = vt100::Parser::new(
+            std::num::NonZeroU16::new(8).unwrap(),
+            std::num::NonZeroU16::new(80).unwrap(),
+            0,
+        );
+        vt.process(&ansi);
+        assert_eq!(vt.screen().contents().trim_end(), expected);
+    }
+}
+
+#[test]
+fn confirmed_table_displays_withdrawn_footnote_spelling_without_stalling() {
+    let d = doc(&format!(
+        "$old\nend$ [^n] {}|b\n-|-\nx|y\n\n[^n]: note\n",
+        "x".repeat(1100)
+    ));
+    assert_eq!(d.tables().len(), 1);
+    assert!(
+        d.footnote_reference_state(mdtui3::FootnoteReferenceId(0))
+            .is_none()
+    );
+    let mut first = FirstFrame::new(
+        &d,
+        FirstFrameConfig {
+            top_tile: TileId(0),
+            tile_limit: 8,
+            width: 80,
+            row_limit: 12,
+        },
+    )
+    .unwrap();
+    let mut done = false;
+    for _ in 0..1000 {
+        let result = first
+            .advance(&d, &mut Budget::new(mdtui_tui::stream::FRAME_WORK))
+            .unwrap();
+        if matches!(
+            result.status,
+            FirstFrameStatus::Covered | FirstFrameStatus::EndOfDocument
+        ) {
+            done = true;
+            break;
+        }
+    }
+    assert!(
+        done,
+        "selected table scanner must skip inactive raw arena entries"
+    );
+    let mut screen = Screen::new(12, 80, ContentArea::new(0, 80)).unwrap();
+    first.write_to_screen(&mut screen, 0).unwrap();
+    let line = (0..80)
+        .map(|x| screen.cell(4, x).unwrap().text())
+        .collect::<String>();
+    let all = (0..12)
+        .flat_map(|y| (0..80).map(move |x| (y, x)))
+        .map(|(y, x)| screen.cell(y, x).unwrap().text())
+        .collect::<String>();
+    assert!(all.contains("[^n]"), "{line} / {all}");
+}

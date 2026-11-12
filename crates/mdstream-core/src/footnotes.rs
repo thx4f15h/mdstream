@@ -12,7 +12,8 @@ pub const MAX_FOOTNOTE_LABEL_BYTES: usize = 999;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FootnoteId(pub usize);
 
-/// Stable source-ordered occurrence, distinct from the symbol it references.
+/// Stable allocation identity, distinct from the symbol it references.
+/// Active source order is provided by `Document::footnote_references_in`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FootnoteReferenceId(pub usize);
 
@@ -70,11 +71,24 @@ pub(crate) fn valid_label(label: &str) -> bool {
             .all(|c| c.is_alphanumeric() || matches!(c, '_' | '-'))
 }
 
+type ReferenceCheckpoint = (
+    usize,
+    usize,
+    BTreeMap<FootnoteId, (Option<usize>, Option<usize>, u64)>,
+);
 #[derive(Default)]
 pub(crate) struct Footnotes {
     names: BTreeMap<String, FootnoteId>,
     pub entries: Vec<Footnote>,
     pub references: Vec<FootnoteReference>,
+    active: Vec<bool>,
+    states: Vec<SyntaxState>,
+    pub(crate) next: Vec<Option<FootnoteReferenceId>>,
+    order: BTreeMap<usize, FootnoteReferenceId>,
+    checkpoint: Option<ReferenceCheckpoint>,
+    undo_peak: usize,
+    reuse_peak: usize,
+    reuse: BTreeMap<(usize, usize, FootnoteId), FootnoteReferenceId>,
     // Source-ordered continuation prefixes of winning definitions only.
     gaps: Vec<FootnoteGap>,
     // Only the active definition can defer a blank separating list children.
@@ -90,6 +104,92 @@ struct FootnoteGap {
 }
 
 impl Footnotes {
+    pub(crate) fn confirmation_peak(&self) -> usize {
+        self.undo_peak
+            .max(self.checkpoint.as_ref().map_or(0, |c| c.2.len()))
+            + self.reuse_peak.max(self.reuse.len())
+    }
+
+    pub(crate) fn begin_reference_line(&mut self) {
+        assert!(self.checkpoint.is_none());
+        self.reuse.clear();
+        self.checkpoint = Some((self.references.len(), self.numbered, BTreeMap::new()));
+    }
+    pub(crate) fn commit_reference_line(&mut self) -> u64 {
+        let Some((base, _, saved)) = self.checkpoint.take() else {
+            return 0;
+        };
+        self.undo_peak = self.undo_peak.max(saved.len());
+        for id in base..self.references.len() {
+            if self.active[id] {
+                self.states[id] = SyntaxState::Sealed;
+            }
+        }
+        (self.references.len() - base + saved.len()) as u64
+    }
+    pub(crate) fn rollback_reference_line(&mut self, update: &mut Update) -> u64 {
+        let (base, numbered, saved) = self.checkpoint.take().unwrap();
+        self.undo_peak = self.undo_peak.max(saved.len());
+        let count = self.references.len() - base + saved.len();
+        for i in base..self.references.len() {
+            assert_ne!(self.states[i], SyntaxState::Sealed);
+            let r = self.references[i];
+            self.reuse.insert(
+                (r.source.start, r.source.end, r.symbol),
+                FootnoteReferenceId(i),
+            );
+            if self.active[i] {
+                self.deactivate(FootnoteReferenceId(i));
+            }
+        }
+        for (id, (number, first_use, revision)) in saved {
+            let entry = &mut self.entries[id.0];
+            entry.number = number;
+            entry.first_use = first_use;
+            entry.revision = revision;
+            update.footnotes_changed.push(id);
+        }
+        self.reuse_peak = self.reuse_peak.max(self.reuse.len());
+        self.numbered = numbered;
+        count as u64
+    }
+    pub(crate) fn clear_reference_reuse(&mut self) -> u64 {
+        let n = self.reuse.len();
+        self.reuse.clear();
+        n as u64
+    }
+    fn activate(&mut self, id: FootnoteReferenceId) {
+        let start = self.references[id.0].source.start;
+        let next = self
+            .order
+            .range((std::ops::Bound::Excluded(start), std::ops::Bound::Unbounded))
+            .next()
+            .map(|(_, id)| *id);
+        if let Some((_, &previous)) = self.order.range(..start).next_back() {
+            self.next[previous.0] = Some(id);
+        }
+        self.next[id.0] = next;
+        self.active[id.0] = true;
+        self.order.insert(start, id);
+    }
+    fn deactivate(&mut self, id: FootnoteReferenceId) {
+        let start = self.references[id.0].source.start;
+        if let Some((_, &previous)) = self.order.range(..start).next_back() {
+            self.next[previous.0] = self.next[id.0];
+        }
+        self.order.remove(&start);
+        self.active[id.0] = false;
+        self.next[id.0] = None;
+    }
+    pub(crate) fn first_reference(&self, start: usize) -> Option<FootnoteReferenceId> {
+        self.order
+            .range(..=start)
+            .next_back()
+            .map(|(_, id)| *id)
+            .filter(|id| self.references[id.0].source.end > start)
+            .or_else(|| self.order.range(start..).next().map(|(_, id)| *id))
+    }
+
     // Callers validate bounded labels before interning. BTreeMap supplies a
     // deterministic O(log symbols) bound with a fixed maximum comparison length.
     pub fn intern(&mut self, label: &str, work: &mut Work) -> FootnoteId {
@@ -119,6 +219,11 @@ impl Footnotes {
     ) {
         work.footnote_steps += 1;
         let entry = &mut self.entries[symbol.0];
+        if let Some((_, _, saved)) = &mut self.checkpoint {
+            saved
+                .entry(symbol)
+                .or_insert((entry.number, entry.first_use, entry.revision));
+        }
         if entry.number.is_none() {
             self.numbered += 1;
             entry.number = Some(self.numbered);
@@ -127,7 +232,22 @@ impl Footnotes {
             self.revision = update.revision;
             update.footnotes_changed.push(symbol);
         }
-        self.references.push(FootnoteReference { symbol, source });
+        let id = if let Some(id) = self.reuse.remove(&(source.start, source.end, symbol)) {
+            id
+        } else {
+            let id = FootnoteReferenceId(self.references.len());
+            self.references.push(FootnoteReference { symbol, source });
+            self.active.push(false);
+            self.states.push(SyntaxState::Provisional);
+            self.next.push(None);
+            id
+        };
+        self.states[id.0] = if self.checkpoint.is_some() {
+            SyntaxState::Provisional
+        } else {
+            SyntaxState::Sealed
+        };
+        self.activate(id);
     }
 
     pub fn define(
@@ -274,17 +394,39 @@ impl Document {
         self.footnotes.entries.get(id.0)
     }
 
+    /// Stable allocation arena; pending late-header rows can contain
+    /// provisional/withdrawn occurrences. Enumerate footnote_references_in or
+    /// use footnote_reference_state before consuming an occurrence.
     pub fn footnote_references(&self) -> &[FootnoteReference] {
         &self.footnotes.references
+    }
+
+    pub fn footnote_reference_state(&self, id: FootnoteReferenceId) -> Option<SyntaxState> {
+        self.footnotes
+            .active
+            .get(id.0)
+            .copied()
+            .filter(|active| *active)?;
+        self.footnotes.states.get(id.0).copied()
+    }
+
+    /// Active source-order successor in O(1), independent of allocation order.
+    /// Obtain the first ID with `footnote_references_in`; resumable consumers
+    /// can retain that ID and follow this link after paying to resolve it.
+    /// Withdrawn or invalid IDs have no successor.
+    pub fn next_footnote_reference(&self, id: FootnoteReferenceId) -> Option<FootnoteReferenceId> {
+        self.footnote_reference_state(id)?;
+        self.footnotes.next[id.0]
     }
 
     /// O(1) construction; borrowed cursors cannot outlive the current revision.
     pub fn footnote_references_in(&self, range: Span) -> Option<FootnoteReferences<'_>> {
         self.text(range)?;
         Some(FootnoteReferences {
-            entries: &self.footnotes.references,
+            footnotes: &self.footnotes,
             range,
-            index: None,
+            current: None,
+            started: false,
             complete: range.is_empty(),
         })
     }
@@ -302,6 +444,9 @@ impl Document {
             ..WorkLimit::default()
         }) {
             return Err(Completion::BudgetExhausted);
+        }
+        if self.footnote_reference_state(id).is_none() {
+            return Ok(None);
         }
         let Some(reference) = self.footnotes.references.get(id.0) else {
             return Ok(None);
@@ -346,9 +491,10 @@ impl Document {
 }
 
 pub struct FootnoteReferences<'a> {
-    entries: &'a [FootnoteReference],
+    footnotes: &'a Footnotes,
     range: Span,
-    index: Option<usize>,
+    current: Option<FootnoteReferenceId>,
+    started: bool,
     complete: bool,
 }
 
@@ -369,15 +515,16 @@ impl FootnoteReferences<'_> {
         }) {
             return Err(Completion::BudgetExhausted);
         }
-        let index = self.index.unwrap_or_else(|| {
-            self.entries
-                .partition_point(|r| r.source.end <= self.range.start)
-        });
-        if let Some(&reference) = self.entries.get(index)
-            && reference.source.start < self.range.end
-        {
-            self.index = Some(index + 1);
-            return Ok(Some((FootnoteReferenceId(index), reference)));
+        if !self.started {
+            self.current = self.footnotes.first_reference(self.range.start);
+            self.started = true;
+        }
+        if let Some(id) = self.current {
+            let reference = self.footnotes.references[id.0];
+            if reference.source.start < self.range.end {
+                self.current = self.footnotes.next[id.0];
+                return Ok(Some((id, reference)));
+            }
         }
         self.complete = true;
         Ok(None)

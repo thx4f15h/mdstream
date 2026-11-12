@@ -95,10 +95,24 @@ pub fn hash(text: &str) -> u64 {
 }
 
 pub fn old_work(work: mdstream::Work) -> String {
-    format!("{work:?}")
-        .split(", ")
+    legacy_work(work, false)
+}
+#[allow(dead_code)]
+pub fn full_work(work: mdstream::Work) -> String {
+    legacy_work(work, true)
+}
+fn legacy_work(work: mdstream::Work, observers: bool) -> String {
+    // New publication counters are tested independently; preserve this legacy ledger.
+    let raw = format!("{work:?}");
+    let raw = format!(
+        "Work {{ {}",
+        raw.split_once("paragraph_closures:")
+            .map(|(_, rest)| format!("paragraph_closures:{rest}"))
+            .unwrap()
+    );
+    raw.split(", ")
         .filter(|field| {
-            !field.starts_with("container_eligibility_")
+            (observers || !field.starts_with("container_eligibility_"))
                 && !field.starts_with("code_fallback_")
                 && !field.starts_with("fence_candidate_")
                 && !field.starts_with("structural_prefix_")

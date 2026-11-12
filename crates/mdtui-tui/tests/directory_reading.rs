@@ -242,3 +242,91 @@ fn starting_body_edit_cancels_queued_directory_activation_without_history() {
     assert_eq!(e.runtime().reading().input(), Some("q"));
     assert!(app.history().is_empty());
 }
+
+#[test]
+fn conditional_late_title_query_preserves_body_draft_selection_and_both_copies() {
+    let mut runtime = FrameRuntime::new(
+        FrameGeometry {
+            rows: 16,
+            cols: 120,
+            content_width: 120,
+        },
+        LinkMode::NoOsc8,
+    )
+    .unwrap();
+    let u = runtime
+        .append_bytes(b"*foo [bar* baz]\n\n# *foo [bar* baz]\n\n")
+        .unwrap()
+        .unwrap();
+    runtime.apply_update(&u).unwrap();
+    let mut e = StreamEngine::new(runtime);
+    let mut app = AppState::default();
+    paint(&mut e);
+    key(&mut app, &mut e, K::Char('s'));
+    paint(&mut e);
+    key(&mut app, &mut e, K::Char('v'));
+    key(&mut app, &mut e, K::Char(' '));
+    for _ in 0..12 {
+        key(&mut app, &mut e, K::Right);
+        paint(&mut e);
+    }
+    let selected = e.runtime().reading().selection.range();
+    assert_eq!(selected, Some(mdtui3::Span::new(1, 15)));
+    for (k, packet) in [
+        ('Y', b"\x1b]52;c;Zm9vIFtiYXIqIGJhel0=\x07".as_slice()),
+        ('y', b"\x1b]52;c;Zm9vIFtiYXIgYmF6XQ==\x07".as_slice()),
+    ] {
+        key(&mut app, &mut e, K::Char(k));
+        assert!(paint(&mut e).windows(packet.len()).any(|p| p == packet));
+    }
+    key(&mut app, &mut e, K::Char('/'));
+    type_text(&mut app, &mut e, "foo");
+    key(&mut app, &mut e, K::Tab);
+    key(&mut app, &mut e, K::Char('/'));
+    type_text(&mut app, &mut e, "bar*");
+    key(&mut app, &mut e, K::Enter);
+    paint(&mut e);
+    assert!(e.runtime().directory().unwrap().entries().next().is_none());
+    assert_eq!(e.runtime().reading().input(), Some("foo"));
+    let u = e
+        .runtime_mut()
+        .append_bytes(b"[bar* baz]: /u\n")
+        .unwrap()
+        .unwrap();
+    e.runtime_mut().apply_update(&u).unwrap();
+    paint(&mut e);
+    assert_eq!(
+        e.runtime().directory().unwrap().status,
+        mdtui_tui::sidebar::directory::NameStatus::Stale
+    );
+    key(&mut app, &mut e, K::Char('/'));
+    key(&mut app, &mut e, K::Enter);
+    paint(&mut e);
+    let entry = e.runtime().directory().unwrap().entry(0).unwrap();
+    assert_eq!(entry.id, HeadingId(0));
+    assert_eq!(entry.text, "*foo bar* baz");
+    key(&mut app, &mut e, K::BackTab);
+    key(&mut app, &mut e, K::Enter);
+    paint(&mut e);
+    assert_eq!(
+        e.runtime().reading().current_match().unwrap().source,
+        mdtui3::Span::new(1, 4)
+    );
+    assert_eq!(e.runtime().reading().selection.range(), selected);
+    // Tab suspends the explicit selection mode while retaining its original
+    // range. Re-entering v is a fresh selection, not a request to copy this one.
+    assert!(!e.runtime().reading().selection.active());
+    let source = selected.unwrap();
+    assert_eq!(
+        &e.document().source()[source.start..source.end],
+        "foo [bar* baz]"
+    );
+    key(&mut app, &mut e, K::Tab);
+    key(&mut app, &mut e, K::Enter);
+    paint(&mut e);
+    app.frame_committed(&e);
+    assert_eq!(e.runtime().top_source(), Some(17));
+    assert_eq!(e.runtime().reading().selection.range(), selected);
+    assert_eq!(e.runtime().reading().query(), "foo");
+    assert_eq!(e.runtime().directory().unwrap().query(), "bar*");
+}

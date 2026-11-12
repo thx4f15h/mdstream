@@ -4,8 +4,7 @@ use mdstream::{
     BlockKind, Budget, DisplayStep, Document, LinkId, LinkKind, LinkTarget, Span, Style, WorkLimit,
 };
 
-#[path = "support/link_metadata.rs"]
-mod link_metadata;
+use ordered_emphasis::metadata as link_metadata;
 
 #[path = "support/snapshot.rs"]
 mod support;
@@ -85,7 +84,7 @@ fn check_link(doc: &Document, id: LinkId, style: Style) {
 
 // No source syntax, example number or oracle enters this adapter. Source reads
 // below only distinguish a borrowed physical paragraph LF from decoded content.
-fn project(doc: &Document) -> String {
+fn legacy_project(doc: &Document) -> String {
     assert_eq!(doc.container_count(), 0);
     assert!(doc.headings().entries().is_empty());
     // Direct links retain an interned provisional reference label; validate
@@ -165,6 +164,13 @@ fn project(doc: &Document) -> String {
     }
     assert!(seen.into_iter().all(|s| s), "unprojected object");
     html
+}
+
+#[path = "support/ordered_emphasis.rs"]
+mod ordered_emphasis;
+
+fn project(doc: &Document) -> String {
+    ordered_emphasis::project(doc, Style::EMPHASIS.union(Style::STRONG), true)
 }
 
 fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
@@ -454,7 +460,7 @@ fn strong_projection_rejects_unscored_structure_and_styles() {
         "[^f]: footnote\n",
     ] {
         assert!(
-            std::panic::catch_unwind(|| project(&parse(source))).is_err(),
+            std::panic::catch_unwind(|| legacy_project(&parse(source))).is_err(),
             "accepted {source:?}"
         );
     }

@@ -4,8 +4,7 @@ use mdstream::{
     BlockKind, Budget, DisplayStep, Document, LinkId, LinkKind, LinkTarget, Span, Style, WorkLimit,
 };
 
-#[path = "support/link_metadata.rs"]
-mod link_metadata;
+use ordered_emphasis::metadata as link_metadata;
 
 #[path = "support/snapshot.rs"]
 mod support;
@@ -91,7 +90,7 @@ fn link_outer_style(doc: &Document, id: LinkId) -> Style {
 
 // No source syntax, example number or oracle enters this adapter. Source reads
 // below only distinguish a borrowed physical paragraph LF from decoded content.
-fn project(doc: &Document) -> String {
+fn legacy_project(doc: &Document) -> String {
     assert_eq!(doc.container_count(), 0);
     assert!(doc.headings().entries().is_empty());
     // Direct links retain an interned provisional reference label; validate
@@ -189,6 +188,18 @@ fn project(doc: &Document) -> String {
 #[path = "support/partial_emphasis.rs"]
 mod partial_emphasis;
 
+#[path = "support/ordered_emphasis.rs"]
+mod ordered_emphasis;
+
+fn project(doc: &Document) -> String {
+    ordered_emphasis::project(
+        doc,
+        Style::EMPHASIS.union(Style::STRONG).union(Style::CODE),
+        true,
+    )
+}
+
+#[allow(dead_code)] // Uniform ledger states remain available after this chapter closes its gaps.
 enum Assessment {
     Supported,
     Unsupported {
@@ -204,18 +215,7 @@ enum Assessment {
 // Rejected is counted as unsupported; it never supplies repaired HTML.
 fn assessment(number: usize) -> Assessment {
     match number {
-        460 | 462 | 469..=474 | 478..=481 => Assessment::Supported,
-        461 | 463 => Assessment::Unsupported {
-            reason: "public emphasis bit does not preserve same-style nested depth",
-            observed: "<p><em>foo</em></p>\n",
-        },
-        464..=466 => Assessment::Unsupported {
-            reason: "partial consumption works, but bit-only projection omits repeated strong depth",
-            observed: "<p><strong>foo</strong></p>\n",
-        },
-        467 | 468 => Assessment::Rejected {
-            reason: "public depths record both styles, but simultaneous starts leave their order unspecified",
-        },
+        460..=474 | 478..=481 => Assessment::Supported,
         475 => Assessment::Unsupported {
             reason: "raw HTML is outside project requirements; its contents retain inline parsing",
             observed: "<p><em>&lt;img src=&quot;foo&quot; title=&quot;</em>&quot;/&gt;</p>\n",
@@ -266,7 +266,7 @@ fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
     match assessment(number) {
         Assessment::Supported => assert_eq!(project(doc), expected, "example {number}"),
         Assessment::Rejected { .. } => {
-            assert!(std::panic::catch_unwind(|| project(doc)).is_err());
+            assert!(std::panic::catch_unwind(|| legacy_project(doc)).is_err());
             partial_emphasis::check(number, doc);
         }
         Assessment::Unsupported { observed, .. } => {
@@ -308,9 +308,9 @@ fn pinned_commonmark_emphasis_final_report() {
         counts[category] += 1;
         eprintln!("example {number}: category {category} — {reason}");
     }
-    assert_eq!(counts, [12, 0, 10]);
+    assert_eq!(counts, [19, 0, 3]);
     eprintln!(
-        "CommonMark 0.31.2 Emphasis subset 460–481: 12 supported, 0 deliberate differences, 10 unsupported; chapter scoring complete, compatibility incomplete"
+        "CommonMark 0.31.2 Emphasis subset 460–481: 19 supported, 0 deliberate differences, 3 unsupported; chapter scoring complete, compatibility incomplete"
     );
 }
 
@@ -527,7 +527,7 @@ fn nesting_projection_preserves_visible_runs_and_rejects_ambiguous_order() {
         "[^f]: footnote\n",
     ] {
         assert!(
-            std::panic::catch_unwind(|| project(&parse(source))).is_err(),
+            std::panic::catch_unwind(|| legacy_project(&parse(source))).is_err(),
             "accepted {source:?}"
         );
     }
@@ -586,7 +586,7 @@ fn late_precedence_closure_preserves_block_and_link_identity() {
             format!("__{body}end<a href=\"https://foo.bar/?q=__\">https://foo.bar/?q=__</a>"),
         ),
         ("***", "***", format!("***{body}end***")),
-        ("*_", "_*", format!("<em>{body}end</em>")),
+        ("*_", "_*", format!("<em><em>{body}end</em></em>")),
     ] {
         let mut current = format!("{open}{body}end");
         let mut doc = Document::new();
@@ -614,10 +614,14 @@ fn late_precedence_closure_preserves_block_and_link_identity() {
         assert_eq!(doc.block_at(0), Some(block));
         assert_eq!(doc.link_info(LinkId(0)).copied(), link_info);
         if open == "***" {
-            assert!(std::panic::catch_unwind(|| project(&doc)).is_err());
+            assert!(std::panic::catch_unwind(|| legacy_project(&doc)).is_err());
             let at = doc.source().find('中').unwrap();
             let run = doc.runs_in(Span::new(at, at + 3)).unwrap().next().unwrap();
             assert_eq!((run.emphasis_depth, run.strong_depth), (1, 1));
+            assert_eq!(
+                project(&doc),
+                format!("<p><em><strong>{body}end</strong></em>!</p>\n")
+            );
         } else {
             assert_eq!(project(&doc), format!("<p>{content}!</p>\n"));
         }

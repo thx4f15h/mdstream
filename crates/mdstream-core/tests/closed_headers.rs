@@ -1,3 +1,5 @@
+#[path = "support/header_confirmation.rs"]
+mod header_oracle;
 use mdstream::*;
 
 fn parse(source: &str) -> Document {
@@ -50,7 +52,10 @@ fn isolated_closures_match_independent_early_header_semantics() {
                     late.footnote_references().len(),
                     early.footnote_references().len()
                 );
-                assert!(late.work().inline_bytes <= late.source().len() as u64);
+                assert!(
+                    late.work().inline_bytes
+                        <= late.source().len() as u64 + late.work().header_replay_bytes
+                );
             }
         }
     }
@@ -86,7 +91,13 @@ fn only_cross_line_effects_wait_while_local_semantics_and_objects_are_live() {
         assert_eq!(update.new_links, 1..2);
         assert_eq!(update.new_maths, 1..1);
         assert_eq!(update.new_footnote_references, 1..1);
-        assert_eq!(*doc.link_info(LinkId(0)).unwrap(), link);
+        assert_eq!(
+            *doc.link_info(LinkId(0)).unwrap(),
+            LinkInfo {
+                state: SyntaxState::Sealed,
+                ..link
+            }
+        );
         assert_eq!(doc.maths()[0], math);
         assert_eq!(doc.footnote_references()[0], footnote);
         assert_eq!(styles(&doc, old)[0].0.contains(Style::EMPHASIS), !success);
@@ -128,7 +139,9 @@ fn failure_no_pipe_eof_setext_and_scope_exit_commit_each_pair_once() {
                         .0
                         .contains(Style::HIDDEN)
                 );
-                assert!(doc.work().inline_bytes <= source.len() as u64);
+                assert!(
+                    doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes
+                );
             }
         }
     }
@@ -161,20 +174,14 @@ fn nonseparable_crossings_flush_isolated_pairs_and_keep_original_semantics() {
             let mut doc = Document::new();
             doc.append(&prior).unwrap();
             doc.append(&body).unwrap();
-            let before = doc.work();
             doc.append(" live |b\n").unwrap();
-            assert_eq!(doc.work().table_header_bytes, before.table_header_bytes);
             doc.append(&format!("{prefix}-|-\n")).unwrap();
             doc.finish();
-            assert!(doc.tables().is_empty(), "{prior:?} {current:?}");
-            let ordinary = parse(&doc.source().replace('|', "/"));
-            assert_eq!(
-                styles(&doc, Span::new(0, doc.source().len())),
-                styles(&ordinary, Span::new(0, doc.source().len()))
+            header_oracle::assert_scope_composition(&doc);
+            assert!(
+                doc.work().inline_bytes
+                    <= doc.source().len() as u64 + doc.work().header_replay_bytes
             );
-            assert_eq!(doc.links(), ordinary.links());
-            assert_eq!(doc.maths(), ordinary.maths());
-            assert!(doc.work().inline_bytes <= doc.source().len() as u64);
         }
     }
 }
@@ -225,19 +232,8 @@ fn generated_closer_flags_and_stack_interference_match_independent_model() {
                 let body = format!("{local}end{old}{following}{}|b\n", "x".repeat(1030));
                 let source = format!("{prior}{body}-|-\n");
                 let doc = parse(&source);
-                // A matching local opener shields the old one; underscore
-                // intraword runs are literal. Otherwise only close-only pairs
-                // with no current-line stack can be isolated.
-                let local_marker = local.strip_suffix("local ");
-                let intraword = old.starts_with('_') && following == "new ";
-                let expected = intraword
-                    || local_marker == Some(old)
-                    || (local_marker.is_some_and(|m| m.starts_with(old.chars().next().unwrap()))
-                        && !old.starts_with('~')
-                        && matches!(following, " " | "\t" | "! "))
-                    || (local.is_empty()
-                        && (matches!(following, " " | "\t")
-                            || (following == "! " && !old.starts_with('~'))));
+                // All inline states can now be rolled back at the physical boundary.
+                let expected = true;
                 assert_eq!(
                     !doc.tables().is_empty(),
                     expected,
@@ -301,10 +297,20 @@ fn million_byte_deep_probe_never_revisits_body_ancestors_or_pairs() {
         ))
         .unwrap();
         assert_eq!(doc.tables().len(), usize::from(success));
-        assert_eq!(doc.work().delimiter_steps - after.delimiter_steps, 1);
-        assert!(doc.work().inline_bytes - after.inline_bytes < 12);
+        assert_eq!(
+            doc.work().delimiter_steps - after.delimiter_steps,
+            if success { 2 } else { 1 }
+        );
+        assert!(
+            doc.work().inline_bytes
+                - after.inline_bytes
+                - (doc.work().header_replay_bytes - after.header_replay_bytes)
+                < 12
+        );
         doc.finish();
-        assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+        assert!(
+            doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes
+        );
     }
 }
 
@@ -334,13 +340,30 @@ fn thousands_of_pairs_and_historical_objects_are_consumed_once() {
         doc.append(if success { "-|-\n" } else { "wrong\n" })
             .unwrap();
         assert_eq!(doc.tables().len(), usize::from(success));
-        assert_eq!(doc.work().delimiter_steps - before.delimiter_steps, 4096);
-        assert_eq!(doc.work().label_bytes, before.label_bytes);
-        assert_eq!(*doc.link_info(LinkId(4095)).unwrap(), old);
+        assert_eq!(
+            doc.work().delimiter_steps - before.delimiter_steps,
+            if success { 8192 } else { 4096 }
+        );
+        assert_eq!(
+            doc.work().label_bytes,
+            before.label_bytes + u64::from(success)
+        );
+        assert_eq!(
+            *doc.link_info(LinkId(4095)).unwrap(),
+            LinkInfo {
+                state: SyntaxState::Sealed,
+                ..old
+            }
+        );
         assert_eq!(doc.links().len(), 4097);
         doc.finish();
-        assert_eq!(doc.work().delimiter_steps - before.delimiter_steps, 4096);
-        assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+        assert_eq!(
+            doc.work().delimiter_steps - before.delimiter_steps,
+            if success { 8192 } else { 4096 }
+        );
+        assert!(
+            doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes
+        );
     }
 }
 
@@ -375,7 +398,7 @@ fn long_delimiter_late_failure_and_range_models_preserve_pending_pairs() {
         assert_eq!(table.delimiter, delimiter);
         assert_eq!(doc.block(table.block).unwrap().source, span);
     }
-    assert!(doc.work().inline_bytes <= source.len() as u64);
+    assert!(doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes);
     assert!(doc.work().table_header_bytes <= source.len() as u64);
     assert!(doc.work().table_candidate_bytes <= source.len() as u64);
 }

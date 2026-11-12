@@ -19,6 +19,7 @@ pub struct DisplayRun<'a> {
     /// for entity/code/tab replacements. These do not encode nesting order.
     pub emphasis_depth: usize,
     pub strong_depth: usize,
+    pub style_pair: Option<crate::StylePairId>,
     pub link: Option<LinkId>,
 }
 
@@ -41,6 +42,15 @@ enum Kind {
 }
 
 impl DisplayIndex {
+    pub(crate) fn entries_len(&self) -> usize {
+        self.entries.len()
+    }
+    pub(crate) fn truncate_entries(&mut self, len: usize) -> u64 {
+        let removed = self.entries.len() - len;
+        self.entries.truncate(len);
+        removed as u64
+    }
+
     fn push(&mut self, source: Span, kind: Kind) {
         if source.is_empty() {
             return;
@@ -329,6 +339,7 @@ impl<'a> Iterator for DisplayRuns<'a> {
             style: run.style,
             emphasis_depth: run.emphasis_depth,
             strong_depth: run.strong_depth,
+            style_pair: run.style_pair,
             link: run.link,
         };
         if end < run.source.end {
@@ -373,6 +384,7 @@ struct PreparedDisplay {
     style: Style,
     emphasis_depth: usize,
     strong_depth: usize,
+    style_pair: Option<crate::StylePairId>,
     task: crate::link_semantics::MarkTask,
 }
 impl PreparedDisplay {
@@ -403,6 +415,7 @@ impl PreparedDisplay {
             style: run.style,
             emphasis_depth: run.emphasis_depth,
             strong_depth: run.strong_depth,
+            style_pair: run.style_pair,
             task: crate::link_semantics::MarkTask::new(mark),
         }
     }
@@ -433,6 +446,7 @@ impl PreparedDisplay {
             },
             emphasis_depth: self.emphasis_depth,
             strong_depth: self.strong_depth,
+            style_pair: self.style_pair,
             link,
         }
     }
@@ -545,8 +559,22 @@ impl DisplayCursor {
                 }
                 return Ok(DisplayStep::Run(run));
             }
+            if !resolution.prepare_styles(document, self.position, budget)? {
+                return Ok(DisplayStep::BudgetExhausted);
+            }
+            let style_snapshot = resolution
+                .styles
+                .snapshot(document, self.position, self.end);
             let window = budget.remaining().bytes.saturating_sub(2).min(TILE_BYTES);
-            let mut end = self.position.saturating_add(window).min(self.end);
+            let mut charged_end = self.position.saturating_add(window).min(self.end);
+            while !document.source().is_char_boundary(charged_end) {
+                charged_end -= 1;
+            }
+            let mut end = if style_snapshot.authoritative {
+                charged_end.min(style_snapshot.next)
+            } else {
+                charged_end
+            };
             while !document.source().is_char_boundary(end) {
                 end -= 1;
             }
@@ -554,7 +582,7 @@ impl DisplayCursor {
                 || !budget.charge(WorkLimit {
                     queries: 1,
                     objects: 1,
-                    bytes: end - self.position + 2,
+                    bytes: charged_end - self.position + 2,
                     ..Default::default()
                 })
             {
@@ -565,6 +593,8 @@ impl DisplayCursor {
                     .display_runs_in_with_scratch(Span::new(self.position, end), &mut self.scratch)
                     .unwrap();
                 runs.runs.runs.raw = true;
+                runs.runs.runs.style_override =
+                    style_snapshot.authoritative.then_some(style_snapshot);
                 let run = runs.next().unwrap();
                 let mark = runs.runs.runs.last_mark;
                 (run, mark)

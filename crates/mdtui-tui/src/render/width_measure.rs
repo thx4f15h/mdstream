@@ -3,7 +3,7 @@
 //! frame. Object resolution uses the frame's sole shared memo.
 use mdtui3::{
     BlockId, Budget, DisplayCursor, DisplayRun, DisplayStep, Document, FootnoteReferenceId,
-    FootnoteTarget, LayoutError, LinkId, Span, Style, WorkLimit,
+    FootnoteTarget, LayoutError, LinkId, Span, Style,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -35,6 +35,9 @@ struct PendingRun {
     block: Option<BlockId>,
     link: Option<LinkId>,
     style: Style,
+    style_pair: Option<mdtui3::StylePairId>,
+    emphasis_depth: usize,
+    strong_depth: usize,
     objects: ObjectWindow,
     footnote: Option<usize>,
     hidden: Vec<Span>,
@@ -134,6 +137,9 @@ impl WidthMeasure {
                             block: run.block,
                             link: run.link,
                             style: run.style,
+                            style_pair: run.style_pair,
+                            emphasis_depth: run.emphasis_depth,
+                            strong_depth: run.strong_depth,
                             objects: ObjectWindow::new(document, run.source, self.links.clone())
                                 .ok_or(LayoutError::InvalidRange)?,
                             footnote: None,
@@ -147,18 +153,13 @@ impl WidthMeasure {
                 return Ok(None);
             }
             if pending.footnote.is_none() {
-                if !budget.charge(WorkLimit {
-                    queries: 1,
-                    objects: 1,
-                    ..WorkLimit::default()
-                }) {
+                let mut references = document
+                    .footnote_references_in(pending.source)
+                    .ok_or(LayoutError::InvalidRange)?;
+                let Ok(first) = references.advance(budget) else {
                     return Ok(None);
-                }
-                pending.footnote = Some(
-                    document
-                        .footnote_references()
-                        .partition_point(|r| r.source.end <= pending.source.start),
-                );
+                };
+                pending.footnote = Some(first.map_or(usize::MAX, |(id, _)| id.0));
             }
             let refs = document.footnote_references();
             while let Some(reference) = refs
@@ -173,7 +174,13 @@ impl WidthMeasure {
                 if matches!(resolution.target, FootnoteTarget::Defined(_)) {
                     pending.hidden.push(reference.source);
                 }
-                *pending.footnote.as_mut().unwrap() += 1;
+                // Resolution paid for this occurrence and the fixed successor
+                // read. Raw arena order can change after a header withdrawal.
+                pending.footnote = Some(
+                    document
+                        .next_footnote_reference(FootnoteReferenceId(pending.footnote.unwrap()))
+                        .map_or(usize::MAX, |id| id.0),
+                );
             }
             let pending = self.pending.take().unwrap();
             if self
@@ -194,8 +201,9 @@ impl WidthMeasure {
                 block: pending.block,
                 link: pending.link,
                 style: pending.style,
-                emphasis_depth: 0,
-                strong_depth: 0,
+                style_pair: pending.style_pair,
+                emphasis_depth: pending.emphasis_depth,
+                strong_depth: pending.strong_depth,
             };
             let mut tokens: Vec<_> = image_tokens(&pending.objects, &run).collect();
             if !pending.style.contains(Style::HIDDEN) && !pending.text.is_empty() {
@@ -221,7 +229,11 @@ impl WidthMeasure {
                 .source_position()
                 .saturating_sub(self.memo_window)
                 >= mdtui3::TILE_BYTES
+                && self.links.stats().style_memo_entries == 0
             {
+                // A conditional scope can cross every tile in this cell. Keep
+                // its shared memo through the measurement, avoiding repeated
+                // recovery of the same source events at each tile boundary.
                 self.memo_window = self.cursor.source_position();
                 self.lease = None;
                 self.links.request_retirement();
@@ -269,6 +281,185 @@ impl WidthMeasure {
             }
             self.cluster.drain(..lo);
             self.oversized = true;
+        }
+    }
+}
+
+#[cfg(test)]
+mod ordered_scope_tests {
+    use super::*;
+    use mdtui3::WorkLimit;
+
+    #[test]
+    fn cross_tile_conditional_measurement_recovers_once_and_retires_with_shared_budget() {
+        let n = 8 * mdtui3::TILE_BYTES + 17;
+        let source = format!("**{} [x** z]", "a".repeat(n));
+        let mut d = Document::new();
+        d.append(&format!("{source}\n\n")).unwrap();
+        let span = Span::new(0, source.len());
+        let links = SharedLinks::new(&d);
+        let micro = WorkLimit {
+            queries: 1,
+            objects: 1,
+            bytes: 6,
+            ..WorkLimit::default()
+        };
+        let mut measure = WidthMeasure::new(&d, span, links.clone()).unwrap();
+        let before = links.stats();
+        assert_eq!(
+            measure
+                .advance(&d, &mut Budget::new(WorkLimit::default()))
+                .unwrap(),
+            None
+        );
+        assert_eq!(links.stats(), before);
+        let mut result = None;
+        for _ in 0..400_000 {
+            let mut b = Budget::new(micro);
+            result = measure.advance(&d, &mut b).unwrap();
+            assert!(b.used().queries <= 1 && b.used().objects <= 1 && b.used().bytes <= 6);
+            if result.is_some() {
+                break;
+            }
+        }
+        assert_eq!(result, Some(n + 6));
+        assert_eq!(
+            links.stats().styles.events,
+            4,
+            "one scope, not one recovery per tile"
+        );
+        assert!(measure.source_work <= 4 * source.len());
+        assert!(links.stats().style_memo_entries > 0);
+        let before = links.stats();
+        d.append("[x** z]: /u\n").unwrap();
+        assert!(
+            !links
+                .prepare(&d, &mut Budget::new(WorkLimit::default()))
+                .unwrap()
+        );
+        assert_eq!(links.stats(), before);
+        let mut paid = 0;
+        loop {
+            let mut b = Budget::new(micro);
+            let ready = links.prepare(&d, &mut b).unwrap();
+            paid += b.used().objects;
+            assert!(b.used().objects <= 1);
+            if ready {
+                break;
+            }
+        }
+        assert_eq!(paid, before.memo_entries + before.presentation_entries);
+        assert_eq!(links.stats().memo_entries, 0);
+        let mut changed = WidthMeasure::new(&d, span, links.clone()).unwrap();
+        assert_eq!(
+            changed
+                .advance(&d, &mut Budget::new(WorkLimit::unlimited()))
+                .unwrap(),
+            Some(n + 8)
+        );
+        println!(
+            "cross-tile width: n={n} source_work={} events={} retired={paid}",
+            measure.source_work, before.styles.events
+        );
+    }
+}
+
+#[cfg(test)]
+mod withdrawn_footnote_tests {
+    use super::*;
+    use mdtui3::WorkLimit;
+    #[test]
+    fn confirmed_header_measurement_skips_withdrawn_footnote_occurrences() {
+        let text = format!("end$ [^n] {}", "x".repeat(1100));
+        let mut d = Document::new();
+        d.append(&format!("$old\n{text}|b\n-|-\nx|y\n\n[^n]: note\n"))
+            .unwrap();
+        d.finish();
+        assert_eq!(d.tables().len(), 1);
+        assert!(!d.footnote_references().is_empty());
+        assert!(d.footnote_reference_state(FootnoteReferenceId(0)).is_none());
+        let span = d.tables()[0].cell(0, 0).unwrap().source;
+        let links = SharedLinks::new(&d);
+        let mut measure = WidthMeasure::new(&d, span, links).unwrap();
+        assert_eq!(
+            measure
+                .advance(&d, &mut Budget::new(WorkLimit::unlimited()))
+                .unwrap(),
+            Some(text.len())
+        );
+    }
+}
+
+#[cfg(test)]
+mod source_order_footnote_tests {
+    use super::*;
+    use mdtui3::WorkLimit;
+    #[test]
+    fn confirmed_header_footnotes_follow_source_order_after_old_code_replay() {
+        let text = format!("[^early] ` tail [^later] {}", "x".repeat(1100));
+        let mut d = Document::new();
+        d.append(&format!(
+            "`old\n{text}|b\n-|-\nx|y\n\n[^early]: E\n[^later]: L\n"
+        ))
+        .unwrap();
+        d.finish();
+        let span = d.tables()[0].cell(0, 0).unwrap().source;
+        let mut refs = d.footnote_references_in(span).unwrap();
+        let first = refs
+            .advance(&mut Budget::new(WorkLimit::unlimited()))
+            .unwrap()
+            .unwrap();
+        let second = refs
+            .advance(&mut Budget::new(WorkLimit::unlimited()))
+            .unwrap()
+            .unwrap();
+        assert!(
+            first.0.0 > second.0.0,
+            "allocation order differs from active source order"
+        );
+        assert!(first.1.source.start < second.1.source.start);
+        assert_eq!(d.next_footnote_reference(first.0), Some(second.0));
+        assert_eq!(d.next_footnote_reference(second.0), None);
+        for micro in [false, true] {
+            let links = SharedLinks::new(&d);
+            let mut measure = WidthMeasure::new(&d, span, links).unwrap();
+            assert_eq!(
+                measure
+                    .advance(&d, &mut Budget::new(WorkLimit::default()))
+                    .unwrap(),
+                None
+            );
+            let mut result = None;
+            for _ in 0..50_000 {
+                let limit = if micro {
+                    WorkLimit {
+                        queries: 1,
+                        objects: 1,
+                        bytes: 6,
+                        dependencies: 1,
+                        ..WorkLimit::default()
+                    }
+                } else {
+                    WorkLimit::unlimited()
+                };
+                let mut b = Budget::new(limit);
+                result = measure.advance(&d, &mut b).unwrap();
+                if micro {
+                    assert!(
+                        b.used().queries <= 1
+                            && b.used().objects <= 1
+                            && b.used().bytes <= 6
+                            && b.used().dependencies <= 1
+                    );
+                }
+                if result.is_some() {
+                    break;
+                }
+            }
+            assert_eq!(
+                result,
+                Some(text.len() - "[^early]".len() - "[^later]".len())
+            );
         }
     }
 }

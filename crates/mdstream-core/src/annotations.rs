@@ -4,6 +4,8 @@ use std::num::NonZeroUsize;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Mark {
     pub style: Style,
+    pub(crate) base_hidden: bool,
+    pub(crate) delimiter_hidden: bool,
     pub emphasis_depth: usize,
     pub strong_depth: usize,
     pub link: Option<LinkId>,
@@ -60,6 +62,8 @@ impl Mark {
         let link = if replace { other.link } else { self.link };
         Self {
             style: self.style.union(other.style),
+            base_hidden: self.base_hidden || other.base_hidden,
+            delimiter_hidden: self.delimiter_hidden || other.delimiter_hidden,
             emphasis_depth: self.emphasis_depth + other.emphasis_depth,
             strong_depth: self.strong_depth + other.strong_depth,
             link,
@@ -82,8 +86,17 @@ impl Mark {
     }
 }
 
-#[derive(Default)]
+type LineCheckpoint = (
+    usize,
+    usize,
+    usize,
+    u64,
+    crate::rewind::UndoLog<(usize, Node)>,
+);
+
+#[derive(Clone, Copy, Default)]
 struct Node {
+    saved_epoch: u64,
     children: [Option<NonZeroUsize>; 2],
     tag: Mark,
     newest: u64,
@@ -105,6 +118,9 @@ pub(crate) struct Annotations {
     serial: u64,
     pub visits: u64,
     allocations: u64,
+    checkpoint: Option<LineCheckpoint>,
+    line_epoch: u64,
+    undo_peak: crate::rewind::UndoStats,
 }
 
 impl Default for Annotations {
@@ -116,19 +132,76 @@ impl Default for Annotations {
             serial: 0,
             visits: 0,
             allocations: 1,
+            checkpoint: None,
+            line_epoch: 0,
+            undo_peak: crate::rewind::UndoStats::default(),
         }
     }
 }
 
 impl Annotations {
+    pub(crate) fn undo_stats(&self) -> crate::rewind::UndoStats {
+        self.undo_peak.max(
+            self.checkpoint
+                .as_ref()
+                .map_or(crate::rewind::UndoStats::default(), |c| c.4.stats()),
+        )
+    }
+
+    pub(crate) fn begin_line(&mut self) {
+        assert!(self.checkpoint.is_none());
+        self.line_epoch += 1;
+        self.checkpoint = Some((
+            self.nodes.len(),
+            self.root,
+            self.capacity,
+            self.serial,
+            crate::rewind::UndoLog::default(),
+        ));
+    }
+    pub(crate) fn commit_line(&mut self) -> u64 {
+        self.checkpoint.take().map_or(0, |(_, _, _, _, undo)| {
+            self.undo_peak = self.undo_peak.max(undo.stats());
+            undo.len() as u64
+        })
+    }
+    pub(crate) fn rollback_line(&mut self) -> u64 {
+        let (len, root, capacity, serial, mut undo) = self.checkpoint.take().unwrap();
+        self.undo_peak = self.undo_peak.max(undo.stats());
+        let count = undo.len() as u64;
+        while let Some((id, node)) = undo.pop() {
+            self.nodes[id] = node;
+        }
+        self.nodes.truncate(len);
+        self.root = root;
+        self.capacity = capacity;
+        self.serial = serial;
+        count
+    }
+
     pub fn apply(&mut self, span: Span, style: Style, link: Option<LinkId>, revision: u64) {
         self.apply_mark(
             span,
             Mark {
                 style,
+                base_hidden: style.contains(Style::HIDDEN),
                 emphasis_depth: usize::from(style.contains(Style::EMPHASIS)),
                 strong_depth: usize::from(style.contains(Style::STRONG)),
                 link,
+                revision,
+                ..Mark::default()
+            },
+        );
+    }
+
+    pub(crate) fn delimiter(&mut self, span: Span, style: Style, revision: u64) {
+        self.apply_mark(
+            span,
+            Mark {
+                style,
+                delimiter_hidden: style.contains(Style::HIDDEN),
+                emphasis_depth: usize::from(style.contains(Style::EMPHASIS)),
+                strong_depth: usize::from(style.contains(Style::STRONG)),
                 revision,
                 ..Mark::default()
             },
@@ -200,6 +273,13 @@ impl Annotations {
 
     fn update(&mut self, id: usize, lo: usize, hi: usize, span: Span, mark: Mark) {
         self.visits += 1;
+        if let Some((len, _, _, _, undo)) = &mut self.checkpoint
+            && id < *len
+            && self.nodes[id].saved_epoch != self.line_epoch
+        {
+            undo.push((id, self.nodes[id]));
+            self.nodes[id].saved_epoch = self.line_epoch;
+        }
         self.nodes[id].newest = self.nodes[id].newest.max(mark.revision);
         if span.start <= lo && hi <= span.end {
             self.nodes[id].tag = self.nodes[id].tag.merge(mark);
@@ -1094,5 +1174,43 @@ mod tests {
                 assert_eq!(scratch.stats(), before);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod line_undo_tests {
+    use super::*;
+    #[test]
+    fn epoch_saves_each_old_annotation_node_once_without_an_index_lookup() {
+        let mut a = Annotations::default();
+        for pos in 0..4096 {
+            a.apply(Span::new(pos, pos + 1), Style::default(), None, 1);
+        }
+        let nodes = a.node_count();
+        for commit in [false, true, false] {
+            let original: Vec<_> = (0..4096).map(|p| a.at(p)).collect();
+            a.begin_line();
+            let before = a.visits;
+            for i in 0..20_000 {
+                a.apply(Span::new(i % 4096, i % 4096 + 1), Style::STRONG, None, 2);
+            }
+            let count = a.checkpoint.as_ref().unwrap().4.len();
+            assert!(count <= nodes);
+            assert_eq!(count, nodes);
+            assert!(a.visits - before >= 20_000 * 12);
+            if commit {
+                assert_eq!(a.commit_line(), count as u64);
+            } else {
+                assert_eq!(a.rollback_line(), count as u64);
+                for (p, old) in original.iter().enumerate() {
+                    let now = a.at(p);
+                    assert_eq!(
+                        (now.style, now.strong_depth, now.revision),
+                        (old.style, old.strong_depth, old.revision)
+                    );
+                }
+            }
+        }
+        assert!(a.undo_stats().entries <= nodes);
     }
 }

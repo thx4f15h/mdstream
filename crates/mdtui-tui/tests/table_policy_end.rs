@@ -327,3 +327,69 @@ fn end_pan_targets_the_top_painted_table_when_multiple_tables_are_visible() {
     );
     assert!(runtime.viewport().following());
 }
+
+#[test]
+fn selected_end_cells_use_conditional_styles_and_late_definitions_under_micro_budget() {
+    let mut doc = document(&format!(
+        "|skip|selected|\n|---|---|\n{}|skip|**tail [x** z]|\n\n",
+        "|skip|body|\n".repeat(40)
+    ));
+    let mut view = ViewportState::new(
+        &doc,
+        ViewportConfig {
+            rows: 6,
+            width: 40,
+            ..ViewportConfig::default()
+        },
+    )
+    .unwrap();
+    view.set_table_first_column(&doc, TableId(0), 1).unwrap();
+    view.seek_end(&doc, true).unwrap();
+    let limit = WorkLimit {
+        queries: 1,
+        objects: 1,
+        bytes: 6,
+        tiles: 1,
+        recovery: 1,
+        dependencies: 1,
+    };
+    let settle = |view: &mut ViewportState, doc: &Document| {
+        let before = view.shared_links().stats();
+        view.frame(doc, &mut Budget::new(WorkLimit::default()))
+            .unwrap();
+        assert_eq!(view.shared_links().stats(), before);
+        for _ in 0..200_000 {
+            let mut b = Budget::new(limit);
+            let f = view.frame(doc, &mut b).unwrap();
+            assert!(b.used().queries <= 1 && b.used().objects <= 1 && b.used().bytes <= 6);
+            if matches!(
+                f.status,
+                ViewportFrameStatus::Ready | ViewportFrameStatus::EndOfDocument
+            ) {
+                return f;
+            }
+        }
+        panic!("conditional End did not settle");
+    };
+    let old = settle(&mut view, &doc);
+    assert!(text(&old).contains("tail [x z]"), "{}", text(&old));
+    assert!(!text(&old).contains("skip"));
+    let u = doc.append("[x** z]: /u\n").unwrap();
+    view.apply_update(&doc, &u).unwrap();
+    assert!(!old.matches(&doc));
+    let changed = settle(&mut view, &doc);
+    assert!(
+        text(&changed).contains("**tail x** z"),
+        "{}",
+        text(&changed)
+    );
+    assert!(view.following());
+    assert_eq!(view.table_widths().first_column(TableId(0)), 1);
+    assert!(view.table_widths().work().column_metadata_reads <= 2);
+    let cached = ready(&mut view, &doc);
+    assert_eq!(text(&cached), text(&changed));
+    let stats = view.shared_links().stats();
+    let again = ready(&mut view, &doc);
+    assert_eq!(view.shared_links().stats(), stats);
+    assert_eq!(text(&again), text(&changed));
+}

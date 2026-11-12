@@ -24,6 +24,8 @@ pub struct ObjectStats {
     pub presentation_steps: u64,
     pub retired_presentations: u64,
     pub resolution: LinkResolutionWork,
+    pub styles: mdtui3::StyleResolutionWork,
+    pub style_memo_entries: usize,
 }
 
 #[derive(Clone)]
@@ -126,6 +128,8 @@ impl SharedLinks {
             presentation_steps: state.steps,
             retired_presentations: state.retired,
             resolution: state.resolver.work(),
+            styles: state.resolver.style_work(),
+            style_memo_entries: state.resolver.style_memo_entries(),
         }
     }
 }

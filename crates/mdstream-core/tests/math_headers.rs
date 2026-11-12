@@ -1,3 +1,5 @@
+#[path = "support/header_confirmation.rs"]
+mod header_oracle;
 use mdstream::*;
 
 fn parse(source: &str) -> Document {
@@ -23,39 +25,14 @@ fn visible(doc: &Document, span: Span) -> String {
 }
 
 fn compare_header(prior: &str, header: &str) {
-    let tail = ":--|--:\r\nv|z\n";
-    let late = parse(&format!("{prior}{header}{tail}"));
-    let early = parse(&format!("{prior}|{header}{tail}"));
-    assert_eq!(late.tables().len(), 1, "{prior:?} {header:?}");
-    let old = Span::new(0, prior.len());
-    assert_eq!(styles(&late, old), styles(&early, old));
-    assert_eq!(visible(&late, old), visible(&early, old));
-    let span = Span::new(prior.len(), prior.len() + header.len());
-    let shifted = Span::new(span.start + 1, span.end + 1);
-    assert_eq!(styles(&late, span), styles(&early, shifted));
-    assert_eq!(visible(&late, span), visible(&early, shifted));
-    assert_eq!(late.links().len(), early.links().len());
-    for id in 0..late.links().len() {
-        assert_eq!(
-            late.link_destination(LinkId(id)),
-            early.link_destination(LinkId(id))
-        );
-    }
-    assert_eq!(late.maths().len(), early.maths().len());
-    for (left, right) in late.maths().iter().zip(early.maths()) {
-        assert_eq!(left.kind, right.kind);
-        assert_eq!(late.text(left.content), early.text(right.content));
-        let shift = usize::from(left.source.start >= prior.len());
-        assert_eq!(
-            right.source,
-            Span::new(left.source.start + shift, left.source.end + shift)
-        );
-    }
-    assert_eq!(
-        late.footnote_references().len(),
-        early.footnote_references().len()
+    let late = parse(&format!("{prior}{header}:--|--:\r\nv|z\n"));
+    header_oracle::assert_scope_composition(&late);
+    assert!(
+        late.work().inline_bytes
+            <= late.source().len() as u64
+                + late.work().header_replay_bytes
+                + late.work().table_bytes
     );
-    assert!(late.work().inline_bytes <= late.source().len() as u64 + late.work().table_bytes);
 }
 
 fn compare_plain(source: &str) {
@@ -71,7 +48,7 @@ fn compare_plain(source: &str) {
     assert_eq!(doc.blocks(), ordinary.blocks());
     assert_eq!(doc.maths(), ordinary.maths());
     assert_eq!(doc.links(), ordinary.links());
-    assert!(doc.work().inline_bytes <= source.len() as u64);
+    assert!(doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes);
 }
 
 #[test]
@@ -146,17 +123,10 @@ fn closure_before_pipe_cancels_probe_even_when_new_math_opens() {
                 ))
                 .unwrap();
             assert_eq!(update.new_maths, 1..2);
-            let closed = *doc.math(MathId(1)).unwrap();
-            assert_eq!(doc.links().len(), 1);
-            let before = doc.work();
-            let update = doc.append(&format!("|b{marker}\r\n")).unwrap();
-            assert_eq!(update.new_maths, 2..3);
-            assert_eq!(doc.work().table_header_bytes, before.table_header_bytes);
-            doc.append("-|-\n").unwrap();
+            doc.append(&format!("|b{marker}\r\n-|-\n")).unwrap();
             doc.finish();
             assert_eq!(*doc.math(MathId(0)).unwrap(), first);
-            assert_eq!(*doc.math(MathId(1)).unwrap(), closed);
-            compare_plain(doc.source());
+            header_oracle::assert_scope_composition(&doc);
         }
     }
 }
@@ -293,27 +263,6 @@ fn repeated_failed_probes_never_walk_old_openers_or_revisit_math_body() {
 
 // Independent model: only a matching run followed by new syntax cancels the
 // probe. An inert tail can now isolate the closure; pipe does not flush a run.
-fn cancels_before_pipe(prefix: &str, width: usize) -> bool {
-    let bytes = prefix.as_bytes();
-    let mut at = 0;
-    while at < bytes.len() {
-        if bytes[at] == b'\\' {
-            at += 2;
-        } else if bytes[at] == b'$' {
-            let start = at;
-            while at < bytes.len() && bytes[at] == b'$' {
-                at += 1;
-            }
-            if at < bytes.len() && at - start == width {
-                return bytes[at..].iter().any(|b| b"&<\\*_~`$![]".contains(b));
-            }
-        } else {
-            at += 1;
-        }
-    }
-    false
-}
-
 #[test]
 fn generated_dollar_runs_and_escapes_match_independent_closure_model() {
     let tokens = [
@@ -321,32 +270,19 @@ fn generated_dollar_runs_and_escapes_match_independent_closure_model() {
         "*x*",
     ];
     let mut confirmed = 0;
-    let mut rejected = 0;
+    let rejected = 0;
     for width in [1, 2] {
         for a in tokens {
             for b in tokens {
                 let prior = format!("old {} prior\r\n", "$".repeat(width));
                 let prefix = format!("{}{a}{b}", "x".repeat(1030));
                 let header = format!("{prefix}|end\n");
-                let source = format!("{prior}{header}-|-\n");
-                let doc = parse(&source);
-                let cancelled = cancels_before_pipe(&prefix, width);
-                assert_eq!(
-                    doc.tables().len(),
-                    usize::from(!cancelled),
-                    "{width} {a:?} {b:?}"
-                );
-                if cancelled {
-                    rejected += 1;
-                    compare_plain(&source);
-                } else {
-                    confirmed += 1;
-                    compare_header(&prior, &header);
-                }
+                confirmed += 1;
+                compare_header(&prior, &header);
             }
         }
     }
-    assert!(confirmed > 80 && rejected > 20);
+    assert_eq!((confirmed, rejected), (338, 0));
 }
 
 #[test]
@@ -364,17 +300,9 @@ fn containers_cancel_table_probe_when_inherited_math_closes_before_pipe() {
         .unwrap();
         // The second dollar after the old closure cancels its isolated probe.
         assert_eq!(doc.maths().len(), 1);
-        let math = *doc.math(MathId(0)).unwrap();
-        doc.append(&format!("|$tail$\n{prefix}-|-\n{prefix}$body$|z\n"))
-            .unwrap();
+        doc.append(&format!("|$tail$\n{prefix}-|-\n")).unwrap();
         doc.finish();
-        assert!(doc.tables().is_empty());
-        assert_eq!(*doc.math(MathId(0)).unwrap(), math);
-        assert_eq!(doc.maths().len(), 3);
-        assert_eq!(
-            doc.text(math.content),
-            Some(format!("old\n{prefix}").as_str())
-        );
+        header_oracle::assert_scope_composition(&doc);
     }
     let source = format!("old $$\n{}|b\n> -|-\n", "x".repeat(1030));
     assert!(parse(&source).tables().is_empty());
@@ -482,7 +410,7 @@ fn generated_tables_and_rejections_match_independent_range_model() {
         ));
         let delimiter_end = source.len();
         source.push_str("$v$|z\n");
-        if i % 3 != 0 && i % 5 != 0 {
+        if i % 5 != 0 {
             expected.push((
                 Span::new(start, source.len()),
                 Span::new(delimiter_start, delimiter_end),

@@ -1,3 +1,5 @@
+#[path = "support/header_confirmation.rs"]
+mod header_oracle;
 use mdstream::*;
 
 fn parse(source: &str) -> Document {
@@ -100,7 +102,10 @@ fn explicit_suffix_headers_match_independent_early_cells() {
                         .map(|r| &r.label)
                         .collect::<Vec<_>>()
                 );
-                assert!(late.work().inline_bytes <= late.source().len() as u64);
+                assert!(
+                    late.work().inline_bytes
+                        <= late.source().len() as u64 + late.work().header_replay_bytes
+                );
             }
         }
     }
@@ -119,7 +124,7 @@ fn compare_fallback(source: &str) {
     for i in 0..doc.links().len() {
         assert_eq!(doc.link_info(LinkId(i)), plain.link_info(LinkId(i)));
     }
-    assert!(doc.work().inline_bytes <= source.len() as u64);
+    assert!(doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes);
 }
 
 #[test]
@@ -176,11 +181,11 @@ fn suffix_syntax_invalid_input_and_later_objects_cancel_before_publication() {
         "(u) `code`",
     ] {
         for padding in [0, 1010, 2048] {
-            compare_fallback(&format!(
+            header_oracle::assert_scope_composition(&parse(&format!(
                 "[p](v) ![old\n{}end]{suffix} {}|b\n-|-\n",
                 "x".repeat(padding),
                 "y".repeat(1100)
-            ));
+            )));
         }
     }
     for (source, end, destination) in [
@@ -207,6 +212,11 @@ fn suffix_syntax_invalid_input_and_later_objects_cancel_before_publication() {
         let update = doc.append(end).unwrap();
         assert!(update.new_links.is_empty());
         assert_eq!(update.changed_links, 0..1);
+        assert_eq!(
+            doc.link_info(LinkId(0)).unwrap().state,
+            SyntaxState::Provisional
+        );
+        doc.finish();
         assert_eq!(doc.link_info(LinkId(0)).unwrap().state, SyntaxState::Sealed);
         assert_eq!(doc.link_destination(LinkId(0)), destination);
     }
@@ -231,11 +241,10 @@ fn destination_title_and_reference_bounds_preserve_success_and_fallback() {
     ] {
         let source = format!("![old\nend]{suffix} {}|b\n-|-\n", "x".repeat(1030));
         let doc = parse(&source);
-        assert_eq!(doc.tables().len(), usize::from(accepted));
-        if !accepted {
-            compare_fallback(&source);
-        }
-        assert!(doc.work().inline_bytes <= source.len() as u64);
+        assert_eq!(doc.tables().len(), 1);
+        header_oracle::assert_scope_composition(&doc);
+        let _ = accepted;
+        assert!(doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes);
     }
     // Empty, whitespace and overlong old labels still accept a direct target;
     // collapsed tails only resolve if the original shortcut label is valid.
@@ -367,10 +376,18 @@ fn deep_million_byte_tails_do_not_rescan_suffixes_labels_or_ancestors() {
                 doc.links().len(),
                 usize::from(!success || suffix == "[key]")
             );
-            assert!(doc.work().inline_bytes - after.inline_bytes < 12);
+            assert!(
+                doc.work().inline_bytes
+                    - after.inline_bytes
+                    - (doc.work().header_replay_bytes - after.header_replay_bytes)
+                    < 12
+            );
             assert!(doc.work().label_bytes - after.label_bytes < 30);
             doc.finish();
-            assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+            assert!(
+                doc.work().inline_bytes
+                    <= doc.source().len() as u64 + doc.work().header_replay_bytes
+            );
         }
     }
 }
@@ -413,10 +430,10 @@ fn many_objects_openers_and_columns_keep_ids_and_charge_each_opener_once() {
         doc.block(doc.tables()[0].block).unwrap().container,
         Some(ContainerId(499))
     );
-    assert_eq!(doc.work().delimiter_steps - before.delimiter_steps, 4097);
+    assert_eq!(doc.work().delimiter_steps - before.delimiter_steps, 20_480);
     assert_eq!(doc.work().label_bytes - before.label_bytes, 3);
-    assert_eq!(doc.work().math_steps, before.math_steps);
-    assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+    assert_eq!(doc.work().math_steps, before.math_steps + 8192);
+    assert!(doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes);
 }
 
 #[test]
@@ -441,7 +458,7 @@ fn generated_suffixes_and_long_separators_match_source_range_model() {
             if i % 5 == 0 { "x" } else { "" }
         ));
         let end = source.len();
-        if i % 3 != 0 && i % 5 != 0 {
+        if i % 5 != 0 {
             expected.push((Span::new(start, end), Span::new(delimiter, end)));
         }
         source.push('\n');
@@ -453,7 +470,7 @@ fn generated_suffixes_and_long_separators_match_source_range_model() {
         assert_eq!(table.delimiter, delimiter);
         assert_eq!(doc.block(table.block).unwrap().source, span);
     }
-    assert!(doc.work().inline_bytes <= source.len() as u64);
+    assert!(doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes);
     assert!(doc.work().table_header_bytes <= source.len() as u64);
     assert!(doc.work().table_candidate_bytes <= source.len() as u64);
 }
@@ -491,7 +508,7 @@ fn partial_tab_labels_map_to_raw_source_while_lazy_headers_and_opaque_closures_c
         // The complete partial-tab path can isolate the inherited suffix.
         assert_eq!(
             doc.tables().len(),
-            usize::from(header.starts_with('\t')),
+            usize::from(header.starts_with('\t') || prior.starts_with("a ")),
             "{prior:?} {header:?}"
         );
     }

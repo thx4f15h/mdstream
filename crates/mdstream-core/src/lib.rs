@@ -38,12 +38,19 @@ mod fold_ranges;
 mod folding;
 mod footnotes;
 mod frame;
+mod header_effects;
+pub use header_effects::ConfirmationStats;
 mod heading_search;
 mod headings;
 mod history;
 #[cfg(test)]
 mod index_boundaries;
 mod inline;
+mod inline_styles;
+mod rewind;
+pub use inline_styles::{
+    InlineStyleKind, StylePairId, StylePath, StylePathStep, StyleResolutionWork,
+};
 mod layout;
 mod link_destination;
 mod link_index;
@@ -271,6 +278,10 @@ pub struct Document {
     // Parallel stable LinkId slots; candidates move their structural gaps here.
     direct_title_gaps: Vec<Vec<Span>>,
     maths: Vec<Math>,
+    math_active: Vec<bool>,
+    math_states: Vec<SyntaxState>,
+    math_index: std::collections::BTreeMap<usize, MathId>,
+    header_effects: header_effects::LineEffects,
     math_gaps: Vec<Span>,
     headings: HeadingIndex,
     tables: Vec<Table>,
@@ -289,6 +300,7 @@ pub struct Document {
     references: References,
     footnotes: footnotes::Footnotes,
     annotations: Annotations,
+    inline_styles: inline_styles::Styles,
     display: display::DisplayIndex,
     inline: Inline,
     root_eligibility: Option<RootEligibility>,
@@ -449,7 +461,29 @@ impl Document {
         self.revision
     }
     pub fn work(&self) -> Work {
+        let inline = self.inline.undo_stats();
+        let eligibility = self
+            .root_eligibility
+            .as_ref()
+            .map_or(crate::rewind::UndoStats::default(), Eligibility::undo_stats)
+            .plus(
+                self.container_eligibility
+                    .as_ref()
+                    .map_or(crate::rewind::UndoStats::default(), |e| {
+                        e.observer.undo_stats()
+                    }),
+            );
         Work {
+            inline_undo_peak: self.work.inline_undo_peak.max(inline.entries as u64),
+            inline_undo_bytes_peak: self.work.inline_undo_bytes_peak.max(inline.bytes as u64),
+            eligibility_undo_peak: self
+                .work
+                .eligibility_undo_peak
+                .max(eligibility.entries as u64),
+            eligibility_undo_bytes_peak: self
+                .work
+                .eligibility_undo_bytes_peak
+                .max(eligibility.bytes as u64),
             tree_visits: self.annotations.visits,
             link_index_steps: self.link_order.steps,
             link_gate_steps: self.link_guards.stats().nodes as u64,
@@ -524,10 +558,30 @@ impl Document {
             return None;
         }
         let mut resolution = link_semantics::Resolution::default();
-        self.annotations
-            .next_visible_using(offset, self.source.len(), &mut |mark| {
-                resolution.hidden(self, mark)
-            })
+        let mut at = offset;
+        loop {
+            let text = self
+                .annotations
+                .next_visible_using(at, self.source.len(), &mut |mark| {
+                    resolution.hidden(self, mark)
+                });
+            let Some(key) = self
+                .inline_styles
+                .conditional_scope_after(Span::new(at, self.source.len()), None)
+            else {
+                return text;
+            };
+            if text.is_some_and(|text| text < key) {
+                return text;
+            }
+            let end = self.inline_styles.scope_end(key);
+            for run in self.runs_in(Span::new(at.max(key), end)).unwrap() {
+                if !run.style.contains(Style::HIDDEN) {
+                    return Some(run.source.start);
+                }
+            }
+            at = end;
+        }
     }
 
     /// First visible text or selected candidate, including empty-alt images.
@@ -573,6 +627,10 @@ impl Document {
         if self.link_order.covering(offset) {
             return Some(offset);
         }
+        let conditional = self
+            .inline_styles
+            .conditional_scope_after(Span::new(offset, self.source.len()), None)
+            .map(|key| key.max(offset));
         let object = self
             .link_order
             .lower_bound(offset, &mut 0)
@@ -584,10 +642,7 @@ impl Document {
             &self.references.entries,
             &self.links,
         );
-        match (text, object) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        }
+        text.into_iter().chain(object).chain(conditional).min()
     }
 
     /// Find tiles intersecting a source range in O(log tiles), with no scan.
@@ -701,6 +756,8 @@ impl Document {
             pending: None,
             resolution: link_semantics::Resolution::default(),
             raw: false,
+            style_override: None,
+            style_window: self.inline_styles.window(span.start),
             last_mark: annotations::Mark::default(),
         }
     }
@@ -1052,6 +1109,7 @@ impl Document {
             &mut self.work,
             Publishing {
                 annotations: &mut self.annotations,
+                styles: &mut self.inline_styles,
                 display: &mut self.display,
                 references: &mut self.references,
                 links: &mut self.links,
@@ -1060,6 +1118,10 @@ impl Document {
                 link_guards: &mut self.link_guards,
                 direct_title_gaps: &mut self.direct_title_gaps,
                 maths: &mut self.maths,
+                math_active: &mut self.math_active,
+                math_states: &mut self.math_states,
+                math_index: &mut self.math_index,
+                line: &mut self.header_effects,
                 math_gaps: &mut self.math_gaps,
                 footnotes: &mut self.footnotes,
                 update,
@@ -1234,6 +1296,24 @@ impl Document {
     }
 
     fn isolate_header(&mut self, mode: table::HeaderMode) -> Option<inline::LineBreak> {
+        if mode == table::HeaderMode::Ordinary {
+            let key = self
+                .inline
+                .style_scope_key()
+                .expect("inherited physical line has a style scope");
+            self.annotations.begin_line();
+            self.inline_styles.begin_line(key);
+            self.link_order.begin_line();
+            self.footnotes.begin_reference_line();
+            self.header_effects.begin(
+                self.links.len(),
+                self.maths.len(),
+                self.display.entries_len(),
+                self.math_gaps.len(),
+            );
+            self.work.inline_checkpoint_steps += 1;
+        }
+
         if let Some(root) = &mut self.root_eligibility {
             root.isolate_line(&mut self.work);
         }
@@ -1700,7 +1780,11 @@ impl Document {
     fn reference_use_start(&self, symbol: SymbolId) -> Option<usize> {
         match (
             self.references.entries[symbol.0].first_use,
-            self.link_guards.first_use,
+            self.link_guards
+                .first_use
+                .into_iter()
+                .chain(self.inline_styles.first_use)
+                .min(),
         ) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
@@ -1724,6 +1808,7 @@ impl Document {
             if let Some(start) = self.reference_use_start(symbol) {
                 update.change(Span::new(start, self.source.len()), ChangeKind::Reference);
                 update.change(Span::new(start, self.source.len()), ChangeKind::Visibility);
+                update.dirty.push(Span::new(start, self.source.len()));
             }
         }
         self.close_current(update);
@@ -3335,6 +3420,9 @@ impl Document {
         // RowParser still scans the header once for cell boundaries, whitespace
         // and escaped pipes (also inside code), skipping reusable semantics.
         // An inherited code/math prefix had no cell semantics; parse those here once.
+        if first_cell.is_none() {
+            self.header_effects.replay = Some(Span::new(header.content.start, header.parsed_end));
+        }
         self.start_table_row(
             id,
             header.source,
@@ -3343,6 +3431,8 @@ impl Document {
             first_cell.map(|inline| (inline, header.parsed_end)),
             update,
         );
+        self.header_effects.clear_reuse();
+        self.work.header_effect_steps += self.footnotes.clear_reference_reuse();
         self.tables[id.0].source.end = delimiter.end;
         self.mark(
             Span::new(header.source.start, delimiter.end),
@@ -3405,6 +3495,9 @@ pub struct RenderRun<'a> {
     pub emphasis_depth: usize,
     /// Number of confirmed strong pairs covering this source interval.
     pub strong_depth: usize,
+    /// Innermost actual pair; distinct adjacent pairs retain distinct identities.
+    /// Use style_path(source.start) for the ordered outer-to-inner sequence.
+    pub style_pair: Option<StylePairId>,
     pub link: Option<LinkId>,
 }
 
@@ -3417,6 +3510,8 @@ pub struct Runs<'a> {
     pending: Option<(Span, annotations::Mark)>,
     resolution: link_semantics::Resolution,
     pub(crate) raw: bool,
+    pub(crate) style_override: Option<inline_styles::Snapshot>,
+    style_window: inline_styles::Window<'a>,
     pub(crate) last_mark: annotations::Mark,
 }
 
@@ -3453,6 +3548,20 @@ impl Drop for RunsWithScratch<'_, '_> {
 }
 
 impl Runs<'_> {
+    fn style_at(&mut self, at: usize, end: usize) -> inline_styles::Snapshot {
+        if let Some(snapshot) = self.style_override {
+            return snapshot;
+        }
+        if let Some(snapshot) = self.style_window.snapshot(at, end) {
+            return snapshot;
+        }
+        if self.raw {
+            self.document.inline_styles.unconditional(at, end)
+        } else {
+            self.resolution.style_snapshot(self.document, at, end)
+        }
+    }
+
     /// Tree nodes traversed by this query; independent of parser mutation work.
     pub fn link_resolution_work(&self) -> LinkResolutionWork {
         self.resolution.work
@@ -3460,6 +3569,11 @@ impl Runs<'_> {
 
     pub fn annotation_visits(&self) -> u64 {
         self.marks.visits
+    }
+    /// Fixed initial index seeks plus actual ordered-window state/boundary
+    /// visits. Conditional scope recovery is counted by the shared resolver.
+    pub fn ordered_style_steps(&self) -> u64 {
+        self.style_window.steps
     }
 
     /// Pending annotation stack frames, retained Vec capacity bytes and actual
@@ -3496,15 +3610,19 @@ impl<'a> Iterator for Runs<'a> {
             Some(b) => (None, b.source.start.min(self.end)),
             None => (None, self.end),
         };
-        let (span, mut first) = self.pending.take().or_else(|| self.marks.next())?;
+        let (span, raw) = self.pending.take().or_else(|| self.marks.next())?;
+        let snapshot = self.style_at(start, limit);
+        let mut first = snapshot.apply(raw);
         self.last_mark = first;
         if !self.raw {
             first = self.resolution.mark(self.document, first);
         }
-        let mut end = span.end.min(limit);
-        self.pending = (span.end > end).then_some((span, first));
-        while end < limit {
-            let (span, mut mark) = self.marks.next()?;
+        let mut end = span.end.min(limit).min(snapshot.next);
+        self.pending = (span.end > end).then_some((span, raw));
+        while end < limit && !(snapshot.authoritative && end >= snapshot.next) {
+            let (next_span, raw) = self.pending.take().or_else(|| self.marks.next())?;
+            let next_snapshot = self.style_at(end, limit);
+            let mut mark = next_snapshot.apply(raw);
             if !self.raw {
                 mark = self.resolution.mark(self.document, mark);
             }
@@ -3512,16 +3630,18 @@ impl<'a> Iterator for Runs<'a> {
                 || mark.link != first.link
                 || mark.emphasis_depth != first.emphasis_depth
                 || mark.strong_depth != first.strong_depth
+                || next_snapshot.inner != snapshot.inner
                 || (self.raw
                     && (mark.hide_when_target_available != first.hide_when_target_available
                         || mark.hide_alternative != first.hide_alternative))
             {
-                self.pending = Some((span, mark));
+                self.pending = Some((next_span, raw));
                 break;
             }
-            end = span.end.min(limit);
-            self.pending = (span.end > end).then_some((span, mark));
+            end = next_span.end.min(limit).min(next_snapshot.next);
+            self.pending = (next_span.end > end).then_some((next_span, raw));
         }
+        assert!(start < end, "style boundary failed to advance at {start}");
         self.cursor = end;
         let mut style = first.style;
         if block.is_some_and(|id| matches!(self.document.blocks[id.0].kind, BlockKind::Code { .. }))
@@ -3539,6 +3659,7 @@ impl<'a> Iterator for Runs<'a> {
             style,
             emphasis_depth: first.emphasis_depth,
             strong_depth: first.strong_depth,
+            style_pair: snapshot.inner,
             link: first.link,
         })
     }

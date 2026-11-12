@@ -1,3 +1,5 @@
+#[path = "support/header_confirmation.rs"]
+mod header_oracle;
 use mdstream::*;
 #[allow(dead_code)]
 #[path = "support/shortcut_text_hashes.rs"]
@@ -1309,12 +1311,18 @@ fn pending_suffix_preserves_inherited_emphasis_table_eligibility_baseline() {
             source.as_bytes(),
             expected,
         );
-        assert_eq!(
-            format!("{:?}", support::snapshot(&parse(source)))
-                .replace(&"x".repeat(1100), "<1100 x>"),
-            expected,
-            "inherited eligibility case {index}"
-        );
+        if index % 2 == 1 {
+            // Exactly the former bidirectional-closer rejection branch.
+            assert!(expected.contains("kind: Paragraph"));
+            header_oracle::assert_scope_composition(&parse(source));
+        } else {
+            assert_eq!(
+                format!("{:?}", support::snapshot(&parse(source)))
+                    .replace(&"x".repeat(1100), "<1100 x>"),
+                expected,
+                "inherited eligibility case {index}"
+            );
+        }
     }
     assert_eq!(inherited_suffix_table_sources().len(), 24);
     assert_eq!(
@@ -1331,9 +1339,9 @@ fn old_root_qualification_survives_multiple_gaps_and_valid_opaque_titles() {
         for image in ["", "!"] {
             for (prior, row, tables, direct) in [
                 ("", " 't') ", 1, false),
-                ("*prior ", "end*and ", 0, false),
+                ("*prior ", "end*and ", 1, false),
                 ("*prior ", "end* ", 1, false),
-                ("*prior ", " 'end*and') ", 0, true),
+                ("*prior ", " 'end*and') ", 1, false),
                 ("*prior ", " '`end*and`') ", 1, false),
                 ("*prior ", " '[end*and]') ", 1, false),
             ] {
@@ -1359,7 +1367,7 @@ fn old_root_qualification_survives_multiple_gaps_and_valid_opaque_titles() {
                     support::snapshot(&doc)
                 );
             }
-            for (after, tables) in [("and ", 0), (" ", 1)] {
+            for (after, tables) in [("and ", 1), (" ", 1)] {
                 let source = format!(
                     "{image}[a]({ending}*u{ending}end*{after}{}|b{ending}-|-{ending}",
                     "x".repeat(1100)

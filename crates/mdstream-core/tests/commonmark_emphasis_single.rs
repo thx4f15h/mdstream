@@ -18,7 +18,7 @@ fn parse(source: &str) -> Document {
 // Project the published single emphasis bit, not an inferred delimiter tree.
 // This bit-only adapter does not consume the published depths; never reconstruct them
 // from source markers or use the example number/expected HTML in this adapter.
-fn project(doc: &Document) -> String {
+fn legacy_project(doc: &Document) -> String {
     assert_eq!(doc.container_count(), 0);
     assert!(doc.headings().entries().is_empty());
     assert!(doc.links().is_empty() && doc.references().is_empty());
@@ -80,6 +80,14 @@ fn project(doc: &Document) -> String {
     html
 }
 
+#[path = "support/ordered_emphasis.rs"]
+mod ordered_emphasis;
+
+fn project(doc: &Document) -> String {
+    ordered_emphasis::project(doc, Style::EMPHASIS, false)
+}
+
+#[allow(dead_code)] // Uniform ledger states remain available after this chapter closes its gaps.
 enum Assessment {
     Supported,
     Unsupported {
@@ -91,11 +99,7 @@ enum Assessment {
 // Independent observations: changes require review, not automatic acceptance.
 fn assessment(number: usize) -> Assessment {
     match number {
-        350..=368 | 370..=372 => Assessment::Supported,
-        369 | 373 => Assessment::Unsupported {
-            reason: "public emphasis bit collapses the inner and outer same-style depth",
-            observed: "<p><em>(foo)</em></p>\n",
-        },
+        350..=373 => Assessment::Supported,
         _ => panic!("unclassified example {number}"),
     }
 }
@@ -142,9 +146,9 @@ fn pinned_commonmark_emphasis_single_report() {
         counts[category] += 1;
         eprintln!("example {number}: category {category} — {reason}");
     }
-    assert_eq!(counts, [22, 0, 2]);
+    assert_eq!(counts, [24, 0, 0]);
     eprintln!(
-        "CommonMark 0.31.2 Emphasis subset 350–373: 22 supported, 0 deliberate differences, 2 unsupported; 374–481 not scored"
+        "CommonMark 0.31.2 Emphasis subset 350–373: 24 supported, 0 deliberate differences, 0 unsupported; 374–481 not scored"
     );
 }
 
@@ -356,7 +360,7 @@ fn emphasis_projection_rejects_unscored_structure_and_styles() {
         "[^f]: footnote\n",
     ] {
         assert!(
-            std::panic::catch_unwind(|| project(&parse(source))).is_err(),
+            std::panic::catch_unwind(|| legacy_project(&parse(source))).is_err(),
             "accepted {source:?}"
         );
     }

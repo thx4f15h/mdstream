@@ -79,6 +79,7 @@ struct PreparedLayout {
     style: Style,
     emphasis_depth: usize,
     strong_depth: usize,
+    style_pair: Option<crate::StylePairId>,
     task: crate::link_semantics::MarkTask,
 }
 impl PreparedLayout {
@@ -89,6 +90,7 @@ impl PreparedLayout {
             style: run.style,
             emphasis_depth: run.emphasis_depth,
             strong_depth: run.strong_depth,
+            style_pair: run.style_pair,
             task: crate::link_semantics::MarkTask::new(mark),
         }
     }
@@ -107,6 +109,7 @@ impl PreparedLayout {
             },
             emphasis_depth: self.emphasis_depth,
             strong_depth: self.strong_depth,
+            style_pair: self.style_pair,
             link,
         }
     }
@@ -548,6 +551,18 @@ impl LayoutPass {
                 self.object_activity = None;
                 continue;
             }
+            if !self
+                .resolver
+                .resolution
+                .prepare_styles(document, self.cursor, budget)?
+            {
+                return Ok(Completion::BudgetExhausted);
+            }
+            let style_snapshot =
+                self.resolver
+                    .resolution
+                    .styles
+                    .snapshot(document, self.cursor, span.end);
             let remaining = budget.remaining();
             if remaining.objects == 0
                 || remaining.bytes == 0
@@ -556,7 +571,11 @@ impl LayoutPass {
             {
                 return Ok(Completion::BudgetExhausted);
             }
-            let mut end = self.cursor.saturating_add(remaining.bytes).min(span.end);
+            let mut end = self
+                .cursor
+                .saturating_add(remaining.bytes)
+                .min(span.end)
+                .min(style_snapshot.next);
             if let Some(segment) = self.fold_segment {
                 end = end.min(segment.end());
             }
@@ -574,6 +593,7 @@ impl LayoutPass {
             let (run, mark) = {
                 let mut runs = document.runs_in(Span::new(self.cursor, end)).unwrap();
                 runs.raw = true;
+                runs.style_override = Some(style_snapshot);
                 let run = runs.next().unwrap();
                 let mark = runs.last_mark;
                 (run, mark)

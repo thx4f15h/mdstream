@@ -93,7 +93,13 @@ fn rejected_header_then_marker_delimiter_preserves_identity() {
     );
     assert_eq!(doc.blocks()[table.block.0].container, scope);
     assert_eq!(doc.text(table.cell(0, 0).unwrap().source), Some("*中🙂*"));
-    assert_eq!(*doc.link_info(LinkId(0)).unwrap(), link);
+    assert_eq!(
+        *doc.link_info(LinkId(0)).unwrap(),
+        LinkInfo {
+            state: SyntaxState::Sealed,
+            ..link
+        }
+    );
     assert_eq!(doc.link_destination(LinkId(0)), Some("u"));
     assert_eq!(update.new_tables, 0..1);
     assert!(update.closed_containers.is_empty());
@@ -283,7 +289,13 @@ fn deep_marker_delimiter_does_not_rescan_history() {
     assert!(doc.work().container_steps - before.container_steps < 10 * tail.len() as u64);
     assert_eq!(doc.tables().len(), 1);
     assert_eq!(doc.blocks()[doc.tables()[0].block.0].container, scope);
-    assert_eq!(*doc.link_info(LinkId(0)).unwrap(), link);
+    assert_eq!(
+        *doc.link_info(LinkId(0)).unwrap(),
+        LinkInfo {
+            state: SyntaxState::Sealed,
+            ..link
+        }
+    );
     assert_eq!(doc.container_count(), 982);
     doc.finish();
     assert!(doc.work().table_header_bytes <= 2 * doc.source().len() as u64);

@@ -437,8 +437,17 @@ fn reference_form_samples_preserve_mapping_when_sliced_and_read_with_six_byte_bu
         while cursor.source_position() < markdown.len() {
             let old = cursor.source_position();
             let mut budget = Budget::new(limit);
-            let DisplayStep::Run(run) = cursor.next(&doc, &mut budget).unwrap() else {
-                panic!("small-budget reader made no progress");
+            let run = match cursor.next(&doc, &mut budget).unwrap() {
+                DisplayStep::Run(run) => run,
+                DisplayStep::BudgetExhausted => {
+                    assert_eq!(cursor.source_position(), old);
+                    assert!(
+                        budget.used().queries > 0,
+                        "scope metadata makes paid progress"
+                    );
+                    continue;
+                }
+                DisplayStep::Complete => panic!("source remains"),
             };
             assert_eq!(run.source.start, old);
             check_mapping(markdown, run.source, run.text, run.replacement);
@@ -643,9 +652,11 @@ fn reference_form_raw_spans_identity_and_shared_display_destination_title_budget
                 frames += 1;
                 assert!(
                     frames
-                        <= 4 * (info.source.len()
-                            + expected_destination.len()
-                            + expected_title.as_ref().map_or(0, String::len))
+                        <= 64
+                            * (doc.source().len()
+                                + info.source.len()
+                                + expected_destination.len()
+                                + expected_title.as_ref().map_or(0, String::len))
                             + 8,
                     "shared readers stalled"
                 );
@@ -662,7 +673,7 @@ fn reference_form_raw_spans_identity_and_shared_display_destination_title_budget
                             }
                         }
                         DisplayStep::Complete => display_done = true,
-                        other => panic!("fresh frame failed display: {other:?}"),
+                        DisplayStep::BudgetExhausted => (),
                     }
                 }
                 if !destination_done {

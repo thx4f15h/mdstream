@@ -1,5 +1,9 @@
 #[path = "support/code_replay_changes.rs"]
 mod code_changes;
+#[path = "support/header_confirmation.rs"]
+mod header_oracle;
+#[path = "support/style_confirmation_changes.rs"]
+mod style_changes;
 use mdstream::*;
 #[path = "support/container_title_model.rs"]
 mod model;
@@ -724,24 +728,28 @@ fn old_header_eligibility_at_window_and_late_pipe_keeps_real_table_shapes() {
             );
             let old: Vec<_> = original.split_whitespace().collect();
             let expected = if let Some(expected) = table_changes::exact(&source, bytewise) {
-                let open = source.find("[a]").unwrap();
-                let t = open + 7;
-                changes::assert_plain(
-                    d,
-                    LinkId(0),
-                    Span::new(open + 1, open + 2),
-                    Span::new(open, open + 14),
-                    Span::new(open + 4, open + 5),
-                    Span::new(t, t + 5),
-                    &[Span::new(t + 2, t + 4)],
-                );
-                let inside: String = d
-                    .display_runs_in(Span::new(open, open + 14))
-                    .unwrap()
-                    .filter(|r| !r.style.contains(Style::HIDDEN))
-                    .map(|r| r.text)
-                    .collect();
-                assert_eq!(inside, "a");
+                if index >= 20 && index % 20 == 4 || index >= 20 && index % 20 == 5 {
+                    header_oracle::assert_scope_composition(d);
+                } else {
+                    let open = source.find("[a]").unwrap();
+                    let t = open + 7;
+                    changes::assert_plain(
+                        d,
+                        LinkId(0),
+                        Span::new(open + 1, open + 2),
+                        Span::new(open, open + 14),
+                        Span::new(open + 4, open + 5),
+                        Span::new(t, t + 5),
+                        &[Span::new(t + 2, t + 4)],
+                    );
+                    let inside: String = d
+                        .display_runs_in(Span::new(open, open + 14))
+                        .unwrap()
+                        .filter(|r| !r.style.contains(Style::HIDDEN))
+                        .map(|r| r.text)
+                        .collect();
+                    assert_eq!(inside, "a");
+                }
                 expected
             } else {
                 (
@@ -754,32 +762,21 @@ fn old_header_eligibility_at_window_and_late_pipe_keeps_real_table_shapes() {
                     corpus::hash(&format!("{:?}", support::snapshot(d))),
                     corpus::hash(&corpus::old_work(d.work()))
                 ),
-                code_changes::pair(
+                style_changes::pair(
                     d.source(),
-                    (expected.0, nested_changes::work(d.source(), expected.1))
+                    code_changes::pair(
+                        d.source(),
+                        (expected.0, nested_changes::work(d.source(), expected.1))
+                    )
                 ),
                 "{index}"
             );
-            let full_work = format!("{:?}", d.work())
-                .split(", ")
-                .filter(|field| {
-                    !field.starts_with("link_title_gap_steps:")
-                        && !field.starts_with("code_fallback_")
-                        && !field.starts_with("fence_candidate_")
-                        && !field.starts_with("structural_prefix_")
-                        && !field.starts_with("link_fallback_")
-                        && !field.starts_with("bare_")
-                        && !field.starts_with("link_label_steps:")
-                        && !field.starts_with("link_index_steps:")
-                        && !field.starts_with("link_gate_steps:")
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
+            let full_work = corpus::full_work(d.work());
             let work_expected = if let Some((_, expected, public)) = TABLE_FULL_WORK_CHANGES
                 .iter()
                 .find(|entry| entry.0 == source)
             {
-                if !public {
+                if !public && !(index >= 20 && matches!(index % 20, 4 | 5)) {
                     // Exact confirmed headers keep the old public snapshot;
                     // deferred finalization adds one observer step, no bytes.
                     assert_eq!(d.link_destination(LinkId(0)), None);
@@ -796,14 +793,23 @@ fn old_header_eligibility_at_window_and_late_pipe_keeps_real_table_shapes() {
             };
             assert_eq!(
                 corpus::hash(&full_work),
-                code_changes::work(d.source(), nested_changes::work(d.source(), work_expected)),
+                style_changes::work(
+                    d.source(),
+                    code_changes::work(d.source(), nested_changes::work(d.source(), work_expected))
+                ),
                 "all old Work {index}"
             );
             assert_eq!(
                 format!("{:016x}", corpus::hash(&model::table_shape(d))),
                 format!(
                     "{:016x}",
-                    code_changes::snapshot(d.source(), u64::from_str_radix(old[5], 16).unwrap())
+                    style_changes::snapshot(
+                        d.source(),
+                        code_changes::snapshot(
+                            d.source(),
+                            u64::from_str_radix(old[5], 16).unwrap()
+                        )
+                    )
                 ),
                 "shape {index}"
             );

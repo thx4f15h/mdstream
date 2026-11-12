@@ -4,8 +4,7 @@ use mdstream::{
     BlockKind, Budget, DisplayStep, Document, LinkId, LinkKind, LinkTarget, Span, Style, WorkLimit,
 };
 
-#[path = "support/link_metadata.rs"]
-mod link_metadata;
+use ordered_emphasis::metadata as link_metadata;
 
 #[path = "support/snapshot.rs"]
 mod support;
@@ -87,7 +86,7 @@ fn link_outer_style(doc: &Document, id: LinkId) -> Style {
 
 // No source syntax, example number or oracle enters this adapter. Source reads
 // below only distinguish a borrowed physical paragraph LF from decoded content.
-fn project(doc: &Document) -> String {
+fn legacy_project(doc: &Document) -> String {
     assert_eq!(doc.container_count(), 0);
     assert!(doc.headings().entries().is_empty());
     // Direct links retain an interned provisional reference label; validate
@@ -178,6 +177,14 @@ fn project(doc: &Document) -> String {
     html
 }
 
+#[path = "support/ordered_emphasis.rs"]
+mod ordered_emphasis;
+
+fn project(doc: &Document) -> String {
+    ordered_emphasis::project(doc, Style::EMPHASIS.union(Style::STRONG), true)
+}
+
+#[allow(dead_code)] // Uniform ledger states remain available after this chapter closes its gaps.
 enum Assessment {
     Supported,
     Unsupported {
@@ -189,11 +196,7 @@ enum Assessment {
 // Independently reviewed observations, separate from the unchanged oracle.
 fn assessment(number: usize) -> Assessment {
     match number {
-        431 | 433..=444 => Assessment::Supported,
-        432 => Assessment::Unsupported {
-            reason: "bit-only projection omits the published repeated strong depth",
-            observed: "<p><strong>foo <em>bar baz\nbim</em> bop</strong></p>\n",
-        },
+        431..=444 => Assessment::Supported,
         _ => panic!("unclassified example {number}"),
     }
 }
@@ -240,9 +243,9 @@ fn pinned_commonmark_emphasis_partial_report() {
         counts[category] += 1;
         eprintln!("example {number}: category {category} — {reason}");
     }
-    assert_eq!(counts, [13, 0, 1]);
+    assert_eq!(counts, [14, 0, 0]);
     eprintln!(
-        "CommonMark 0.31.2 Emphasis subset 431–444: 13 supported, 0 deliberate differences, 1 unsupported; 445–481 not scored"
+        "CommonMark 0.31.2 Emphasis subset 431–444: 14 supported, 0 deliberate differences, 0 unsupported; 445–481 not scored"
     );
 }
 
@@ -412,10 +415,10 @@ fn nesting_projection_preserves_visible_runs_and_rejects_ambiguous_order() {
         ("*a\n\nb*\n", "<p>*a</p>\n<p>b*</p>\n"),
         ("*&lt;&amp;&quot;*\n", "<p><em>&lt;&amp;&quot;</em></p>\n"),
         ("&#10;\n", "<p>\n</p>\n"),
-        // The uniform envelope is projectable, but still lacks nested em depth.
+        // Ordered identities retain both emphasis scopes across the anchor.
         (
             "*foo [*bar*](/url)*\n",
-            "<p><em>foo <a href=\"/url\">bar</a></em></p>\n",
+            "<p><em>foo <a href=\"/url\"><em>bar</em></a></em></p>\n",
         ),
     ] {
         assert_eq!(project(&parse(source)), expected);
@@ -461,7 +464,7 @@ fn nesting_projection_preserves_visible_runs_and_rejects_ambiguous_order() {
         "[^f]: footnote\n",
     ] {
         assert!(
-            std::panic::catch_unwind(|| project(&parse(source))).is_err(),
+            std::panic::catch_unwind(|| legacy_project(&parse(source))).is_err(),
             "accepted {source:?}"
         );
     }
@@ -471,9 +474,10 @@ fn nesting_projection_preserves_visible_runs_and_rejects_ambiguous_order() {
 fn repeated_strong_depth_and_link_scope_are_scored_separately() {
     let nested = parse("**foo *bar **baz**\nbim* bop**\n");
     let flat = parse("**foo *bar baz\nbim* bop**\n");
-    assert_eq!(project(&nested), project(&flat));
+    assert_eq!(legacy_project(&nested), legacy_project(&flat));
+    assert_ne!(project(&nested), project(&flat));
     let &(_, _, official) = EMPHASIS_CASES.iter().find(|c| c.0 == 432).unwrap();
-    assert_ne!(project(&nested), official);
+    assert_eq!(project(&nested), official);
     for (source, expected) in [
         (
             "**foo [*bar*](/url)**\n",
@@ -511,7 +515,13 @@ fn nested_late_closers_preserve_identity_and_literal_partial_runs() {
             "_",
             format!("<em>{body}<strong>bar</strong> tail</em>"),
         ),
-        ("_", "_", "_", "_", format!("<em>{body}bar tail</em>")),
+        (
+            "_",
+            "_",
+            "_",
+            "_",
+            format!("<em>{body}<em>bar</em> tail</em>"),
+        ),
         (
             "*",
             "**",

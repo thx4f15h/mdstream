@@ -97,6 +97,8 @@ pub struct DependencyCapture {
     current: Option<crate::LinkId>,
     activity: Option<crate::LinkActivity>,
     resolution: crate::link_semantics::Resolution,
+    style_last: Option<usize>,
+    style_pending: Option<usize>,
     seen: std::collections::BTreeSet<crate::LinkId>,
     expanded: Option<Span>,
     foot_source: Span,
@@ -118,6 +120,8 @@ impl DependencyCapture {
             current: None,
             activity: None,
             resolution: crate::link_semantics::Resolution::capturing(),
+            style_last: None,
+            style_pending: None,
             seen: Default::default(),
             expanded: None,
             foot_source: Span::new(0, 0),
@@ -178,9 +182,13 @@ impl DependencyCapture {
                     }
                     let key = document.tile_key(self.tile).unwrap();
                     self.foot_source = key.source;
+                    self.style_pending = document
+                        .inline_styles
+                        .conditional_scope_after(key.source, None);
                     self.foot_at = document
-                        .footnote_references()
-                        .partition_point(|r| r.source.end <= key.source.start);
+                        .footnotes
+                        .first_reference(key.source.start)
+                        .map_or(usize::MAX, |id| id.0);
                     let mut window = document.link_window(key.source);
                     window.seed(document);
                     self.window = Some(window);
@@ -261,8 +269,9 @@ impl DependencyCapture {
                     self.foot_source =
                         Span::new(label.start.min(source.start), label.end.max(source.end));
                     self.foot_at = document
-                        .footnote_references()
-                        .partition_point(|r| r.source.end <= self.foot_source.start);
+                        .footnotes
+                        .first_reference(self.foot_source.start)
+                        .map_or(usize::MAX, |id| id.0);
                     let mut window = document.link_window(self.foot_source);
                     window.seed(document);
                     self.window = Some(window);
@@ -273,7 +282,7 @@ impl DependencyCapture {
                     if self.foot_at >= entries.len()
                         || entries[self.foot_at].source.start >= self.foot_source.end
                     {
-                        self.phase = 5;
+                        self.phase = if self.style_pending.is_some() { 7 } else { 5 };
                         continue;
                     }
                     if !budget.charge(WorkLimit {
@@ -288,7 +297,32 @@ impl DependencyCapture {
                         reference.symbol,
                         document.footnote(reference.symbol).unwrap().revision,
                     ));
-                    self.foot_at += 1;
+                    self.foot_at =
+                        document.footnotes.next[self.foot_at].map_or(usize::MAX, |id| id.0);
+                }
+                7 => {
+                    if let Some(key) = self.style_pending {
+                        let at = key.max(self.key.as_ref().unwrap().source.start);
+                        if !self.resolution.prepare_styles(document, at, budget)? {
+                            return Ok(DependencyCaptureStep::BudgetExhausted);
+                        }
+                        self.style_last = self.style_pending.take();
+                    } else {
+                        if !budget.charge(WorkLimit {
+                            queries: 1,
+                            objects: 1,
+                            ..WorkLimit::default()
+                        }) {
+                            return Ok(DependencyCaptureStep::BudgetExhausted);
+                        }
+                        self.style_pending = document.inline_styles.conditional_scope_after(
+                            self.key.as_ref().unwrap().source,
+                            self.style_last,
+                        );
+                        if self.style_pending.is_none() {
+                            self.phase = 5;
+                        }
+                    }
                 }
                 5 => {
                     self.phase = 6;

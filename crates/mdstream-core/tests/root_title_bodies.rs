@@ -1,5 +1,7 @@
 #[path = "support/code_replay_changes.rs"]
 mod code_changes;
+#[path = "support/header_confirmation.rs"]
+mod header_oracle;
 use mdstream::*;
 #[allow(dead_code)]
 #[path = "support/shortcut_text_hashes.rs"]
@@ -1006,77 +1008,84 @@ fn body_old_eligibility_first_pipe_eager_opaque_and_table_decisions_match_head()
         );
         let doc = parse(source);
         let (tables, hash) = expected.split_once(' ').unwrap();
-        assert_eq!(
-            doc.tables().len().to_string(),
-            tables,
-            "table decision {index}"
-        );
-        match index % 30 {
-            4 | 5 | 6 | 9 | 10 | 11 | 28 | 29 => {
-                // Precisely these complete sources change: 12 successful body
-                // upgrades and 20 opaque failures. No generic LF/table exemption.
-                let success = matches!(index % 30, 4 | 10 | 28);
-                let start = source.find("[a]").unwrap() - usize::from(source.contains("![a]"));
-                let label = source.find("[a]").unwrap() + 1;
-                let title_start = source.find("'first").unwrap() + 1;
-                let title_end = source.find("last')").map(|pos| pos + 4);
-                let expected_visible = if success {
-                    format!("{}a{}", &source[..start], &source[title_end.unwrap() + 2..])
-                } else {
-                    source.clone()
-                }
-                .replace("\r\n", "\n");
-                assert_eq!(visible(&doc), expected_visible, "changed display {index}");
-                assert_eq!(doc.links().len(), 1);
-                assert_eq!(doc.link_destination(LinkId(0)), success.then_some("u"));
-                assert_eq!(
-                    doc.link_title(LinkId(0)),
-                    title_end
-                        .filter(|_| success)
-                        .map(|end| &source[title_start..end])
-                );
-                assert_eq!(
-                    doc.link_info(LinkId(0)),
-                    Some(&LinkInfo {
-                        kind: if source.contains("![a]") {
-                            LinkKind::Image
-                        } else {
-                            LinkKind::Link
-                        },
-                        label: Span::new(label, label + 1),
-                        source: Span::new(
-                            start,
-                            if success {
-                                title_end.unwrap() + 2
-                            } else {
-                                label + 2
-                            }
-                        ),
-                        title: title_end
+        if matches!(index % 30, 6 | 14) {
+            // Inherited bidirectional emphasis, or code closure followed by
+            // fresh inline syntax: the two newly legal physical-row branches.
+            assert_eq!(tables, "0");
+            header_oracle::assert_scope_composition(&doc);
+        } else {
+            assert_eq!(
+                doc.tables().len().to_string(),
+                tables,
+                "table decision {index}"
+            );
+            match index % 30 {
+                4 | 5 | 6 | 9 | 10 | 11 | 28 | 29 => {
+                    // Precisely these complete sources change: 12 successful body
+                    // upgrades and 20 opaque failures. No generic LF/table exemption.
+                    let success = matches!(index % 30, 4 | 10 | 28);
+                    let start = source.find("[a]").unwrap() - usize::from(source.contains("![a]"));
+                    let label = source.find("[a]").unwrap() + 1;
+                    let title_start = source.find("'first").unwrap() + 1;
+                    let title_end = source.find("last')").map(|pos| pos + 4);
+                    let expected_visible = if success {
+                        format!("{}a{}", &source[..start], &source[title_end.unwrap() + 2..])
+                    } else {
+                        source.clone()
+                    }
+                    .replace("\r\n", "\n");
+                    assert_eq!(visible(&doc), expected_visible, "changed display {index}");
+                    assert_eq!(doc.links().len(), 1);
+                    assert_eq!(doc.link_destination(LinkId(0)), success.then_some("u"));
+                    assert_eq!(
+                        doc.link_title(LinkId(0)),
+                        title_end
                             .filter(|_| success)
-                            .map(|end| Span::new(title_start, end)),
-                        state: SyntaxState::Sealed,
-                    })
-                );
-                assert_eq!(
-                    doc.references(),
-                    [Reference {
-                        label: "a".into(),
-                        destination: None,
-                        title: None,
-                        revision: 0,
-                        first_use: Some(start)
-                    }]
-                );
-            }
-            _ => assert_eq!(
-                format!("{:016x}", digest(&format!("{:?}", support::snapshot(&doc)))),
-                format!(
-                    "{:016x}",
-                    code_changes::snapshot(source, u64::from_str_radix(hash, 16).unwrap())
+                            .map(|end| &source[title_start..end])
+                    );
+                    assert_eq!(
+                        doc.link_info(LinkId(0)),
+                        Some(&LinkInfo {
+                            kind: if source.contains("![a]") {
+                                LinkKind::Image
+                            } else {
+                                LinkKind::Link
+                            },
+                            label: Span::new(label, label + 1),
+                            source: Span::new(
+                                start,
+                                if success {
+                                    title_end.unwrap() + 2
+                                } else {
+                                    label + 2
+                                }
+                            ),
+                            title: title_end
+                                .filter(|_| success)
+                                .map(|end| Span::new(title_start, end)),
+                            state: SyntaxState::Sealed,
+                        })
+                    );
+                    assert_eq!(
+                        doc.references(),
+                        [Reference {
+                            label: "a".into(),
+                            destination: None,
+                            title: None,
+                            revision: 0,
+                            first_use: Some(start)
+                        }]
+                    );
+                }
+                _ => assert_eq!(
+                    format!("{:016x}", digest(&format!("{:?}", support::snapshot(&doc)))),
+                    format!(
+                        "{:016x}",
+                        code_changes::snapshot(source, u64::from_str_radix(hash, 16).unwrap())
+                    ),
+                    "unchanged {index}: {source:?}"
                 ),
-                "unchanged {index}: {source:?}"
-            ),
+            }
         }
         let mut stream = Utf8Document::new();
         for byte in source.bytes() {

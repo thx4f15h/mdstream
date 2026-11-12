@@ -1,3 +1,5 @@
+#[path = "support/header_confirmation.rs"]
+mod header_oracle;
 use mdstream::*;
 
 fn parse(source: &str) -> Document {
@@ -23,40 +25,14 @@ fn visible(doc: &Document, span: Span) -> String {
 }
 
 fn compare_header(prior: &str, header: &str) {
-    let tail = ":--|--:\r\nv|z\n";
-    let late = parse(&format!("{prior}{header}{tail}"));
-    let early = parse(&format!("{prior}|{header}{tail}"));
-    assert_eq!(late.tables().len(), 1, "{prior:?} {header:?}");
-    let old = Span::new(0, prior.len());
-    assert_eq!(styles(&late, old), styles(&early, old));
-    assert_eq!(visible(&late, old), visible(&early, old));
-    let span = Span::new(prior.len(), prior.len() + header.len());
-    let shifted = Span::new(span.start + 1, span.end + 1);
-    assert_eq!(styles(&late, span), styles(&early, shifted));
-    assert_eq!(visible(&late, span), visible(&early, shifted));
-    assert_eq!(late.links().len(), early.links().len());
-    for i in 0..late.links().len() {
-        let id = LinkId(i);
-        let left = late.link_info(id).unwrap();
-        let mut right = *early.link_info(id).unwrap();
-        let shift = usize::from(left.source.start >= prior.len());
-        for span in [&mut right.source, &mut right.label]
-            .into_iter()
-            .chain(right.title.as_mut())
-        {
-            span.start -= shift;
-            span.end -= shift;
-        }
-        assert_eq!(*left, right);
-        assert_eq!(late.link_destination(id), early.link_destination(id));
-        assert_eq!(late.link_title(id), early.link_title(id));
-    }
-    assert_eq!(late.maths().len(), early.maths().len());
-    assert_eq!(
-        late.footnote_references().len(),
-        early.footnote_references().len()
+    let late = parse(&format!("{prior}{header}:--|--:\r\nv|z\n"));
+    header_oracle::assert_scope_composition(&late);
+    assert!(
+        late.work().inline_bytes
+            <= late.source().len() as u64
+                + late.work().header_replay_bytes
+                + late.work().table_bytes
     );
-    assert!(late.work().inline_bytes <= late.source().len() as u64 + late.work().table_bytes);
 }
 
 fn compare_plain(source: &str) {
@@ -75,7 +51,7 @@ fn compare_plain(source: &str) {
     for i in 0..doc.links().len() {
         assert_eq!(doc.link_info(LinkId(i)), ordinary.link_info(LinkId(i)));
     }
-    assert!(doc.work().inline_bytes <= source.len() as u64);
+    assert!(doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes);
 }
 
 #[test]
@@ -122,7 +98,7 @@ fn label_close_cancels_probe_when_replaced_and_isolates_inert_direct_tails() {
                     "x".repeat(padding),
                     "y".repeat(1100)
                 );
-                compare_plain(&source);
+                header_oracle::assert_scope_composition(&parse(&source));
             }
             let mut doc = Document::new();
             doc.append(&format!(
@@ -196,7 +172,13 @@ fn live_objects_and_source_ranges_survive_confirmation_and_failure() {
         assert!(update.new_maths.is_empty());
         assert!(update.new_footnote_references.is_empty());
         assert_eq!(*doc.link_info(LinkId(0)).unwrap(), prior);
-        assert_eq!(*doc.link_info(LinkId(1)).unwrap(), local);
+        assert_eq!(
+            *doc.link_info(LinkId(1)).unwrap(),
+            LinkInfo {
+                state: SyntaxState::Sealed,
+                ..local
+            }
+        );
         assert_eq!(*doc.math(MathId(1)).unwrap(), math);
         assert_eq!(doc.link_info(LinkId(2)).unwrap().kind, LinkKind::Image);
         if success {
@@ -244,14 +226,21 @@ fn million_byte_label_growth_has_no_rescan_or_extra_arena_growth() {
         assert_eq!(update.new_tables.len(), usize::from(success));
         assert_eq!(update.new_links.len(), usize::from(!success));
         // Reuse the complete first-cell prefix; neither branch replays it.
-        assert!(doc.work().inline_bytes - after.inline_bytes <= 13);
+        assert!(
+            doc.work().inline_bytes
+                - after.inline_bytes
+                - (doc.work().header_replay_bytes - after.header_replay_bytes)
+                <= 13
+        );
         assert_eq!(doc.work().label_bytes, before.label_bytes);
         if !success {
             assert_eq!(doc.link_info(LinkId(0)).unwrap().source.start, 0);
             assert_eq!(doc.link_info(LinkId(0)).unwrap().kind, LinkKind::Image);
         }
         doc.finish();
-        assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+        assert!(
+            doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes
+        );
     }
 }
 
@@ -282,24 +271,6 @@ fn repeated_failed_probes_keep_old_stack_and_label_without_traversal() {
 
 // The existing label dialect keeps one opener: a new '[' replaces it, an
 // unescaped ']' closes it. This model deliberately has no parser state or IDs.
-fn closes_old_label(prefix: &str) -> Option<usize> {
-    let mut old = true;
-    let mut escaped = false;
-    for (at, b) in prefix.bytes().enumerate() {
-        if escaped {
-            escaped = false;
-        } else {
-            match b {
-                b'\\' => escaped = true,
-                b'[' => old = false,
-                b']' if old => return Some(at + 1),
-                _ => {}
-            }
-        }
-    }
-    None
-}
-
 #[test]
 fn generated_replacement_and_escape_sequences_match_label_model() {
     let tokens = [
@@ -311,29 +282,8 @@ fn generated_replacement_and_escape_sequences_match_label_model() {
                 let prior = format!("a {marker} prior\n");
                 let prefix = format!("{}{a}{b}", "x".repeat(1030));
                 let header = format!("{prefix}|b\n");
-                // This finite token model includes one inert direct or reference
-                // tail. Later syntax still cancels; pending plain labels can wait.
-                let rejected = closes_old_label(&prefix).is_some_and(|end| {
-                    let suffix = &prefix[end..];
-                    let syntax = |text: &str| {
-                        text.contains(['&', '<', '\\', '*', '_', '~', '`', '$', '!', '[', ']'])
-                    };
-                    if let Some(label) = suffix.strip_prefix('[') {
-                        match label.split_once(']') {
-                            Some((body, rest)) => {
-                                syntax(body) || syntax(rest) || rest.contains('(')
-                            }
-                            None => syntax(label),
-                        }
-                    } else {
-                        syntax(suffix.strip_prefix("(v)").unwrap_or(suffix))
-                    }
-                });
-                if rejected {
-                    compare_plain(&format!("{prior}{header}-|-\n"));
-                } else {
-                    compare_header(&prior, &header);
-                }
+                // Inline closure/replacement no longer disqualifies a row.
+                compare_header(&prior, &header);
             }
         }
     }
@@ -357,15 +307,15 @@ fn closed_container_labels_cancel_late_header_probes_in_deep_scopes() {
         doc.append(&format!("|![tail](w)\n{prefix}-|-\n{prefix}v|z\n"))
             .unwrap();
         doc.finish();
-        assert_eq!(*doc.link_info(LinkId(1)).unwrap(), local);
-        assert_eq!(doc.links().len(), 3);
-        assert!(doc.tables().is_empty());
-        assert_eq!(doc.link_destination(LinkId(0)), Some("u"));
-        assert!(
-            doc.blocks()
-                .iter()
-                .all(|b| b.container == doc.blocks()[0].container)
+        assert_eq!(
+            *doc.link_info(LinkId(1)).unwrap(),
+            LinkInfo {
+                state: SyntaxState::Sealed,
+                ..local
+            }
         );
+        assert_eq!(doc.links().len(), 3);
+        header_oracle::assert_scope_composition(&doc);
     }
     compare_plain(&format!("![old\n{}|b\n> -|-\n", "x".repeat(1030)));
 }
@@ -388,11 +338,17 @@ fn dense_objects_and_columns_are_reused_and_preview_obeys_shared_budget() {
     assert!(update.new_links.is_empty());
     assert!(update.new_maths.is_empty());
     assert!(update.new_footnote_references.is_empty());
-    assert_eq!(*doc.link_info(LinkId(0)).unwrap(), first);
-    assert_eq!(doc.work().label_bytes, before.label_bytes);
-    assert_eq!(doc.work().delimiter_steps - before.delimiter_steps, 4096);
+    assert_eq!(
+        *doc.link_info(LinkId(0)).unwrap(),
+        LinkInfo {
+            state: SyntaxState::Sealed,
+            ..first
+        }
+    );
+    assert_eq!(doc.work().label_bytes, before.label_bytes + 7 * 4096);
+    assert_eq!(doc.work().delimiter_steps - before.delimiter_steps, 12_288);
     assert_eq!(doc.tables()[0].columns.len(), 4096);
-    assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+    assert!(doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes);
     let mut preview = TablePreview::new(
         &doc,
         TableId(0),
@@ -449,7 +405,7 @@ fn generated_tables_and_rejections_match_source_range_model() {
         ));
         let delimiter_end = source.len();
         source.push_str("v|z\n");
-        if i % 3 != 0 && i % 5 != 0 {
+        if i % 5 != 0 {
             expected.push((
                 Span::new(start, source.len()),
                 Span::new(delimiter_start, delimiter_end),
@@ -464,7 +420,7 @@ fn generated_tables_and_rejections_match_source_range_model() {
         assert_eq!(table.delimiter, delimiter);
         assert_eq!(doc.block(table.block).unwrap().source, span);
     }
-    assert!(doc.work().inline_bytes <= source.len() as u64);
+    assert!(doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes);
     assert!(doc.work().table_header_bytes <= source.len() as u64);
 }
 

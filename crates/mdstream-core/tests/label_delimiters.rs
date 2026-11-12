@@ -48,7 +48,7 @@ fn published_labels_reject_outer_closers_and_preserve_local_and_enclosing_pairs(
                 assert_eq!(depths(&doc, "签"), (0, 0, false), "{source:?}");
                 assert_eq!(visible(&doc), format!("p {marker}前 {label} 后\n\n"));
                 let source = format!(
-                    "p {marker}前 {image}[签{marker} **中** _文_]{suffix} 后{marker}\n\n[r]: /u\n"
+                    "p {marker}前 {image}[签{marker} **中** _文_]{suffix} 后{marker}\n\n[r]: /u\n[签{marker} **中** _文_]: /u\n"
                 );
                 let doc = parse(&source);
                 let outer = (marker.len() % 2, marker.len() / 2, false);
@@ -122,7 +122,7 @@ fn unpublished_labels_release_summaries_as_ordinary_emphasis_once() {
             let source = format!("p {marker}前 [签{marker}]{suffix}");
             let doc = parse(&source);
             assert_eq!(doc.links().len(), 1);
-            assert_eq!(depths(&doc, "签"), (0, 0, false), "{source:?}");
+            assert_eq!(depths(&doc, "签"), expected, "{source:?}");
         }
     }
 }
@@ -141,7 +141,7 @@ fn published_labels_end_unmatched_openers_but_keep_outer_and_confirmed_styles() 
                     // The inner run is open-only. An independent scope model
                     // leaves it literal and permits only the outer pair.
                     let source = format!(
-                        "p {outer}前 {image}[签 {inner}中]{suffix} 后{outer} 尾{inner} .\n\n[r]: /u\n"
+                        "p {outer}前 {image}[签 {inner}中]{suffix} 后{outer} 尾{inner} .\n\n[r]: /u\n[签 {inner}中]: /u\n"
                     );
                     let doc = parse(&source);
                     for text in ["前", "签", "中", "后"] {
@@ -175,11 +175,14 @@ fn published_labels_end_unmatched_openers_but_keep_outer_and_confirmed_styles() 
 fn unfinished_failed_and_overlong_labels_have_explicit_boundaries() {
     // No closing bracket: the candidate remains ordinary inline text.
     assert_eq!(visible(&parse("[签 *中 后*")), "[签 中 后");
-    // Published shortcut references keep the existing hidden-bracket dialect,
-    // even when the destination is undefined or an explicit suffix fails.
+    // Inactive labels export their unmatched openers to ordinary prose.
     for source in ["[签 *中]*", "[签 *中](bad *", "[签 *中][missing]*"] {
         let doc = parse(source);
-        assert_eq!(depths(&doc, "中"), (0, 0, false), "{source:?}");
+        assert_eq!(
+            depths(&doc, "中"),
+            (usize::from(!source.contains("(bad")), 0, false),
+            "{source:?}"
+        );
     }
     let label = format!("签 *中{}", "x".repeat(1100));
     for (suffix, linked) in [("(u)", true), ("[r]", true), ("", false), ("(bad z", false)] {
@@ -215,7 +218,10 @@ fn source_mapping_ids_late_definitions_and_consumers_share_the_frame_budget() {
         let block = doc.block_at(info.source.start).unwrap();
         assert_eq!(doc.text(info.label), Some(label_text));
         assert_eq!(doc.text(info.source), Some(link_source));
-        assert_eq!(depths(&doc, "中"), (0, 0, false));
+        assert_eq!(
+            depths(&doc, "中"),
+            (usize::from(label_source.starts_with('[')), 0, false)
+        );
         doc.append("\n\n[r]: /目标&amp; \"标&amp;题\"\n").unwrap();
         doc.finish();
         assert_eq!(*doc.link_info(id).unwrap(), info);
@@ -239,8 +245,13 @@ fn source_mapping_ids_late_definitions_and_consumers_share_the_frame_budget() {
         let mut shown = String::new();
         while cursor.source_position() < span.end {
             let mut budget = Budget::new(limit);
-            let DisplayStep::Run(run) = cursor.next(&doc, &mut budget).unwrap() else {
-                panic!("no progress")
+            let run = match cursor.next(&doc, &mut budget).unwrap() {
+                DisplayStep::Run(r) => r,
+                DisplayStep::BudgetExhausted => {
+                    assert!(budget.used().queries > 0);
+                    continue;
+                }
+                DisplayStep::Complete => panic!("source remains"),
             };
             assert_eq!(doc.text(run.source), Some(run.text));
             assert_eq!(run.replacement, None);
@@ -291,8 +302,21 @@ fn inherited_labels_drop_openers_only_when_the_late_header_fails() {
                     "{inner:?} {ending:?}"
                 );
                 assert_eq!(doc.links().len(), usize::from(!success));
-                assert_eq!(depths(&doc, "inner"), (0, 0, false));
-                assert_eq!(depths(&doc, "end"), (0, 0, false));
+                let paired = !success && ending.starts_with("wrong");
+                let expected = if inner.starts_with('~') {
+                    (0, 0, paired)
+                } else {
+                    (
+                        usize::from(paired) * (inner.len() % 2),
+                        usize::from(paired) * (inner.len() / 2),
+                        false,
+                    )
+                };
+                assert_eq!(depths(&doc, "inner"), expected);
+                assert_eq!(
+                    depths(&doc, "end"),
+                    if success { (0, 0, false) } else { expected }
+                );
                 if success {
                     let early = parse(&format!(
                         "{prior}{continuation}|end] {}|b\n{continuation}{ending}",
@@ -460,7 +484,7 @@ fn inherited_left_closers_resolve_only_after_header_confirmation() {
                         "{marker} {prefix} {suffix} {ending:?}"
                     );
                     assert_eq!(doc.links().len(), usize::from(!table || suffix == "[r]"));
-                    let prior = if table {
+                    let prior = if table || suffix != "(u)" {
                         (marker.len() % 2, marker.len() / 2, false)
                     } else {
                         (0, 0, false)

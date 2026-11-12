@@ -24,7 +24,7 @@ pub enum SyntaxState {
 }
 
 /// A half-open UTF-8 byte range in the original, append-only source.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
@@ -207,6 +207,21 @@ pub struct ContentBlockIndexStats {
 /// Tree visits count mutation traversals; view queries do not mutate statistics.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Work {
+    /// Maxima of sums of actual per-component undo peaks, not an instantaneous
+    /// cross-component maximum; bytes include retained Clear buffer capacity.
+    pub inline_undo_peak: u64,
+    pub inline_undo_bytes_peak: u64,
+    pub eligibility_undo_peak: u64,
+    pub eligibility_undo_bytes_peak: u64,
+    pub style_events: u64,
+    pub style_scope_steps: u64,
+    pub style_index_steps: u64,
+    pub style_suffix_bytes: u64,
+    pub style_suffix_steps: u64,
+    pub inline_checkpoint_steps: u64,
+    pub inline_rollback_steps: u64,
+    pub header_effect_steps: u64,
+    pub header_replay_bytes: u64,
     /// Final container-paragraph endpoints inserted; no per-leaf/byte updates.
     pub paragraph_closures: u64,
     /// Bracket lifetimes and linked delimiter journal operations.

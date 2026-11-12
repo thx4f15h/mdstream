@@ -45,7 +45,7 @@ fn transition(html: &mut String, active: &mut Vec<usize>, style: Style) {
     active.extend(added);
 }
 
-fn project(doc: &Document) -> String {
+fn legacy_project(doc: &Document) -> String {
     assert_eq!(doc.container_count(), 0);
     assert!(doc.headings().entries().is_empty());
     assert!(doc.links().is_empty() && doc.references().is_empty());
@@ -101,6 +101,13 @@ fn project(doc: &Document) -> String {
         html.push_str("</p>\n");
     }
     html
+}
+
+#[path = "support/ordered_emphasis.rs"]
+mod ordered_emphasis;
+
+fn project(doc: &Document) -> String {
+    ordered_emphasis::project(doc, Style::EMPHASIS.union(Style::STRONG), false)
 }
 
 fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
@@ -340,7 +347,7 @@ fn nesting_projection_preserves_visible_runs_and_rejects_ambiguous_order() {
         "[^f]: footnote\n",
     ] {
         assert!(
-            std::panic::catch_unwind(|| project(&parse(source))).is_err(),
+            std::panic::catch_unwind(|| legacy_project(&parse(source))).is_err(),
             "accepted {source:?}"
         );
     }

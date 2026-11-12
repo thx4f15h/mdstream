@@ -1,3 +1,5 @@
+#[path = "support/header_confirmation.rs"]
+mod header_oracle;
 use mdstream::*;
 
 fn parse(source: &str) -> Document {
@@ -236,7 +238,7 @@ fn compare_plain(source: &str) {
     assert_eq!(doc.blocks(), ordinary.blocks());
     assert_eq!(doc.maths(), ordinary.maths());
     assert_eq!(doc.links(), ordinary.links());
-    assert!(doc.work().inline_bytes <= source.len() as u64);
+    assert!(doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes);
 }
 
 #[test]
@@ -286,7 +288,6 @@ fn syntax_suffix_flushes_old_math_before_any_new_object_and_never_restarts() {
         for padding in [0, 1010, 2048] {
             let mut doc = Document::new();
             doc.append("$prior$ a [old *old $$ prior\r\n").unwrap();
-            let original = doc.maths()[0];
             let update = doc
                 .append(&format!(
                     "{}end$$ {suffix} &amp; [live](v) $$new {}",
@@ -296,20 +297,9 @@ fn syntax_suffix_flushes_old_math_before_any_new_object_and_never_restarts() {
                 .unwrap();
             assert_eq!(update.new_maths.start, 1);
             assert!(update.new_maths.end >= 2);
-            let closed = doc.maths()[1];
-            let before = doc.work();
             doc.append("|b$$\n-|-\n").unwrap();
             doc.finish();
-            assert!(doc.tables().is_empty(), "{suffix:?}");
-            assert!(doc.work().table_header_bytes - before.table_header_bytes <= 4);
-            assert_eq!(doc.maths()[0], original);
-            assert_eq!(doc.maths()[1], closed);
-            assert!(
-                doc.maths()
-                    .windows(2)
-                    .all(|m| m[0].source.end <= m[1].source.start)
-            );
-            compare_plain(doc.source());
+            header_oracle::assert_scope_composition(&doc);
         }
     }
 }
@@ -356,7 +346,7 @@ fn million_byte_deep_probe_visits_only_new_bytes_and_reparses_only_the_row() {
         assert_eq!(doc.maths().len(), usize::from(!success));
         if success {
             assert_eq!(doc.work().inline_bytes - after.inline_bytes, 1_000_046);
-            assert_eq!(doc.work().math_steps - after.math_steps, 2);
+            assert_eq!(doc.work().math_steps - after.math_steps, 1);
         } else {
             assert!(doc.work().inline_bytes - after.inline_bytes < 12);
             assert_eq!(doc.work().math_steps - after.math_steps, 1);
@@ -387,7 +377,7 @@ fn long_separator_and_syntax_suffix_follow_independent_range_model() {
             if i % 5 == 0 { "x" } else { "" }
         ));
         let end = source.len();
-        if i % 3 != 0 && i % 5 != 0 {
+        if i % 5 != 0 {
             expected.push((Span::new(start, end), Span::new(delimiter, end)));
         }
         source.push('\n');
@@ -441,7 +431,7 @@ fn dense_old_objects_and_openers_are_not_revisited_or_renumbered() {
         doc.block(doc.tables()[0].block).unwrap().container,
         Some(ContainerId(499))
     );
-    assert_eq!(doc.work().math_steps - before.math_steps, 8194);
+    assert_eq!(doc.work().math_steps - before.math_steps, 8193);
     doc.finish();
     assert!(doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().table_bytes);
 }

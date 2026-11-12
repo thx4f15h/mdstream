@@ -3043,3 +3043,19 @@ y 复制逻辑显示投影，Y 精确复制 UTF-8 原文范围。显示投影保
 
 
 本项最终组合固定采用已提交基点 `07e8f4554fadbf7e0c20021cd81c740767ab2643`，保留上方 015 的完整记录。原生 4299276 结果、冻结与日志归档在 `016-prototypes/native-4299276/`；自有 stash `c4dd619b72b506ecc1117ccb5c5a90c952f7d123` 及快进/恢复记录见 `016-prototypes/integration-base15.json`。正文 `DisplaySearch::next_with_resolver` 与标题首命中包装均调用同一 `advance_impl`，没有第二份 KMP 匹配器。按焦点保留两套查询和草稿，q 在各自输入态作为字符，Ctrl-C 退出；Tab/Shift-Tab 与 Alt 历史保持。显式目录 Enter 暂停未完成正文搜索导航，正文编辑取消待执行目录激活；查询、选区与复制意愿不被另一套筛选覆盖。`directory_reading.rs` 的交错输入、实际 y/Y OSC52 字节、n/N、搜索/跳转取消与历史回归，以及保留的 015 reading/reading_pty 验收组合行为；最终冻结 SHA、全工作区门禁和真实终端记录仍见本项结果 JSON。
+
+
+## 2026-11-13 强调作用域、有序身份与一般晚表头确认
+
+标签按真实 LinkDisposition 隔离强调；未定义引用和被有效孩子抑制的父候选透明，图片沿用嵌套对象选择。StylePairId 由实际消耗的 delimiter 源片段组成，StylePath 按 outer→inner 输出，区分同点混合样式及相邻同深度配对。419 的既有 depth=2 由真实新接口准确消费 em/link/em，523 的作用域修正；八份评分消费升级后，350–481 为 **129 支持、0 差异、3 原始 HTML 排除**，Links 512–538 为 **25/2/0**。已有部分消耗、三倍数、Unicode 侧界与深度仍归原交付，官方输入、HTML、generator、SHA 和既有黄金数据保持。
+
+一般晚表头在可隔离快路外保存物理行标量 checkpoint 与实际修改 journal；成功恢复并在真实旧行边界 finish，再独立解析单元格，失败保留已消费普通语义。旧强调、代码、数学、标签闭合及含行内语法的后缀均覆盖；仅 Provisional 对象可撤销，相同源事件复用 ID。annotation 用节点 line epoch 去重，连续 collector 端点写合并 undo；不复制旧栈、不遍历历史引用使用点。累计解析 **O(n log n)**、空间 **O(n)**；无条件窗口 **O(log n + R)**，条件预分类事件恢复额外 **O(V log n)**，共享 Budget、memo 与逐节点退休。StylePath 的 K 项实际成本 **O((K+1) log n)**；不承诺单次 append/finish 硬时延。
+
+四类手写语义及官方 cmark 提供独立期望，哨兵包装的拆分解析仅验证作用域组合关系并保留 canonical 晚定义语境。UTF-8 全切点/逐前缀、深标签/长 run、0/1/6 预算、真实布局/搜索/折叠/缓存与取消验证保持；原始 N 字节独立断言 replay ≤4N、inline ≤8N，另验树访步及 undo/index 峰值。百万单字节追加的 grammar undo 峰值为 6 条、584 字节；750 条旧账本差异逐 source 分类，覆盖全部 201 个 source 和 120 个 root-title 输入，50 个新增表头结构匹配官方 cmark。
+
+TUI WidthMeasure 保存真实 style_pair/深度，跨 tile 条件测量只恢复同一 scope 一次；选列显示、End/FOLLOW、晚定义及陈旧 ticket 使用共享 resolver，退休逐节点收费。表宽与选列显示沿活跃脚注源码索引前进，覆盖旧数学撤销产生的死 occurrence 和代码回放导致的分配顺序倒置；不因 raw arena 中的撤销项暂停循环。32 项观测、width/3+2 列元数据界限、原 source cut 与 Reader 快速取消保持，原始输入及 ANSI golden 未改。完整 workspace debug/release、doc、fmt、生产与新增测试严格 clippy、全部 38 份报告及离线生成核验通过。数学方言、后缀字面回放、完整容器/HTML 和其它原未完需求保持既有范围。
+
+
+阅读控件组合验收保留源码选区、显式重查和两种复制。条件标签改变时，旧命中失效、原选区重新投影，显示复制跟随实际样式及隐藏，原文保持精确；相邻配对、实体完整来源、一般表头决议和活跃脚注顺序均通过真实控件验证。表格复制对已付费准备但物理 owner 位于窗口外的行作预算化源码顺序合并，保持视口原行高归属和当前列/minmax，不扩大连续窗口；百万字 owner 间隔的 28 字节选区只借记 682 byte 单位。两万字条件 scope 的小选区复制借记 7,110 byte 单位、恢复 4 个样式事件，取消中的 129 个共享 memo 节点逐个付费退休。真实 FIFO/PTY 验证晚定义前后精确 OSC52、隐藏选区、搜索和写端未 EOF 时退出；其它窄项及未完成需求保持原范围。
+
+目录的显示名称页与正文共享同一条件样式 resolver 和首命中匹配引擎；523 晚定义与父候选抑制改变真实名称，旧结果保持 stale，显式刷新后重建。微预算下，尚未付费发布替换页时不恢复旧 revision 摘要。深条件查询取消后逐节点退休；巨型标题取得首命中即跳过余文，独立有界摘要仍遵守源码限额。Body/Sidebar 草稿、原始选区、两种 OSC52 复制、目录激活与正文搜索暂停语义保持；真实 FIFO/PTY 覆盖目录晚定义刷新、q 输入和 Ctrl-C 终端恢复。

@@ -60,14 +60,14 @@ pub fn snapshot(doc: &Document) -> Snapshot {
             })
             .collect(),
         math_payloads: (0..doc.maths().len())
-            .map(|i| {
-                let mut cursor = doc.math_payload(mdstream::MathId(i)).unwrap();
+            .filter_map(|i| {
+                let mut cursor = doc.math_payload(mdstream::MathId(i))?;
                 let mut budget = mdstream::Budget::new(mdstream::WorkLimit::unlimited());
                 let mut chunks = Vec::new();
                 while let Some(chunk) = cursor.advance(&mut budget).unwrap() {
                     chunks.push((chunk.source, chunk.text.to_owned()));
                 }
-                chunks
+                Some(chunks)
             })
             .collect(),
         footnotes: doc.footnotes().to_vec(),

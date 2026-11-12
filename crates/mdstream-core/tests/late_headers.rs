@@ -1,3 +1,5 @@
+#[path = "support/header_confirmation.rs"]
+mod header_oracle;
 use mdstream::*;
 
 fn parse(source: &str) -> Document {
@@ -70,7 +72,10 @@ fn committed_first_cell_objects_keep_their_ids_and_tail_is_published_once() {
             }
             doc.finish();
             assert_eq!(doc.links().len(), 2);
-            assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+            assert!(
+                doc.work().inline_bytes
+                    <= doc.source().len() as u64 + doc.work().header_replay_bytes
+            );
         }
     }
 }
@@ -111,7 +116,10 @@ fn resumed_first_cell_matches_fully_deferred_table_semantics() {
                 late.footnote_references().len(),
                 early.footnote_references().len()
             );
-            assert!(late.work().inline_bytes <= late.source().len() as u64);
+            assert!(
+                late.work().inline_bytes
+                    <= late.source().len() as u64 + late.work().header_replay_bytes
+            );
         }
     }
 }
@@ -130,7 +138,9 @@ fn first_pipe_detection_preserves_escape_parity_at_and_after_the_window() {
                 let source = format!("{start}\n{next}-|-\n");
                 let doc = parse(&source);
                 assert_eq!(doc.tables().len(), usize::from(slashes % 2 == 0));
-                assert!(doc.work().inline_bytes <= source.len() as u64);
+                assert!(
+                    doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes
+                );
             }
         }
     }
@@ -155,7 +165,10 @@ fn failure_eof_and_setext_consume_only_unparsed_suffix() {
             assert_eq!(doc.links().len(), 1);
             assert_eq!(doc.maths().len(), 1);
             assert_eq!(doc.footnote_references().len(), 1);
-            assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+            assert!(
+                doc.work().inline_bytes
+                    <= doc.source().len() as u64 + doc.work().header_replay_bytes
+            );
         }
         let doc = parse(&format!("{prefix}**{}**\n{prefix}---\n", "x".repeat(2048)));
         assert_eq!(doc.headings().entries().len(), 1);
@@ -192,24 +205,21 @@ fn ordinary_long_lines_keep_immediate_semantics_and_container_continuity() {
                 .contains(Style::EMPHASIS)
         );
         assert!(doc.tables().is_empty());
-        assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+        assert!(
+            doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes
+        );
     }
 }
 
 #[test]
-fn open_cross_line_state_remains_explicitly_out_of_scope() {
+fn open_cross_line_state_confirms_at_the_real_physical_boundary() {
     for prefix in ["", "> "] {
         let source = format!(
             "{prefix}*prior\n{prefix}end*{}|b\n{prefix}-|-\n",
             "x".repeat(2048)
         );
         let doc = parse(&source);
-        assert!(doc.tables().is_empty());
-        assert!(
-            styles(&doc, Span::new(prefix.len() + 1, prefix.len() + 2))[0]
-                .0
-                .contains(Style::EMPHASIS)
-        );
+        header_oracle::assert_scope_composition(&doc);
         // Starting an independent sequence after a real block boundary works.
         for boundary in [format!("{prefix}\n"), format!("{prefix}# title\n")] {
             let doc = parse(&format!(
@@ -297,7 +307,9 @@ fn million_byte_prefix_and_tail_only_consume_new_bytes_with_constant_candidate_s
             assert_eq!(doc.work().table_bytes, 2_000_042);
         }
         doc.finish();
-        assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+        assert!(
+            doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes
+        );
         assert!(doc.work().table_header_bytes <= doc.source().len() as u64);
     }
 }
@@ -332,7 +344,7 @@ fn failed_long_delimiter_does_not_replay_prefix_or_restart_candidate() {
         doc.text(doc.tables()[0].cell(0, 0).unwrap().source),
         Some("h")
     );
-    assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+    assert!(doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes);
 }
 
 #[test]
@@ -360,7 +372,7 @@ fn dense_published_objects_and_wide_sparse_tables_stay_linear() {
         table.rows().iter().map(|r| r.cells.len()).sum::<usize>(),
         8192
     );
-    assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+    assert!(doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes);
     assert!(doc.annotation_node_count() <= 4 * doc.source().len());
 }
 
@@ -402,7 +414,7 @@ fn generated_success_failure_ranges_match_independent_model() {
             .position(|(span, ..)| span.range().contains(&at));
         assert_eq!(doc.table_at(at), id.map(TableId));
     }
-    assert!(doc.work().inline_bytes <= source.len() as u64);
+    assert!(doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes);
     assert!(doc.work().table_header_bytes <= source.len() as u64);
     assert!(doc.work().table_candidate_bytes <= source.len() as u64);
 }

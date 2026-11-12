@@ -224,4 +224,89 @@ mod unix {
         session.read_until_eof(Duration::from_secs(3)).unwrap();
         assert!(session.output().windows(8).any(|s| s == b"\x1b[?1049l"));
     }
+    #[test]
+    fn actual_cli_conditional_style_selection_copy_and_late_definition_share_source_identity() {
+        let workspace = TempWorkspace::new().unwrap();
+        let fifo = workspace.path().join("conditional-reading.fifo");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let mut command = pty::command(env!("CARGO_BIN_EXE_mdtui-tui"));
+        command.arg(&fifo);
+        let size = pty::PTY_80X24;
+        let mut session = pty::spawn(command, size).unwrap();
+        let mut writer = OpenOptions::new().write(true).open(&fifo).unwrap();
+        writer.write_all(b"*foo [bar* baz]\n\n").unwrap();
+        writer.flush().unwrap();
+        wait(&mut session, size, |s| s.starts_with("foo [bar baz]"));
+        session.send(b"v ").unwrap();
+        wait(&mut session, size, |s| s.contains("SELECT EXTEND 1..2"));
+        for end in [3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15] {
+            session.send(b"\x1b[C").unwrap();
+            let status = format!("SELECT EXTEND 1..{end}");
+            wait(&mut session, size, |s| s.contains(&status));
+        }
+        session.send(b"Y").unwrap();
+        assert_eq!(packets(&mut session, 1)[0], b"foo [bar* baz]");
+        session.send(b"y").unwrap();
+        assert_eq!(packets(&mut session, 2)[1], b"foo [bar baz]");
+        writer.write_all(b"[bar* baz]: /u\n").unwrap();
+        writer.flush().unwrap();
+        wait(&mut session, size, |s| {
+            s.starts_with("*foo bar* baz") && s.contains("SELECT HIDDEN") && s.contains("1..15")
+        });
+        session.send(b"y").unwrap();
+        assert_eq!(packets(&mut session, 3)[2], b"foo bar* baz");
+        session.send(b"Y").unwrap();
+        assert_eq!(packets(&mut session, 4)[3], b"foo [bar* baz]");
+        session.send(b"\x1b").unwrap();
+        wait(&mut session, size, |s| s.contains("cancelled"));
+        session.send(b"/bar*\r").unwrap();
+        wait(&mut session, size, |s| s.contains("/bar* | match"));
+        session.send(b"q").unwrap();
+        assert!(session.wait(Duration::from_secs(3)).unwrap().success());
+        session.read_until_eof(Duration::from_secs(3)).unwrap();
+        assert!(session.output().windows(8).any(|s| s == b"\x1b[?1049l"));
+    }
+
+    #[test]
+    fn actual_cli_directory_conditional_title_refresh_and_q_editor_ctrl_c() {
+        let workspace = TempWorkspace::new().unwrap();
+        let fifo = workspace.path().join("conditional-directory.fifo");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let mut command = pty::command(env!("CARGO_BIN_EXE_mdtui-tui"));
+        command.arg(&fifo);
+        let size = pty::PTY_80X24;
+        let mut session = pty::spawn(command, size).unwrap();
+        let mut writer = OpenOptions::new().write(true).open(&fifo).unwrap();
+        writer.write_all(b"intro\n\n# *foo [bar* baz]\n\n").unwrap();
+        writer.flush().unwrap();
+        wait(&mut session, size, |s| s.starts_with("intro"));
+        session.send(b"s\t/bar*\r").unwrap();
+        wait(&mut session, size, |s| s.contains("names 0"));
+        writer.write_all(b"[bar* baz]: /u\n").unwrap();
+        writer.flush().unwrap();
+        wait(&mut session, size, |s| s.contains("stale"));
+        session.send(b"/\r").unwrap();
+        wait(&mut session, size, |s| {
+            s.contains("names 1") && s.contains("*foo bar* baz")
+        });
+        session.send(b"/q").unwrap();
+        wait(&mut session, size, |s| s.contains("edit 5/256B /bar*q"));
+        session.send(b"\x03").unwrap();
+        assert!(session.wait(Duration::from_secs(3)).unwrap().success());
+        session.read_until_eof(Duration::from_secs(3)).unwrap();
+        assert!(session.output().windows(8).any(|s| s == b"\x1b[?1049l"));
+        assert!(session.output().windows(6).any(|s| s == b"\x1b[?25h"));
+    }
 }

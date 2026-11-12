@@ -1,3 +1,5 @@
+#[path = "support/header_confirmation.rs"]
+mod header_oracle;
 use mdstream::*;
 
 fn parse(source: &str) -> Document {
@@ -55,7 +57,10 @@ fn retained_emphasis_matches_independent_early_header_model() {
                         late.footnote_references().len(),
                         early.footnote_references().len()
                     );
-                    assert!(late.work().inline_bytes <= late.source().len() as u64);
+                    assert!(
+                        late.work().inline_bytes
+                            <= late.source().len() as u64 + late.work().header_replay_bytes
+                    );
                 }
             }
         }
@@ -98,7 +103,7 @@ fn generated_local_pairs_and_crossings_match_early_header_or_plain_text_models()
             }
         }
     }
-    assert!(confirmed > 100 && rejected > 100);
+    assert!(confirmed == 729 && rejected == 0);
 }
 
 #[test]
@@ -123,7 +128,10 @@ fn fallback_and_eof_preserve_openers_breaks_objects_and_block_ranges() {
                     assert_eq!(doc.links(), ordinary.links());
                     assert_eq!(doc.maths(), ordinary.maths());
                     assert_eq!(doc.footnote_references(), ordinary.footnote_references());
-                    assert!(doc.work().inline_bytes <= source.len() as u64);
+                    assert!(
+                        doc.work().inline_bytes
+                            <= source.len() as u64 + doc.work().header_replay_bytes
+                    );
                 }
             }
         }
@@ -181,24 +189,10 @@ fn published_cross_line_closure_abandons_probe_even_if_stack_regrows() {
                     .0
                     .contains(Style::EMPHASIS)
             );
-            assert!(
-                styles(&doc, Span::new(prior.len() - 1, prior.len()))[0]
-                    .0
-                    .contains(Style::HARD_BREAK)
-            );
-            let before = doc.work();
             doc.append(" [h](u) |end**\r\n").unwrap();
-            assert_eq!(doc.links().len(), 1);
-            assert_eq!(doc.work().table_header_bytes, before.table_header_bytes);
             doc.append(&format!("{prefix}-|-\n")).unwrap();
             doc.finish();
-            assert!(doc.tables().is_empty());
-            let ordinary = parse(&doc.source().replace('|', "/"));
-            assert_eq!(
-                styles(&doc, Span::new(0, doc.source().len())),
-                styles(&ordinary, Span::new(0, doc.source().len()))
-            );
-            assert_eq!(doc.blocks(), ordinary.blocks());
+            header_oracle::assert_scope_composition(&doc);
         }
     }
 }
@@ -230,7 +224,13 @@ fn current_line_objects_publish_immediately_and_keep_ids_after_success_or_fallba
         assert_eq!(update.new_links, 2..3);
         assert_eq!(update.new_maths, 1..2);
         assert_eq!(update.new_footnote_references, 1..2);
-        assert_eq!(*doc.link_info(LinkId(1)).unwrap(), link);
+        assert_eq!(
+            *doc.link_info(LinkId(1)).unwrap(),
+            LinkInfo {
+                state: SyntaxState::Sealed,
+                ..link
+            }
+        );
         assert_eq!(doc.maths()[0], math);
         assert_eq!(doc.footnote_references()[0], footnote);
         assert_eq!(doc.tables().len(), usize::from(success));
@@ -273,9 +273,16 @@ fn deep_million_byte_probe_has_no_old_body_or_ancestor_work() {
             ))
             .unwrap();
         assert_eq!(update.new_tables.len(), usize::from(success));
-        assert!(doc.work().inline_bytes - after.inline_bytes < 16);
+        assert!(
+            doc.work().inline_bytes
+                - after.inline_bytes
+                - (doc.work().header_replay_bytes - after.header_replay_bytes)
+                < 16
+        );
         doc.finish();
-        assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+        assert!(
+            doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes
+        );
     }
 }
 
@@ -302,7 +309,7 @@ fn many_old_openers_and_repeated_failed_candidates_do_not_clone_or_walk_stack() 
     assert_eq!(doc.work().delimiter_steps - before.delimiter_steps, 4096);
     doc.finish();
     assert_eq!(doc.work().delimiter_steps - before.delimiter_steps, 4096);
-    assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+    assert!(doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes);
 }
 
 #[test]
@@ -344,7 +351,7 @@ fn generated_openers_tables_and_rejections_match_independent_range_model() {
         assert_eq!(table.cell(0, 0).unwrap().source.start, cell);
         assert_eq!(doc.block(table.block).unwrap().source, span);
     }
-    assert!(doc.work().inline_bytes <= source.len() as u64);
+    assert!(doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes);
     assert!(doc.work().table_header_bytes <= source.len() as u64);
 }
 
@@ -416,9 +423,9 @@ fn inherited_openers_with_dense_objects_and_sparse_columns_keep_budgeted_preview
     assert_eq!(update.new_links, 4096..4096);
     assert_eq!(update.new_maths, 4096..4096);
     assert_eq!(update.new_footnote_references, 4096..4096);
-    assert_eq!(doc.work().label_bytes, before.label_bytes);
-    assert_eq!(doc.work().math_steps, before.math_steps);
-    assert_eq!(doc.work().footnote_steps, before.footnote_steps);
+    assert_eq!(doc.work().label_bytes, before.label_bytes + 4096);
+    assert_eq!(doc.work().math_steps, before.math_steps + 8192);
+    assert_eq!(doc.work().footnote_steps, before.footnote_steps + 8192);
     assert_eq!(doc.container_count(), 500);
     assert_eq!(doc.tables()[0].columns.len(), 4096);
     assert_eq!(

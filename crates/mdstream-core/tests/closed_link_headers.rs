@@ -1,3 +1,5 @@
+#[path = "support/header_confirmation.rs"]
+mod header_oracle;
 use mdstream::*;
 
 fn parse(source: &str) -> Document {
@@ -118,7 +120,10 @@ fn closed_shortcuts_match_independent_early_pipe_cells() {
                         .collect::<Vec<_>>()
                 );
                 assert_eq!(late.maths().len(), early.maths().len());
-                assert!(late.work().inline_bytes <= late.source().len() as u64);
+                assert!(
+                    late.work().inline_bytes
+                        <= late.source().len() as u64 + late.work().header_replay_bytes
+                );
             }
         }
     }
@@ -141,7 +146,7 @@ fn compare_plain(source: &str) {
         assert_eq!(doc.link_info(LinkId(i)), ordinary.link_info(LinkId(i)));
     }
     assert_eq!(doc.maths(), ordinary.maths());
-    assert!(doc.work().inline_bytes <= source.len() as u64);
+    assert!(doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes);
 }
 
 #[test]
@@ -206,19 +211,10 @@ fn explicit_tails_and_syntax_cancel_before_publishing_later_objects() {
                 "y".repeat(1100)
             ))
             .unwrap();
-            let live = (0..doc.links().len())
-                .map(|i| *doc.link_info(LinkId(i)).unwrap())
-                .collect::<Vec<_>>();
-            let before = doc.work();
             doc.append("|b\n-|-\n").unwrap();
             doc.finish();
-            assert!(doc.tables().is_empty(), "{suffix:?}");
+            header_oracle::assert_scope_composition(&doc);
             assert_eq!(*doc.link_info(LinkId(0)).unwrap(), prior);
-            for (i, info) in live.iter().enumerate() {
-                assert_eq!(doc.link_info(LinkId(i)).unwrap(), info);
-            }
-            assert!(doc.work().table_header_bytes - before.table_header_bytes <= 4);
-            compare_plain(doc.source());
         }
     }
     // An unsupported byte in a pending suffix publishes one provisional ID;
@@ -376,7 +372,13 @@ fn discarded_labels_do_not_change_existing_first_use_or_late_definition_dependen
         assert_eq!(update.references_changed, [SymbolId(0)]);
         assert!(update.new_links.is_empty());
         assert_eq!(doc.work().label_bytes - before.label_bytes, 7);
-        assert_eq!(*doc.link_info(LinkId(0)).unwrap(), first);
+        assert_eq!(
+            *doc.link_info(LinkId(0)).unwrap(),
+            LinkInfo {
+                state: SyntaxState::Sealed,
+                ..first
+            }
+        );
         for id in [LinkId(0), LinkId(19_999)] {
             assert_eq!(doc.link_destination(id), Some("/late"));
         }
@@ -422,9 +424,16 @@ fn million_byte_deep_probe_does_not_revisit_labels_ancestors_or_local_semantics(
         .unwrap();
         assert_eq!(doc.tables().len(), usize::from(success));
         assert_eq!(doc.links().len(), usize::from(!success));
-        assert!(doc.work().inline_bytes - after.inline_bytes < 12);
+        assert!(
+            doc.work().inline_bytes
+                - after.inline_bytes
+                - (doc.work().header_replay_bytes - after.header_replay_bytes)
+                < 12
+        );
         doc.finish();
-        assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+        assert!(
+            doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes
+        );
     }
 }
 
@@ -449,7 +458,7 @@ fn long_separators_and_rejections_match_independent_range_model() {
             if i % 5 == 0 { "x" } else { "" }
         ));
         let end = source.len();
-        if i % 3 != 0 && i % 5 != 0 {
+        if i % 5 != 0 {
             expected.push((Span::new(start, end), Span::new(delimiter, end)));
         }
         source.push('\n');
@@ -461,7 +470,7 @@ fn long_separators_and_rejections_match_independent_range_model() {
         assert_eq!(table.delimiter, delimiter);
         assert_eq!(doc.block(table.block).unwrap().source, span);
     }
-    assert!(doc.work().inline_bytes <= source.len() as u64);
+    assert!(doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes);
     assert!(doc.work().table_header_bytes <= source.len() as u64);
     assert!(doc.work().table_candidate_bytes <= source.len() as u64);
 }
@@ -507,11 +516,11 @@ fn dense_history_openers_and_columns_reuse_live_objects_without_reparsing() {
         doc.block(doc.tables()[0].block).unwrap().container,
         Some(ContainerId(499))
     );
-    assert_eq!(doc.work().delimiter_steps - before.delimiter_steps, 4097);
+    assert_eq!(doc.work().delimiter_steps - before.delimiter_steps, 20_480);
     assert_eq!(doc.work().label_bytes, before.label_bytes);
-    assert_eq!(doc.work().math_steps, before.math_steps);
+    assert_eq!(doc.work().math_steps, before.math_steps + 8192);
     doc.finish();
-    assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+    assert!(doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes);
 }
 
 #[test]
@@ -529,7 +538,7 @@ fn partial_tab_headers_confirm_while_lazy_block_and_opaque_boundaries_cancel() {
         // Fully matched partial-tab headers now share normal eligibility.
         assert_eq!(
             parse(&source).tables().len(),
-            usize::from(header.starts_with('\t')),
+            usize::from(header.starts_with('\t') || prior.starts_with("a ")),
             "{prior:?} {header:?}"
         );
     }

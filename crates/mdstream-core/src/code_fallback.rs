@@ -29,8 +29,8 @@ pub(super) struct Checkpoint {
 
 #[derive(Default)]
 pub(super) struct CodeFallback {
-    pub runs: Vec<Span>,
-    pub events: Vec<Event>,
+    pub runs: crate::rewind::Vector<Span>,
+    pub events: crate::rewind::Vector<Event>,
     pub checkpoint: Option<Checkpoint>,
     pub boundary: Option<(usize, Option<Event>, usize)>,
 }
@@ -97,7 +97,7 @@ impl CodeFallback {
     }
 
     pub fn index(&mut self, effects: &mut Effects<'_>) -> Vec<Span> {
-        let mut runs = self.runs.clone();
+        let mut runs = self.runs.to_vec();
         effects.work.code_fallback_steps += runs.len() as u64;
         runs.sort_unstable_by(|a, b| {
             effects.work.code_fallback_comparisons += 1;

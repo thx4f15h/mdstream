@@ -307,6 +307,14 @@ impl FirstFrame {
         self.sink.as_ref().map_or(&[], TileLayoutSink::lines)
     }
 
+    pub(crate) fn prepared_copy_row(
+        &self,
+        block: mdtui3::BlockId,
+        index: usize,
+    ) -> Option<(&crate::render::sink::SinkLine, bool)> {
+        self.sink.as_ref()?.prepared_copy_row(block, index)
+    }
+
     pub fn write_to_screen(&self, screen: &mut Screen, start_row: u16) -> Result<u16, SinkError> {
         self.sink
             .as_ref()

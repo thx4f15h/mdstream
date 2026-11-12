@@ -220,9 +220,9 @@ fn old_container_table_roles_survive_new_gap_and_sticky_divergence() {
     ] {
         for width in [1023, 1024, 1025, 1100] {
             for (prior, closer, eligible) in [
-                ("*prior [a](u", "end*and", false),
+                ("*prior [a](u", "end*and", true),
                 ("_prior [a](u", "end_and", true),
-                ("~~prior [a](u", "end~~and", false),
+                ("~~prior [a](u", "end~~and", true),
                 ("*prior [a](u", "end* ", true),
                 ("_prior [a](u", "end_ ", true),
                 ("~~prior [a](u", "end~~ ", true),

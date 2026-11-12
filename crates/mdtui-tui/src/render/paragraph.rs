@@ -426,6 +426,7 @@ mod tests {
             style,
             emphasis_depth: 0,
             strong_depth: 0,
+            style_pair: None,
             link,
         });
     }

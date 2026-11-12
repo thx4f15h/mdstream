@@ -1,3 +1,5 @@
+#[path = "support/header_confirmation.rs"]
+mod header_oracle;
 use mdstream::*;
 
 fn parse(source: &str) -> Document {
@@ -98,7 +100,9 @@ fn invalid_late_candidates_recover_inline_text_once_and_allow_the_next_table() {
                     .unwrap()
                     .any(|r| r.text == "a" && r.style.contains(Style::STRONG))
             );
-            assert!(doc.work().inline_bytes <= source.len() as u64);
+            assert!(
+                doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes
+            );
             assert!(doc.work().classified_bytes < 3 * BLOCK_LOOKAHEAD as u64);
         }
     }
@@ -120,7 +124,7 @@ fn missing_pipes_columns_and_eof_use_original_incomplete_prefix_fallback() {
                 BlockKind::Paragraph
             }
         );
-        assert!(doc.work().inline_bytes <= source.len() as u64);
+        assert!(doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes);
     }
     let doc = parse(&format!("a|b\n{}", "-".repeat(BLOCK_LOOKAHEAD)));
     assert!(doc.tables().is_empty());
@@ -181,7 +185,10 @@ fn million_byte_probe_has_no_reclassification_or_ancestor_work_on_append() {
             assert!(doc.work().inline_bytes - after.inline_bytes < 16);
             assert_eq!(doc.work().container_steps, after.container_steps);
         } else {
-            assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+            assert!(
+                doc.work().inline_bytes
+                    <= doc.source().len() as u64 + doc.work().header_replay_bytes
+            );
             assert!(doc.work().container_steps - after.container_steps < 1100);
         }
         doc.finish();
@@ -212,7 +219,7 @@ fn late_rejection_does_not_keep_probing_the_same_line() {
             .unwrap()
             .any(|r| r.text.contains('h') && r.style.contains(Style::EMPHASIS))
     );
-    assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+    assert!(doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes);
 }
 
 #[test]
@@ -297,15 +304,11 @@ fn late_header_pipe_requires_isolatable_inline_state_and_other_limits_remain() {
             parse(&format!("{prefix}`prior\n{source}")).tables().len(),
             1
         );
-        // Code followed by new semantics still commits rather than revoking.
-        assert!(
-            parse(&format!(
-                "{prefix}`prior\n{prefix}end` &amp; {}|b\n{prefix}-|-\n",
-                "x".repeat(BLOCK_LOOKAHEAD)
-            ))
-            .tables()
-            .is_empty()
-        );
+        let generalized = parse(&format!(
+            "{prefix}`prior\n{prefix}end` &amp; {}|b\n{prefix}-|-\n",
+            "x".repeat(BLOCK_LOOKAHEAD)
+        ));
+        header_oracle::assert_scope_composition(&generalized);
         let source = format!("{prefix}title\n{prefix}{}\n", "=".repeat(2048));
         assert_eq!(parse(&source).headings().entries().len(), 1);
     }
@@ -360,7 +363,7 @@ fn long_delimiter_ranges_match_an_independent_multi_table_model() {
         assert_eq!(doc.table_at(at), table.map(TableId));
     }
     assert!(doc.work().table_candidate_bytes <= source.len() as u64);
-    assert!(doc.work().inline_bytes <= source.len() as u64);
+    assert!(doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes);
     assert!(doc.work().classified_bytes <= 2 * source.len() as u64);
 }
 

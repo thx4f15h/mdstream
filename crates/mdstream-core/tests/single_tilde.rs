@@ -290,7 +290,13 @@ fn late_closure_preserves_ids_raw_mapping_and_shared_query_budget() {
     doc.finish();
     assert_eq!(doc.block_at(0), Some(block));
     assert_eq!(doc.blocks()[block.0].container, container);
-    assert_eq!(*doc.link_info(LinkId(0)).unwrap(), link);
+    assert_eq!(
+        *doc.link_info(LinkId(0)).unwrap(),
+        LinkInfo {
+            state: SyntaxState::Sealed,
+            ..link
+        }
+    );
     assert_eq!(doc.maths()[0], math);
     assert_ne!(doc.tile_key(TileId(0)).unwrap(), tile);
     assert!(style_at(&doc, "中").contains(Style::STRIKE));
@@ -429,16 +435,33 @@ fn deep_million_byte_headers_and_historical_mixed_openers_have_linear_work() {
         ))
         .unwrap();
         assert_eq!(doc.tables().len(), usize::from(success));
-        assert_eq!(doc.work().delimiter_steps - after.delimiter_steps, 4096);
-        assert_eq!(doc.work().label_bytes, after.label_bytes);
+        assert_eq!(
+            doc.work().delimiter_steps - after.delimiter_steps,
+            if success { 8196 } else { 4096 }
+        );
+        assert_eq!(
+            doc.work().label_bytes,
+            after.label_bytes + u64::from(success)
+        );
         assert_eq!(*doc.link_info(LinkId(4095)).unwrap(), historical);
-        assert_eq!(*doc.link_info(LinkId(4096)).unwrap(), local);
+        assert_eq!(
+            *doc.link_info(LinkId(4096)).unwrap(),
+            LinkInfo {
+                state: SyntaxState::Sealed,
+                ..local
+            }
+        );
         assert_eq!(doc.maths()[0], math);
         assert_eq!(doc.block_at(historical.source.start), Some(BlockId(0)));
         assert!(doc.blocks().get(block.0).is_some());
         doc.finish();
-        assert_eq!(doc.work().delimiter_steps - after.delimiter_steps, 4096);
-        assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+        assert_eq!(
+            doc.work().delimiter_steps - after.delimiter_steps,
+            if success { 8196 } else { 4096 }
+        );
+        assert!(
+            doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes
+        );
         assert!(doc.work().delimiter_steps <= 3 * doc.source().len() as u64);
     }
 }

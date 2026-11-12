@@ -111,6 +111,7 @@ impl Owner {
     }
 }
 pub(crate) struct Resolution {
+    pub(crate) styles: crate::inline_styles::Resolver,
     token: usize,
     retiring: bool,
     values: BTreeMap<usize, bool>,
@@ -135,6 +136,7 @@ impl Resolution {
     fn empty(token: usize) -> Self {
         Self {
             token,
+            styles: crate::inline_styles::Resolver::default(),
             retiring: false,
             values: BTreeMap::new(),
             dispositions: BTreeMap::new(),
@@ -148,12 +150,18 @@ impl Resolution {
         std::mem::replace(self, empty)
     }
     pub(crate) fn memo_entries(&self) -> usize {
-        self.values.len() + self.dispositions.len() + self.owners.len()
+        self.values.len() + self.dispositions.len() + self.owners.len() + self.styles.entries()
     }
     pub(crate) fn retire(&mut self, budget: &mut Budget) -> crate::Completion {
         if !self.retiring {
             self.retiring = true;
             self.token = memo_token();
+        }
+        let before = self.styles.work.retired_entries;
+        let completion = self.styles.retire(budget);
+        self.work.retired_entries += self.styles.work.retired_entries - before;
+        if completion != crate::Completion::Covered {
+            return crate::Completion::BudgetExhausted;
         }
         while self.memo_entries() != 0 {
             if !charge(budget, 0, 0) {
@@ -174,6 +182,9 @@ impl Resolution {
     }
 }
 pub(crate) fn available(document: &Document, id: LinkId) -> bool {
+    if !document.link_order.active(id) {
+        return false;
+    }
     match document.links[id.0] {
         LinkTarget::Direct(_) | LinkTarget::Email(_) | LinkTarget::Www(_) => true,
         LinkTarget::Reference(symbol) => {
@@ -694,6 +705,14 @@ impl LinkResolver {
     }
     pub fn work(&self) -> LinkResolutionWork {
         self.resolution.work
+    }
+    /// Current conditional-style memo entries, maintained in O(1). A consumer
+    /// spanning several source tiles can retain its lease until that scope ends.
+    pub fn style_memo_entries(&self) -> usize {
+        self.resolution.styles.entries()
+    }
+    pub fn style_work(&self) -> crate::StyleResolutionWork {
+        self.resolution.styles.work
     }
 }
 impl LinkActivity {

@@ -621,6 +621,11 @@ struct CopyTask {
     layout: Option<FirstFrame>,
     layout_ready: bool,
     row: usize,
+    line_serial: usize,
+    extra_block: usize,
+    extra_row: usize,
+    extra_ready: bool,
+    extra_pending: Option<(mdtui3::BlockId, usize, usize)>,
     cell: usize,
     column: usize,
     emitted_row: Option<usize>,
@@ -649,6 +654,11 @@ impl CopyTask {
             layout: None,
             layout_ready: false,
             row: 0,
+            line_serial: 0,
+            extra_block: 0,
+            extra_row: 0,
+            extra_ready: false,
+            extra_pending: None,
             cell: 0,
             column: 0,
             emitted_row: None,
@@ -786,15 +796,52 @@ impl CopyTask {
                 }
                 self.layout_ready = true;
             }
-            while let Some(line) = layout.lines().get(self.row) {
-                let Some(cell) = line.cells.get(self.cell) else {
-                    self.row += 1;
-                    self.cell = 0;
-                    self.column = 0;
-                    self.separator = false;
-                    self.word_space = false;
-                    continue;
-                };
+            loop {
+                // Table cells were prepared through the paid indexed window,
+                // even when their physical row owner lies outside its tiles.
+                // Merge only those unpublished rows; never extend the layout
+                // across the containing row's potentially huge source range.
+                if !self.extra_ready {
+                    loop {
+                        let Some(block) = layout.plan().blocks.get(self.extra_block) else {
+                            self.extra_ready = true;
+                            break;
+                        };
+                        if !budget.charge(WorkLimit {
+                            queries: 1,
+                            objects: 1,
+                            ..WorkLimit::default()
+                        }) {
+                            return Ok(false);
+                        }
+                        if matches!(block.kind, mdtui3::BlockKind::Table { .. })
+                            && let Some((line, outside)) =
+                                layout.prepared_copy_row(block.id, self.extra_row)
+                        {
+                            if outside {
+                                self.extra_pending = Some((
+                                    block.id,
+                                    self.extra_row,
+                                    line.source.map_or(block.source.start, |s| s.source.start),
+                                ));
+                                self.extra_ready = true;
+                                break;
+                            }
+                            self.extra_row += 1;
+                        } else {
+                            self.extra_block += 1;
+                            self.extra_row = 0;
+                        }
+                    }
+                }
+                let published = layout.lines().get(self.row);
+                if published.is_none() && self.extra_pending.is_none() {
+                    break;
+                }
+                let extra = self.extra_pending.is_some_and(|(_, _, start)| {
+                    published
+                        .is_none_or(|line| line.source.is_some_and(|s| start <= s.source.start))
+                });
                 // One object/query and up to six bytes makes progress even for
                 // a cell containing many combining scalars. Output is chunked.
                 if !budget.charge(WorkLimit {
@@ -805,13 +852,34 @@ impl CopyTask {
                 }) {
                     return Ok(false);
                 }
+                let line = if extra {
+                    let (block, row, _) = self.extra_pending.unwrap();
+                    layout.prepared_copy_row(block, row).unwrap().0
+                } else {
+                    published.unwrap()
+                };
+                let Some(cell) = line.cells.get(self.cell) else {
+                    if extra {
+                        self.extra_row += 1;
+                        self.extra_ready = false;
+                        self.extra_pending = None;
+                    } else {
+                        self.row += 1;
+                    }
+                    self.line_serial += 1;
+                    self.cell = 0;
+                    self.column = 0;
+                    self.separator = false;
+                    self.word_space = false;
+                    continue;
+                };
                 if self.column + usize::from(cell.width) <= usize::from(self.width)
                     && cell
                         .source
                         .is_some_and(|source| overlaps(source, self.source))
                 {
                     if self.position == self.source.start {
-                        if self.emitted_row.is_some_and(|old| old != self.row) {
+                        if self.emitted_row.is_some_and(|old| old != self.line_serial) {
                             let block = line.source.and_then(|line| line.block);
                             let separate = block != self.emitted_block
                                 || block
@@ -875,7 +943,7 @@ impl CopyTask {
                                     }
                                 }
                             }
-                        } else if self.emitted_row == Some(self.row) {
+                        } else if self.emitted_row == Some(self.line_serial) {
                             if self.separator {
                                 self.bytes.push(b'\t');
                             } else if self.word_space {
@@ -887,7 +955,7 @@ impl CopyTask {
                         self.gap_first = None;
                         self.gap_checked = false;
                     }
-                    self.emitted_row = Some(self.row);
+                    self.emitted_row = Some(self.line_serial);
                     self.emitted_block = line.source.and_then(|line| line.block);
                     if self.bytes.len() + cell.text.len() - (self.position - self.source.start)
                         > MAX_CLIPBOARD_BYTES
@@ -910,7 +978,10 @@ impl CopyTask {
                     self.position = self.source.start;
                     self.last_source_end = cell.source.map(|source| source.end);
                 }
-                if cell.source.is_none() && cell.text == " " && self.emitted_row == Some(self.row) {
+                if cell.source.is_none()
+                    && cell.text == " "
+                    && self.emitted_row == Some(self.line_serial)
+                {
                     self.word_space = true;
                 }
                 if cell.source.is_none()
@@ -991,7 +1062,7 @@ fn write_clipboard<W: Write + ?Sized>(writer: &mut W, encoded: &[u8]) -> io::Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn decode(packet: &[u8]) -> Vec<u8> {
+    pub(super) fn decode(packet: &[u8]) -> Vec<u8> {
         assert!(packet.starts_with(b"\x1b]52;c;"));
         assert_eq!(packet.last(), Some(&7));
         let mut out = Vec::new();
@@ -1298,5 +1369,244 @@ mod tests {
                 .stats()
                 .scanned_bytes
         );
+    }
+}
+
+#[cfg(test)]
+mod style_confirmation_tests {
+    use super::*;
+
+    fn parsed(source: &str) -> Document {
+        let mut doc = Document::new();
+        doc.append(source).unwrap();
+        doc.finish();
+        doc
+    }
+    fn micro() -> WorkLimit {
+        WorkLimit {
+            queries: 1,
+            objects: 1,
+            bytes: 6,
+            tiles: 1,
+            recovery: 1,
+            dependencies: 1,
+        }
+    }
+    fn copy_range(doc: &Document, source: Span, kind: CopyKind) -> (Vec<u8>, usize, u64) {
+        copy_range_in_columns(doc, source, kind, None)
+    }
+    fn copy_range_in_columns(
+        doc: &Document,
+        source: Span,
+        kind: CopyKind,
+        column: Option<usize>,
+    ) -> (Vec<u8>, usize, u64) {
+        let links = SharedLinks::new(doc);
+        let mut tables = TableWidthCache::new(doc);
+        tables.set_links(links.clone());
+        if let Some(column) = column {
+            tables.set_policy(
+                crate::render::table_widths::TableWidthPolicy::new(3, Some(3)).unwrap(),
+            );
+            tables
+                .set_first_column(doc, mdtui3::TableId(0), column)
+                .unwrap();
+        }
+        let mut tools = ReadingTools::default();
+        tools.selection.cursor = Some(source);
+        tools.start_copy(doc, kind, 120);
+        let before = links.stats();
+        let mut wire = Vec::new();
+        let mut zero = Budget::new(WorkLimit::default());
+        tools.advance(doc, &links, &mut zero, &mut wire, &mut tables);
+        assert_eq!(links.stats(), before);
+        assert_eq!(zero.used(), WorkLimit::default());
+        assert!(wire.is_empty());
+        let mut bytes = 0;
+        for _ in 0..200_000 {
+            let mut budget = Budget::new(micro());
+            tools.advance(doc, &links, &mut budget, &mut wire, &mut tables);
+            let used = budget.used();
+            bytes += used.bytes;
+            assert!(used.queries <= 1 && used.objects <= 1 && used.bytes <= 6);
+            assert!(used.tiles <= 1 && used.recovery <= 1 && used.dependencies <= 1);
+            if !tools.pending() {
+                assert_eq!(tools.message(), "clipboard request sent");
+                return (
+                    super::tests::decode(&wire),
+                    bytes,
+                    links.stats().styles.events,
+                );
+            }
+            assert!(wire.is_empty(), "no partial clipboard packet");
+        }
+        panic!("combined reading copy did not finish");
+    }
+
+    #[test]
+    fn visible_and_raw_reading_copies_use_actual_conditional_scope_and_pair_order() {
+        for (body, definitions, expected) in [
+            ("*foo [bar* baz]", "", "foo [bar baz]"),
+            ("*foo [bar* baz]", "[bar* baz]: /u\n", "*foo bar* baz"),
+            (
+                "*foo [bar* [kid] baz][outer]",
+                "[outer]: /u\n[kid]: /v\n",
+                "foo [bar kid baz]outer",
+            ),
+            ("~~***a***~~_b_ &fjlig;", "", "ab fj"),
+        ] {
+            let doc = parsed(&format!("{body}\n\n{definitions}"));
+            let range = Span::new(0, body.len());
+            assert_eq!(
+                copy_range(&doc, range, CopyKind::Visible).0,
+                expected.as_bytes()
+            );
+            assert_eq!(copy_range(&doc, range, CopyKind::Source).0, body.as_bytes());
+        }
+        let doc = parsed(&format!("*{} [x* z]\n\n", "a".repeat(20_000)));
+        let (visible, bytes, events) = copy_range(&doc, Span::new(0, 8), CopyKind::Visible);
+        assert_eq!(visible, b"aaaaaaa");
+        assert!(
+            events <= 8,
+            "related scope recovery must be shared across glyphs"
+        );
+        assert!(
+            bytes < 20_000,
+            "no full paragraph source scan for the small copy: {bytes}"
+        );
+        println!("conditional reading small copy: bytes={bytes} style_events={events}");
+    }
+
+    #[test]
+    fn reading_copy_of_confirmed_headers_uses_fresh_cells_and_active_footnote_order() {
+        for (old, body, definitions, expected) in [
+            ("[prior", "end](u*x*) *x*", "", "end](ux) x"),
+            ("$prior", "end$ [^n]", "[^n]: note\n", "end$ [^n]"),
+            (
+                "`prior",
+                "[^early]A`tail[^later]B",
+                "[^early]: E\n[^later]: L\n",
+                "A`tailB",
+            ),
+        ] {
+            let doc = parsed(&format!(
+                "{old}\n{body} {}|b\n-|-\nx|y\n\n{definitions}",
+                "z".repeat(1100)
+            ));
+            assert_eq!(doc.tables().len(), 1);
+            let start = doc.tables()[0].cell(0, 0).unwrap().source.start;
+            let selected = Span::new(start, start + body.len());
+            assert_eq!(
+                copy_range(&doc, selected, CopyKind::Visible).0,
+                expected.as_bytes()
+            );
+            assert_eq!(
+                copy_range(&doc, selected, CopyKind::Source).0,
+                body.as_bytes()
+            );
+            if old == "$prior" {
+                assert!(
+                    doc.footnote_reference_state(mdtui3::FootnoteReferenceId(0))
+                        .is_none()
+                );
+            }
+            if old == "`prior" {
+                let mut refs = doc.footnote_references_in(selected).unwrap();
+                let first = refs
+                    .advance(&mut Budget::new(WorkLimit::unlimited()))
+                    .unwrap()
+                    .unwrap();
+                let next = refs
+                    .advance(&mut Budget::new(WorkLimit::unlimited()))
+                    .unwrap()
+                    .unwrap();
+                assert!(first.0.0 > next.0.0);
+                assert_eq!(doc.next_footnote_reference(first.0), Some(next.0));
+            }
+        }
+    }
+
+    #[test]
+    fn panned_copy_reuses_prepared_rows_across_a_million_byte_owner_gap() {
+        let source = format!(
+            "|{}|**tiny**|\n|---|---|\n|a|other|\n",
+            "z".repeat(1_000_000)
+        );
+        let doc = parsed(&source);
+        let selected = Span::new(
+            source.find("**tiny**").unwrap(),
+            source.find("other").unwrap() + 5,
+        );
+        assert!(selected.len() < 40);
+        let (text, bytes, _) = copy_range_in_columns(&doc, selected, CopyKind::Visible, Some(1));
+        assert_eq!(text, b"tin\noth");
+        assert!(
+            bytes < 4096,
+            "no row envelope scan or owner-gap prelayout: {bytes}"
+        );
+        assert_eq!(
+            copy_range_in_columns(&doc, selected, CopyKind::Source, Some(1)).0,
+            source.as_bytes()[selected.start..selected.end]
+        );
+        println!(
+            "panned copy across owner gap: selection={} work_bytes={bytes}",
+            selected.len()
+        );
+    }
+
+    #[test]
+    fn cancelling_reading_search_retires_the_shared_conditional_style_memo_per_paid_node() {
+        let marker = "*".repeat(4097);
+        let doc = parsed(&format!("{marker}界{marker} [r]\n\n"));
+        let links = SharedLinks::new(&doc);
+        let mut tables = TableWidthCache::new(&doc);
+        tables.set_links(links.clone());
+        let mut tools = ReadingTools::default();
+        tools.start_input();
+        tools.input_key(KeyCode::Char('界'), KeyModifiers::NONE, &doc, &links);
+        tools.input_key(KeyCode::Enter, KeyModifiers::NONE, &doc, &links);
+        let before = links.stats();
+        tools.advance(
+            &doc,
+            &links,
+            &mut Budget::new(WorkLimit::default()),
+            &mut Vec::new(),
+            &mut tables,
+        );
+        assert_eq!(links.stats(), before);
+        for _ in 0..100_000 {
+            let mut budget = Budget::new(micro());
+            tools.advance(&doc, &links, &mut budget, &mut Vec::new(), &mut tables);
+            assert!(
+                budget.used().queries <= 1
+                    && budget.used().objects <= 1
+                    && budget.used().bytes <= 6
+            );
+            if links.stats().style_memo_entries > 128 {
+                break;
+            }
+        }
+        assert!(links.stats().style_memo_entries > 128);
+        tools.cancel(&links);
+        let before = links.stats();
+        assert!(
+            !links
+                .prepare(&doc, &mut Budget::new(WorkLimit::default()))
+                .unwrap()
+        );
+        assert_eq!(links.stats(), before);
+        let mut paid = 0;
+        loop {
+            let mut budget = Budget::new(micro());
+            let done = links.prepare(&doc, &mut budget).unwrap();
+            paid += budget.used().objects;
+            assert!(budget.used().objects <= 1 && budget.used().queries <= 1);
+            if done {
+                break;
+            }
+        }
+        assert_eq!(paid, before.memo_entries + before.presentation_entries);
+        assert_eq!(links.stats().memo_entries, 0);
+        println!("reading conditional cancellation: retired={paid}");
     }
 }

@@ -215,8 +215,17 @@ mod tests {
                 bytes: 6,
                 ..Default::default()
             });
-            let DisplayStep::Run(run) = cursor.next(doc, &mut budget).unwrap() else {
-                panic!("one scalar fits")
+            let run = match cursor.next(doc, &mut budget).unwrap() {
+                DisplayStep::Run(run) => run,
+                DisplayStep::BudgetExhausted => {
+                    assert_eq!(cursor.source_position(), at);
+                    assert!(
+                        budget.used().queries > 0,
+                        "metadata must make paid progress"
+                    );
+                    continue;
+                }
+                DisplayStep::Complete => panic!("source remains"),
             };
             assert_eq!(run.source.start, at);
             if !run.style.contains(Style::HIDDEN) {

@@ -196,7 +196,10 @@ fn late_unicode_closers_isolate_headers_or_commit_once_on_failure() {
                     assert_eq!(late.links().len(), 2);
                     assert_eq!(late.link_destination(LinkId(0)), Some("u"));
                     assert_eq!(late.link_destination(LinkId(1)), Some("v"));
-                    assert!(late.work().inline_bytes <= source.len() as u64);
+                    assert!(
+                        late.work().inline_bytes
+                            <= source.len() as u64 + late.work().header_replay_bytes
+                    );
                     assert!(late.work().flanking_steps <= 24 * late.work().delimiter_steps);
                 }
             }
@@ -351,7 +354,7 @@ fn opaque_failed_and_scope_boundaries_retain_existing_dialects() {
         let run = doc.runs_in(Span::new(at, at + 3)).unwrap().next().unwrap();
         assert_eq!((run.emphasis_depth, run.strong_depth), (0, 32768));
         assert!(doc.work().flanking_steps <= 48);
-        assert!(doc.work().inline_bytes <= source.len() as u64);
+        assert!(doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes);
     }
 }
 

@@ -442,8 +442,17 @@ fn image_samples_preserve_mapping_when_sliced_and_read_with_six_byte_budgets() {
         while cursor.source_position() < markdown.len() {
             let old = cursor.source_position();
             let mut budget = Budget::new(limit);
-            let DisplayStep::Run(run) = cursor.next(&doc, &mut budget).unwrap() else {
-                panic!("small-budget reader made no progress");
+            let run = match cursor.next(&doc, &mut budget).unwrap() {
+                DisplayStep::Run(run) => run,
+                DisplayStep::BudgetExhausted => {
+                    assert_eq!(cursor.source_position(), old);
+                    assert!(
+                        budget.used().queries > 0,
+                        "scope metadata makes paid progress"
+                    );
+                    continue;
+                }
+                DisplayStep::Complete => panic!("source remains"),
             };
             assert_eq!(run.source.start, old);
             check_mapping(markdown, run.source, run.text, run.replacement);

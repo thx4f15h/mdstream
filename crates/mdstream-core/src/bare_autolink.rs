@@ -19,7 +19,7 @@ pub(super) enum Kind {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub(super) struct Candidate {
     pub span: Span,
     pub address: usize,

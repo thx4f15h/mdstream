@@ -1,3 +1,5 @@
+#[path = "support/header_confirmation.rs"]
+mod header_oracle;
 use mdstream::*;
 
 fn parse(source: &str) -> Document {
@@ -83,7 +85,10 @@ fn pending_tick_run_at_pipe_is_discarded_without_publishing_old_code() {
                     visible(&failed, Span::new(0, source.len())).replace('|', "/"),
                     visible(&ordinary, Span::new(0, source.len()))
                 );
-                assert!(failed.work().inline_bytes <= source.len() as u64);
+                assert!(
+                    failed.work().inline_bytes
+                        <= source.len() as u64 + failed.work().header_replay_bytes
+                );
             }
         }
     }
@@ -110,7 +115,9 @@ fn fallback_eof_setext_and_scope_exit_preserve_original_code_mapping() {
                 );
                 assert_eq!(doc.blocks(), ordinary.blocks());
                 assert_eq!(doc.links(), ordinary.links());
-                assert!(doc.work().inline_bytes <= source.len() as u64);
+                assert!(
+                    doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes
+                );
             }
         }
     }
@@ -136,21 +143,9 @@ fn closure_before_pipe_cancels_probe_even_when_a_new_code_span_opens() {
                     .0
                     .contains(Style::CODE)
             );
-            let old_link = *doc.link_info(LinkId(0)).unwrap();
-            let before = doc.work();
-            doc.append("|b`\r\n").unwrap();
-            assert_eq!(doc.work().table_header_bytes, before.table_header_bytes);
-            doc.append(&format!("{prefix}-|-\n")).unwrap();
+            doc.append(&format!("|b`\r\n{prefix}-|-\n")).unwrap();
             doc.finish();
-            assert!(doc.tables().is_empty());
-            assert_eq!(*doc.link_info(LinkId(0)).unwrap(), old_link);
-            let ordinary = parse(&doc.source().replace('|', "/"));
-            let span = Span::new(0, doc.source().len());
-            assert_eq!(styles(&doc, span), styles(&ordinary, span));
-            assert_eq!(
-                visible(&doc, span).replace('|', "/"),
-                visible(&ordinary, span)
-            );
+            header_oracle::assert_scope_composition(&doc);
         }
     }
 }
@@ -260,7 +255,7 @@ fn repeated_failed_probes_keep_code_summary_and_never_walk_old_openers() {
     doc.append("> ` [live](u)\n").unwrap();
     assert_eq!(doc.links().len(), 1);
     assert!(doc.tables().is_empty());
-    assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+    assert!(doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes);
     let expected = parse(&doc.source().replace('|', "/"));
     doc.finish();
     let span = Span::new(0, doc.source().len());
@@ -302,7 +297,7 @@ fn generated_code_lengths_and_closures_match_header_or_plain_models() {
         }
     }
     assert!(
-        confirmed > 80 && rejected > 20,
+        confirmed == 363 && rejected == 0,
         "{confirmed} confirmed, {rejected} rejected"
     );
 }

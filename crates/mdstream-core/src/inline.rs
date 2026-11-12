@@ -21,6 +21,7 @@ use code_fallback::{Checkpoint as CodeCheckpoint, CodeFallback, Event as CodeEve
 use label_journal::List as LabelList;
 
 pub(crate) struct Publishing<'a> {
+    pub styles: &'a mut crate::inline_styles::Styles,
     pub annotations: &'a mut Annotations,
     pub display: &'a mut crate::display::DisplayIndex,
     pub references: &'a mut References,
@@ -30,6 +31,10 @@ pub(crate) struct Publishing<'a> {
     pub link_guards: &'a mut crate::link_semantics::Guards,
     pub direct_title_gaps: &'a mut Vec<Vec<Span>>,
     pub maths: &'a mut Vec<crate::Math>,
+    pub math_active: &'a mut Vec<bool>,
+    pub math_states: &'a mut Vec<SyntaxState>,
+    pub math_index: &'a mut std::collections::BTreeMap<usize, crate::MathId>,
+    pub line: &'a mut crate::header_effects::LineEffects,
     pub math_gaps: &'a mut Vec<Span>,
     pub footnotes: &'a mut crate::footnotes::Footnotes,
     pub update: &'a mut Update,
@@ -65,6 +70,31 @@ impl Publishing<'_> {
                 .apply(span, style, None, self.update.revision);
         }
         // Coalesce adjacent/overlapping mutations without scanning prior changes.
+        if let Some(last) = self.update.dirty.last_mut()
+            && span.start <= last.end
+            && last.start <= span.end
+        {
+            last.start = last.start.min(span.start);
+            last.end = last.end.max(span.end);
+        } else {
+            self.update.dirty.push(span);
+        }
+    }
+
+    fn delimiter(&mut self, span: Span, style: Style) {
+        if span.is_empty() {
+            return;
+        }
+        self.annotations
+            .delimiter(span, style, self.update.revision);
+        self.update.change(
+            span,
+            if style == Style::HIDDEN {
+                ChangeKind::Visibility
+            } else {
+                ChangeKind::Style
+            },
+        );
         if let Some(last) = self.update.dirty.last_mut()
             && span.start <= last.end
             && last.start <= span.end
@@ -118,6 +148,7 @@ impl Publishing<'_> {
         suffix: Option<Span>,
         title: Option<Span>,
         title_gaps: Vec<Span>,
+        work: &mut Work,
     ) -> LinkId {
         debug_assert_eq!(self.links.len(), self.link_info.len());
         debug_assert_eq!(self.links.len(), self.direct_title_gaps.len());
@@ -149,7 +180,8 @@ impl Publishing<'_> {
         // Only a previously published shortcut supplies the visible-label witness.
         // Do not infer syntax ownership from the label annotation.
         let qualified = candidate.link.is_some();
-        let id = match candidate.link {
+        let reuse = candidate.link.or_else(|| self.line.reuse_link(info));
+        let id = match reuse {
             Some(id) => {
                 self.links[id.0] = target;
                 self.link_info[id.0] = info;
@@ -164,6 +196,8 @@ impl Publishing<'_> {
                 id
             }
         };
+        self.link_info[id.0].state = self.line.state(id, info.state);
+        self.update.changed_links.start = self.update.changed_links.start.min(id.0);
         self.link_order.insert(info.source, id);
         let selected = candidate.gate.unwrap_or_else(|| {
             if candidate.image.is_some() {
@@ -174,6 +208,18 @@ impl Publishing<'_> {
         });
         let nested = candidate.nested || candidate.children.head.is_some();
         self.link_order.set_gate(id, selected, nested);
+        let fixed = if matches!(target, LinkTarget::Reference(_)) {
+            None
+        } else {
+            match selected.root {
+                Guard::Never => Some(!selected.positive),
+                Guard::Always => Some(selected.positive),
+                Guard::Node(_) => None,
+            }
+        };
+        if let Some(changed) = self.styles.bind(candidate.open, id, fixed, work) {
+            self.mark(changed, Style::default(), None);
+        }
         if candidate.link.is_none() {
             self.link_order.adopt(candidate.children, id, self.update);
         }
@@ -222,6 +268,7 @@ pub(crate) struct Effects<'a> {
     pub source: &'a str,
     pub work: &'a mut Work,
     publishing: Option<Publishing<'a>>,
+    style_sink: Option<(&'a mut crate::inline_styles::Styles, usize, Option<LinkId>)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -245,6 +292,7 @@ impl<'a> Effects<'a> {
             source,
             work,
             publishing: Some(publishing),
+            style_sink: None,
         }
     }
 
@@ -253,6 +301,36 @@ impl<'a> Effects<'a> {
             source,
             work,
             publishing: None,
+            style_sink: None,
+        }
+    }
+
+    fn style_touch(&mut self, key: usize, span: Span) {
+        if let Some(p) = &mut self.publishing {
+            p.styles.touch(key, span, self.work);
+        }
+    }
+    fn style_enter(&mut self, key: usize, open: usize) {
+        if let Some(p) = &mut self.publishing {
+            p.styles.enter(key, open, self.work);
+        } else if let Some((styles, owner, _)) = &mut self.style_sink {
+            styles.enter(*owner, open, self.work);
+        }
+    }
+    fn style_leave(&mut self, key: usize, open: usize, end: usize) {
+        if let Some(p) = &mut self.publishing {
+            p.styles.leave(key, open, end, self.work);
+        } else if let Some((styles, owner, _)) = &mut self.style_sink {
+            styles.leave(*owner, open, end, self.work);
+        }
+    }
+    fn style_run(&mut self, key: usize, run: crate::inline_styles::DelimiterRun) {
+        if let Some(p) = &mut self.publishing {
+            if let Some(changed) = p.styles.run(key, run, None, self.work) {
+                p.mark(changed, Style::default(), None);
+            }
+        } else if let Some((styles, owner, unless)) = &mut self.style_sink {
+            styles.run(*owner, run, *unless, self.work);
         }
     }
 
@@ -291,6 +369,7 @@ impl<'a> Effects<'a> {
                 suffix,
                 title,
                 title_gaps,
+                self.work,
             )
         })
     }
@@ -299,12 +378,20 @@ impl<'a> Effects<'a> {
         if let Some(p) = &mut self.publishing
             && let Some(id) = id
         {
-            p.link_info[id.0].state = SyntaxState::Sealed;
+            p.link_info[id.0].state = p.line.state(id, SyntaxState::Sealed);
         }
     }
 
     fn code(&mut self, pair: &CodePair) {
         if let Some(p) = &mut self.publishing {
+            p.styles.fixed_pair(
+                crate::StylePairId {
+                    open: pair.code.open,
+                    close: pair.close,
+                    kind: crate::InlineStyleKind::Code,
+                },
+                self.work,
+            );
             let content = Span::new(pair.code.open.end, pair.close.start);
             p.display.code(
                 content,
@@ -320,7 +407,7 @@ impl<'a> Effects<'a> {
     fn math(&mut self, pair: &MathPair) {
         if let Some(p) = &mut self.publishing {
             let source = Span::new(pair.open.start, pair.close.end);
-            p.maths.push(crate::Math {
+            let math = crate::Math {
                 kind: if pair.open.len() == 1 {
                     crate::MathKind::Inline
                 } else {
@@ -328,7 +415,24 @@ impl<'a> Effects<'a> {
                 },
                 source,
                 content: Span::new(pair.open.end, pair.close.start),
-            });
+            };
+            let id = if let Some(id) = p.line.reuse_math(math) {
+                assert_eq!(p.maths[id.0], math);
+                p.math_active[id.0] = true;
+                id
+            } else {
+                let id = crate::MathId(p.maths.len());
+                p.maths.push(math);
+                p.math_active.push(true);
+                p.math_states.push(SyntaxState::Provisional);
+                id
+            };
+            p.math_states[id.0] = if p.line.pending {
+                SyntaxState::Provisional
+            } else {
+                SyntaxState::Sealed
+            };
+            p.math_index.insert(source.start, id);
             p.update.change(source, ChangeKind::Structure);
         }
     }
@@ -346,52 +450,64 @@ impl<'a> Effects<'a> {
         end: usize,
         target: crate::autolink::Target,
     ) -> Option<LinkId> {
+        let label = Span::new(start + 1, end);
+        let target = match target {
+            crate::autolink::Target::Uri => LinkTarget::Direct(label),
+            crate::autolink::Target::Email => LinkTarget::Email(label),
+        };
+        let info = LinkInfo {
+            kind: LinkKind::Link,
+            label,
+            source: Span::new(start, end + 1),
+            title: None,
+            state: SyntaxState::Sealed,
+        };
+        let id = self.publish_plain_link(info, target);
         if let Some(p) = &mut self.publishing {
-            let label = Span::new(start + 1, end);
-            let id = LinkId(p.links.len());
-            p.link_order.insert(Span::new(start, end + 1), id);
-            p.links.push(match target {
-                crate::autolink::Target::Uri => LinkTarget::Direct(label),
-                crate::autolink::Target::Email => LinkTarget::Email(label),
-            });
-            p.link_info.push(LinkInfo {
-                kind: LinkKind::Link,
-                label,
-                source: Span::new(start, end + 1),
-                title: None,
-                state: SyntaxState::Sealed,
-            });
-            p.direct_title_gaps.push(Vec::new());
-            p.mark(label, Style::default(), Some(id));
+            p.mark(label, Style::default(), id);
             p.hide(Span::new(start, start + 1));
             p.hide(Span::new(end, end + 1));
-            Some(id)
+        }
+        id
+    }
+    fn bare_autolink(&mut self, label: Span, www: bool, email: bool) {
+        let target = if www {
+            LinkTarget::Www(label)
+        } else if email {
+            LinkTarget::Email(label)
         } else {
-            None
+            LinkTarget::Direct(label)
+        };
+        let info = LinkInfo {
+            kind: LinkKind::Link,
+            label,
+            source: label,
+            title: None,
+            state: SyntaxState::Sealed,
+        };
+        let id = self.publish_plain_link(info, target);
+        if let Some(p) = &mut self.publishing {
+            p.mark(label, Style::default(), id);
         }
     }
-
-    fn bare_autolink(&mut self, label: Span, www: bool, email: bool) {
-        if let Some(p) = &mut self.publishing {
+    fn publish_plain_link(&mut self, info: LinkInfo, target: LinkTarget) -> Option<LinkId> {
+        let p = self.publishing.as_mut()?;
+        let id = if let Some(id) = p.line.reuse_link(info) {
+            p.links[id.0] = target;
+            p.link_info[id.0] = info;
+            p.direct_title_gaps[id.0].clear();
+            id
+        } else {
             let id = LinkId(p.links.len());
-            p.link_order.insert(label, id);
-            p.links.push(if www {
-                LinkTarget::Www(label)
-            } else if email {
-                LinkTarget::Email(label)
-            } else {
-                LinkTarget::Direct(label)
-            });
-            p.link_info.push(LinkInfo {
-                kind: LinkKind::Link,
-                label,
-                source: label,
-                title: None,
-                state: SyntaxState::Sealed,
-            });
+            p.links.push(target);
+            p.link_info.push(info);
             p.direct_title_gaps.push(Vec::new());
-            p.mark(label, Style::default(), Some(id));
-        }
+            id
+        };
+        p.link_info[id.0].state = p.line.state(id, info.state);
+        p.update.changed_links.start = p.update.changed_links.start.min(id.0);
+        p.link_order.insert(info.source, id);
+        Some(id)
     }
 
     fn entity(&mut self, span: Span, text: String) {
@@ -472,12 +588,31 @@ struct EmphasisPair {
 
 impl EmphasisPair {
     fn commit(self, effects: &mut Effects<'_>) {
-        effects.mark(Span::new(self.open.end, self.close.start), self.style, None);
-        effects.hide(self.open);
-        effects.hide(self.close);
+        if let Some(p) = &mut effects.publishing {
+            let id = crate::StylePairId {
+                open: self.open,
+                close: self.close,
+                kind: if self.style == Style::EMPHASIS {
+                    crate::InlineStyleKind::Emphasis
+                } else if self.style == Style::STRONG {
+                    crate::InlineStyleKind::Strong
+                } else {
+                    crate::InlineStyleKind::Strike
+                },
+            };
+            p.styles.pair(id, effects.work);
+            for (span, style) in [
+                (Span::new(self.open.end, self.close.start), self.style),
+                (self.open, Style::HIDDEN),
+                (self.close, Style::HIDDEN),
+            ] {
+                p.delimiter(span, style);
+            }
+        }
     }
 }
 
+#[derive(Clone, Copy)]
 #[cfg_attr(test, derive(Debug))]
 struct PendingEmail {
     candidate: Option<bare_autolink::Candidate>,
@@ -550,6 +685,7 @@ impl CodePair {
     }
 }
 
+#[derive(Clone, Copy)]
 #[cfg_attr(test, derive(Debug))]
 struct MathCandidate {
     open: Span,
@@ -669,6 +805,7 @@ impl std::fmt::Debug for Bracket {
     }
 }
 
+#[derive(Clone, Copy)]
 #[cfg_attr(test, derive(Debug))]
 pub(crate) struct LineBreak {
     newline: Span,
@@ -777,6 +914,8 @@ enum HeaderLinkSuffix {
 #[derive(Default)]
 #[cfg_attr(test, derive(Debug))]
 pub(crate) struct Inline {
+    header_saved: Option<LineCheckpoint>,
+    style_scope: Option<usize>,
     root_paragraph: bool,
     container_paragraph: bool,
     paragraph_key: Option<crate::table::ParagraphKey>,
@@ -787,7 +926,7 @@ pub(crate) struct Inline {
     // trim the outer edges without replaying text or visiting physical leaves.
     raw_content: Option<Span>,
     raw_cr: Option<usize>,
-    stack: Vec<Delimiter>,
+    stack: crate::rewind::Vector<Delimiter>,
     last: [Option<usize>; 14],
     run: Option<Run>,
     code: Option<Code>,
@@ -797,12 +936,12 @@ pub(crate) struct Inline {
     math: Option<MathCandidate>,
     footnote: Option<usize>,
     bracket: Option<Bracket>,
-    brackets: Vec<Bracket>,
+    brackets: crate::rewind::Vector<Bracket>,
     bracket_allocations: u64,
     // Raw payload only, without container prefixes. One extra byte lets a
     // closing ']' complete an exactly MAX_LABEL_BYTES reference label. Direct
     // labels remain unbounded source envelopes; never keep their whole text.
-    label: Vec<u8>,
+    label: crate::rewind::Vector<u8>,
     label_overflow: bool,
     label_delimiters: label_journal::Arena<LabelDelimiter>,
     // Prefix from the preceding line, resolved as prose on header success.
@@ -827,10 +966,10 @@ pub(crate) struct Inline {
     bare_replay: bool,
     bare_recovery: Option<bare_autolink::Recovery>,
     bare_collect: Option<Span>,
-    bare_markers: std::collections::BTreeMap<usize, usize>,
-    email_pending: Vec<PendingEmail>,
-    email_waiting: std::collections::VecDeque<usize>,
-    email_ready: Vec<usize>,
+    bare_markers: crate::rewind::Map<usize, usize>,
+    email_pending: crate::rewind::Vector<PendingEmail>,
+    email_waiting: crate::rewind::Queue<usize>,
+    email_ready: crate::rewind::Queue<usize>,
     header_email_pending: usize,
     entity: Option<usize>,
     // Inherited openers can close without affecting the independent cell's
@@ -861,11 +1000,19 @@ pub(crate) struct Inline {
     header_link_suffix: Option<HeaderLinkSuffix>,
 }
 
+struct LineCheckpoint(Box<Inline>);
+impl std::fmt::Debug for LineCheckpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LineCheckpoint")
+    }
+}
+
 // One fresh core for the active ordinary paragraph. No document, tree,
 // reference store, published IDs or copied old parser state is retained here.
 #[derive(Default)]
 pub(crate) struct Eligibility {
-    inline: Inline,
+    // Keep Document moves/drop frames bounded as the grammar checkpoint grows.
+    inline: Box<Inline>,
     cursor: Option<usize>,
     last_virtual_tab: Option<usize>,
     container: bool,
@@ -876,6 +1023,10 @@ pub(crate) struct Eligibility {
 pub(crate) type RootEligibility = Eligibility;
 
 impl Eligibility {
+    pub(crate) fn undo_stats(&self) -> crate::rewind::UndoStats {
+        self.inline.undo_stats()
+    }
+
     pub fn container() -> Self {
         Self {
             container: true,
@@ -911,6 +1062,11 @@ impl Eligibility {
             w.code_fallback_steps + w.code_fallback_comparisons;
         total.bare_eligibility_bytes += w.bare_autolink_bytes;
         total.link_label_steps += w.link_label_steps;
+        total.eligibility_undo_peak = total.eligibility_undo_peak.max(w.inline_undo_peak);
+        total.eligibility_undo_bytes_peak = total
+            .eligibility_undo_bytes_peak
+            .max(w.inline_undo_bytes_peak);
+
         let steps = w.inline_bytes
             + w.delimiter_steps
             + w.delimiter_search_steps
@@ -1064,6 +1220,13 @@ impl Inline {
                 effects.work.code_fallback_bytes += 1;
             } else {
                 effects.work.inline_bytes += 1;
+                if effects
+                    .publishing
+                    .as_ref()
+                    .is_some_and(|p| p.line.replay.is_some_and(|r| r.start <= at && at < r.end))
+                {
+                    effects.work.header_replay_bytes += 1;
+                }
             }
             if !title_body {
                 self.byte(b' ', at, Origin::Virtual, effects);
@@ -1076,11 +1239,122 @@ impl Inline {
         }
     }
 
+    pub(crate) fn undo_stats(&self) -> crate::rewind::UndoStats {
+        self.stack
+            .undo_stats()
+            .plus(self.brackets.undo_stats())
+            .plus(self.label.undo_stats())
+            .plus(self.bare_markers.undo_stats())
+            .plus(self.email_pending.undo_stats())
+            .plus(self.email_waiting.undo_stats())
+            .plus(self.email_ready.undo_stats())
+            .plus(self.label_delimiters.undo_stats())
+            .plus(self.code_fallback.runs.undo_stats())
+            .plus(self.code_fallback.events.undo_stats())
+    }
+    fn account_undo_peak(&self, work: &mut Work) {
+        let s = self.undo_stats();
+        work.inline_undo_peak = work.inline_undo_peak.max(s.entries as u64);
+        work.inline_undo_bytes_peak = work.inline_undo_bytes_peak.max(s.bytes as u64);
+    }
+    pub(crate) fn style_scope_key(&self) -> Option<usize> {
+        self.style_scope
+    }
+    fn save_line(&mut self) {
+        assert!(self.header_saved.is_none());
+        assert!(
+            self.tail.is_none() && self.code_recovery.is_none() && self.bare_recovery.is_none()
+        );
+        let mut saved = Box::new(Self::default());
+        saved.style_scope = self.style_scope;
+        saved.root_paragraph = self.root_paragraph;
+        saved.container_paragraph = self.container_paragraph;
+        saved.paragraph_key = self.paragraph_key;
+        saved.root_separator_seen = self.root_separator_seen;
+        saved.raw_content = self.raw_content;
+        saved.raw_cr = self.raw_cr;
+        saved.last = self.last;
+        saved.run = self.run;
+        saved.code = self.code;
+        saved.math = self.math;
+        saved.footnote = self.footnote;
+        saved.bracket = self.bracket;
+        saved.label_overflow = self.label_overflow;
+        saved.bang = self.bang;
+        saved.escape = self.escape;
+        saved.previous = self.previous;
+        saved.previous_scalar = self.previous_scalar;
+        saved.spaces = self.spaces;
+        saved.whitespace = self.whitespace;
+        saved.carriage = self.carriage;
+        saved.line_break = self.line_break;
+        saved.autolink = self.autolink;
+        saved.bare = self.bare;
+        saved.bare_replay = self.bare_replay;
+        saved.bare_collect = self.bare_collect;
+        saved.entity = self.entity;
+        saved.code_fallback.checkpoint = self.code_fallback.checkpoint;
+        saved.code_fallback.boundary = self.code_fallback.boundary;
+        self.stack.begin();
+        self.brackets.begin();
+        self.label.begin();
+        self.bare_markers.begin();
+        self.email_pending.begin();
+        self.email_waiting.begin();
+        self.email_ready.begin();
+        self.label_delimiters.begin();
+        self.code_fallback.runs.begin();
+        self.code_fallback.events.begin();
+        self.header_saved = Some(LineCheckpoint(saved));
+    }
+    fn commit_line(&mut self, work: &mut Work) {
+        self.account_undo_peak(work);
+        if self.header_saved.take().is_none() {
+            return;
+        }
+        work.inline_checkpoint_steps += 1;
+        work.inline_checkpoint_steps += self.stack.commit();
+        work.inline_checkpoint_steps += self.brackets.commit();
+        work.inline_checkpoint_steps += self.label.commit();
+        work.inline_checkpoint_steps += self.bare_markers.commit();
+        work.inline_checkpoint_steps += self.email_pending.commit();
+        work.inline_checkpoint_steps += self.email_waiting.commit();
+        work.inline_checkpoint_steps += self.email_ready.commit();
+        work.inline_checkpoint_steps += self.label_delimiters.commit();
+        work.inline_checkpoint_steps +=
+            self.code_fallback.runs.commit() + self.code_fallback.events.commit();
+    }
+    fn restore_line(&mut self, work: &mut Work) {
+        self.account_undo_peak(work);
+        let mut saved = *self.header_saved.take().unwrap().0;
+        work.inline_rollback_steps += self.stack.rollback();
+        saved.stack = std::mem::take(&mut self.stack);
+        work.inline_rollback_steps += self.brackets.rollback();
+        saved.brackets = std::mem::take(&mut self.brackets);
+        work.inline_rollback_steps += self.label.rollback();
+        saved.label = std::mem::take(&mut self.label);
+        work.inline_rollback_steps += self.bare_markers.rollback();
+        saved.bare_markers = std::mem::take(&mut self.bare_markers);
+        work.inline_rollback_steps += self.email_pending.rollback();
+        saved.email_pending = std::mem::take(&mut self.email_pending);
+        work.inline_rollback_steps += self.email_waiting.rollback();
+        saved.email_waiting = std::mem::take(&mut self.email_waiting);
+        work.inline_rollback_steps += self.email_ready.rollback();
+        saved.email_ready = std::mem::take(&mut self.email_ready);
+        work.inline_rollback_steps += self.label_delimiters.rollback();
+        saved.label_delimiters = std::mem::take(&mut self.label_delimiters);
+        work.inline_rollback_steps +=
+            self.code_fallback.runs.rollback() + self.code_fallback.events.rollback();
+        saved.code_fallback.runs = std::mem::take(&mut self.code_fallback.runs);
+        saved.code_fallback.events = std::mem::take(&mut self.code_fallback.events);
+        saved.bracket_allocations = self.bracket_allocations;
+        *self = saved;
+    }
+
     /// Emphasis openers, code/math, a label and the pending break may reach the
     /// preceding line. Inspect fixed state, never walk or clone the stack.
     pub fn can_isolate_line(&self) -> bool {
-        self.brackets.is_empty()
-            && self.previous == Some(b'\n')
+        self.previous == Some(b'\n')
             && self.run.is_none()
             && self.footnote.is_none()
             && self.bang.is_none()
@@ -1095,11 +1369,16 @@ impl Inline {
 
     pub fn isolate_line(&mut self) -> Option<LineBreak> {
         debug_assert!(self.can_isolate_line());
-        debug_assert!(self.header_pairs.is_empty());
-        debug_assert!(self.header_code.is_none());
-        debug_assert!(self.header_math.is_none());
-        debug_assert!(self.header_link.is_none());
-        debug_assert!(self.header_link_suffix.is_none());
+        debug_assert!(
+            self.header_pairs.is_empty()
+                && self.header_code.is_none()
+                && self.header_math.is_none()
+                && self.header_link.is_none()
+                && self.header_link_suffix.is_none()
+        );
+        self.save_line();
+        // Preserve the existing separable summaries. The outer checkpoint also
+        // covers the ordinary path after one of these summaries must flush.
         self.header_email_pending = self.email_pending.len();
         self.header_floor = self.stack.len();
         self.header_label_delimiters = self.label_delimiters.len();
@@ -1116,10 +1395,18 @@ impl Inline {
     }
 
     pub fn header_crossed(&self) -> bool {
-        self.header_crossed
+        self.header_saved.is_none() && self.header_crossed
     }
 
     pub fn cancel_header(&mut self, effects: &mut Effects<'_>) {
+        self.flush_header(effects);
+        self.commit_line(effects.work);
+        if let Some(p) = &mut effects.publishing {
+            crate::header_effects::commit(p, effects.work);
+        }
+    }
+
+    fn flush_header(&mut self, effects: &mut Effects<'_>) {
         if let Some(candidate) = self.header_link.take() {
             effects.work.delimiter_steps += 1;
             let candidate = self.shortcut(candidate, effects);
@@ -1205,6 +1492,14 @@ impl Inline {
     /// is instead parsed once as a cell during the existing row scan. Never
     /// finish its pending run: that could publish a cross-line mapping/object.
     pub fn confirm_header(&mut self, effects: &mut Effects<'_>) -> bool {
+        if self.header_saved.is_some() {
+            self.restore_line(effects.work);
+            if let Some(p) = &mut effects.publishing {
+                crate::header_effects::rollback(p, effects.work);
+            }
+            self.finish(effects);
+            return false;
+        }
         if self.code_fallback.truncate_header() {
             // The current row has no committed effects while inherited code is
             // opaque (or its closure isolated). Finish only the old paragraph,
@@ -1320,6 +1615,8 @@ impl Inline {
         if span.is_empty() {
             return;
         }
+        let style_scope = *self.style_scope.get_or_insert(span.start);
+        effects.style_touch(style_scope, span);
         if self.code_recovery.is_none() {
             self.code_fallback
                 .record(CodeEvent::Raw(span), effects.work);
@@ -1333,6 +1630,13 @@ impl Inline {
                 effects.work.inline_bytes += 1;
             }
             if self.code_recovery.is_none() {
+                if effects
+                    .publishing
+                    .as_ref()
+                    .is_some_and(|p| p.line.replay.is_some_and(|r| r.start <= pos && pos < r.end))
+                {
+                    effects.work.header_replay_bytes += 1;
+                }
                 if let Some(cr) = self.raw_cr.take()
                     && byte != b'\n'
                 {
@@ -1418,7 +1722,7 @@ impl Inline {
                 || self.header_math.is_some()
                 || self.header_link.is_some()
             {
-                self.cancel_header(effects);
+                self.flush_header(effects);
                 self.header_crossed = true;
             }
             self.finish_run(effects.source[label.start..].chars().next(), effects);
@@ -1533,7 +1837,7 @@ impl Inline {
                     || self.header_math.is_some()
                     || self.header_link.is_some())
             {
-                self.cancel_header(effects);
+                self.flush_header(effects);
                 self.header_crossed = true;
             }
             effects.bare_autolink(label, false, !native_protocol);
@@ -1563,8 +1867,9 @@ impl Inline {
         if !self.header_pairs.is_empty() {
             return;
         }
-        let ready = std::mem::take(&mut self.email_ready);
-        for id in ready {
+        let ready = self.email_ready.len();
+        for _ in 0..ready {
+            let id = self.email_ready.pop_front().unwrap();
             if let Some(candidate) = self.email_pending[id].candidate.take() {
                 self.publish_email(candidate, true, effects);
             }
@@ -1649,7 +1954,7 @@ impl Inline {
             // Flush before this byte can publish a source-ordered replacement
             // or object. Rejection is permanent
             // for this line, even if its next opaque candidate is open at '|'.
-            self.cancel_header(effects);
+            self.flush_header(effects);
             self.header_crossed = true;
         }
         if let Some(math) = &mut self.math {
@@ -1785,6 +2090,9 @@ impl Inline {
                 .is_some_and(|b| b.image.is_none() && b.open + 1 == pos) =>
             {
                 let bracket = self.bracket.take().unwrap();
+                if let Some(key) = self.style_scope {
+                    effects.style_leave(key, bracket.open, pos);
+                }
                 self.footnote = Some(bracket.open);
                 self.bracket = self.brackets.pop();
                 self.label.clear();
@@ -1809,9 +2117,15 @@ impl Inline {
                 self.label.clear();
                 self.label_overflow = false;
                 self.bracket = Some(Bracket::new(pos, bang.filter(|at| *at + 1 == pos)));
+                if let Some(key) = self.style_scope {
+                    effects.style_enter(key, pos);
+                }
             }
             b']' => {
                 if let Some(bracket) = self.bracket.take() {
+                    if let Some(key) = self.style_scope {
+                        effects.style_leave(key, bracket.open, pos);
+                    }
                     effects.work.link_label_steps += 1;
                     self.bracket = self.brackets.pop();
                     if let Some(parent) = &mut self.bracket {
@@ -2118,6 +2432,17 @@ impl Inline {
         } else {
             base + usize::from(can_close) * 3 + residue
         };
+        if let Some(key) = self.style_scope {
+            effects.style_run(
+                key,
+                crate::inline_styles::DelimiterRun {
+                    source: run.source,
+                    kind,
+                    can_open,
+                    can_close,
+                },
+            );
+        }
         let mut close = run.source;
         while can_close && !close.is_empty() {
             let index = if run.byte == b'~' {
@@ -2255,7 +2580,7 @@ impl Inline {
             } {
                 Progress::Invalid => {
                     if self.header_link.is_some() {
-                        self.cancel_header(effects);
+                        self.flush_header(effects);
                         self.header_crossed = true;
                     } else {
                         self.seal_candidate(candidate, effects);
@@ -2311,7 +2636,7 @@ impl Inline {
                     || (byte == b'[' && !escaped)
                 {
                     if self.header_link.is_some() {
-                        self.cancel_header(effects);
+                        self.flush_header(effects);
                         self.header_crossed = true;
                     } else {
                         self.seal_candidate(candidate, effects);
@@ -2341,6 +2666,47 @@ impl Inline {
         true
     }
 
+    fn style_suffix(&mut self, source: Span, owner: Option<LinkId>, effects: &mut Effects<'_>) {
+        let (Some(key), Some(id), Some(publishing)) =
+            (self.style_scope, owner, &mut effects.publishing)
+        else {
+            return;
+        };
+        publishing.styles.enter(key, source.start, effects.work);
+        let mut work = Work::default();
+        let mut local = Inline {
+            style_scope: Some(key),
+            previous: Some(b'['),
+            previous_scalar: Some('['),
+            ..Inline::default()
+        };
+        let mut sink = Effects {
+            source: effects.source,
+            work: &mut work,
+            publishing: None,
+            style_sink: Some((publishing.styles, key, Some(id))),
+        };
+        local.feed(Span::new(source.start + 1, source.end), &mut sink);
+        local.finish(&mut sink);
+        publishing
+            .styles
+            .leave(key, source.start, source.end - 1, effects.work);
+        if let Some(changed) = publishing.styles.conditional_source(key) {
+            publishing.mark(changed, Style::default(), None);
+        }
+        effects.work.style_events += work.style_events;
+        effects.work.style_scope_steps += work.style_scope_steps;
+        effects.work.style_suffix_bytes += work.inline_bytes + work.code_fallback_bytes;
+        let mut observer = Eligibility {
+            inline: Box::new(local),
+            work,
+            ..Eligibility::default()
+        };
+        let mut accounted = Work::default();
+        observer.account(&mut accounted);
+        effects.work.style_suffix_steps += accounted.root_eligibility_steps;
+    }
+
     fn reference_tail(
         &mut self,
         mut candidate: Candidate,
@@ -2362,6 +2728,9 @@ impl Inline {
                 Vec::new(),
                 effects,
             );
+            if source.len() != 2 {
+                self.style_suffix(source, candidate.link, effects);
+            }
             let gate = candidate
                 .gate
                 .unwrap_or_else(|| Gate::unless(candidate.blockers.root));
@@ -2467,6 +2836,10 @@ impl Inline {
         }
         self.finish_run(None, effects);
         while let Some(bracket) = self.bracket.take() {
+            if let (Some(key), Some(p)) = (self.style_scope, &mut effects.publishing) {
+                let end = p.styles.scope_end(key);
+                p.styles.leave(key, bracket.open, end, effects.work);
+            }
             self.bracket = self.brackets.pop();
             let mut candidate = Candidate::bare(bracket.open, bracket.open, bracket.image);
             candidate.journal = bracket.journal;
@@ -2503,6 +2876,7 @@ impl Inline {
         self.root_separator_seen = false;
         self.code_fallback.clear();
         self.code_fallback.events.clear();
+        self.style_scope = None;
         self.account_labels(effects);
     }
 }
@@ -2615,6 +2989,13 @@ mod tests {
             let mut publishing = self.doc.work;
             publishing.link_fallback_bytes = 0;
             publishing.link_fallback_steps = 0;
+            // Publication indexes are absent from the grammar-only observer.
+            publishing.style_events = 0;
+            publishing.style_scope_steps = 0;
+            publishing.style_index_steps = 0;
+            publishing.style_suffix_bytes = 0;
+            publishing.style_suffix_steps = 0;
+            publishing.header_effect_steps = 0;
             assert_eq!(publishing, self.work, "work after {event}");
             assert_eq!(self.work.tree_visits, 0);
         }
@@ -2644,6 +3025,17 @@ mod tests {
 
         fn isolate(&mut self) {
             assert!(self.doc.inline.can_isolate_line());
+            let key = self.doc.inline.style_scope_key().unwrap();
+            self.doc.annotations.begin_line();
+            self.doc.inline_styles.begin_line(key);
+            self.doc.link_order.begin_line();
+            self.doc.footnotes.begin_reference_line();
+            self.doc.header_effects.begin(
+                self.doc.links.len(),
+                self.doc.maths.len(),
+                self.doc.display.entries_len(),
+                self.doc.math_gaps.len(),
+            );
             let published_break = self.doc.inline.isolate_line();
             let observed_break = self.observer.isolate_line();
             assert_eq!(
@@ -3141,7 +3533,7 @@ mod tests {
                     assert_eq!(doc.tables().len(), usize::from(ending == "-|-\n"));
                     let work = doc.work();
                     let bytes = doc.source().len() as u64;
-                    assert!(work.inline_bytes <= bytes);
+                    assert!(work.inline_bytes <= bytes + work.header_replay_bytes);
                     assert!(work.delimiter_steps <= 3 * bytes);
                     assert!(work.delimiter_search_steps <= 6 * work.delimiter_steps);
                     assert!(work.tree_visits <= 24 * bytes * usize::BITS as u64);
@@ -3225,7 +3617,7 @@ mod tests {
                 .unwrap();
             assert!(doc.inline.header_link_suffix.is_some());
             let candidate = doc.inline.header_link.unwrap();
-            let label = doc.inline.label.clone();
+            let label = doc.inline.label.to_vec();
             let capacity = doc.inline.label.capacity();
             let before = doc.work();
             doc.append(&"x".repeat(1_000_000)).unwrap();
@@ -3253,7 +3645,10 @@ mod tests {
                 assert!(doc.inline.header_link_suffix.is_none());
                 assert!(doc.inline.label.capacity() <= capacity);
             }
-            assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+            assert!(
+                doc.work().inline_bytes
+                    <= doc.source().len() as u64 + doc.work().header_replay_bytes
+            );
         }
     }
 
@@ -3263,7 +3658,7 @@ mod tests {
         doc.append(&format!("> a ![old\n> end] {}", "x".repeat(1030)))
             .unwrap();
         let candidate = doc.inline.header_link.unwrap();
-        let label = doc.inline.label.clone();
+        let label = doc.inline.label.to_vec();
         let capacity = doc.inline.label.capacity();
         let before = doc.work();
         doc.append(&"x".repeat(1_000_000)).unwrap();
@@ -3293,7 +3688,9 @@ mod tests {
             // fallback reuses this buffer. Neither path retains history.
             assert!(doc.inline.label.capacity() <= capacity);
         }
-        assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+        assert!(
+            doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes
+        );
     }
 
     #[test]
@@ -3392,7 +3789,9 @@ mod tests {
             assert!(doc.inline.header_pairs.is_empty());
             assert_eq!(doc.inline.header_pairs.capacity(), capacity);
         }
-        assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+        assert!(
+            doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes
+        );
     }
 
     #[test]

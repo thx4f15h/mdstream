@@ -119,3 +119,91 @@ fn from_heading_skips_preceding_giant_title_and_out_of_arena_is_complete() {
     );
     assert_eq!(zero.used(), WorkLimit::default());
 }
+
+#[test]
+fn conditional_scope_first_matches_follow_late_definitions_and_parent_suppression() {
+    let mut d = Document::new();
+    d.append("# *foo [bar* baz]\n\n# *foo [bar* [kid] baz][outer]\n\n[outer]: /u\n")
+        .unwrap();
+    for defined in [false, true] {
+        let mut resolver = d.link_resolver();
+        for (query, expected) in [
+            ("*foo", if defined { vec![0] } else { vec![1] }),
+            ("bar*", if defined { vec![0] } else { vec![1] }),
+            ("bar kid baz", if defined { vec![1] } else { vec![] }),
+        ] {
+            let mut search = HeadingSearch::new(&d, query, 6).unwrap();
+            let before = resolver.style_work();
+            let mut zero = Budget::new(WorkLimit::default());
+            search.swap_link_resolver(&mut resolver).unwrap();
+            assert_eq!(
+                search.next_match(&d, &mut zero).unwrap(),
+                HeadingSearchStep::BudgetExhausted
+            );
+            search.swap_link_resolver(&mut resolver).unwrap();
+            assert_eq!(resolver.style_work(), before);
+            let mut ids = Vec::new();
+            let mut complete = false;
+            for _ in 0..20_000 {
+                let mut b = Budget::new(micro());
+                search.swap_link_resolver(&mut resolver).unwrap();
+                let step = search.next_match(&d, &mut b).unwrap();
+                search.swap_link_resolver(&mut resolver).unwrap();
+                assert!(b.used().queries <= 1 && b.used().objects <= 1 && b.used().bytes <= 6);
+                match step {
+                    HeadingSearchStep::Match(hit) => {
+                        if query == "*foo" {
+                            let start = d.headings().get(hit.heading).unwrap().content.start;
+                            assert_eq!(hit.source, mdstream::Span::new(start, start + 4));
+                        }
+                        ids.push(hit.heading.0);
+                    }
+                    HeadingSearchStep::Complete => {
+                        complete = true;
+                        break;
+                    }
+                    HeadingSearchStep::BudgetExhausted => {}
+                }
+            }
+            assert!(complete, "{defined} {query}: first-match pages must finish");
+            assert_eq!(ids, expected, "{defined} {query}");
+        }
+        assert!(
+            resolver.style_work().events < 64,
+            "one shared scope evaluation"
+        );
+        if !defined {
+            let mut stale = HeadingSearch::new(&d, "foo", 6).unwrap();
+            d.append("[bar* baz]: /v\n[kid]: /k\n").unwrap();
+            let mut b = Budget::new(micro());
+            assert_eq!(
+                stale.next_match(&d, &mut b),
+                Err(LayoutError::StaleContinuation)
+            );
+            assert_eq!(b.used(), WorkLimit::default());
+        }
+    }
+}
+
+#[test]
+fn conditional_first_hit_skips_remaining_giant_title_with_shared_resolver() {
+    let d = parse(&format!("# *{} [r]\n\n# aa\n", "a".repeat(1_000_000)));
+    let mut search = HeadingSearch::new(&d, "aa", 6).unwrap();
+    let mut resolver = d.link_resolver();
+    let mut paid = Vec::new();
+    for id in 0..2 {
+        let mut b = Budget::new(WorkLimit::unlimited());
+        search.swap_link_resolver(&mut resolver).unwrap();
+        let hit = search.next_match(&d, &mut b).unwrap();
+        search.swap_link_resolver(&mut resolver).unwrap();
+        assert!(matches!(hit, HeadingSearchStep::Match(hit) if hit.heading == HeadingId(id)));
+        paid.push(b.used().bytes);
+    }
+    assert!(paid[0] < 8192 && paid[1] < 64, "{paid:?}");
+    assert!(resolver.style_work().events > 0 && resolver.style_work().events <= 8);
+    assert!(search.scratch_capacity_bytes() < 8192);
+    eprintln!(
+        "conditional heading first hits: paid_bytes={paid:?} styles={:?}",
+        resolver.style_work()
+    );
+}

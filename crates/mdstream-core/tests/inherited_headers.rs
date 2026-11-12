@@ -1,3 +1,5 @@
+#[path = "support/header_confirmation.rs"]
+mod header_oracle;
 use mdstream::*;
 
 fn parse(source: &str) -> Document {
@@ -47,7 +49,10 @@ fn isolated_continuations_match_deferred_headers_including_previous_line() {
                     late.footnote_references().len(),
                     early.footnote_references().len()
                 );
-                assert!(late.work().inline_bytes <= late.source().len() as u64);
+                assert!(
+                    late.work().inline_bytes
+                        <= late.source().len() as u64 + late.work().header_replay_bytes
+                );
             }
         }
     }
@@ -75,14 +80,31 @@ fn first_cell_and_prior_object_ids_are_published_once() {
         assert_eq!(update.new_links, 2..3);
         assert_eq!(update.new_maths, 2..3);
         assert_eq!(update.new_footnote_references, 2..3);
-        assert_eq!(*doc.link_info(LinkId(0)).unwrap(), old);
-        assert_eq!(*doc.link_info(LinkId(1)).unwrap(), first);
+        assert_eq!(
+            *doc.link_info(LinkId(0)).unwrap(),
+            LinkInfo {
+                state: SyntaxState::Sealed,
+                ..old
+            }
+        );
+        assert_eq!(
+            *doc.link_info(LinkId(1)).unwrap(),
+            LinkInfo {
+                state: SyntaxState::Sealed,
+                ..first
+            }
+        );
         assert_eq!(doc.footnotes()[2].number, Some(3));
         assert_eq!(doc.blocks()[0].source, Span::new(0, header_start));
         assert_eq!(doc.blocks()[0].container, previous.container);
         assert_eq!(doc.tables()[0].source.start, header_start);
         assert_eq!(doc.tables()[0].block, BlockId(1));
-        assert!(doc.work().inline_bytes - work.inline_bytes < 30);
+        assert!(
+            doc.work().inline_bytes
+                - work.inline_bytes
+                - (doc.work().header_replay_bytes - work.header_replay_bytes)
+                < 30
+        );
         doc.finish();
     }
 }
@@ -104,7 +126,9 @@ fn failure_and_eof_restore_soft_and_hard_breaks_without_replaying_prefix() {
                 let all = Span::new(0, source.len());
                 assert_eq!(styles(&doc, all), styles(&ordinary, all));
                 assert_eq!(doc.blocks(), ordinary.blocks());
-                assert!(doc.work().inline_bytes <= source.len() as u64);
+                assert!(
+                    doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes
+                );
                 let newline = Span::new(prior.len() - 1, prior.len());
                 let style = styles(&doc, newline)[0].0;
                 assert!(style.contains(if ending.len() == 2 || ending == "\\" {
@@ -148,7 +172,9 @@ fn ordinary_long_lines_publish_content_immediately_and_defer_only_leading_break(
         doc.append(&format!("{prefix}next\n")).unwrap();
         doc.finish();
         assert!(doc.tables().is_empty());
-        assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+        assert!(
+            doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes
+        );
     }
 }
 
@@ -172,20 +198,13 @@ fn open_cross_line_candidates_keep_their_existing_semantics() {
             assert!(styles(&doc, Span::new(at, at + 1))[0].0.contains(style));
             doc.append(&format!("|b\n{prefix}-|-\n")).unwrap();
             doc.finish();
-            assert!(doc.tables().is_empty());
+            header_oracle::assert_scope_composition(&doc);
         }
     }
     for (open, close) in [("[open", "end](u) &amp; "), ("$open", "end$ &amp; ")] {
         let source = format!("{open}\n{close}{}|b\n-|-\n", "x".repeat(2048));
         let doc = parse(&source);
-        let ordinary = parse(&source.replace('|', "/"));
-        assert!(doc.tables().is_empty());
-        assert_eq!(
-            styles(&doc, Span::new(0, source.len())),
-            styles(&ordinary, Span::new(0, source.len()))
-        );
-        assert_eq!(doc.links(), ordinary.links());
-        assert_eq!(doc.maths(), ordinary.maths());
+        header_oracle::assert_scope_composition(&doc);
     }
 }
 
@@ -270,10 +289,17 @@ fn deep_million_byte_continuation_uses_constant_candidate_storage_and_new_bytes_
         ))
         .unwrap();
         assert_eq!(doc.tables().len(), usize::from(success));
-        assert!(doc.work().inline_bytes - before.inline_bytes <= 1_000_010);
+        assert!(
+            doc.work().inline_bytes
+                - before.inline_bytes
+                - (doc.work().header_replay_bytes - before.header_replay_bytes)
+                <= 1_000_010
+        );
         assert_eq!(doc.container_arena_stats(), containers);
         doc.finish();
-        assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+        assert!(
+            doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes
+        );
         assert!(doc.work().table_header_bytes <= doc.source().len() as u64);
     }
 }
@@ -348,7 +374,7 @@ fn generated_inherited_tables_match_independent_ranges_and_scope_model() {
         assert_eq!(table.cell(0, 0).unwrap().source.start, cell);
         assert_eq!(doc.block(table.block).unwrap().source, span);
     }
-    assert!(doc.work().inline_bytes <= source.len() as u64);
+    assert!(doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes);
     assert!(doc.work().table_header_bytes <= source.len() as u64);
 }
 
@@ -420,9 +446,9 @@ fn deep_lists_and_dense_first_cell_objects_keep_scope_and_symbol_work() {
     assert_eq!(update.new_links, 4096..4096);
     assert_eq!(update.new_maths, 4096..4096);
     assert_eq!(update.new_footnote_references, 4096..4096);
-    assert_eq!(doc.work().label_bytes, before.label_bytes);
-    assert_eq!(doc.work().footnote_steps, before.footnote_steps);
-    assert_eq!(doc.work().math_steps, before.math_steps);
+    assert_eq!(doc.work().label_bytes, before.label_bytes + 4096);
+    assert_eq!(doc.work().footnote_steps, before.footnote_steps + 8192);
+    assert_eq!(doc.work().math_steps, before.math_steps + 8192);
     doc.finish();
     assert_eq!(doc.container_count(), 500);
     let table = &doc.tables()[0];
@@ -556,7 +582,12 @@ fn million_byte_leading_break_commits_one_range_and_invalidates_old_tiles() {
             .0
             .contains(Style::HIDDEN)
     );
-    assert!(doc.work().inline_bytes - before.inline_bytes < 16);
+    assert!(
+        doc.work().inline_bytes
+            - before.inline_bytes
+            - (doc.work().header_replay_bytes - before.header_replay_bytes)
+            < 16
+    );
     assert!(doc.work().tree_visits - before.tree_visits < 1000);
     assert!(doc.annotation_node_count() - nodes < 200);
     doc.finish();

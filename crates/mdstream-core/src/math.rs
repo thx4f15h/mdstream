@@ -55,13 +55,23 @@ impl Document {
         Some(cursor)
     }
 
-    /// Source-ordered, non-overlapping confirmed objects. No provisional entries.
+    /// Stable allocation arena. A pending late-header row can contain
+    /// provisional or withdrawn candidates; use math_state/math/maths_in for
+    /// current semantic objects. IDs never shift when a row is confirmed.
     pub fn maths(&self) -> &[Math] {
         &self.maths
     }
 
     pub fn math(&self, id: MathId) -> Option<&Math> {
+        self.math_active
+            .get(id.0)
+            .copied()
+            .filter(|active| *active)?;
         self.maths.get(id.0)
+    }
+    pub fn math_state(&self, id: MathId) -> Option<crate::SyntaxState> {
+        self.math(id)?;
+        self.math_states.get(id.0).copied()
     }
 
     /// O(1) construction. The first advance pays for the O(log M) range lookup;
@@ -71,7 +81,8 @@ impl Document {
         Some(MathObjects {
             entries: &self.maths,
             range,
-            index: None,
+            order: &self.math_index,
+            cursor: None,
             complete: range.is_empty(),
         })
     }
@@ -108,7 +119,8 @@ impl Document {
 pub struct MathObjects<'a> {
     entries: &'a [Math],
     range: Span,
-    index: Option<usize>,
+    order: &'a std::collections::BTreeMap<usize, MathId>,
+    cursor: Option<std::collections::btree_map::Range<'a, usize, MathId>>,
     complete: bool,
 }
 
@@ -126,15 +138,20 @@ impl MathObjects<'_> {
         }) {
             return Err(Completion::BudgetExhausted);
         }
-        let index = self.index.unwrap_or_else(|| {
-            self.entries
-                .partition_point(|math| math.source.end <= self.range.start)
-        });
-        if let Some(&math) = self.entries.get(index)
-            && math.source.start < self.range.end
-        {
-            self.index = Some(index + 1);
-            return Ok(Some((MathId(index), math)));
+        if self.cursor.is_none() {
+            let start = self
+                .order
+                .range(..=self.range.start)
+                .next_back()
+                .filter(|(_, id)| self.entries[id.0].source.end > self.range.start)
+                .map_or(self.range.start, |(&start, _)| start);
+            self.cursor = Some(self.order.range(start..));
+        }
+        if let Some((_, &id)) = self.cursor.as_mut().unwrap().next() {
+            let math = self.entries[id.0];
+            if math.source.start < self.range.end {
+                return Ok(Some((id, math)));
+            }
         }
         self.complete = true;
         Ok(None)

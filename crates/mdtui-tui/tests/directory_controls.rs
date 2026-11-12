@@ -585,3 +585,114 @@ fn suspended_completed_name_page_preserves_selection_and_continues_after_its_las
     event(&mut d, &doc, E::Move(3), 5);
     assert_eq!(ids(&d), [3, 4]);
 }
+
+fn conditional_micro() -> WorkLimit {
+    WorkLimit {
+        queries: 1,
+        objects: 1,
+        bytes: 6,
+        tiles: 1,
+        recovery: 1,
+        dependencies: 1,
+    }
+}
+
+fn settle_conditional(d: &mut Directory, doc: &Document) {
+    for _ in 0..100_000 {
+        let mut b = Budget::new(conditional_micro());
+        d.advance(doc, 0, 6, 36, &mut b).unwrap();
+        let used = b.used();
+        assert!(used.queries <= 1 && used.objects <= 1 && used.bytes <= 6);
+        assert!(used.tiles <= 1 && used.recovery <= 1 && used.dependencies <= 1);
+        if !d.pending() {
+            return;
+        }
+    }
+    panic!("conditional directory did not settle: {}", d.notice());
+}
+
+#[test]
+fn conditional_names_and_pages_refresh_523_and_suppressed_parent_with_micro_budget() {
+    let mut doc = Document::new();
+    doc.append("intro\n\n# *foo [bar* baz]\n\n# *foo [bar* [kid] baz][outer]\n\n[outer]: /u\n")
+        .unwrap();
+    let links = SharedLinks::new(&doc);
+    let mut d = Directory::new(&doc, links.clone());
+    settle_conditional(&mut d, &doc);
+    assert_eq!(d.entry(0).unwrap().text, "foo [bar baz]");
+    assert_eq!(d.entry(1).unwrap().text, "*foo bar* [kid] baz");
+    d.begin_edit();
+    d.insert('*');
+    d.submit();
+    let before = links.stats();
+    d.advance(&doc, 0, 6, 36, &mut Budget::new(WorkLimit::default()))
+        .unwrap();
+    assert_eq!(links.stats(), before);
+    settle_conditional(&mut d, &doc);
+    assert_eq!(ids(&d), [1]);
+    assert_eq!(d.entry(0).unwrap().text, "*foo bar* [kid] baz");
+    let update = doc.append("[bar* baz]: /v\n[kid]: /k\n").unwrap();
+    d.apply_update(&doc, &update);
+    settle_conditional(&mut d, &doc);
+    assert_eq!(d.status, NameStatus::Stale);
+    assert!(ids(&d).is_empty());
+    d.begin_edit();
+    d.submit();
+    settle_conditional(&mut d, &doc);
+    assert_eq!(ids(&d), [0]);
+    assert_eq!(d.entry(0).unwrap().text, "*foo bar* baz");
+    d.clear_query();
+    settle_conditional(&mut d, &doc);
+    assert_eq!(ids(&d), [0, 1]);
+    assert_eq!(d.entry(1).unwrap().text, "foo [bar kid baz]outer");
+}
+
+#[test]
+fn suspended_conditional_name_search_retires_shared_style_nodes_one_paid_object_each() {
+    let marker = "*".repeat(4097);
+    let doc = doc(&format!("intro\n\n# {marker}界{marker} [r]\n"));
+    let links = SharedLinks::new(&doc);
+    let mut d = Directory::new(&doc, links.clone());
+    d.begin_edit();
+    d.insert('界');
+    d.submit();
+    for _ in 0..100_000 {
+        d.advance(&doc, 0, 6, 36, &mut Budget::new(conditional_micro()))
+            .unwrap();
+        if links.stats().style_memo_entries > 128 {
+            break;
+        }
+    }
+    assert_eq!(d.status, NameStatus::Searching);
+    assert!(links.stats().style_memo_entries > 128);
+    d.suspend();
+    let before = links.stats();
+    assert!(
+        !links
+            .prepare(&doc, &mut Budget::new(WorkLimit::default()))
+            .unwrap()
+    );
+    assert_eq!(links.stats(), before);
+    let mut paid = 0;
+    for _ in 0..100_000 {
+        let mut b = Budget::new(conditional_micro());
+        let done = links.prepare(&doc, &mut b).unwrap();
+        assert!(b.used().queries <= 1 && b.used().objects <= 1);
+        paid += b.used().objects;
+        if done {
+            break;
+        }
+    }
+    assert_eq!(links.stats().memo_entries, 0);
+    assert_eq!(paid, before.memo_entries + before.presentation_entries);
+    assert_eq!(d.status, NameStatus::Stale);
+    d.begin_edit();
+    d.submit();
+    settle_conditional(&mut d, &doc);
+    assert_eq!(ids(&d), [0]);
+    // The name matches through the hidden marker prefix, while its independent
+    // bounded excerpt stops at the existing source-byte limit.
+    assert_eq!(d.entry(0).unwrap().text, "…");
+    assert!(d.entry(0).unwrap().truncated);
+    eprintln!("conditional directory cancellation: paid_nodes={paid}");
+}

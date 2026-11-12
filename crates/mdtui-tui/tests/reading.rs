@@ -886,3 +886,251 @@ fn omitted_heading_and_list_links_complete_without_fake_highlight_or_bottom_navi
             .contains("match not drawn")
     );
 }
+
+fn combo_limit() -> WorkLimit {
+    WorkLimit {
+        queries: 1,
+        objects: 1,
+        bytes: 6,
+        tiles: 1,
+        recovery: 1,
+        dependencies: 1,
+    }
+}
+fn settle_combo_frame(engine: &mut StreamEngine) {
+    for _ in 0..200_000 {
+        let mut budget = Budget::new(combo_limit());
+        let commit = engine
+            .runtime_mut()
+            .frame_to(&mut Vec::new(), &mut budget)
+            .unwrap();
+        let used = budget.used();
+        assert!(used.queries <= 1 && used.objects <= 1 && used.bytes <= 6);
+        assert!(used.tiles <= 1 && used.recovery <= 1 && used.dependencies <= 1);
+        if commit.committed
+            && !engine.runtime().reading().pending()
+            && !engine.runtime().has_pending_jump()
+        {
+            return;
+        }
+    }
+    panic!("combined frame did not settle");
+}
+fn finish_combo_copy(engine: &mut StreamEngine) -> Vec<u8> {
+    let mut wire = Vec::new();
+    for _ in 0..200_000 {
+        let mut budget = Budget::new(combo_limit());
+        engine.runtime_mut().advance_reading(&mut wire, &mut budget);
+        let used = budget.used();
+        assert!(used.queries <= 1 && used.objects <= 1 && used.bytes <= 6);
+        assert!(used.tiles <= 1 && used.recovery <= 1 && used.dependencies <= 1);
+        if !engine.runtime().reading().pending() {
+            return clipboard(&wire);
+        }
+        assert!(wire.is_empty());
+    }
+    panic!("combined copy did not settle");
+}
+fn replace_query(app: &mut AppState, engine: &mut StreamEngine, old_chars: usize, text: &str) {
+    key(app, engine, KeyCode::Char('/'));
+    for _ in 0..old_chars {
+        key(app, engine, KeyCode::Backspace);
+    }
+    for c in text.chars() {
+        key(app, engine, KeyCode::Char(c));
+    }
+    key(app, engine, KeyCode::Enter);
+}
+
+#[test]
+fn ordered_adjacent_styles_and_entity_selection_keep_exact_cell_sources_and_copy_bytes() {
+    let mut engine = engine("*a*_b_ &fjlig;\n", 40, 8);
+    let mut app = AppState::default();
+    key(&mut app, &mut engine, KeyCode::Char('v'));
+    assert_eq!(
+        engine.runtime().reading().selection.range(),
+        Some(Span::new(1, 2))
+    );
+    key(&mut app, &mut engine, KeyCode::Right);
+    assert_eq!(
+        engine.runtime().reading().selection.range(),
+        Some(Span::new(4, 5))
+    );
+    key(&mut app, &mut engine, KeyCode::Right);
+    key(&mut app, &mut engine, KeyCode::Right);
+    assert_eq!(
+        engine.runtime().reading().selection.range(),
+        Some(Span::new(7, 14))
+    );
+    key(&mut app, &mut engine, KeyCode::Char('Y'));
+    assert_eq!(finish_combo_copy(&mut engine), b"&fjlig;");
+    key(&mut app, &mut engine, KeyCode::Char('y'));
+    assert_eq!(finish_combo_copy(&mut engine), b"fj");
+    query(&mut app, &mut engine, "j");
+    settle_combo_frame(&mut engine);
+    assert_eq!(
+        engine.runtime().reading().current_match().unwrap().source,
+        Span::new(7, 14)
+    );
+    assert!(
+        !engine
+            .runtime()
+            .reading()
+            .status()
+            .unwrap()
+            .contains("match not drawn")
+    );
+}
+
+#[test]
+fn late_conditional_scope_definition_reprojects_real_selection_search_and_copy() {
+    let mut runtime = FrameRuntime::new(
+        FrameGeometry {
+            rows: 8,
+            cols: 40,
+            content_width: 40,
+        },
+        LinkMode::NoOsc8,
+    )
+    .unwrap();
+    let update = runtime
+        .append_bytes(format!("*{} [x* z]\n\n", "a".repeat(20_000)).as_bytes())
+        .unwrap()
+        .unwrap();
+    runtime.apply_update(&update).unwrap();
+    let mut engine = StreamEngine::new(runtime);
+    paint(&mut engine);
+    let mut app = AppState::default();
+    key(&mut app, &mut engine, KeyCode::Char('v'));
+    let selected = Some(Span::new(1, 2));
+    assert_eq!(engine.runtime().reading().selection.range(), selected);
+    query(&mut app, &mut engine, "aaa");
+    settle_combo_frame(&mut engine);
+    assert_eq!(
+        engine.runtime().reading().current_match().unwrap().source,
+        Span::new(1, 4)
+    );
+    let update = engine
+        .runtime_mut()
+        .append_bytes(b"[x* z]: /u\n")
+        .unwrap()
+        .unwrap();
+    engine.runtime_mut().apply_update(&update).unwrap();
+    assert!(engine.runtime().reading().stale());
+    assert!(engine.runtime().reading().current_match().is_none());
+    settle_combo_frame(&mut engine);
+    assert_eq!(engine.runtime().reading().selection.range(), selected);
+    assert_eq!(engine.screen().front_cell(0, 0).unwrap().text(), "*");
+    assert_eq!(
+        engine.screen().front_cell(0, 0).unwrap().source(),
+        Some(Span::new(0, 1))
+    );
+    assert_eq!(
+        engine.screen().front_cell(0, 1).unwrap().source(),
+        Some(Span::new(1, 2))
+    );
+    key(&mut app, &mut engine, KeyCode::Char('Y'));
+    assert_eq!(finish_combo_copy(&mut engine), b"a");
+    key(&mut app, &mut engine, KeyCode::Char('y'));
+    assert_eq!(finish_combo_copy(&mut engine), b"a");
+    replace_query(&mut app, &mut engine, 3, "*aaa");
+    settle_combo_frame(&mut engine);
+    assert_eq!(
+        engine.runtime().reading().current_match().unwrap().source,
+        Span::new(0, 4)
+    );
+    assert_eq!(engine.runtime().reading().selection.range(), selected);
+}
+
+#[test]
+fn general_header_confirmation_preserves_source_selection_and_resubmits_fresh_cell_search() {
+    let mut runtime = FrameRuntime::new(
+        FrameGeometry {
+            rows: 8,
+            cols: 60,
+            content_width: 60,
+        },
+        LinkMode::NoOsc8,
+    )
+    .unwrap();
+    let update = runtime
+        .append_bytes(format!("*prior\nend*x* {}", "z".repeat(1100)).as_bytes())
+        .unwrap()
+        .unwrap();
+    runtime.apply_update(&update).unwrap();
+    let mut engine = StreamEngine::new(runtime);
+    paint(&mut engine);
+    let mut app = AppState::default();
+    query(&mut app, &mut engine, "end");
+    settle_combo_frame(&mut engine);
+    assert_eq!(
+        engine.runtime().reading().current_match().unwrap().source,
+        Span::new(7, 10)
+    );
+    key(&mut app, &mut engine, KeyCode::Char('v'));
+    let selected = engine.runtime().reading().selection.range();
+    assert!(selected.is_some());
+    let update = engine
+        .runtime_mut()
+        .append_bytes(b"|b\n---|---\n")
+        .unwrap()
+        .unwrap();
+    engine.runtime_mut().apply_update(&update).unwrap();
+    assert_eq!(engine.runtime().document().tables().len(), 1);
+    assert!(engine.runtime().reading().stale());
+    settle_combo_frame(&mut engine);
+    assert_eq!(engine.runtime().reading().selection.range(), selected);
+    replace_query(&mut app, &mut engine, 3, "endx");
+    settle_combo_frame(&mut engine);
+    assert_eq!(
+        engine.runtime().reading().current_match().unwrap().source,
+        Span::new(7, 12)
+    );
+    assert!(
+        !engine
+            .runtime()
+            .reading()
+            .status()
+            .unwrap()
+            .contains("match not drawn")
+    );
+    assert_eq!(engine.runtime().reading().selection.range(), selected);
+}
+
+#[test]
+fn header_footnote_active_order_distinguishes_drawn_literal_and_hidden_core_matches() {
+    for (old, body, definitions, query_text, drawn) in [
+        ("$prior", "end$ [^n]", "[^n]: note\n", "[^n]", true),
+        (
+            "`prior",
+            "[^early]A`tail[^later]B",
+            "[^early]: E\n[^later]: L\n",
+            "early",
+            false,
+        ),
+    ] {
+        let source = format!(
+            "{old}\n{body} {}|b\n-|-\nx|y\n\n{definitions}",
+            "z".repeat(1100)
+        );
+        let mut engine = engine(&source, 60, 8);
+        let mut app = AppState::default();
+        query(&mut app, &mut engine, query_text);
+        settle_combo_frame(&mut engine);
+        let start = source.find(query_text).unwrap();
+        assert_eq!(
+            engine.runtime().reading().current_match().unwrap().source,
+            Span::new(start, start + query_text.len())
+        );
+        assert_eq!(
+            !engine
+                .runtime()
+                .reading()
+                .status()
+                .unwrap()
+                .contains("match not drawn"),
+            drawn
+        );
+        assert!(!engine.runtime().has_pending_jump());
+    }
+}

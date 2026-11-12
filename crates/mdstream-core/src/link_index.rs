@@ -28,6 +28,7 @@ struct Slot {
     pending: Option<LinkId>,
     gate: crate::link_semantics::Gate,
     nested: bool,
+    active: bool,
 }
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Children {
@@ -39,6 +40,7 @@ impl std::fmt::Debug for Children {
         f.write_str("Children")
     }
 }
+type LineSlotUndo = (LinkId, Option<LinkId>, Option<LinkId>);
 #[derive(Default)]
 pub(crate) struct LinkIndex {
     nodes: Vec<Node>,
@@ -47,8 +49,51 @@ pub(crate) struct LinkIndex {
     first: Option<LinkId>,
     pub(crate) steps: u64,
     allocations: u64,
+    line_undo: Option<crate::rewind::UndoLog<LineSlotUndo>>,
+    undo_peak: crate::rewind::UndoStats,
 }
 impl LinkIndex {
+    pub(crate) fn undo_stats(&self) -> crate::rewind::UndoStats {
+        self.undo_peak.max(self.line_undo.as_ref().map_or(
+            crate::rewind::UndoStats::default(),
+            crate::rewind::UndoLog::stats,
+        ))
+    }
+
+    pub(crate) fn begin_line(&mut self) {
+        assert!(self.line_undo.is_none());
+        self.line_undo = Some(crate::rewind::UndoLog::default());
+    }
+    fn save_line_slot(&mut self, id: LinkId) {
+        if let Some(undo) = &mut self.line_undo {
+            undo.push((id, self.slots[id.0].parent, self.slots[id.0].pending));
+        }
+    }
+    pub(crate) fn commit_line(&mut self) -> u64 {
+        self.line_undo.take().map_or(0, |u| {
+            self.undo_peak = self.undo_peak.max(u.stats());
+            u.len() as u64
+        })
+    }
+    pub(crate) fn rollback_line(&mut self) -> u64 {
+        let mut u = self.line_undo.take().unwrap();
+        self.undo_peak = self.undo_peak.max(u.stats());
+        let n = u.len() as u64;
+        while let Some((id, parent, pending)) = u.pop() {
+            self.slots[id.0].parent = parent;
+            self.slots[id.0].pending = pending;
+        }
+        n
+    }
+    pub(crate) fn active(&self, id: LinkId) -> bool {
+        self.slots[id.0].active
+    }
+    pub(crate) fn deactivate(&mut self, id: LinkId) {
+        self.slots[id.0].active = false;
+        self.slots[id.0].gate =
+            crate::link_semantics::Gate::only(crate::link_semantics::Guard::Never);
+    }
+
     fn push_node(&mut self, node: Node) {
         if self.nodes.len() == self.nodes.capacity() {
             self.allocations += 1;
@@ -57,6 +102,12 @@ impl LinkIndex {
     }
     pub(crate) fn insert(&mut self, source: Span, id: LinkId) {
         if id.0 < self.slots.len() {
+            if !self.slots[id.0].active {
+                self.slots[id.0].parent = None;
+                self.slots[id.0].pending = None;
+                self.slots[id.0].gate = crate::link_semantics::Gate::default();
+                self.slots[id.0].active = true;
+            }
             assert_eq!(self.slots[id.0].source.start, source.start);
             self.update(id, source.end);
         } else {
@@ -81,6 +132,7 @@ impl LinkIndex {
         self.steps += 1;
         if let Some(head) = source.head {
             if let Some(tail) = destination.tail {
+                self.save_line_slot(tail);
                 self.slots[tail.0].pending = Some(head);
             } else {
                 destination.head = Some(head);
@@ -93,6 +145,7 @@ impl LinkIndex {
         while let Some(id) = child {
             self.steps += 1;
             assert!(self.slots[id.0].parent.is_none());
+            self.save_line_slot(id);
             child = self.slots[id.0].pending.take();
             self.slots[id.0].parent = Some(parent);
             update.changed_links.start = update.changed_links.start.min(id.0);
@@ -304,6 +357,7 @@ impl LinkIndex {
             pending: None,
             gate: Default::default(),
             nested: false,
+            active: true,
         });
         let root = if let Some(root) = self.root {
             self.insert_key(root, id, None)

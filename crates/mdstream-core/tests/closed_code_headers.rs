@@ -1,3 +1,5 @@
+#[path = "support/header_confirmation.rs"]
+mod header_oracle;
 use mdstream::*;
 
 fn parse(source: &str) -> Document {
@@ -135,7 +137,9 @@ fn fallback_no_pipe_eof_setext_and_scope_exit_restore_exact_mapping_once() {
                     visible(&ordinary, span)
                 );
                 assert_eq!(doc.blocks(), ordinary.blocks());
-                assert!(doc.work().inline_bytes <= source.len() as u64);
+                assert!(
+                    doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes
+                );
             }
         }
     }
@@ -171,25 +175,11 @@ fn unsafe_suffix_flushes_before_new_mappings_and_never_restarts_the_probe() {
                 "y".repeat(1100)
             ))
             .unwrap();
-            let before = doc.work();
             assert!(styles(&doc, Span::new(16, 17))[0].0.contains(Style::CODE));
             assert!(!doc.links().is_empty());
-            let links = doc.links().to_vec();
             doc.append("|b`\n-|-\n").unwrap();
             doc.finish();
-            assert!(doc.tables().is_empty(), "{suffix:?}");
-            // The new short line may be summarized, but the long line never restarts.
-            assert!(doc.work().table_header_bytes - before.table_header_bytes <= 4);
-            assert_eq!(doc.links(), links);
-            let ordinary = parse(&doc.source().replace('|', "/"));
-            let span = Span::new(0, doc.source().len());
-            assert_eq!(styles(&doc, span), styles(&ordinary, span));
-            assert_eq!(
-                visible(&doc, span).replace('|', "/"),
-                visible(&ordinary, span)
-            );
-            assert_eq!(doc.maths(), ordinary.maths());
-            assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+            header_oracle::assert_scope_composition(&doc);
         }
     }
 }
@@ -233,7 +223,7 @@ fn million_byte_deep_probe_visits_only_new_bytes_and_reparses_only_the_row() {
         assert_eq!(doc.tables().len(), usize::from(success));
         if success {
             assert_eq!(doc.work().inline_bytes - after.inline_bytes, 1_000_046);
-            assert_eq!(doc.work().delimiter_steps - after.delimiter_steps, 2);
+            assert_eq!(doc.work().delimiter_steps - after.delimiter_steps, 1);
         } else {
             assert!(doc.work().inline_bytes - after.inline_bytes < 12);
             assert_eq!(doc.work().delimiter_steps - after.delimiter_steps, 1);
@@ -263,7 +253,7 @@ fn long_separator_and_unsafe_suffix_follow_independent_range_model() {
             if i % 5 == 0 { "x" } else { "" }
         ));
         let end = source.len();
-        if i % 3 != 0 && i % 5 != 0 {
+        if i % 5 != 0 {
             expected.push((Span::new(start, end), Span::new(delimiter, end)));
         }
         source.push('\n');
@@ -317,7 +307,7 @@ fn dense_old_objects_and_opaque_row_publish_once_without_visiting_history() {
     );
     assert_eq!(
         doc.work().delimiter_steps - before.delimiter_steps,
-        4096 + 8192 + 2
+        4096 + 8192 + 1
     );
     doc.finish();
     assert!(doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().table_bytes);

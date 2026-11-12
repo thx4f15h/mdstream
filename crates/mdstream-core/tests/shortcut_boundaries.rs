@@ -653,12 +653,13 @@ fn random_labels_supplement_the_explicit_base_visible_witnesses() {
             let info = doc.link_info(LinkId(i)).unwrap();
             if matches!(target, LinkTarget::Reference(_)) && info.source.end == info.label.end + 1 {
                 accepted += 1;
-                assert!(
-                    doc.runs_in(info.label)
-                        .unwrap()
-                        .any(|r| !r.style.contains(Style::HIDDEN)),
-                    "{source:?}"
-                );
+                let open = doc
+                    .runs_in(Span::new(info.source.start, info.source.start + 1))
+                    .unwrap()
+                    .next()
+                    .unwrap();
+                assert!(!open.style.contains(Style::HIDDEN), "{source:?}");
+                assert_eq!(doc.link_destination(LinkId(i)), None);
             }
         }
     }

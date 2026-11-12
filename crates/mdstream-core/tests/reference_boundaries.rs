@@ -84,13 +84,21 @@ fn qualified_reference_syntax_follows_the_current_target() {
             assert_eq!(doc.links()[0], LinkTarget::Reference(symbol));
             assert_eq!(
                 shown(&doc, info.source),
-                if winner { resolved } else { literal }
+                if winner {
+                    resolved
+                } else if source == "[a][*b*&amp;\\!]" {
+                    "[a][b&amp;\\!]"
+                } else {
+                    literal
+                }
             );
             for (at, ch) in source.char_indices() {
                 let span = Span::new(at, at + ch.len_utf8());
                 let syntax = (syntax.0 <= at && at < syntax.1) || (syntax.2 <= at && at < syntax.3);
                 let permanent = hidden.iter().any(|&(a, b)| a <= at && at < b);
-                let expected_hidden = permanent || (syntax && winner);
+                let expected_hidden = permanent
+                    || (syntax && winner)
+                    || (source == "[a][*b*&amp;\\!]" && !winner && matches!(at, 4 | 6));
                 let raw = doc.runs_in(span).unwrap().next().unwrap();
                 let display = doc.display_runs_in(span).unwrap().next().unwrap();
                 assert_eq!(

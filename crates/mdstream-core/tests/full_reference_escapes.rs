@@ -318,7 +318,11 @@ fn escaped_suffixes_keep_late_header_cancellation_and_regular_tables() {
                     "x".repeat(1100)
                 );
                 let whole = parse(&source);
-                assert!(whole.tables().is_empty(), "{source:?}");
+                assert_eq!(
+                    whole.tables().len(),
+                    usize::from(ending == "\n> ---|---\n"),
+                    "{source:?}"
+                );
                 let expected = support::snapshot(&whole);
                 for at in 0..=source.len() {
                     let mut doc = Document::new();

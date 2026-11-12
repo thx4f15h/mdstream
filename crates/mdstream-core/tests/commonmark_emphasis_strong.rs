@@ -19,7 +19,7 @@ fn parse(source: &str) -> Document {
 // Mixed styles are outside this subset and explicitly rejected.
 // This bit-only adapter does not consume the published depths; never reconstruct them
 // from source markers or use the example number/expected HTML in this adapter.
-fn project(doc: &Document) -> String {
+fn legacy_project(doc: &Document) -> String {
     assert_eq!(doc.container_count(), 0);
     assert!(doc.headings().entries().is_empty());
     assert!(doc.links().is_empty() && doc.references().is_empty());
@@ -98,6 +98,14 @@ fn project(doc: &Document) -> String {
     html
 }
 
+#[path = "support/ordered_emphasis.rs"]
+mod ordered_emphasis;
+
+fn project(doc: &Document) -> String {
+    ordered_emphasis::project(doc, Style::EMPHASIS.union(Style::STRONG), false)
+}
+
+#[allow(dead_code)] // Uniform ledger states remain available after this chapter closes its gaps.
 enum Assessment {
     Supported,
     Unsupported {
@@ -109,11 +117,7 @@ enum Assessment {
 // Independent observations: changes require review, not automatic acceptance.
 fn assessment(number: usize) -> Assessment {
     match number {
-        374..=388 => Assessment::Supported,
-        389 => Assessment::Unsupported {
-            reason: "nested strong regions collapse to one public style bit; nesting depth is not represented",
-            observed: "<p><strong>foo, bar, baz</strong></p>\n",
-        },
+        374..=389 => Assessment::Supported,
         _ => panic!("unclassified example {number}"),
     }
 }
@@ -160,9 +164,9 @@ fn pinned_commonmark_emphasis_strong_report() {
         counts[category] += 1;
         eprintln!("example {number}: category {category} — {reason}");
     }
-    assert_eq!(counts, [15, 0, 1]);
+    assert_eq!(counts, [16, 0, 0]);
     eprintln!(
-        "CommonMark 0.31.2 Emphasis subset 374–389: 15 supported, 0 deliberate differences, 1 unsupported; 390–481 not scored"
+        "CommonMark 0.31.2 Emphasis subset 374–389: 16 supported, 0 deliberate differences, 0 unsupported; 390–481 not scored"
     );
 }
 
@@ -391,7 +395,7 @@ fn strong_projection_rejects_unscored_structure_and_styles() {
         "[^f]: footnote\n",
     ] {
         assert!(
-            std::panic::catch_unwind(|| project(&parse(source))).is_err(),
+            std::panic::catch_unwind(|| legacy_project(&parse(source))).is_err(),
             "accepted {source:?}"
         );
     }

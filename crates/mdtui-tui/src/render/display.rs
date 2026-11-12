@@ -533,18 +533,13 @@ impl DisplayScanner {
         );
         if self.table_mode {
             if self.footnote_index.is_none() {
-                if !budget.charge(mdtui3::WorkLimit {
-                    queries: 1,
-                    objects: 1,
-                    ..Default::default()
-                }) {
+                let mut references = document
+                    .footnote_references_in(self.requested)
+                    .ok_or(LayoutError::InvalidRange)?;
+                let Ok(first) = references.advance(budget) else {
                     return Ok(ScanStatus::BudgetExhausted);
-                }
-                self.footnote_index = Some(
-                    document
-                        .footnote_references()
-                        .partition_point(|r| r.source.end <= self.requested.start),
-                );
+                };
+                self.footnote_index = Some(first.map_or(usize::MAX, |(id, _)| id.0));
             }
             while let Some(reference) = document
                 .footnote_references()
@@ -560,7 +555,13 @@ impl DisplayScanner {
                 if matches!(resolution.target, mdtui3::FootnoteTarget::Defined(_)) {
                     self.hidden_footnotes.push(reference.source);
                 }
-                *self.footnote_index.as_mut().unwrap() += 1;
+                self.footnote_index = Some(
+                    document
+                        .next_footnote_reference(mdtui3::FootnoteReferenceId(
+                            self.footnote_index.unwrap(),
+                        ))
+                        .map_or(usize::MAX, |id| id.0),
+                );
             }
             let tokens = self
                 .layout_segments

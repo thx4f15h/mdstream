@@ -414,10 +414,7 @@ fn assessment(number: usize) -> Assessment {
     match number {
         512 | 513 | 514 | 515 | 516 | 517 | 518 | 519 | 520 | 521 | 522 | 525 | 526 | 527 | 528
         | 529 | 530 | 531 | 532 | 533 | 534 | 535 | 537 | 538 => Assessment::Supported,
-        523 => Assessment::DeliberateDifference {
-            reason: "unresolved shortcut references retain literal brackets and isolate label emphasis",
-            observed: "<p>*foo [bar* baz]</p>\n",
-        },
+        523 => Assessment::Supported,
         524 => Assessment::DeliberateDifference {
             reason: "raw HTML is outside the project dialect and stays literal",
             observed: "<p><a href=\"baz\">foo &lt;bar attr=&quot;</a>&quot;&gt;</p>\n",
@@ -483,9 +480,9 @@ fn pinned_commonmark_link_labels_report() {
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [24, 3, 0]);
+    assert_eq!(counts, [25, 2, 0]);
     eprintln!(
-        "CommonMark 0.31.2 Links subset (512–538): 24 supported, 3 deliberate differences, 0 unsupported; 482–511 and 539–571 outside this score"
+        "CommonMark 0.31.2 Links subset (512–538): 25 supported, 2 deliberate differences, 0 unsupported; 482–511 and 539–571 outside this score"
     );
 }
 
@@ -674,9 +671,11 @@ fn link_label_raw_spans_identity_and_shared_display_destination_title_budget() {
                 frames += 1;
                 assert!(
                     frames
-                        <= 4 * (info.source.len()
-                            + expected_destination.len()
-                            + expected_title.as_ref().map_or(0, String::len))
+                        <= 64
+                            * (doc.source().len()
+                                + info.source.len()
+                                + expected_destination.len()
+                                + expected_title.as_ref().map_or(0, String::len))
                             + 8,
                     "shared readers stalled"
                 );

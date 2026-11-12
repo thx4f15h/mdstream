@@ -1,3 +1,5 @@
+#[path = "support/header_confirmation.rs"]
+mod header_oracle;
 use mdstream::*;
 
 #[path = "support/emphasis_model.rs"]
@@ -195,7 +197,10 @@ fn late_punctuation_closers_match_independent_cells_or_commit_on_failure() {
                     assert_eq!(late.links().len(), 2);
                     assert_eq!(late.link_destination(LinkId(0)), Some("u"));
                     assert_eq!(late.link_destination(LinkId(1)), Some("v"));
-                    assert!(late.work().inline_bytes <= source.len() as u64);
+                    assert!(
+                        late.work().inline_bytes
+                            <= source.len() as u64 + late.work().header_replay_bytes
+                    );
                 }
             }
         }
@@ -206,7 +211,7 @@ fn late_punctuation_closers_match_independent_cells_or_commit_on_failure() {
             "{marker}prior\nend{marker}! {}|b\n-|-\n",
             "x".repeat(1100)
         ));
-        assert!(doc.tables().is_empty());
+        header_oracle::assert_scope_composition(&doc);
     }
 }
 
@@ -389,5 +394,5 @@ fn deep_million_byte_stream_and_historical_openers_have_linear_counts() {
     doc.finish();
     // Each opener is pushed/popped at most once; finish visits only the stack.
     assert!(doc.work().delimiter_steps <= doc.source().len() as u64);
-    assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+    assert!(doc.work().inline_bytes <= doc.source().len() as u64 + doc.work().header_replay_bytes);
 }

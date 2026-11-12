@@ -1,5 +1,7 @@
 #[path = "support/code_replay_changes.rs"]
 mod code_changes;
+#[path = "support/style_confirmation_changes.rs"]
+mod style_changes;
 use mdstream::*;
 #[path = "support/container_eligibility_cases.rs"]
 mod corpus;
@@ -86,7 +88,10 @@ fn container_eligibility_preserves_head_snapshots_and_every_old_work_counter() {
                     ),
                     nested_changes::work(d.document().source(), expected.1),
                 );
-                let expected = code_changes::pair(d.document().source(), expected);
+                let expected = style_changes::pair(
+                    d.document().source(),
+                    code_changes::pair(d.document().source(), expected),
+                );
                 assert_eq!(
                     (
                         corpus::hash(&format!("{:?}", support::snapshot(d.document()))),

@@ -581,7 +581,9 @@ fn rejected_info_keeps_ordinary_header_eligibility_with_one_payload_consumption(
             assert_eq!(doc.text(table.cell(1, 0).unwrap().source), Some("x"));
             assert_eq!(doc.text(table.cell(1, 1).unwrap().source), Some("y"));
             assert_eq!(table.source, Span::new(before.len(), source.len()));
-            assert!(doc.work().inline_bytes <= source.len() as u64);
+            assert!(
+                doc.work().inline_bytes <= source.len() as u64 + doc.work().header_replay_bytes
+            );
             assert!(doc.work().table_header_bytes <= source.len() as u64);
             assert!(doc.blocks().len() >= ids);
         }
@@ -696,7 +698,10 @@ fn failed_candidate_preserves_existing_table_identity_and_success_interrupts_it(
                 Some("x")
             );
             assert!(update.tables_changed.contains(&TableId(0)));
-            assert!(doc.work().inline_bytes <= doc.source().len() as u64);
+            assert!(
+                doc.work().inline_bytes
+                    <= doc.source().len() as u64 + doc.work().header_replay_bytes
+            );
         }
     }
 }
@@ -753,7 +758,10 @@ fn independent_opener_model_confirms_full_info_or_rejects_backticks_in_any_late_
                             raw_info
                         );
                     }
-                    assert!(doc.work().inline_bytes <= source.len() as u64);
+                    assert!(
+                        doc.work().inline_bytes
+                            <= source.len() as u64 + doc.work().header_replay_bytes
+                    );
                     cases += 1;
                 }
             }

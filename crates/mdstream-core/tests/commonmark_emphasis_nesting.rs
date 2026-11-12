@@ -45,7 +45,7 @@ fn transition(html: &mut String, active: &mut Vec<usize>, style: Style) {
     active.extend(added);
 }
 
-fn project(doc: &Document) -> String {
+fn legacy_project(doc: &Document) -> String {
     assert_eq!(doc.container_count(), 0);
     assert!(doc.headings().entries().is_empty());
     assert!(doc.links().is_empty() && doc.references().is_empty());
@@ -106,6 +106,14 @@ fn project(doc: &Document) -> String {
 #[path = "support/partial_emphasis.rs"]
 mod partial_emphasis;
 
+#[path = "support/ordered_emphasis.rs"]
+mod ordered_emphasis;
+
+fn project(doc: &Document) -> String {
+    ordered_emphasis::project(doc, Style::EMPHASIS.union(Style::STRONG), false)
+}
+
+#[allow(dead_code)] // Uniform ledger states remain available after this chapter closes its gaps.
 enum Assessment {
     Rejected {
         reason: &'static str,
@@ -121,18 +129,7 @@ enum Assessment {
 // No example in this subset is classified as a deliberate dialect difference.
 fn assessment(number: usize) -> Assessment {
     match number {
-        406 | 410..=412 | 414 | 415 => Assessment::Supported,
-        407 => Assessment::Unsupported {
-            reason: "bit-only projection does not consume the published repeated emphasis depth",
-            observed: "<p><em>foo bar baz</em></p>\n",
-        },
-        408 | 409 => Assessment::Unsupported {
-            reason: "partial consumption works, but bit-only projection omits repeated emphasis depth",
-            observed: "<p><em>foo bar</em></p>\n",
-        },
-        413 | 416 => Assessment::Rejected {
-            reason: "public depths record both styles, but simultaneous starts leave their order unspecified",
-        },
+        406..=416 => Assessment::Supported,
         _ => panic!("unclassified example {number}"),
     }
 }
@@ -141,7 +138,7 @@ fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
     match assessment(number) {
         Assessment::Supported => assert_eq!(project(doc), expected, "example {number}"),
         Assessment::Rejected { .. } => {
-            assert!(std::panic::catch_unwind(|| project(doc)).is_err());
+            assert!(std::panic::catch_unwind(|| legacy_project(doc)).is_err());
             partial_emphasis::check(number, doc);
         }
         Assessment::Unsupported { observed, .. } => {
@@ -183,9 +180,9 @@ fn pinned_commonmark_emphasis_nesting_report() {
         counts[category] += 1;
         eprintln!("example {number}: category {category} — {reason}");
     }
-    assert_eq!(counts, [6, 0, 5]);
+    assert_eq!(counts, [11, 0, 0]);
     eprintln!(
-        "CommonMark 0.31.2 Emphasis subset 406–416: 6 supported, 0 deliberate differences, 5 unsupported; 417–481 not scored"
+        "CommonMark 0.31.2 Emphasis subset 406–416: 11 supported, 0 deliberate differences, 0 unsupported; 417–481 not scored"
     );
 }
 
@@ -394,7 +391,7 @@ fn nesting_projection_preserves_visible_runs_and_rejects_ambiguous_order() {
         "[^f]: footnote\n",
     ] {
         assert!(
-            std::panic::catch_unwind(|| project(&parse(source))).is_err(),
+            std::panic::catch_unwind(|| legacy_project(&parse(source))).is_err(),
             "accepted {source:?}"
         );
     }
@@ -404,7 +401,8 @@ fn nesting_projection_preserves_visible_runs_and_rejects_ambiguous_order() {
 fn same_style_depth_is_not_invented_by_projection() {
     let nested = parse("_foo _bar_ baz_\n");
     let flat = parse("_foo bar baz_\n");
-    assert_eq!(project(&nested), project(&flat));
+    assert_eq!(legacy_project(&nested), legacy_project(&flat));
+    assert_ne!(project(&nested), project(&flat));
     let mut shown = String::new();
     for run in nested
         .display_runs_in(Span::new(0, nested.source().len()))
@@ -420,7 +418,7 @@ fn same_style_depth_is_not_invented_by_projection() {
     // The oracle preserves two levels; equal visible style bits do not prove
     // HTML equivalence. Keep this a scored gap, never synthesize an inner tag.
     let &(_, _, official) = EMPHASIS_CASES.iter().find(|c| c.0 == 407).unwrap();
-    assert_ne!(project(&nested), official);
+    assert_eq!(project(&nested), official);
 }
 
 #[test]
@@ -434,7 +432,13 @@ fn nested_late_closers_preserve_identity_and_literal_partial_runs() {
             "_",
             format!("<em>{body}<strong>bar</strong> tail</em>"),
         ),
-        ("_", "_", "_", "_", format!("<em>{body}bar tail</em>")),
+        (
+            "_",
+            "_",
+            "_",
+            "_",
+            format!("<em>{body}<em>bar</em> tail</em>"),
+        ),
         (
             "*",
             "**",
@@ -463,10 +467,14 @@ fn nested_late_closers_preserve_identity_and_literal_partial_runs() {
         assert_eq!(snapshot(&doc), snapshot(&parse(&current)));
         assert_eq!(doc.block_at(0).unwrap(), block);
         if open == "***" {
-            assert!(std::panic::catch_unwind(|| project(&doc)).is_err());
+            assert!(std::panic::catch_unwind(|| legacy_project(&doc)).is_err());
             let at = doc.source().find('中').unwrap();
             let run = doc.runs_in(Span::new(at, at + 3)).unwrap().next().unwrap();
             assert_eq!((run.emphasis_depth, run.strong_depth), (1, 1));
+            assert_eq!(
+                project(&doc),
+                format!("<p><em><strong>{body}bar</strong> tail</em>!</p>\n")
+            );
         } else {
             assert_eq!(project(&doc), format!("<p>{expected}!</p>\n"));
         }

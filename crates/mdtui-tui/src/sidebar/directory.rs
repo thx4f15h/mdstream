@@ -867,7 +867,12 @@ impl Directory {
                 self.running_event = None;
             }
         }
-        self.model.advance(doc, budget)?;
+        // A stale name page is replaced by a paid publish step. With a tiny
+        // budget that step may still be pending; do not resume its old-revision
+        // excerpt before the replacement has been prepared.
+        if self.model.matches(doc) {
+            self.model.advance(doc, budget)?;
+        }
         Ok(())
     }
     pub fn breadcrumb_text(&self) -> String {

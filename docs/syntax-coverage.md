@@ -17,12 +17,12 @@ The `commonmark_autolinks_official` suite includes `commonmark_autolinks_officia
 | `commonmark_blank_lines` / Blank lines | 227 | `pinned_commonmark_blank_lines_report` | `scripts/generate_commonmark_blank_lines.py` | 227 | — | — |
 | `commonmark_block_quotes` / Block quotes | 228–252 | `pinned_commonmark_block_quotes_report` | `scripts/generate_commonmark_block_quotes.py` | 228–237, 239–251 | 238, 252 | — |
 | `commonmark_code_spans` / Code spans | 328–349 | `pinned_commonmark_code_spans_report` | `scripts/generate_commonmark_code_spans.py` | 328–343, 345–349 | — | 344 |
-| `commonmark_emphasis_final` / Emphasis and strong emphasis | 460–481 | `pinned_commonmark_emphasis_final_report` | `scripts/generate_commonmark_emphasis_final.py` | 460, 462, 469–474, 478–481 | — | 461, 463–468, 475–477 |
-| `commonmark_emphasis_nesting` / Emphasis and strong emphasis | 406–416 | `pinned_commonmark_emphasis_nesting_report` | `scripts/generate_commonmark_emphasis_nesting.py` | 406, 410–412, 414–415 | — | 407–409, 413, 416 |
-| `commonmark_emphasis_partial` / Emphasis and strong emphasis | 431–444 | `pinned_commonmark_emphasis_partial_report` | `scripts/generate_commonmark_emphasis_partial.py` | 431, 433–444 | — | 432 |
-| `commonmark_emphasis_runs` / Emphasis and strong emphasis | 417–430 | `pinned_commonmark_emphasis_runs_report` | `scripts/generate_commonmark_emphasis_runs.py` | 420–424, 428–429 | — | 417–419, 425–427, 430 |
-| `commonmark_emphasis_single` / Emphasis and strong emphasis | 350–373 | `pinned_commonmark_emphasis_single_report` | `scripts/generate_commonmark_emphasis_single.py` | 350–368, 370–372 | — | 369, 373 |
-| `commonmark_emphasis_strong` / Emphasis and strong emphasis | 374–389 | `pinned_commonmark_emphasis_strong_report` | `scripts/generate_commonmark_emphasis_strong.py` | 374–388 | — | 389 |
+| `commonmark_emphasis_final` / Emphasis and strong emphasis | 460–481 | `pinned_commonmark_emphasis_final_report` | `scripts/generate_commonmark_emphasis_final.py` | 460–474, 478–481 | — | 475–477 |
+| `commonmark_emphasis_nesting` / Emphasis and strong emphasis | 406–416 | `pinned_commonmark_emphasis_nesting_report` | `scripts/generate_commonmark_emphasis_nesting.py` | 406–416 | — | — |
+| `commonmark_emphasis_partial` / Emphasis and strong emphasis | 431–444 | `pinned_commonmark_emphasis_partial_report` | `scripts/generate_commonmark_emphasis_partial.py` | 431–444 | — | — |
+| `commonmark_emphasis_runs` / Emphasis and strong emphasis | 417–430 | `pinned_commonmark_emphasis_runs_report` | `scripts/generate_commonmark_emphasis_runs.py` | 417–430 | — | — |
+| `commonmark_emphasis_single` / Emphasis and strong emphasis | 350–373 | `pinned_commonmark_emphasis_single_report` | `scripts/generate_commonmark_emphasis_single.py` | 350–373 | — | — |
+| `commonmark_emphasis_strong` / Emphasis and strong emphasis | 374–389 | `pinned_commonmark_emphasis_strong_report` | `scripts/generate_commonmark_emphasis_strong.py` | 374–389 | — | — |
 | `commonmark_emphasis_strong_close` / Emphasis and strong emphasis | 390–405 | `pinned_commonmark_emphasis_strong_close_report` | `scripts/generate_commonmark_emphasis_strong_close.py` | 390–405 | — | — |
 | `commonmark_emphasis_unequal` / Emphasis and strong emphasis | 445–459 | `pinned_commonmark_emphasis_unequal_report` | `scripts/generate_commonmark_emphasis_unequal.py` | 445–459 | — | — |
 | `commonmark_entities` / Entity and numeric character references | 25–41 | `pinned_commonmark_entities_report` | `scripts/generate_commonmark_entities.py` | 25–30, 32–41 | — | 31 |
@@ -32,7 +32,7 @@ The `commonmark_autolinks_official` suite includes `commonmark_autolinks_officia
 | `commonmark_indented_code` / Indented code blocks | 107–118 | `pinned_commonmark_indented_code_report` | `scripts/generate_commonmark_indented_code.py` | 107–109, 114–118 | 110–113 | — |
 | `commonmark_inline_links` / Links | 482–511 | `pinned_commonmark_inline_links_report` | `scripts/generate_commonmark_inline_links.py` | 482–490, 492, 495–511 | 493 | 491, 494 |
 | `commonmark_inlines` / Inlines | 327 | `pinned_commonmark_inlines_report` | `scripts/generate_commonmark_inlines.py` | 327 | — | — |
-| `commonmark_link_labels` / Links | 512–538 | `pinned_commonmark_link_labels_report` | `scripts/generate_commonmark_link_labels.py` | 512–522, 525–535, 537–538 | 523–524, 536 | — |
+| `commonmark_link_labels` / Links | 512–538 | `pinned_commonmark_link_labels_report` | `scripts/generate_commonmark_link_labels.py` | 512–523, 525–535, 537–538 | 524, 536 | — |
 | `commonmark_list_items` / List items | 253–300 | `pinned_commonmark_list_items_report` | `scripts/generate_commonmark_list_items.py` | 253–263, 265–288, 290, 292–300 | 264, 289, 291 | — |
 | `commonmark_lists` / Lists | 301–326 | `pinned_commonmark_lists_report` | `scripts/generate_commonmark_lists.py` | 301–307, 310–311, 313–326 | 308–309, 312 | — |
 | `commonmark_paragraphs` / Paragraphs | 219–226 | `pinned_commonmark_paragraphs_report` | `scripts/generate_commonmark_paragraphs.py` | 219–222, 224–226 | 223 | — |
@@ -59,5 +59,5 @@ Explicit chapter exclusions (no silent omissions):
 Examples containing HTML within included non-HTML chapters remain scored as Unsupported where appropriate; only the two complete CommonMark HTML chapters are excluded.
 Unsupported and deliberate differences retain exact chapter observations/rejection checks and the remaining implementation TODOs. Coverage does not convert either category to Supported.
 
-commonmark: 588 executed examples; 524 supported, 31 deliberate differences, 33 unsupported.
+commonmark: 588 executed examples; 548 supported, 30 deliberate differences, 10 unsupported.
 gfm: 27 executed examples; 27 supported, 0 deliberate differences, 0 unsupported.
