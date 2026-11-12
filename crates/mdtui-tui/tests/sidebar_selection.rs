@@ -152,7 +152,7 @@ fn sidebar_page_selection_and_window_move_without_body_scroll() {
     assert!(page.redraw);
     settle(&mut engine, &mut writer, Duration::ZERO);
     assert_eq!(engine.runtime().sidebar_selection(), Some(HeadingId(40)));
-    assert_eq!(engine.runtime().sidebar_window_start(), Some(20));
+    assert_eq!(engine.runtime().sidebar_window_start(), Some(21));
     assert_eq!(engine.runtime().top_source(), body_top);
 
     let second = app
@@ -161,7 +161,7 @@ fn sidebar_page_selection_and_window_move_without_body_scroll() {
     assert!(second.redraw);
     settle(&mut engine, &mut writer, Duration::ZERO);
     assert_eq!(engine.runtime().sidebar_selection(), Some(HeadingId(80)));
-    assert_eq!(engine.runtime().sidebar_window_start(), Some(60));
+    assert_eq!(engine.runtime().sidebar_window_start(), Some(61));
     assert_eq!(engine.runtime().top_source(), body_top);
 
     app.handle_key(&mut engine, KeyCode::BackTab, KeyModifiers::NONE)
@@ -174,7 +174,7 @@ fn sidebar_page_selection_and_window_move_without_body_scroll() {
     settle(&mut engine, &mut writer, Duration::ZERO);
     assert!(engine.runtime().top_source() > body_top);
     assert_eq!(engine.runtime().sidebar_selection(), Some(HeadingId(80)));
-    assert_eq!(engine.runtime().sidebar_window_start(), Some(60));
+    assert_eq!(engine.runtime().sidebar_window_start(), Some(61));
     assert_ne!(
         engine.runtime().sidebar_current_heading(),
         Some(HeadingId(80))
@@ -198,7 +198,7 @@ fn sidebar_home_end_and_boundaries_only_move_the_sidebar_selection() {
     assert!(end.redraw);
     settle(&mut engine, &mut writer, Duration::ZERO);
     assert_eq!(engine.runtime().sidebar_selection(), Some(HeadingId(99)));
-    assert_eq!(engine.runtime().sidebar_window_start(), Some(60));
+    assert_eq!(engine.runtime().sidebar_window_start(), Some(62));
     assert_eq!(engine.runtime().top_source(), body_top);
 
     let boundary = app
@@ -287,7 +287,7 @@ fn current_and_selection_have_distinct_styles_and_independent_windows() {
         .expect("move sidebar selection");
     settle(&mut engine, &mut writer, Duration::ZERO);
     assert_eq!(engine.runtime().sidebar_selection(), Some(HeadingId(41)));
-    assert_eq!(engine.runtime().sidebar_window_start(), Some(21));
+    assert_eq!(engine.runtime().sidebar_window_start(), Some(22));
     assert_eq!(engine.runtime().body_current_heading(), scrolled_current);
     assert_eq!(engine.runtime().sidebar_current_heading(), None);
     assert_eq!(engine.runtime().top_source(), body_top);
@@ -349,7 +349,7 @@ fn selection_survives_toggle_resize_and_append_without_becoming_current() {
             .expect("append heading"),
         IngestResult::Applied
     );
-    settle(&mut engine, &mut writer, now);
+    settle(&mut engine, &mut writer, now + MAX_BATCH_DELAY);
     assert_eq!(engine.runtime().sidebar_selection(), Some(HeadingId(19)));
     assert_eq!(engine.runtime().body_current_heading(), Some(HeadingId(0)));
 
@@ -452,7 +452,7 @@ fn heading_activation_moves_body_and_keeps_the_sidebar_window() {
         .frame_to(&mut output, &mut unlimited())
         .expect("selection frame");
     assert_eq!(runtime.sidebar_selection(), Some(HeadingId(10)));
-    assert_eq!(runtime.sidebar_window_start(), Some(6));
+    assert_eq!(runtime.sidebar_window_start(), Some(7));
     let target = runtime.document().headings().entries()[10];
 
     assert!(
@@ -462,7 +462,7 @@ fn heading_activation_moves_body_and_keeps_the_sidebar_window() {
     );
     assert_eq!(runtime.top_source(), Some(target.source.start));
     assert_eq!(runtime.sidebar_selection(), Some(HeadingId(10)));
-    assert_eq!(runtime.sidebar_window_start(), Some(6));
+    assert_eq!(runtime.sidebar_window_start(), Some(7));
     assert!(!runtime.viewport().top_position().is_approximate());
 
     runtime
@@ -470,7 +470,7 @@ fn heading_activation_moves_body_and_keeps_the_sidebar_window() {
         .expect("activated frame");
     assert_eq!(runtime.sidebar_current_heading(), Some(HeadingId(10)));
     assert_eq!(runtime.sidebar_selection(), Some(HeadingId(10)));
-    assert_eq!(runtime.sidebar_window_start(), Some(6));
+    assert_eq!(runtime.sidebar_window_start(), Some(7));
 }
 
 #[test]
@@ -488,6 +488,9 @@ fn failed_heading_activation_does_not_move_and_a_retry_succeeds() {
         .frame_to(&mut output, &mut unlimited())
         .expect("initial sidebar frame");
     assert!(runtime.sidebar_selection_end());
+    runtime
+        .frame_to(&mut output, &mut unlimited())
+        .expect("paid selection frame");
     let selected = runtime.sidebar_selection();
     let top = runtime.top_source();
     let target = runtime
@@ -549,9 +552,10 @@ fn runtime_heading_update_reuses_visible_entries_and_adds_new_heading() {
     let after_paragraph = engine.runtime().sidebar_stats().expect("sidebar stats");
     assert_eq!(after_paragraph.excerpts_created, before.excerpts_created);
     assert_eq!(after_paragraph.source_bytes_read, before.source_bytes_read);
-    assert!(after_paragraph.reused_entries > before.reused_entries);
+    assert_eq!(after_paragraph.reused_entries, before.reused_entries);
     assert_eq!(after_paragraph.rebuilt_entries, before.rebuilt_entries);
     settle(&mut engine, &mut writer, at + MAX_BATCH_DELAY);
+    assert!(engine.runtime().sidebar_stats().unwrap().reused_entries > before.reused_entries);
 
     let at = at + MAX_BATCH_DELAY;
     assert_eq!(
@@ -563,10 +567,11 @@ fn runtime_heading_update_reuses_visible_entries_and_adds_new_heading() {
     let after_heading = engine.runtime().sidebar_stats().expect("sidebar stats");
     assert_eq!(after_heading.excerpts_created, before.excerpts_created);
     assert_eq!(after_heading.source_bytes_read, before.source_bytes_read);
-    assert_eq!(after_heading.rebuilt_entries, before.rebuilt_entries + 1);
+    assert_eq!(after_heading.rebuilt_entries, before.rebuilt_entries);
     assert_eq!(engine.runtime().sidebar_selection(), Some(HeadingId(0)));
     settle(&mut engine, &mut writer, at + MAX_BATCH_DELAY);
     let after_frame = engine.runtime().sidebar_stats().expect("sidebar stats");
+    assert_eq!(after_frame.rebuilt_entries, before.rebuilt_entries + 1);
     assert_eq!(after_frame.excerpts_created, before.excerpts_created + 1);
     assert!(engine.runtime().sidebar_window_start().is_some());
 }

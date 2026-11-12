@@ -182,6 +182,7 @@ fn up_page_home_history_and_sidebar_navigation_exit_follow() {
         app.sidebar_visible()
     );
     app.handle_action(&mut engine, KeyAction::End).unwrap();
+    frame(&mut engine); // directory metadata is advanced under the frame Budget
     assert_eq!(
         engine.runtime().sidebar_selection(),
         Some(mdtui3::HeadingId(1))

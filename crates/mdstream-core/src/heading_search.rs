@@ -13,6 +13,15 @@ pub struct HeadingMatch {
     pub source: Span,
 }
 
+/// One bounded heading-name page step. Only the first occurrence in a matching
+/// heading is returned; the next call starts at the following heading.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HeadingSearchStep {
+    Match(HeadingMatch),
+    Complete,
+    BudgetExhausted,
+}
+
 /// Revision-bound literal, case-sensitive search of indexed heading content.
 /// The six level indexes skip excluded headings and body text. Fold visibility
 /// does not affect search; use the returned ID/source for explicit navigation.
@@ -41,6 +50,21 @@ impl HeadingSearch {
         })
     }
 
+    /// Start at an arena ID (inclusive), without searching earlier names.
+    /// Used when a bounded result window is resized. Out-of-arena starts are
+    /// already complete; query/revision and budget contracts are unchanged.
+    pub fn from_heading(
+        document: &Document,
+        query: &str,
+        max_level: u8,
+        first: HeadingId,
+    ) -> Result<Self, LayoutError> {
+        let mut task = Self::new(document, query, max_level)?;
+        task.next_heading = first.0;
+        task.complete |= first.0 >= document.headings().entries().len();
+        Ok(task)
+    }
+
     pub fn take_link_resolver(&mut self) -> crate::LinkResolver {
         self.search.take_link_resolver()
     }
@@ -56,16 +80,84 @@ impl HeadingSearch {
     pub fn revision(&self) -> u64 {
         self.search.revision()
     }
+    /// Same capacity accounting as DisplaySearch; independent of heading count.
+    pub fn scratch_capacity_bytes(&self) -> usize {
+        self.search.scratch_capacity_bytes()
+    }
 
     /// Heading currently being read/matched, or None between candidates/at EOF.
     pub fn current_heading(&self) -> Option<HeadingId> {
         self.current
     }
 
+    /// Current/next arena position for progress notices, including pauses
+    /// between candidates. Does not read title or index metadata.
+    pub fn heading_position(&self) -> usize {
+        self.current.map_or(self.next_heading, |id| id.0)
+    }
+
     /// Absolute read position within current_heading, possibly ahead of pending
     /// matching. None between headings or after completion; not a screen position.
     pub fn source_position(&self) -> Option<usize> {
         self.current.map(|_| self.search.source_position())
+    }
+
+    /// Find the next matching heading without collecting all occurrences or
+    /// scanning the rest of a matched title. Shares the exact display semantics
+    /// and charges of `advance`; storage is O(query bytes), independent of H.
+    pub fn next_match(
+        &mut self,
+        document: &Document,
+        budget: &mut Budget,
+    ) -> Result<HeadingSearchStep, LayoutError> {
+        self.search.validate(document)?;
+        loop {
+            if self.complete {
+                return Ok(HeadingSearchStep::Complete);
+            }
+            let Some(heading) = self.current else {
+                if !budget.charge(WorkLimit {
+                    queries: 1,
+                    objects: 1,
+                    ..Default::default()
+                }) {
+                    return Ok(HeadingSearchStep::BudgetExhausted);
+                }
+                let next = (1..=self.max_level)
+                    .filter_map(|level| {
+                        let ids = document.headings().at_level(level);
+                        ids.get(ids.partition_point(|id| id.0 < self.next_heading))
+                            .copied()
+                    })
+                    .min();
+                if let Some(id) = next {
+                    let content = document.headings().get(id).unwrap().content;
+                    self.search.reset(document.display_cursor(content).unwrap());
+                    self.current = Some(id);
+                } else {
+                    self.complete = true;
+                }
+                continue;
+            };
+            let mut found = None;
+            let completion = self.search.advance_until(document, budget, |hit| {
+                found = Some(HeadingMatch {
+                    heading,
+                    display: hit.display,
+                    source: hit.source,
+                });
+                false
+            })?;
+            if completion == Completion::BudgetExhausted {
+                return Ok(HeadingSearchStep::BudgetExhausted);
+            }
+            self.current = None;
+            self.next_heading = heading.0 + 1;
+            self.complete = self.next_heading == document.headings().entries().len();
+            if let Some(hit) = found {
+                return Ok(HeadingSearchStep::Match(hit));
+            }
+        }
     }
 
     /// Append occurrences in heading/source order. Each candidate lookup costs

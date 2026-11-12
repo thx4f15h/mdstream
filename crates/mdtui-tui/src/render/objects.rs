@@ -100,6 +100,11 @@ impl SharedLinks {
         self.0.borrow_mut().retirement_requested = true;
     }
 
+    pub fn retirement_pending(&self) -> bool {
+        let state = self.0.borrow();
+        state.retirement_requested && state.active_tasks == 0
+    }
+
     pub fn with_resolver<T>(&self, apply: impl FnOnce(&mut LinkResolver) -> T) -> T {
         apply(&mut self.0.borrow_mut().resolver)
     }

@@ -796,10 +796,24 @@ fn app_pans_first_painted_table_with_large_steps_boundaries_and_sidebar_noop() {
     draw(&mut engine);
     app.handle_key(&mut engine, KeyCode::Tab, KeyModifiers::NONE)
         .unwrap();
-    assert!(
-        !app.handle_key(&mut engine, KeyCode::Left, KeyModifiers::NONE)
-            .unwrap()
-            .redraw
+    let first = engine
+        .runtime()
+        .viewport()
+        .table_widths()
+        .first_column(TableId(0));
+    let tree = app
+        .handle_key(&mut engine, KeyCode::Left, KeyModifiers::NONE)
+        .unwrap();
+    if tree.redraw {
+        draw(&mut engine);
+    }
+    assert_eq!(
+        engine
+            .runtime()
+            .viewport()
+            .table_widths()
+            .first_column(TableId(0)),
+        first
     );
     engine
         .runtime_mut()

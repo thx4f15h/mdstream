@@ -4,7 +4,7 @@
 
 目标是：即使输入逐字符到达、一个段落长达数百万字、分隔符很晚才闭合、引用定义出现在文末，也不反复扫描旧文档。支持的方言有明确限制，以换取可证明的复杂度。
 
-当前开发方向（2026-10-30 确认）：先把地基打牢，在既定需求和复杂度约束内支持尽量丰富、可复用的基础功能，再在其上搭建完整项目。当前已交付核心库、可运行示例与终端阅读器基础；核心语法、目录筛选、折叠和搜索等未完成要求继续按 TODO 分项推进。具体范围见 [开发阶段与推进原则](TODO.md#开发阶段与推进原则)。
+当前开发方向（2026-10-30 确认）：先把地基打牢，在既定需求和复杂度约束内支持尽量丰富、可复用的基础功能，再在其上搭建完整项目。当前已交付核心库、可运行示例与终端阅读器基础；核心语法、正文折叠等未完成要求继续按 TODO 分项推进。具体范围见 [开发阶段与推进原则](TODO.md#开发阶段与推进原则)。
 
 已交付任务及验收记录见 [DONE](DONE.md)。后续优化见 [核心改进顺序与验收条件](TODO.md#核心改进顺序与验收条件)：优先保证整帧实际重排受窗口和恢复预算约束，再改善缓存复用与扩展语义支持。
 
@@ -19,7 +19,7 @@ nix develop -c cargo r -r -p mdtui-tui -- README.md
 nix develop -c cargo r -r -p mdtui-tui -- --once crates/mdtui-tui/tests/fixtures/spec/images.md
 ```
 
-输入支持普通文件和 Unix FIFO；首屏不等待 EOF，写端暂停时仍可 `q` 退出。交互模式支持方向键、翻页、Home/End、`s` 目录侧栏、Tab 焦点、Enter 跳转，以及 `v` 源码选区、`y` 显示文本复制、`Y` 精确源码复制、`/` 提交式显示搜索和 `n`/`N` 命中导航；正文 End 持续跟随当前输入流的末尾，Ctrl+End 只跳到当前末尾；上滚或显式导航退出跟随。图片显示可点击 alt，空 alt 显示 `[image]`。表格可用 `--table-min-width` / `--table-max-width` 限定内容列宽，Left/Right 横移一列、Ctrl-Left/Right 横移八列；最上方可见表格为目标，状态显示列范围和左右省略数，百万字 cell 按帧精测。详细键位、尺寸和限制见 [阅读器使用说明](crates/mdtui-tui/README.md)，来源、预算及验收见 [终端集成说明](docs/tui-integration.md)。
+输入支持普通文件和 Unix FIFO；首屏不等待 EOF，写端暂停时仍可 `q` 退出。交互模式支持方向键、翻页、Home/End、`s` 目录侧栏、Tab 焦点、Enter 跳转，以及 `v` 源码选区、`y` 显示文本复制、`Y` 精确源码复制、`/` 提交式显示搜索和 `n`/`N` 命中导航；正文 End 持续跟随当前输入流的末尾，Ctrl+End 只跳到当前末尾；上滚或显式导航退出跟随。图片显示可点击 alt，空 alt 显示 `[image]`。表格可用 `--table-min-width` / `--table-max-width` 限定内容列宽，Left/Right 横移一列、Ctrl-Left/Right 横移八列；最上方可见表格为目标，状态显示列范围和左右省略数，百万字 cell 按帧精测。侧栏焦点的 Left/Right 收展目录树，0…6 限定标题级别上限，`/` 编辑区分大小写的显示名称查询，Esc 取消；路径与查询状态在侧栏头部显示。详细键位、尺寸和限制见 [阅读器使用说明](crates/mdtui-tui/README.md)，来源、预算及验收见 [终端集成说明](docs/tui-integration.md)。
 
 ## 接入
 
@@ -1214,6 +1214,10 @@ assert_eq!(matches[0].display, 0..4);
 assert_eq!(doc.text(matches[0].source), Some("a**b**&amp;c"));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+分页选择器可用 `HeadingSearch::next_match`：每次至多返回一个标题的首个命中（`HeadingSearchStep::Match`），随后直接跳过该标题其它重叠命中；BudgetExhausted 保留进度，Complete 表示当前 revision 已搜索完。复用同一个匹配引擎，不创建全部命中 Vec。`from_heading` 可从指定 HeadingId 开始，适合 resize 后只重建原匹配页；`heading_position` 与 `source_position` 提供无读取的进度，`scratch_capacity_bytes` 报告查询数组与数值 scratch 容量，排除固定 run 缓冲和共享 resolver。终端的 UI `0` 映射为核心上限 6；编辑查询限 256 UTF-8 字节。终端目录操作详见 [阅读器说明](crates/mdtui-tui/README.md#键位)，正文折叠 UI Reveal 仍由原 [准确目标与渐进定位](TODO.md#标题导航与折叠联动规划) 跟踪。
+
+`HeadingIndex::outline_parent` 在同 scope 的 `parent` 之外补充容器入口捕获的继承章节，O(log H) 查询且不走容器祖先链、不读标题。它用于目录树和有界路径，跨 scope 的标题链可超过六层；正文折叠仍保留真实容器父节点。
 
 `HeadingMatch` 每项表示一次出现，按标题及匹配位置排序；重复名称由 `HeadingId` 区分，同一标题可返回多项。`display` 是该标题显示内容内的 UTF-8 字节范围，`source` 是绝对源码包络，端点来自实体等替代内容时包含完整原始区间。调用方可按 ID 生成选择器条目，用显示范围高亮，并通过 `NavAction::Heading(hit.heading)` 定位标题或 `Source(hit.source.start)` 定位命中。搜索包含被折叠隐藏的标题，不改变折叠状态；选中结果后可交给 `FoldNavigation::Reveal` 展开必要路径。
 

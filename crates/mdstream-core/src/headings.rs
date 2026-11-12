@@ -111,6 +111,16 @@ impl HeadingIndex {
         self.before(&self.scope(h.container).levels, h.source.start, h.level - 1)
     }
 
+    /// Outline parent: nearest same-scope shallower section, otherwise the
+    /// section inherited at this exact container's entry. Container-only links
+    /// are skipped using the captured summary, without walking their ancestors.
+    /// Unlike `parent`, outline chains can exceed six headings across scopes.
+    /// O(log H), no source/title reads or copied ancestor path.
+    pub fn outline_parent(&self, id: HeadingId) -> Option<HeadingId> {
+        let h = self.get(id)?;
+        self.parent(id).or(self.scope(h.container).inherited)
+    }
+
     pub fn first_child(&self, id: HeadingId) -> Option<HeadingId> {
         let h = self.get(id)?;
         let next = self.after(&self.scope(h.container).levels, h.source.start, 6)?;

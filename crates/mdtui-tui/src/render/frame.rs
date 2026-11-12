@@ -26,7 +26,8 @@ use crate::render::viewport::{
     ViewportFrame, ViewportFrameStatus, ViewportState,
 };
 use crate::screen::{Cell, ContentArea, Screen, ScreenError, StyleRole};
-use crate::sidebar::{SidebarModel, SidebarStats};
+use crate::sidebar::SidebarStats;
+use crate::sidebar::directory::{Directory, DirectoryEvent, HEADER_ROWS};
 
 pub const FIRST_FRAME_CLEAR: &[u8] = b"\x1b[2J\x1b[H";
 pub const BEGIN_SYNCHRONIZED_UPDATE: &[u8] = b"\x1b[?2026h";
@@ -207,6 +208,7 @@ pub struct FrameRuntime {
     refiner: Option<SourceRefiner>,
     pending_jump: Option<usize>,
     pending_search_target: Option<(usize, bool)>,
+    pending_sidebar_activate: bool,
     reconcile_scrolled_source: bool,
     presenter: FramePresenter,
     geometry: FrameGeometry,
@@ -214,8 +216,7 @@ pub struct FrameRuntime {
     content_x: u16,
     sidebar_width: u16,
     sidebar_visible: bool,
-    sidebar_selection: Option<HeadingId>,
-    sidebar: Option<SidebarState>,
+    sidebar: Option<Directory>,
     links: Option<LinkTable>,
     link_focus: Option<LinkId>,
     pending_activation: Option<(
@@ -234,18 +235,12 @@ pub struct FrameRuntime {
     body_dirty: bool,
 }
 
-struct SidebarState {
-    model: SidebarModel,
-    current: Option<HeadingId>,
-    selection: Option<HeadingId>,
-}
-
 #[derive(Clone, Copy)]
 struct FramePaintLayout<'a> {
     content_x: u16,
     content_width: u16,
     sidebar_width: u16,
-    sidebar: Option<&'a SidebarState>,
+    sidebar: Option<&'a Directory>,
     focused_link: Option<LinkId>,
     notice: Option<&'a str>,
     following: bool,
@@ -253,15 +248,6 @@ struct FramePaintLayout<'a> {
     selection: Option<mdtui3::Span>,
     cursor: Option<mdtui3::Span>,
     search: Option<mdtui3::Span>,
-}
-
-#[derive(Clone, Copy)]
-struct SidebarWindow {
-    current: Option<HeadingId>,
-    selection: HeadingId,
-    first_visible: usize,
-    rows: usize,
-    width: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -329,6 +315,7 @@ impl FrameRuntime {
             refiner: None,
             pending_jump: None,
             pending_search_target: None,
+            pending_sidebar_activate: false,
             reconcile_scrolled_source: true,
             presenter,
             geometry,
@@ -336,7 +323,6 @@ impl FrameRuntime {
             content_x: 0,
             sidebar_width: 0,
             sidebar_visible: false,
-            sidebar_selection: None,
             sidebar: None,
             links: None,
             link_focus: None,
@@ -546,14 +532,12 @@ impl FrameRuntime {
 
     #[must_use]
     pub fn sidebar_pending(&self) -> bool {
-        self.sidebar
-            .as_ref()
-            .is_some_and(|sidebar| !sidebar.model.is_complete())
+        self.sidebar_visible && self.sidebar.as_ref().is_some_and(Directory::pending)
     }
 
     #[must_use]
     pub fn sidebar_current_heading(&self) -> Option<HeadingId> {
-        self.sidebar.as_ref().and_then(|sidebar| sidebar.current)
+        self.sidebar.as_ref().and_then(Directory::visible_current)
     }
 
     #[must_use]
@@ -566,19 +550,24 @@ impl FrameRuntime {
 
     #[must_use]
     pub fn sidebar_stats(&self) -> Option<SidebarStats> {
-        self.sidebar.as_ref().map(|sidebar| sidebar.model.stats())
+        self.sidebar.as_ref().map(Directory::stats)
     }
 
     #[must_use]
     pub fn sidebar_window_start(&self) -> Option<usize> {
-        self.sidebar
-            .as_ref()
-            .map(|sidebar| sidebar.model.first_visible())
+        self.sidebar.as_ref().map(Directory::window_start)
     }
 
     #[must_use]
-    pub const fn sidebar_selection(&self) -> Option<HeadingId> {
-        self.sidebar_selection
+    pub fn sidebar_selection(&self) -> Option<HeadingId> {
+        self.sidebar.as_ref().and_then(Directory::selection)
+    }
+
+    pub fn directory(&self) -> Option<&Directory> {
+        self.sidebar.as_ref()
+    }
+    pub fn directory_mut(&mut self) -> Option<&mut Directory> {
+        self.sidebar.as_mut()
     }
 
     #[must_use]
@@ -627,7 +616,9 @@ impl FrameRuntime {
     }
 
     pub fn has_pending_jump(&self) -> bool {
-        self.pending_jump.is_some() || self.pending_search_target.is_some()
+        self.pending_jump.is_some()
+            || self.pending_search_target.is_some()
+            || self.pending_sidebar_activate
     }
 
     pub fn viewport(&self) -> &ViewportState {
@@ -724,6 +715,7 @@ impl FrameRuntime {
         self.pending_search_target = None;
         self.body_dirty = true;
         self.pending_jump = None;
+        self.pending_sidebar_activate = false;
         self.refiner = None;
         self.reconcile_scrolled_source = true;
         let rows = if follow {
@@ -763,6 +755,7 @@ impl FrameRuntime {
         self.body_dirty = true;
         self.cancel_end()?;
         self.pending_jump = None;
+        self.pending_sidebar_activate = false;
         self.refiner = None;
         let moved = self.viewport.scroll_down(self.document.document(), rows)?;
         if moved {
@@ -777,6 +770,7 @@ impl FrameRuntime {
         self.body_dirty = true;
         self.cancel_end()?;
         self.pending_jump = None;
+        self.pending_sidebar_activate = false;
         self.refiner = None;
         let moved = self.viewport.scroll_up(self.document.document(), rows)?;
         if moved {
@@ -877,12 +871,17 @@ impl FrameRuntime {
             self.pending_jump = Some(source);
             self.refiner = None;
         }
+        if previous_sidebar_visible
+            && !sidebar_visible
+            && let Some(sidebar) = self.sidebar.as_mut()
+        {
+            sidebar.suspend();
+        }
         if width_changed
             || x_changed
             || height_changed
             || previous_sidebar_visible != sidebar_visible
         {
-            self.sidebar = None;
             self.links = None;
         }
         Ok(FrameResize {
@@ -921,10 +920,14 @@ impl FrameRuntime {
             || previous_x != sidebar_width
             || previous_width != width;
         self.sidebar_visible = effective;
-        self.sidebar_width = sidebar_width;
-        if !effective || changed {
-            self.sidebar = None;
+        if !effective {
+            self.pending_sidebar_activate = false;
+            if let Some(sidebar) = self.sidebar.as_mut() {
+                sidebar.suspend();
+            }
         }
+        self.sidebar_width = sidebar_width;
+        self.ensure_sidebar_model()?;
         if changed && !change.changed && previous_x == sidebar_width && previous_width == width {
             self.presenter.reset_baseline()?;
         }
@@ -962,7 +965,6 @@ impl FrameRuntime {
         if geometry_changed {
             self.body_dirty = true;
             self.presenter.reset_baseline()?;
-            self.sidebar = None;
             self.links = None;
         }
         Ok(change)
@@ -974,6 +976,20 @@ impl FrameRuntime {
         budget: &mut Budget,
     ) -> Result<FrameCommit, FrameError> {
         let started = Instant::now();
+        if self.pending_sidebar_activate {
+            self.activate_sidebar_selection(budget)?;
+            if self.pending_sidebar_activate {
+                return Ok(FrameCommit {
+                    status: Some(ViewportFrameStatus::BudgetExhausted),
+                    metrics: FrameMetrics {
+                        layout_budget: budget.used(),
+                        frame_elapsed: started.elapsed(),
+                        ..FrameMetrics::default()
+                    },
+                    ..FrameCommit::default()
+                });
+            }
+        }
         let rows = if self.reading.status_visible() || self.viewport.following() {
             self.geometry.rows.saturating_sub(1).max(1)
         } else {
@@ -1246,132 +1262,102 @@ impl FrameRuntime {
 
     fn prepare_sidebar(&mut self, budget: &mut Budget) -> Result<(), FrameError> {
         self.ensure_sidebar_model()?;
-        let document = self.document.document();
-        if let Some(sidebar) = self.sidebar.as_mut() {
-            sidebar.model.advance(document, budget)?;
+        if self.sidebar_visible {
+            let doc = self.document.document();
+            let source = self.viewport.top_source(doc).unwrap_or(0);
+            if let Some(sidebar) = self.sidebar.as_mut() {
+                sidebar.advance(
+                    doc,
+                    source,
+                    usize::from(self.geometry.rows),
+                    usize::from(self.sidebar_width.saturating_sub(1)),
+                    budget,
+                )?;
+            }
         }
         Ok(())
     }
 
     fn ensure_sidebar_model(&mut self) -> Result<(), FrameError> {
-        let document = self.document.document();
-        let top_source = self.viewport.top_source(document);
-        let Some(window) = sidebar_window_for(
-            document,
-            top_source,
-            self.geometry.rows,
-            self.sidebar_width,
-            &mut self.sidebar_selection,
-        ) else {
-            self.sidebar = None;
-            return Ok(());
-        };
-        if let Some(sidebar) = self.sidebar.as_mut()
-            && sidebar.model.matches(document)
-            && sidebar.model.width() == window.width
-        {
-            sidebar
-                .model
-                .reconfigure(document, window.first_visible, window.rows)?;
-            sidebar.current = window.current;
-            sidebar.selection = Some(window.selection);
-            return Ok(());
+        if self.sidebar_visible && self.sidebar.is_none() {
+            self.sidebar = Some(Directory::new(
+                self.document.document(),
+                self.viewport.shared_links(),
+            ));
         }
-        let mut model =
-            SidebarModel::new(document, window.first_visible, window.rows, window.width);
-        model.set_links(self.viewport.shared_links());
-        self.sidebar = Some(SidebarState {
-            model,
-            current: window.current,
-            selection: Some(window.selection),
-        });
         Ok(())
     }
 
     fn apply_sidebar_update(&mut self, update: &Update) -> Result<(), FrameError> {
-        if !self.sidebar_visible {
-            return Ok(());
-        }
-        let document = self.document.document();
-        let top_source = self.viewport.top_source(document);
-        let Some(window) = sidebar_window_for(
-            document,
-            top_source,
-            self.geometry.rows,
-            self.sidebar_width,
-            &mut self.sidebar_selection,
-        ) else {
-            self.sidebar = None;
-            return Ok(());
-        };
-        if let Some(sidebar) = self.sidebar.as_mut()
-            && sidebar.model.document() == document.id()
-            && sidebar.model.revision() == update.base_revision
-        {
-            sidebar
-                .model
-                .apply_update(document, update, window.first_visible, window.rows)?;
-            sidebar.current = window.current;
-            sidebar.selection = Some(window.selection);
+        if let Some(sidebar) = self.sidebar.as_mut() {
+            sidebar.apply_update(self.document.document(), update);
         }
         Ok(())
     }
 
     pub fn ensure_sidebar_selection(&mut self) -> Option<HeadingId> {
-        let document = self.document.document();
-        let top_source = self.viewport.top_source(document);
-        sidebar_window_for(
-            document,
-            top_source,
-            self.geometry.rows,
-            self.sidebar_width,
-            &mut self.sidebar_selection,
-        )
-        .map(|window| window.selection)
+        self.sidebar_selection()
     }
 
+    pub fn cancel_sidebar_activation(&mut self) {
+        self.pending_sidebar_activate = false;
+    }
+    pub fn sidebar_event(&mut self, event: DirectoryEvent) -> bool {
+        let changed = self.sidebar_visible && self.sidebar.as_mut().is_some_and(|s| s.event(event));
+        if changed {
+            self.cancel_sidebar_activation();
+        }
+        changed
+    }
     pub fn sidebar_move_selection(&mut self, delta: isize) -> bool {
-        let Some(selection) = self.ensure_sidebar_selection() else {
-            return false;
-        };
-        let total = self.document.document().headings().entries().len();
-        if total == 0 {
-            return false;
-        }
-        let index = if delta >= 0 {
-            selection
-                .0
-                .saturating_add(delta.unsigned_abs())
-                .min(total - 1)
-        } else {
-            selection.0.saturating_sub(delta.unsigned_abs())
-        };
-        self.set_sidebar_selection(index)
+        self.sidebar_event(DirectoryEvent::Move(delta))
     }
-
     pub fn sidebar_selection_home(&mut self) -> bool {
-        let total = self.document.document().headings().entries().len();
-        total > 0 && self.set_sidebar_selection(0)
+        self.sidebar_event(DirectoryEvent::Home)
     }
-
     pub fn sidebar_selection_end(&mut self) -> bool {
-        let total = self.document.document().headings().entries().len();
-        total > 0 && self.set_sidebar_selection(total - 1)
-    }
-
-    fn set_sidebar_selection(&mut self, index: usize) -> bool {
-        let total = self.document.document().headings().entries().len();
-        if !self.sidebar_visible
-            || index >= total
-            || self.sidebar_selection == Some(HeadingId(index))
-        {
-            return false;
-        }
-        self.sidebar_selection = Some(HeadingId(index));
-        true
+        self.sidebar_event(DirectoryEvent::End)
     }
 
     pub fn activate_sidebar_selection(&mut self, budget: &mut Budget) -> Result<bool, FrameError> {
+        self.prepare_sidebar(budget)?;
+        if self
+            .sidebar
+            .as_ref()
+            .is_some_and(|s| s.status == crate::sidebar::directory::NameStatus::Stale)
+        {
+            self.pending_sidebar_activate = false;
+            return Ok(false);
+        }
+        if self.sidebar_selection().is_some()
+            || self
+                .sidebar
+                .as_ref()
+                .is_some_and(Directory::selection_pending)
+        {
+            self.reading.pause_search(&self.viewport.shared_links());
+            if self.pending_search_target.take().is_some() {
+                self.pending_jump = None;
+                self.refiner = None;
+            }
+        }
+        if self
+            .sidebar
+            .as_ref()
+            .is_some_and(Directory::selection_pending)
+        {
+            self.pending_sidebar_activate = true;
+            return Ok(false);
+        }
+        if !budget.charge(mdtui3::WorkLimit {
+            queries: 1,
+            objects: 1,
+            ..Default::default()
+        }) {
+            self.pending_sidebar_activate = self.sidebar_selection().is_some();
+            return Ok(false);
+        }
+        self.pending_sidebar_activate = false;
         let Some(selection) = self.ensure_sidebar_selection() else {
             return Ok(false);
         };
@@ -1379,6 +1365,8 @@ impl FrameRuntime {
         let Some(heading) = document.headings().get(selection).copied() else {
             return Ok(false);
         };
+        // Body folding UI will insert its budgeted FoldNavigation::Reveal here
+        // before source refinement. Directory collapse wishes never alter it.
         Ok(matches!(
             self.refine_source_to_top(heading.source.start, budget)?,
             RefineJump::Ready(true)
@@ -1622,6 +1610,7 @@ impl FrameRuntime {
         match self.refine_target(source, budget)? {
             RefineTarget::Ready(target) => {
                 self.pending_jump = None;
+                self.pending_sidebar_activate = false;
                 // Set the exact source first; reconcile refines its row while
                 // preserving same-tile heading/fragment identity.
                 self.navigator.navigate(
@@ -1655,10 +1644,12 @@ impl FrameRuntime {
             }
             RefineTarget::NotFound => {
                 self.pending_jump = None;
+                self.pending_sidebar_activate = false;
                 Ok(RefineJump::NotFound)
             }
             RefineTarget::Failed => {
                 self.pending_jump = None;
+                self.pending_sidebar_activate = false;
                 Ok(RefineJump::Failed)
             }
         }
@@ -1922,7 +1913,7 @@ impl FramePresenter {
     fn paint_sidebar(
         &mut self,
         sidebar_width: u16,
-        sidebar: Option<&SidebarState>,
+        sidebar: Option<&Directory>,
     ) -> Result<(), FrameError> {
         let border_column = sidebar_width - 1;
         let text_width = usize::from(border_column);
@@ -1932,24 +1923,54 @@ impl FramePresenter {
                 border_column,
                 Cell::new("│", StyleRole::TABLE_BORDER, 1, None, None)?,
             )?;
-            let Some(entry) = sidebar.and_then(|sidebar| sidebar.model.entry(usize::from(row)))
-            else {
+            if usize::from(row) < HEADER_ROWS {
+                if let Some(sidebar) = sidebar {
+                    let message = if row == 0 {
+                        sidebar.breadcrumb_text()
+                    } else {
+                        sidebar.notice()
+                    };
+                    let text = clip_sidebar_text(&message, text_width);
+                    let mut cursor = TextCursor::new(0);
+                    for grapheme in graphemes(&text) {
+                        cursor.place(
+                            &mut self.screen,
+                            row,
+                            grapheme,
+                            StyleRole::META,
+                            None,
+                            None,
+                        )?;
+                    }
+                }
+                continue;
+            }
+            let index = usize::from(row) - HEADER_ROWS;
+            let Some(entry) = sidebar.and_then(|sidebar| sidebar.entry(index)) else {
                 continue;
             };
-            let indent = usize::from(entry.level.saturating_sub(1)).saturating_mul(2);
+            let indent = sidebar
+                .map_or(0, |s| s.depth(index))
+                .saturating_mul(2)
+                .min(text_width.saturating_sub(4));
             if indent >= text_width {
                 continue;
             }
-            let available = text_width - indent;
-            let text = clip_sidebar_text(&entry.text, available);
+            let available = text_width.saturating_sub(indent + 2);
+            let text = format!(
+                "{} {}",
+                sidebar.map_or(" ", |s| s.marker(index)),
+                clip_sidebar_text(&entry.text, available)
+            );
             let style = match sidebar {
                 Some(sidebar)
-                    if sidebar.current == Some(entry.id) && sidebar.selection == Some(entry.id) =>
+                    if sidebar.current() == Some(entry.id)
+                        && sidebar.selection() == Some(entry.id) =>
                 {
                     StyleRole::SIDEBAR_CURRENT.with(StyleRole::SIDEBAR_SELECTION)
                 }
-                Some(sidebar) if sidebar.current == Some(entry.id) => StyleRole::SIDEBAR_CURRENT,
-                Some(sidebar) if sidebar.selection == Some(entry.id) => {
+                Some(sidebar) if sidebar.current() == Some(entry.id) => StyleRole::SIDEBAR_CURRENT,
+                Some(sidebar) if sidebar.selection() == Some(entry.id) => {
                     StyleRole::SIDEBAR_SELECTION
                 }
                 _ => StyleRole::SIDEBAR,
@@ -2106,48 +2127,6 @@ fn sidebar_layout_for(cols: u16, visible: bool) -> (bool, u16, u16) {
         return (false, 0, cols);
     };
     (true, width, cols.saturating_sub(width))
-}
-
-fn sidebar_window_for(
-    document: &Document,
-    top_source: Option<usize>,
-    rows: u16,
-    sidebar_width: u16,
-    selection: &mut Option<HeadingId>,
-) -> Option<SidebarWindow> {
-    if sidebar_width <= 1 {
-        return None;
-    }
-    let headings = document.headings();
-    let total = headings.entries().len();
-    if total == 0 {
-        *selection = None;
-        return None;
-    }
-    let source = top_source.unwrap_or(0);
-    let current = headings.current(source);
-    let selected = selection
-        .filter(|selected| selected.0 < total)
-        .or(current)
-        .or_else(|| headings.next(source, 6))
-        .unwrap_or(HeadingId(0));
-    *selection = Some(selected);
-    let rows = usize::from(rows);
-    let width = usize::from(sidebar_width - 1);
-    if width == 0 {
-        return None;
-    }
-    let max_first = total.saturating_sub(rows);
-    let first_visible = selected.0.saturating_sub(rows / 2).min(max_first);
-    let visible_current = current
-        .filter(|current| (first_visible..first_visible.saturating_add(rows)).contains(&current.0));
-    Some(SidebarWindow {
-        current: visible_current,
-        selection: selected,
-        first_visible,
-        rows,
-        width,
-    })
 }
 
 fn full_screen_diff(screen: &Screen) -> ScreenDiff {

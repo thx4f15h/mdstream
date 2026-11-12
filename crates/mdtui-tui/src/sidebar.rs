@@ -90,7 +90,86 @@ pub struct SidebarModel {
     complete: bool,
 }
 
+pub mod directory;
+
 impl SidebarModel {
+    /// UI path: callers obtain sparse metadata under their shared frame Budget.
+    /// An empty model does not inspect the heading index or source.
+    pub(crate) fn empty(document: &Document, width: usize) -> Self {
+        Self {
+            links: crate::render::objects::SharedLinks::new(document),
+            document: document.id(),
+            revision: document.revision(),
+            first_visible: 0,
+            rows: 0,
+            width,
+            limits: default_excerpt_limits(width),
+            entries: Vec::new(),
+            stats: SidebarStats::default(),
+            complete: true,
+        }
+    }
+
+    pub(crate) fn prepare_sparse(
+        &mut self,
+        document: &Document,
+        headings: &[(HeadingId, Heading)],
+        width: usize,
+        dirty_from: usize,
+    ) {
+        let mut old = std::mem::take(&mut self.entries);
+        let same_width = self.width == width;
+        self.entries = headings
+            .iter()
+            .map(|&(id, heading)| {
+                let reused = old
+                    .iter()
+                    .position(|state| {
+                        same_width
+                            && state.entry.id == id
+                            && state.heading == heading
+                            && (self.revision == document.revision()
+                                || (state.done && heading.source.end <= dirty_from))
+                    })
+                    .map(|i| old.swap_remove(i));
+                if let Some(state) = reused {
+                    self.stats.reused_entries += 1;
+                    state
+                } else {
+                    self.stats.rebuilt_entries += 1;
+                    new_entry_state(id, heading, width)
+                }
+            })
+            .collect();
+        self.stats.headings_considered = headings.len();
+        self.revision = document.revision();
+        self.width = width;
+        self.limits = default_excerpt_limits(width);
+        self.rows = headings.len();
+        self.first_visible = headings.first().map_or(0, |(id, _)| id.0);
+        self.complete = self.entries.iter().all(|state| state.done);
+    }
+
+    pub(crate) fn cancel_pending(&mut self) {
+        for state in &mut self.entries {
+            state.excerpt = None;
+            state.lease = None;
+            if !state.done {
+                state.raw_text.clear();
+                state.entry.text = "…".to_owned();
+            }
+        }
+    }
+
+    pub(crate) fn capacity_bytes(&self) -> usize {
+        self.entries.capacity() * std::mem::size_of::<EntryState>()
+            + self
+                .entries
+                .iter()
+                .map(|s| s.raw_text.capacity() + s.entry.text.capacity())
+                .sum::<usize>()
+    }
+
     #[must_use]
     pub fn new(document: &Document, first_visible: usize, rows: usize, width: usize) -> Self {
         Self::with_limits(

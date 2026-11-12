@@ -451,6 +451,16 @@ impl ReadingTools {
         self.message = "cancelled";
         links.request_retirement();
     }
+    /// A later explicit directory jump wins over a still-running search. Keep
+    /// its query/current hit, draft, selection and copy; n/N can resume explicitly.
+    pub(crate) fn pause_search(&mut self, links: &SharedLinks) {
+        if self.searching {
+            self.search = None;
+            self.searching = false;
+            self.message = "search paused by directory; n/N: resume";
+            links.request_retirement();
+        }
+    }
     pub fn changed(&mut self, revision: u64) {
         if self.revision.is_some_and(|old| old != revision) {
             self.search = None;

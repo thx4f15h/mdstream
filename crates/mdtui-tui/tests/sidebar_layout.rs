@@ -63,7 +63,12 @@ fn onscreen_text(screen: &Screen, row: u16, start: u16, end: u16) -> String {
 }
 
 fn find_in_region(screen: &Screen, start: u16, end: u16, needle: &str) -> Option<(u16, u16)> {
-    for row in 0..screen.rows() {
+    let first = if start == 0 && end < screen.cols() {
+        2
+    } else {
+        0
+    };
+    for row in first..screen.rows() {
         let text = onscreen_text(screen, row, start, end);
         if let Some(byte) = text.find(needle) {
             let column = start + u16::try_from(text[..byte].chars().count()).unwrap();
@@ -294,7 +299,7 @@ fn sidebar_indentation_follows_heading_level() {
     let layout = runtime.set_sidebar_visible(true).unwrap();
     let mut output = Vec::new();
     commit(&mut runtime, &mut output);
-    for (text, expected_column) in [("One", 0), ("Two", 2), ("Three", 4)] {
+    for (text, expected_column) in [("One", 2), ("Two", 4), ("Three", 6)] {
         let (row, column) = find_in_region(runtime.screen(), 0, layout.content_x, text).unwrap();
         assert_eq!(column, expected_column, "heading {text}");
         assert!(row < HEIGHT);

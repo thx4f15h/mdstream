@@ -3027,3 +3027,19 @@ y 复制逻辑显示投影，Y 精确复制 UTF-8 原文范围。显示投影保
 验证：冻结 643 个仓库输入（除本追加日志 DONE.md），其中 504 个 Rust 文件，SHA-256 `175837046ff15585892e938d4a094a0f7835343337a8769385fedc3cc43d5346`；完整 workspace debug 2534、release 2530、doc 78 通过，check/all-targets、fmt、doc build、生产 lib/bins 严格 clippy、TUI all-targets 严格 clippy及新增 core 测试严格 clippy 均通过。未声称包含已知 bare_autolinks 旧测试 lint 的 workspace all-targets 严格 clippy。独立 cell/source/剪贴板字节、UTF-8 全切点、零/1 query/1 object/6 bytes、27 个新增默认验收、20k guard 取消退役、近 64 KiB UTF-8 负载与超限拒绝、2 MB 段落中部小选区、真实 FIFO PTY 与独立 tmux 全流程已验证。另跑的 64 MiB 手工验收中，31 字节中部显示选区扫描 2304 字节、累计计费 14825 work bytes；此读量与工作口径不是进程总堆或 I/O 时延。
 
 保留后续：本项没有终端折叠占位、由选区创建手工折叠、FoldAnchor 占位恢复、FoldNavigation 必要路径展开及折叠视图复制联动；对应父项继续未勾选。只整合已提交固定基线 4299276，不包含其它活跃任务。
+
+## 2026-11-13 目录面包屑筛选与树展开
+
+补齐原“目录与标题选择器”的面包屑、级别/名称筛选和目录树展开；已有层级侧栏、current/selection 与精确 Enter 跳转作为基础保留，不重复计为本轮新交付。
+
+- 侧栏头两行显示正文当前路径和筛选/查询状态，不占正文行、不带 source/link 命中。路径至多读取最近三个标题，深路径显示 `…/`；`c` 定位 current 后 Left 可继续选父。目录采用确切 scope 的父章节及容器入口继承章节，缺级不造虚构节点，跨 scope 可超过六层。
+- Sidebar Left 优先收起自身后代，再选父；Right 优先展开，再选首个可见子标题。折叠意愿按 HeadingId 独立保存，父收展/过滤/resize 不重置子意愿；大子树按章节端点二分跳过。0 为全部，1…6 选择级别不超过上限，区别于严格同级/子树命令。隐藏 selection 使用明确邻近规则，current 始终来自正文真实源码。
+- `/` 编辑、Enter 提交、Esc 放弃编辑/清除已提交查询；q/s/数字为输入字符，Ctrl-C 退出，Backspace/Delete 删除一个 UTF-8 标量，输入限 256 字节。名称使用核心显示语义、字面且区分大小写、每标题首命中；只保留有限匹配页，后页继续发现，精确前页和 End 可按预算重扫并显示进度。追加/finish/晚定义标 stale，等待 `/ Enter` 刷新；resize 从原匹配页附近恢复。
+- 构造及零 Budget 不读正文，目录候选、深祖先、摘要/guard 和名称匹配共用帧 Budget。`HeadingSearch::next_match` 在既有 KMP 引擎上暂停并跳过同标题剩余命中，`from_heading` 支持局部恢复；`outline_parent` 复用已捕获的 scope 继承摘要。目录和 Frame 共用唯一 SharedLinks resolver，页间/取消/追加的旧 memo 逐帧退役；查询 scratch 有显式容量口径，不积累全部标题名称、百万命中或历史路径。
+
+验收：`directory_controls.rs`、`directory_app.rs`、核心 `outline_pages.rs`，以及保留的侧栏/导航/表格/follow/终端测试。外部朴素模型对照 100,000 次窗口、层级、过滤、selection/current/path 状态；百万标题末端 8 行窗口仅 11 个元数据步骤和 56 字节标题源码，十万隐藏后代普通追加 10 个元数据步骤，千层 1q/1o/6b 可恢复，超长标题与共享 memo 取消按实际访问量验证。隔离 tmux 覆盖名称输入 q、所有目录键、分页/历史/表格/follow/resize、FIFO 晚定义与 Setext，终端设置恢复。模型、计数、冻结 SHA、完整命令退出码和测试数保存在 `/tmp/mdtui3-codex-todo/016-prototypes/` 与 `016-result.json`；既有 21 输入 fixture、11 ANSI golden、hook/rustfmt 和核心零运行时依赖/forbid unsafe 保持。
+
+目录状态与正文 FoldView 独立。正文折叠控件、摘要占位绘制和跳转 UI Reveal 仍由原 TODO “单点及批量操作”“可定位的摘要”“准确目标与渐进定位”验收，未勾选；目录激活处仅留明确接入点。原生版本未消费并行脏代码；最终组合以固定已提交 015 基点 `07e8f4554fadbf7e0c20021cd81c740767ab2643` 为准，保留其选区/两种复制/正文搜索和文档前缀，标题首命中与正文搜索共用同一匹配实现。严格 workspace all-target clippy 的既有 `bare_autolinks.rs:594` bool lint 单独报告，不修无关测试、不宣称该命令通过。
+
+
+本项最终组合固定采用已提交基点 `07e8f4554fadbf7e0c20021cd81c740767ab2643`，保留上方 015 的完整记录。原生 4299276 结果、冻结与日志归档在 `016-prototypes/native-4299276/`；自有 stash `c4dd619b72b506ecc1117ccb5c5a90c952f7d123` 及快进/恢复记录见 `016-prototypes/integration-base15.json`。正文 `DisplaySearch::next_with_resolver` 与标题首命中包装均调用同一 `advance_impl`，没有第二份 KMP 匹配器。按焦点保留两套查询和草稿，q 在各自输入态作为字符，Ctrl-C 退出；Tab/Shift-Tab 与 Alt 历史保持。显式目录 Enter 暂停未完成正文搜索导航，正文编辑取消待执行目录激活；查询、选区与复制意愿不被另一套筛选覆盖。`directory_reading.rs` 的交错输入、实际 y/Y OSC52 字节、n/N、搜索/跳转取消与历史回归，以及保留的 015 reading/reading_pty 验收组合行为；最终冻结 SHA、全工作区门禁和真实终端记录仍见本项结果 JSON。

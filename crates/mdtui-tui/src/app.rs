@@ -163,10 +163,72 @@ impl AppState {
         code: KeyCode,
         modifiers: KeyModifiers,
     ) -> Result<AppOutcome, StreamError> {
-        if engine
-            .runtime_mut()
-            .reading_key(code, modifiers, self.focus == FocusTarget::Body)?
+        if self.focus == FocusTarget::Sidebar {
+            let editing = engine
+                .runtime()
+                .directory()
+                .is_some_and(|s| s.editing().is_some());
+            let plain = !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+            let changed = if let Some(sidebar) = engine.runtime_mut().directory_mut() {
+                if editing {
+                    match code {
+                        KeyCode::Esc => sidebar.cancel_edit(),
+                        KeyCode::Enter => sidebar.submit(),
+                        KeyCode::Backspace | KeyCode::Delete => sidebar.delete(),
+                        KeyCode::Char(ch) if plain => sidebar.insert(ch),
+                        _ => false,
+                    }
+                } else {
+                    match code {
+                        KeyCode::Char('/') if plain => sidebar.begin_edit(),
+                        KeyCode::Char('c') if plain => {
+                            sidebar.event(crate::sidebar::directory::DirectoryEvent::Current)
+                        }
+                        KeyCode::Char(ch @ '0'..='6') if plain => {
+                            sidebar.set_level(ch as u8 - b'0')
+                        }
+                        KeyCode::Esc => sidebar.clear_query(),
+                        KeyCode::Left if plain => {
+                            sidebar.event(crate::sidebar::directory::DirectoryEvent::Left)
+                        }
+                        KeyCode::Right if plain => {
+                            sidebar.event(crate::sidebar::directory::DirectoryEvent::Right)
+                        }
+                        _ => false,
+                    }
+                }
+            } else {
+                false
+            };
+            if changed {
+                engine.runtime_mut().cancel_sidebar_activation();
+                engine.request_render();
+            }
+            let reserved = plain
+                && matches!(
+                    code,
+                    KeyCode::Char('/' | 'c' | '0'..='6') | KeyCode::Left | KeyCode::Right
+                )
+                || code == KeyCode::Esc;
+            let global = matches!(code, KeyCode::Tab | KeyCode::BackTab)
+                || (code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL))
+                || (matches!(code, KeyCode::Left | KeyCode::Right)
+                    && modifiers.contains(KeyModifiers::ALT));
+            if (editing && !global) || reserved {
+                return Ok(AppOutcome {
+                    redraw: changed,
+                    ..AppOutcome::default()
+                });
+            }
+        }
+        if self.focus != FocusTarget::Sidebar
+            && !(matches!(code, KeyCode::Left | KeyCode::Right)
+                && modifiers.contains(KeyModifiers::ALT))
+            && engine
+                .runtime_mut()
+                .reading_key(code, modifiers, self.focus == FocusTarget::Body)?
         {
+            engine.runtime_mut().cancel_sidebar_activation();
             engine.request_render();
             return Ok(AppOutcome {
                 redraw: true,
@@ -387,7 +449,9 @@ impl AppState {
     }
 
     fn record_history_jump(&mut self, from: Option<HistoryPosition>, to: Option<HistoryPosition>) {
-        if let Some(to) = to {
+        if let Some(to) = to
+            && Some(to) != from
+        {
             self.history.record_jump(from, to);
         }
     }

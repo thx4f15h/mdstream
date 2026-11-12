@@ -1,0 +1,121 @@
+use mdstream::{
+    Budget, Document, HeadingId, HeadingSearch, HeadingSearchStep, LayoutError, WorkLimit,
+};
+
+fn parse(s: &str) -> Document {
+    let mut d = Document::new();
+    d.append(s).unwrap();
+    d.finish();
+    d
+}
+fn micro() -> WorkLimit {
+    WorkLimit {
+        queries: 1,
+        objects: 1,
+        bytes: 6,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn first_match_pages_equal_first_occurrence_oracle_with_micro_budget() {
+    let d = parse("# aaa\n\n## a&amp;b\n\n> # 汉字\n>\n> ## ![alt](img)\n\n# aaa\n");
+    for level in 0..=6 {
+        for query in ["aa", "&", "汉字", "alt", "missing"] {
+            let mut reference = HeadingSearch::new(&d, query, level).unwrap();
+            let mut all = Vec::new();
+            reference
+                .advance(&d, &mut Budget::new(WorkLimit::unlimited()), &mut all)
+                .unwrap();
+            all.dedup_by_key(|hit| hit.heading);
+            let mut search = HeadingSearch::new(&d, query, level).unwrap();
+            let mut actual = Vec::new();
+            for _ in 0..20000 {
+                let mut b = Budget::new(micro());
+                match search.next_match(&d, &mut b).unwrap() {
+                    HeadingSearchStep::Match(hit) => actual.push(hit),
+                    HeadingSearchStep::Complete => break,
+                    HeadingSearchStep::BudgetExhausted => {}
+                }
+                assert!(b.used().queries <= 1 && b.used().objects <= 1 && b.used().bytes <= 6);
+            }
+            assert_eq!(actual, all);
+            assert!(search.scratch_capacity_bytes() < 8192);
+        }
+    }
+}
+
+#[test]
+fn first_match_does_not_scan_million_overlapping_occurrences_or_read_body() {
+    let d = parse(&format!(
+        "# {}\n\n{}\n\n# aa\n",
+        "a".repeat(1_000_000),
+        "b".repeat(1_000_000)
+    ));
+    let mut search = HeadingSearch::new(&d, "aa", 6).unwrap();
+    let mut b = Budget::new(WorkLimit::unlimited());
+    assert!(
+        matches!(search.next_match(&d,&mut b).unwrap(),HeadingSearchStep::Match(hit) if hit.heading==HeadingId(0))
+    );
+    let mut second = Budget::new(WorkLimit::unlimited());
+    assert!(
+        matches!(search.next_match(&d,&mut second).unwrap(),HeadingSearchStep::Match(hit) if hit.heading==HeadingId(1))
+    );
+    assert!(b.used().bytes < 8192 && second.used().bytes < 64);
+    assert!(search.scratch_capacity_bytes() < 8192);
+}
+
+#[test]
+fn outline_parent_preserves_scope_and_chains_beyond_six_levels() {
+    let mut source = String::from("# Root\n\n");
+    for depth in 1..=1000 {
+        source.push_str(&format!("{} # H{depth}\n", ">".repeat(depth)));
+    }
+    let d = parse(&source);
+    assert_eq!(d.headings().entries().len(), 1001);
+    for i in 1..=1000 {
+        assert_eq!(d.headings().parent(HeadingId(i)), None);
+        assert_eq!(
+            d.headings().outline_parent(HeadingId(i)),
+            Some(HeadingId(i - 1))
+        );
+    }
+}
+
+#[test]
+fn stale_and_wrong_document_reject_before_output_or_budget() {
+    let mut d = Document::new();
+    d.append("# a\n").unwrap();
+    let mut search = HeadingSearch::new(&d, "a", 6).unwrap();
+    let other = parse("# a\n");
+    let mut b = Budget::new(micro());
+    assert_eq!(
+        search.next_match(&other, &mut b),
+        Err(LayoutError::WrongDocument)
+    );
+    assert_eq!(b.used(), WorkLimit::default());
+    d.append("\n").unwrap();
+    assert_eq!(
+        search.next_match(&d, &mut b),
+        Err(LayoutError::StaleContinuation)
+    );
+    assert_eq!(b.used(), WorkLimit::default());
+}
+
+#[test]
+fn from_heading_skips_preceding_giant_title_and_out_of_arena_is_complete() {
+    let d = parse(&format!("# {}\n\n# target\n", "x".repeat(1_000_000)));
+    let mut search = HeadingSearch::from_heading(&d, "target", 6, HeadingId(1)).unwrap();
+    let mut b = Budget::new(WorkLimit::unlimited());
+    assert!(
+        matches!(search.next_match(&d,&mut b).unwrap(),HeadingSearchStep::Match(hit) if hit.heading==HeadingId(1))
+    );
+    assert!(b.used().bytes < 64);
+    let mut search = HeadingSearch::from_heading(&d, "target", 6, HeadingId(2)).unwrap();
+    let mut zero = Budget::new(WorkLimit::default());
+    assert_eq!(
+        search.next_match(&d, &mut zero).unwrap(),
+        HeadingSearchStep::Complete
+    );
+    assert_eq!(zero.used(), WorkLimit::default());
+}

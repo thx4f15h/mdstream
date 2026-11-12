@@ -98,7 +98,7 @@ pub use footnotes::{
     MAX_FOOTNOTE_LABEL_BYTES,
 };
 pub use frame::{FoldLayoutSink, LayoutPass, LayoutSink};
-pub use heading_search::{HeadingMatch, HeadingSearch};
+pub use heading_search::{HeadingMatch, HeadingSearch, HeadingSearchStep};
 pub use headings::{Heading, HeadingIndex};
 pub use history::{Bookmark, HistoryDirection, HistoryNavigation, NavigationHistory};
 pub use layout::{

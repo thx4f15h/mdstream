@@ -89,6 +89,15 @@ impl DisplaySearch {
         self.revision
     }
 
+    /// Allocated pattern/failure/source-ring and annotation scratch bytes.
+    /// Excludes the fixed run buffer, resolver memo and allocator overhead.
+    pub fn scratch_capacity_bytes(&self) -> usize {
+        self.pattern.capacity()
+            + self.failure.capacity() * std::mem::size_of::<usize>()
+            + self.sources.capacity() * std::mem::size_of::<Span>()
+            + self.cursor.scratch_stats().capacity_bytes
+    }
+
     /// Source read so far. A bounded run may still await matching, so reaching
     /// the source end alone does not mean the search is complete.
     pub fn source_position(&self) -> usize {
@@ -152,6 +161,17 @@ impl DisplaySearch {
             emit(hit);
             true
         })
+    }
+
+    // Heading-name pages stop at one paid occurrence and then skip that title.
+    // Both public source/display search and heading search use advance_impl.
+    pub(crate) fn advance_until(
+        &mut self,
+        document: &Document,
+        budget: &mut Budget,
+        emit: impl FnMut(DisplayMatch) -> bool,
+    ) -> Result<Completion, LayoutError> {
+        self.advance_impl(document, None, budget, emit)
     }
 
     /// Return at most one overlapping match, borrowing the caller's shared
