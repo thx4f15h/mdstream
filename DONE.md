@@ -3069,3 +3069,16 @@ TUI WidthMeasure 保存真实 style_pair/深度，跨 tile 条件测量只恢复
 验证包含独立排序并集/随机操作与真实pass差分、七族/同tile/邻接交叉范围、源码cut、逐UTF-8前缀与EOF/迟确认、恢复/旧任务拒绝、512范围前沿及600层路径、基础高度数组模型和实际压缩容量/析构。64 MiB隐藏区仅4事件、13字节可见片段，任务272字节，高度树节点/容量/测量不变。原完整折叠终端UI保持未完成；本项不重复计入015选区/搜索或016目录交付。
 
 本桥接最终组合固定已提交基点 `11c1edacb78c384bba8735d7c202b1ca31760dfe`，完整保留其010记录与当前评分归属。新增两项独立小用例核对未定义/晚定义523的真实StylePair身份、同一resolver的付费退休/重绑定，以及old-label晚表头撤销后SourceFold overlay、段落范围收缩、单次ParagraphEnd、活跃math/footnote与真实LayoutPass；投影仍是原始源码几何，不冒充显示文本。原生3c7e6b0冻结与全门禁证据归档到 `017-prototypes/core-bridge/native-3c7e6b0/`，固定组合的冻结、命令和实际owner探针另存 `integration-11c1eda/`。终端折叠UI继续未完成，未触碰TUI生产路径。
+
+
+## 2026-11-13 删除线混合与容器规则验证交付
+
+固定 main 完整前缀为 `94fbdffd428453269c3196afe812ccc69676c2cc`；本轮只消费该已提交 base，不复制 012/018 活跃树、不派生、不 commit/push。原 DONE 全文逐字保留为前缀。当前正式删除线与混合/容器合同已由该 base 的实际 parser、010 条件样式/有序身份/一般表头撤销及 006/009 基础满足，本轮没有强行改生产 Rust，仅新增 15 项独立回归、两个 test support 文件及当前语义文档，勾选原“删除线更广泛混合与容器规则”且保留其它原待办。
+
+独立预期包括 1,216 个朴素 reverse-search/最终范围配对模型、1,526 个构造式树的原始 UTF-8/实体完整 replacement/StylePairId 路径，以及手写固定 source→HTML/pair/span witness。实际 DisplayCursor、StylePath、LinkActivity 和 LayoutPass 消费核对 raw 分配身份、Active/Unresolved/Suppressed、晚定义与旧任务拒绝、一般晚表头旧 scope finish 和撤销候选不交付。覆盖单/双与三连以上、侧界/Unicode/escape、强调/strong/code/失败 code/实体、链接/图片/引用及深容器、soft/hard LF/CRLF、partial tab、cell fresh scope、每 UTF-8 byte 切点/每 prefix/finish。追加自比较单独标为一致性，不充当独立 oracle。
+
+锁定外部 cmark-gfm **0.29.0.gfm.13**，实际核验版本/扩展，保留来源 COPYING、工具/源码 SHA、全部 1,520 输入及原始 HTML/XML、生成脚本和每例 SHA。可见标量/有序路径 1,402 相同、118 不同；108 份差异逐原始位置由独立 formal 模型核对 hidden/最内 pair/完整 path，另 10 份固定图片 full 未解析后缀 witness 的 Strike 原始标记和路径一致，差异属于原本其它 TODO 的字面显示。四个标点相邻反例另存精确官方 outer-Strike/Em/inner-Strike 与正式 close-first 配对，Raw RenderRun、DisplayRun、StylePath 和真实 LayoutPass 分别核对，未将森林遗漏误归方言。既存 README:3776 的 ASCII close-first 和等长 run 合同保持；没有为追求 cmark 数字新增语法目标。
+
+预算验收包含零预算、0q/0o/0b、1q/1o/6b 多帧显式 Complete、1024 层混合样式和条件 guard、路径取消和 memo 逐节点退休、4097 层缺失引用前缀及百万普通 tail。百万 literal tilde 只启动一个 run、不建立 pair；20,000 旧引用晚定义 inline/style/delimiter/guard 均无历史遍历，仅 17 个 annotation tree visits；百万普通 tail 只新增百万 inline byte，旧样式索引/guard/annotation/parser capacity 保持。实际 Work、memo 数量及公开 arena capacity 完整记录于仓外日志，不声称 BTree 私有分配、allocator 元数据或总堆峰值。解析累计 O(n log n)、空间 O(n)，条件 V 恢复额外 O(V log n)，共享 resolver 不逐 glyph 回扫，退休每个节点单独付费。
+
+验证采用“新增测试/文档”范围：冻结清单证明全部固定 main 生产、Cargo、520 个原 Rust 文件、官方夹具/生成器/黄金数组、hook/rustfmt 与根已验 660 输入逐字关联；原完整门禁 2625 debug / 2621 release / 81 doc 属固定 main 记录，本轮不冒称重跑全量。最终命令/退出与输入 SHA 见 `/tmp/mdtui3-codex-todo/019-prototypes/commands.json`、`frozen-inputs.json` 和 `input-relation.json`；本轮新增测试 debug/release、实际 GFM 删除线报告、独立来源核验、fmt 和生产/新测试 strict clippy 均在冻结后执行。核心零运行时依赖和 unsafe 禁用保持；已知旧 bare_autolinks bool lint 未改，不将其它待办转为完成。

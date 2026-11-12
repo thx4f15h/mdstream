@@ -3773,6 +3773,8 @@ CommonMark Link reference definitions 213 仍为刻意差异，剩余原因改�
 
 ## 精确单波浪号删除线（2026-11-10）
 
+本节保留单波浪号交付时的算法与限制记录；精确 run、ASCII 侧界和 close-first 仍是当前合同。代码失败重放、有序深度、实际标签作用域与完整 formal 混合/容器验收以文末[当前规则](#删除线混合与容器规则)为准，后续能力不能从本节的历史未完成列表判断。
+
 当前行内方言支持 `~strike~` 与 `~~strike~~`，二者都发布 `Style::STRIKE`。run 在下一个不同字节或序列 EOF 才定长；只配对同长度的完整 run，单/双不混配，三连及更长 run 不成为删除线定界符，也不部分消费。未闭合 opener 在原作用域终结时丢弃，保留字面显示，不回放正文。转义与既有 ASCII flanking 保持：后字节非 ASCII 空白可开、前字节非 ASCII 空白可闭，能闭合时优先闭合且同一 run 不重新开启；不声称 Unicode flanking。
 
 例如 `~a ~~b~~ c~` 和反向组合可配对，但公开位不区分删除线嵌套深度；`~a ~~b~ c~~` 在单 run 闭合时弹掉中间双 opener，余下 `~~` 字面。代码/数学候选内部继续不解析波浪号，未完成候选沿用原 opaque 失败规则；标签内部及外部已确认的配对保持；已发布标签的未配对 opener 现在在标签终点清退，见下方[标签终点](#已发布标签的未配对分隔符终点)，外入内跨界与目标/title 候选优先级沿用现有方言。连续正文仍以同一确切容器身份续接，不跨空行、实际块/容器切换或表格单元格。长表头继承的 close-only 快路仍暂存可隔离配对；其它交叉闭合由通用行 checkpoint 确认或撤销。
@@ -4110,3 +4112,23 @@ assert_eq!(kinds, [InlineStyleKind::Strike, InlineStyleKind::Strong]);
 阅读控件共享上述条件样式 resolver：显示复制和单命中搜索不重新解释 Markdown；晚定义及表头决议使旧命中失效，源码选区保持原始 Span，实体使用完整 replacement 来源。复制当前列的已准备投影时，对 owner 位于所选 tile 窗口外的表格行逐项付费发现，再按源码顺序与已发布行合并；不改变视口行高 owner，不复制行对象，也不把窗口拉长到巨大 row 包络。当前横移和 min/max 保持。组合验收覆盖 1q/1o/6b 的六项共享 Budget、真实选区/搜索/显示与原文 OSC52、条件 memo 逐节点退休、一般表头的旧 scope finish 和活跃脚注源码顺序。百万字 owner 间隔的 28 字节选区只支付 682 byte 单位，复制结果为当前两行裁剪列 `tin` / `oth`。
 
 目录的显示名称页与正文共享同一条件样式 resolver 和首命中匹配引擎；523 晚定义与父候选抑制改变真实名称，旧结果保持 stale，显式刷新后重建。微预算下，尚未付费发布替换页时不恢复旧 revision 摘要。深条件查询取消后逐节点退休；巨型标题取得首命中即跳过余文，独立有界摘要仍遵守源码限额。Body/Sidebar 草稿、原始选区、两种 OSC52 复制、目录激活与正文搜索暂停语义保持；真实 FIFO/PTY 覆盖目录晚定义刷新、q 输入和 Ctrl-C 终端恢复。
+
+
+## 删除线混合与容器规则
+
+本节说明固定正式方言内的当前行为，取代前述删除线历史交付中的混合、代码失败重放、深度与标签作用域限制。`~` 与 `~~` 只配对同长度的完整 maximal run，三连及以上保持字面；ASCII 空白阻止相应方向配对，标点和非 ASCII 空白不阻止删除线配对。能闭合时优先闭合、同一 run 不重新开启，闭合弹掉中间未配对 opener。强调/strong 仍使用自己的 Unicode flanking 和三倍数规则，不把删除线侧界套给强调。
+
+因此 `~a *~x~* z~` 的实际两组 Strike 为开 0..1 / 闭 4..5，以及开 6..7 / 闭 10..11，`x` 不带样式，两个星号保持字面。它与 cmark 的 outer Strike → Em → inner Strike 不同，原因是内层 `~` 前的星号允许按既有规则关闭外层 Strike。加入明确开启边界的 `~a *a ~a x z~ z* z~` 则具有三层有序路径。`Style::STRIKE` 是便利位，重复 Strike 和混合次序通过 `StylePairId` / `StylePath` 表达；相邻同位样式也保留不同 marker 身份。
+
+| 边界或混合 | 当前行为 |
+| --- | --- |
+| code / 实体 / escape | 闭合 code 不解析内部波浪号，失败 code 按既有单次释放重放；数学仍沿用独立 opaque 方言。实体产生的波浪号不成为 delimiter，多标量 replacement 保留整个原始来源；转义标点保留未转义字符的原始 UTF-8 区间 |
+| 链接 / 图片 / 引用候选 | 实际 Active label 隔离内外未闭合 delimiter，Unresolved 与 Suppressed label 透明；晚定义切换真实赋值，稳定对象 ID 不变。图片与孩子链接分别按已有活动规则求值，完整失败后缀/图片字面回退继续属于其它原 TODO |
+| 换行 / 容器 | 同一确切作用域的普通、显式与 lazy 正文共享软/硬 LF/CRLF 和配对；部分祖先与部分 tab 使用统一列模型。blank、兄弟、新叶块、子容器及真实退出结束旧 scope，返回同一个父 ID 不恢复旧 opener；Setext 保留既有迟确认语义 |
+| 表格 / 未完成输入 | cell 是独立 fresh scope；一般晚 pipe 成功时撤销本行效果，在旧物理行末 finish 旧 scope 后解析 cell；失败或 EOF 保留普通分支。撤销后的 raw 对象槽仍存在，实际活动与布局按 resolver 判断；未完成 run 等待后继或 finish，源码始终只追加 |
+
+生产算法复用已有固定类别 opener 头、分类事件与有序森林，没有新增解析器、依赖或状态树。每个 opener 入/出栈各一次，每组 pair 消耗新的 closer；单/双删除线各有固定类别。源接收、header journal 和一次失败 code 释放按实际新增/重放事件计费，累计 O(n log n)、空间 O(n)。无条件窗口顺序读边界；条件 scope 只恢复其预分类事件，额外 V 按 O(V log n) 和共享 query/object Budget 计费，不能宣称与条件事件无关的窗口成本。共用同一 LinkResolver 后不会逐 glyph 回扫 scope；StylePath 和 memo 取消/退休逐节点付费。
+
+`tests/strike_mixed.rs` 的 15 项验收包含 1,216 组独立朴素批处理配对、1,526 组构造式语法树的逐标量来源/完整有序身份，另有固定混合反例、标签活动矩阵、显式/lazy/tab/退出、晚表头撤销与真实 LayoutPass、UTF-8 任意 byte 切点及每 prefix/finish、零预算与 1q/1o/6b 显式 Complete、百万 long run、1024 层样式/条件 guard、4097 层缺失引用前缀、百万普通 tail 和 20,000 旧引用的真实 Work/capacity。分块自比较只验证追加一致性；独立预期来自手写 pair/span、构造树和有界批处理模型。
+
+外部固定 cmark-gfm 0.29.0.gfm.13（`--extension strikethrough`；表格另启用 `table`）保留了 1,520 份输入、HTML/XML 与来源哈希。1,402 份可见标量/有序路径相同；118 份差异中，108 份逐原始位置经独立 formal 配对/隐藏/path 模型核对，另 10 份是相同 Strike 配对而未解析图片 full 后缀显示不同的固定 witness。未把这些统计并入官方评分，也不在评分器重解析或补语义；原 GFM 491–493 输入、HTML、生成器、SHA 和三例 3/0/0 保持。参考工具仅用于仓外独立核验，不进入默认 Cargo 测试或 runtime。此交付补齐当前 formal 混合/容器合同的验证与文档，没有修改生产 Rust；完整标准兼容、其它失败回退、脚注正文和 UI 原待办继续保留。
