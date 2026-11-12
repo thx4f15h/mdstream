@@ -1,4 +1,7 @@
-use crate::{LinkId, LinkTarget, Reference, Span, Style};
+#[cfg(test)]
+use crate::Reference;
+use crate::references::Lookup;
+use crate::{LinkId, LinkTarget, Span, Style};
 use std::num::NonZeroUsize;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -25,7 +28,11 @@ impl Mark {
     pub(crate) fn alternative_owner(self) -> Option<LinkId> {
         self.hide_alternative.map(|id| LinkId(id.get() - 1))
     }
-    pub fn effective_style(self, references: &[Reference], links: &[LinkTarget]) -> Style {
+    pub fn effective_style<R: Lookup + ?Sized>(
+        self,
+        references: &R,
+        links: &[LinkTarget],
+    ) -> Style {
         if !self.style.contains(Style::HIDDEN)
             && self.hide_owner().is_some_and(|id| {
                 target_available(id, references, links, &mut VisibilityWork::default())
@@ -338,11 +345,11 @@ impl Annotations {
         self.next_visible_resolving(offset, end, &[], &[])
     }
 
-    pub fn next_visible_resolving(
+    pub fn next_visible_resolving<R: Lookup + ?Sized>(
         &self,
         offset: usize,
         end: usize,
-        references: &[Reference],
+        references: &R,
         links: &[LinkTarget],
     ) -> Option<usize> {
         self.visible_query(
@@ -353,11 +360,11 @@ impl Annotations {
         )
     }
 
-    fn visible_query(
+    fn visible_query<R: Lookup + ?Sized>(
         &self,
         offset: usize,
         end: usize,
-        targets: (&[Reference], &[LinkTarget]),
+        targets: (&R, &[LinkTarget]),
         work: &mut VisibilityWork,
     ) -> Option<usize> {
         if offset >= end {
@@ -376,12 +383,12 @@ impl Annotations {
         .or_else(|| (self.capacity < end).then_some(self.capacity))
     }
 
-    fn find_visible(
+    fn find_visible<R: Lookup + ?Sized>(
         &self,
         id: usize,
         span: Span,
         query: Span,
-        targets: (&[Reference], &[LinkTarget]),
+        targets: (&R, &[LinkTarget]),
         work: &mut VisibilityWork,
     ) -> Option<usize> {
         self.find_visible_by(id, span, query, work, &mut |mark, work| {
@@ -597,9 +604,9 @@ impl VisibilityWork {
 
 // Gate owners follow the object's current target, including same-ID upgrades.
 // Callers short-circuit permanent hiding before entering this predicate.
-fn target_available(
+fn target_available<R: Lookup + ?Sized>(
     id: LinkId,
-    references: &[Reference],
+    references: &R,
     links: &[LinkTarget],
     work: &mut VisibilityWork,
 ) -> bool {
@@ -608,7 +615,7 @@ fn target_available(
         LinkTarget::Direct(_) | LinkTarget::Email(_) | LinkTarget::Www(_) => true,
         LinkTarget::Reference(symbol) => {
             work.symbol();
-            references[symbol.0].destination.is_some()
+            references.resolved(symbol)
         }
     }
 }

@@ -190,7 +190,23 @@ fn boundaries_blanks_raw_mapping_and_first_definition() {
             text.push_str(chunk.text);
         }
         assert_eq!(Some(text.as_str()), doc.text(definition.content));
-        assert_eq!(doc.footnotes().len(), 1);
+        let labels = doc
+            .footnotes()
+            .iter()
+            .map(|n| n.label.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            labels,
+            if source.contains("[^x]") {
+                vec!["n", "x"]
+            } else {
+                vec!["n"]
+            }
+        );
+        if source.contains("[^x]") {
+            assert_eq!(doc.footnotes()[1].number, Some(1));
+            assert!(doc.footnotes()[1].definition.is_none());
+        }
         assert!(doc.footnote_references().is_empty());
     }
     // A long whitespace continuation is accepted from its bounded prefix.

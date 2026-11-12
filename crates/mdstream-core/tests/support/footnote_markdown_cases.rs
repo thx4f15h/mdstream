@@ -1,0 +1,23 @@
+// Authored expectations archived before implementation; not generated from core output.
+const CASES:&[Case]=&[
+Case{name:"inline",body:"plain *em* **strong** ~~gone~~ `a  b` &amp; \\* $x$",counts:&[("links",0),("maths",1),("headings",0),("tables",0)],visible:Some("plain em strong gone a  b & * x")},
+Case{name:"utf8",body:"*中🙂* &amp; \\_ ` z `",counts:&[("links",0),("maths",0)],visible:Some("中🙂 & _ z")},
+Case{name:"links_images",body:"[link](/u \"t\") ![alt](/img)",counts:&[("links",2),("images",1),("maths",0)],visible:Some("link alt")},
+Case{name:"block_mix",body:"# Head\n\n- item *em*\n- second\n\n> quote [l](/u)\n\nh|v\n-|-\na|b\n\n```rs\n*x* &amp;\n```\n\n$$\ny\n$$",counts:&[("headings",1),("tables",1),("code_blocks",1),("math_blocks",1),("links",1),("maths",0)],visible:None},
+Case{name:"setext",body:"Title\n===",counts:&[("headings",1),("tables",0),("links",0),("maths",0)],visible:None},
+Case{name:"indent_code",body:"    *raw* &amp;",counts:&[("code_blocks",1),("links",0),("maths",0)],visible:None},
+Case{name:"quote_list",body:"> *q*\n>\n> - [x] task\n> - item",counts:&[("links",0),("maths",0),("task_items",1)],visible:None},
+Case{name:"local_link_definition",body:"[L][r]\n\n[r]: /inside \"T\"",counts:&[("links",1),("definitions",1)],visible:None},
+Case{name:"duplicate_link_definition",body:"[x][r]\n\n[r]: /first\n[r]: /second",counts:&[("links",1),("definitions",2)],visible:None},
+Case{name:"late_external_definition",body:"[L][late]",counts:&[("links",1),("unresolved_links",1)],visible:None},
+Case{name:"undefined_footnote",body:"[^missing]",counts:&[("footnote_references",1),("footnotes",1)],visible:None},
+Case{name:"cross_footnote",body:"[^b] [^a] [^b]",counts:&[("footnote_references",3),("footnotes",2)],visible:None},
+Case{name:"opaque_code",body:"```\n[^x] $y$ [z](/u) &amp;\n```",counts:&[("links",0),("maths",0),("footnote_references",0),("code_blocks",1)],visible:None},
+Case{name:"opaque_math",body:"$[^x] &amp; [z](/u)$",counts:&[("links",0),("maths",1),("footnote_references",0)],visible:None},
+Case{name:"code_entity_mapping",body:"` a\n b ` &amp;",counts:&[("links",0),("maths",0)],visible:Some("a b &")},
+Case{name:"empty",body:"",counts:&[("links",0),("maths",0),("headings",0)],visible:Some("")},
+Case{name:"multi_paragraph",body:"first\n\nsecond",counts:&[("links",0),("maths",0),("paragraphs",2)],visible:None},
+Case{name:"thematic",body:"***",counts:&[("thematic_breaks",1),("links",0),("maths",0)],visible:None},
+Case{name:"math_blocks",body:"$$\nx_1 + &amp;\n$$",counts:&[("math_blocks",1),("maths",0),("links",0)],visible:None},
+Case{name:"failed_candidate",body:"[bad](unfinished",counts:&[("links",1),("unresolved_links",1)],visible:None},
+];

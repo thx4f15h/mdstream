@@ -607,7 +607,7 @@ impl LayoutPass {
                 let mut run = run;
                 run.style = run
                     .style
-                    .union(mark.effective_style(&document.references.entries, &document.links));
+                    .union(mark.effective_style(&document.references, &document.links));
                 self.cursor = run.source.end;
                 sink.text(run);
             }

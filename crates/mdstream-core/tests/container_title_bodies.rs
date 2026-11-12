@@ -1,3 +1,5 @@
+#[path = "support/footnote_markdown_legacy.rs"]
+mod body_legacy;
 #[path = "support/code_replay_changes.rs"]
 mod code_changes;
 #[path = "support/header_confirmation.rs"]
@@ -169,7 +171,10 @@ fn real_predecessor_controls_and_all_eof_work_use_exact_source_allowlists() {
                         control_change_model(d, source);
                     } else {
                         assert_eq!(
-                            corpus::hash(&format!("{:?}", support::snapshot(d))),
+                            corpus::hash(&format!(
+                                "{:?}",
+                                body_legacy::snapshot(d, support::snapshot(d))
+                            )),
                             original.0
                         );
                     }
@@ -184,7 +189,10 @@ fn real_predecessor_controls_and_all_eof_work_use_exact_source_allowlists() {
                 let expected = code_changes::pair(d.source(), expected);
                 assert_eq!(
                     (
-                        corpus::hash(&format!("{:?}", support::snapshot(d))),
+                        corpus::hash(&format!(
+                            "{:?}",
+                            body_legacy::snapshot(d, support::snapshot(d))
+                        )),
                         corpus::hash(&corpus::old_work(d.work()))
                     ),
                     expected,

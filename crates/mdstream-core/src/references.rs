@@ -47,68 +47,153 @@ pub(crate) fn normalize_label(label: &str, work: &mut Work) -> Option<String> {
 #[derive(Default)]
 pub(crate) struct References {
     pub(crate) shape: crate::DisplayShapeEffects,
+    pub(crate) journal: Option<Vec<Event>>,
+    pub(crate) positions: Vec<Option<usize>>,
     names: BTreeMap<String, SymbolId>,
     pub entries: Vec<Reference>,
     // Parallel to entries: O(1) lookup, retained only for winning definitions.
     pub title_gaps: Vec<Vec<Span>>,
+    pub(crate) title_spaces: Vec<Vec<(Span, u8)>>,
     pub revision: u64,
+    pub(crate) slots: Vec<std::sync::Arc<crate::symbol_context::Symbol>>,
+    pub(crate) bindings: Vec<Option<std::sync::Arc<crate::symbol_context::Symbol>>>,
+}
+
+#[derive(Debug)]
+pub(crate) enum Event {
+    Use(SymbolId, usize),
+    Definition {
+        symbol: SymbolId,
+        position: usize,
+        destination: Span,
+        title: Option<Span>,
+        gaps: Vec<Span>,
+    },
+    Title {
+        symbol: SymbolId,
+        position: usize,
+        title: Span,
+        gaps: Vec<Span>,
+    },
 }
 
 impl References {
     pub fn intern(&mut self, label: &str, work: &mut Work) -> Option<SymbolId> {
         let normalized = normalize_label(label, work)?;
-        if let Some(&id) = self.names.get(&normalized) {
-            return Some(id);
+        Some(self.intern_key(&normalized))
+    }
+    // The local producer already checked and normalized the original label.
+    pub(crate) fn intern_key(&mut self, normalized: &str) -> SymbolId {
+        if let Some(&id) = self.names.get(normalized) {
+            return id;
         }
         let id = SymbolId(self.entries.len());
-        self.names.insert(normalized.clone(), id);
+        self.names.insert(normalized.to_owned(), id);
         self.entries.push(Reference {
-            label: normalized,
+            label: normalized.to_owned(),
             destination: None,
             title: None,
             revision: 0,
             first_use: None,
         });
         self.title_gaps.push(Vec::new());
-        Some(id)
+        self.title_spaces.push(Vec::new());
+        self.slots.push(Default::default());
+        self.bindings.push(None);
+        self.positions.push(None);
+        id
     }
 
     pub fn define(
         &mut self,
         id: SymbolId,
+        position: usize,
         destination: Span,
         title: Option<Span>,
         gaps: Vec<Span>,
         revision: u64,
     ) -> bool {
+        if let Some(journal) = &mut self.journal {
+            journal.push(Event::Definition {
+                symbol: id,
+                position,
+                destination,
+                title,
+                gaps: gaps.clone(),
+            });
+        }
         let entry = &mut self.entries[id.0];
-        if entry.destination.is_some() {
+        if self.positions[id.0].is_some_and(|old| old <= position) {
             return false;
         }
+        self.positions[id.0] = Some(position);
         entry.destination = Some(destination);
         entry.title = title;
         self.title_gaps[id.0] = gaps;
+        self.title_spaces[id.0].clear();
         entry.revision += 1;
         self.revision = revision;
         self.shape.emit(crate::DisplayShapeEffectKind::Reference {
             id,
             generation: entry.revision,
         });
+        self.slots[id.0].publish(true, entry.revision);
         true
     }
 
     /// Only the winning definition may retain a continuation capability.
     pub fn define_title(&mut self, id: SymbolId, title: Span, gaps: Vec<Span>, revision: u64) {
+        if let Some(journal) = &mut self.journal {
+            journal.push(Event::Title {
+                symbol: id,
+                position: self.positions[id.0].unwrap(),
+                title,
+                gaps: gaps.clone(),
+            });
+        }
         let entry = &mut self.entries[id.0];
         debug_assert!(entry.destination.is_some() && entry.title.is_none());
         entry.title = Some(title);
         self.title_gaps[id.0] = gaps;
+        self.title_spaces[id.0].clear();
         entry.revision += 1;
         self.revision = revision;
         self.shape.emit(crate::DisplayShapeEffectKind::Reference {
             id,
             generation: entry.revision,
         });
+        self.slots[id.0].publish(true, entry.revision);
+    }
+    pub(crate) fn semantic_revision(&self, id: SymbolId) -> u64 {
+        self.bindings[id.0]
+            .as_ref()
+            .map_or(self.entries[id.0].revision, |s| s.revision())
+    }
+}
+
+pub(crate) trait Lookup {
+    fn resolved(&self, id: SymbolId) -> bool;
+}
+impl Lookup for References {
+    fn resolved(&self, id: SymbolId) -> bool {
+        self.bindings[id.0]
+            .as_ref()
+            .map_or(self.entries[id.0].destination.is_some(), |s| s.resolved())
+    }
+}
+impl Lookup for [Reference] {
+    fn resolved(&self, id: SymbolId) -> bool {
+        self[id.0].destination.is_some()
+    }
+}
+impl Lookup for Vec<Reference> {
+    fn resolved(&self, id: SymbolId) -> bool {
+        self.as_slice().resolved(id)
+    }
+}
+impl<const N: usize> Lookup for [Reference; N] {
+    fn resolved(&self, id: SymbolId) -> bool {
+        self.as_slice().resolved(id)
     }
 }
 

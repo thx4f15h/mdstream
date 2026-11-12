@@ -53,8 +53,31 @@ fn definitions_share_global_namespaces_with_first_definition_and_reference_order
     );
     assert_eq!(definition.state, SyntaxState::Sealed);
     assert_eq!(note(&doc, "unused").1.number, None);
-    assert_eq!(note(&doc, "N").1.number, Some(2));
-    assert_eq!(doc.footnotes().len(), 3);
+    assert_eq!(note(&doc, "opaque").1.number, Some(2));
+    assert!(note(&doc, "opaque").1.definition.is_none());
+    assert_eq!(note(&doc, "opaque").1.first_use, source.find("[^opaque]"));
+    let body = doc.footnote_body(n).unwrap();
+    let mut refs = body.footnote_references_in(body.range()).unwrap();
+    let (id, reference) = refs.advance(&mut unlimited()).unwrap().unwrap();
+    assert_eq!(id.body(), body.key());
+    assert_eq!(reference.symbol, note(&doc, "opaque").0);
+    let at = "**raw** &amp; $x$ ".len();
+    assert_eq!(
+        reference.source,
+        BodySpan {
+            body: body.key(),
+            span: Span::new(at, at + "[^opaque]".len())
+        }
+    );
+    assert!(refs.advance(&mut unlimited()).unwrap().is_none());
+    assert_eq!(note(&doc, "N").1.number, Some(3));
+    assert_eq!(
+        doc.footnotes()
+            .iter()
+            .map(|n| n.label.as_str())
+            .collect::<Vec<_>>(),
+        ["n", "opaque", "unused", "N"]
+    );
     assert!(doc.maths().is_empty());
     assert_eq!(doc.footnote_references().len(), 4);
     assert!(doc.footnote_references()[..3].iter().all(|r| r.symbol == n));
@@ -605,8 +628,15 @@ fn generated_definitions_match_independent_first_definition_and_physical_range_m
         assert_eq!(doc.text(r.destination.unwrap()), Some(url.as_str()));
         assert_eq!(doc.text(r.title.unwrap()), Some(title.as_str()));
     }
+    assert_eq!(doc.footnotes().len(), first_notes.len() + 1);
     for n in doc.footnotes() {
-        assert_eq!(n.definition.unwrap().content, first_notes[&n.label]);
+        if n.label == "opaque" {
+            assert_eq!(n.number, Some(2));
+            assert!(n.definition.is_none());
+            assert_eq!(n.first_use, source.find("[^opaque]"));
+        } else {
+            assert_eq!(n.definition.unwrap().content, first_notes[&n.label]);
+        }
     }
     assert!(doc.work().classified_bytes <= 2 * source.len() as u64);
     assert!(doc.work().container_bytes <= 4 * source.len() as u64);

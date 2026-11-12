@@ -1,3 +1,5 @@
+#[path = "support/footnote_markdown_legacy.rs"]
+mod body_legacy;
 #[path = "support/header_confirmation.rs"]
 mod header_oracle;
 use mdstream::*;
@@ -132,7 +134,7 @@ fn non_target_snapshots_match_real_prechange_baseline() {
             assert_eq!(displayed, "a\n");
         } else {
             assert_eq!(
-                format!("{:?}", support::snapshot(&doc)),
+                format!("{:?}", body_legacy::snapshot(&doc, support::snapshot(&doc))),
                 expected,
                 "{source:?}"
             );

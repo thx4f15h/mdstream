@@ -405,6 +405,8 @@ pub struct Update {
     pub changed_links: Range<usize>,
     pub rows_changed: Vec<RowChange>,
     pub changes: Vec<Change>,
+    /// Source-ordered hosted Markdown deltas; their spans belong to BodyKey.
+    pub body_updates: Vec<crate::BodyUpdate>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -535,6 +537,23 @@ impl Update {
         }
         if self.display_shape.enabled() != next.display_shape.enabled() {
             return Err(crate::LayoutError::OutOfOrderUpdate);
+        }
+        if let (Some(a), Some(b)) = (self.body_updates.last(), next.body_updates.first()) {
+            if a.body() == b.body() && !a.consecutive(b) {
+                return Err(crate::LayoutError::OutOfOrderUpdate);
+            }
+            if a.body().definition() > b.body().definition() {
+                return Err(crate::LayoutError::OutOfOrderUpdate);
+            }
+        }
+        for delta in next.body_updates.drain(..) {
+            if let Some(last) = self.body_updates.last_mut()
+                && last.body() == delta.body()
+            {
+                last.merge(delta)?;
+            } else {
+                self.body_updates.push(delta);
+            }
         }
         self.display_shape.merge(&mut next.display_shape);
         self.revision = next.revision;

@@ -50,14 +50,16 @@ pub struct CodeInfo<'a> {
     literal: bool,
     normalize_crlf: bool,
     gaps: &'a [Span],
+    spaces: &'a [(Span, u8)],
 }
 
 #[derive(Clone, Copy)]
 enum Probe {
     Start,
     Scanning(usize),
+    // text_len <= 8 fits the fixed decoded buffer and keeps the cursor <=96B.
     // text_len == 0 means a failed candidate: emit the literal '&'.
-    Ready { source_len: usize, text_len: usize },
+    Ready { source_len: usize, text_len: u8 },
 }
 
 impl<'a> CodeInfo<'a> {
@@ -71,6 +73,7 @@ impl<'a> CodeInfo<'a> {
             literal: false,
             normalize_crlf: false,
             gaps: &[],
+            spaces: &[],
         }
     }
 
@@ -79,6 +82,18 @@ impl<'a> CodeInfo<'a> {
             normalize_crlf: true,
             gaps,
             ..Self::new(source, remaining)
+        }
+    }
+
+    pub(crate) fn title_with_spaces(
+        source: &'a str,
+        remaining: Span,
+        gaps: &'a [Span],
+        spaces: &'a [(Span, u8)],
+    ) -> Self {
+        Self {
+            spaces,
+            ..Self::title(source, remaining, gaps)
         }
     }
 
@@ -138,6 +153,24 @@ impl<'a> CodeInfo<'a> {
         if available.queries == 0 || available.objects == 0 || available.bytes == 0 {
             return Err(Completion::BudgetExhausted);
         }
+        if let Some(&(source, columns)) = self.spaces.first()
+            && source.start == self.remaining.start
+        {
+            if !budget.charge(WorkLimit {
+                queries: 1,
+                objects: 1,
+                bytes: source.len().max(usize::from(columns)),
+                ..Default::default()
+            }) {
+                return Err(Completion::BudgetExhausted);
+            }
+            self.remaining.start = source.end;
+            self.spaces = &self.spaces[1..];
+            return Ok(Some(CodeInfoChunk {
+                source,
+                text: &"   "[..usize::from(columns)],
+            }));
+        }
         let text = &self.source[self.remaining.range()];
         if !self.literal && text.as_bytes()[0] == b'&' {
             if matches!(self.probe, Probe::Start) {
@@ -172,7 +205,7 @@ impl<'a> CodeInfo<'a> {
                         self.decoded[..decoded.len()].copy_from_slice(decoded.as_bytes());
                         Probe::Ready {
                             source_len: offset + 1,
-                            text_len: decoded.len(),
+                            text_len: decoded.len() as u8,
                         }
                     } else {
                         Probe::Ready {
@@ -200,7 +233,7 @@ impl<'a> CodeInfo<'a> {
                 if !budget.charge(WorkLimit {
                     queries: 1,
                     objects: 1,
-                    bytes: text_len,
+                    bytes: usize::from(text_len),
                     ..WorkLimit::default()
                 }) {
                     return Err(Completion::BudgetExhausted);
@@ -210,7 +243,7 @@ impl<'a> CodeInfo<'a> {
                 self.probe = Probe::Start;
                 return Ok(Some(CodeInfoChunk {
                     source,
-                    text: std::str::from_utf8(&self.decoded[..text_len]).unwrap(),
+                    text: std::str::from_utf8(&self.decoded[..usize::from(text_len)]).unwrap(),
                 }));
             }
         }

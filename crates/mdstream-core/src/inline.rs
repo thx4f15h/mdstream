@@ -174,6 +174,9 @@ impl Publishing<'_> {
             },
         };
         if let LinkTarget::Reference(symbol) = target {
+            if let Some(journal) = &mut self.references.journal {
+                journal.push(crate::references::Event::Use(symbol, info.source.start));
+            }
             let first = &mut self.references.entries[symbol.0].first_use;
             *first = Some(first.map_or(info.source.start, |old| old.min(info.source.start)));
         }
@@ -576,6 +579,10 @@ impl<'a> Effects<'a> {
     fn footnote(&mut self, start: usize, end: usize) {
         let label = &self.source[start + 2..end];
         if let Some(p) = &mut self.publishing {
+            if p.footnotes.literal_markers.contains(&start) {
+                self.work.footnote_steps += 1;
+                return;
+            }
             let symbol = p.footnotes.intern(label, self.work);
             let source = Span::new(start, end + 1);
             p.footnotes.reference(symbol, source, p.update, self.work);

@@ -2360,9 +2360,9 @@ assert_eq!(output, "中 + \\alpha\r\n🙂");
 
 支持 `[^label]` 与顶层或显式容器内的多行、多段 `[^label]: body` 定义。label 为 1..999 个 UTF-8 字节，由 `char::is_alphanumeric` 接受的 Unicode 标量、ASCII `_`、`-` 组成；区分大小写、不做 Unicode 规范化，不支持空白、转义、实体或其它标点。脚注与普通引用链接使用独立命名空间；`[^` 定义前缀保留给脚注，非法定义不会成为普通链接定义。这里只定义本库方言，不承诺其它 Markdown 脚注扩展的全部行为。
 
-定义起始行允许至多三个前导空格，冒号后可紧接正文，也可省略恰好一个 space/tab；其余空白原样保留。空正文有效。正文是不解析 Markdown、数学或嵌套脚注的原始源码包络；排除最后一个物理行的 LF/CRLF，保留内部换行、裸 CR、续行缩进和容器前缀。第一个合法定义生效，后续同标签定义连同续行一起隐藏，但不覆盖正文或改变该符号版本。顶层和容器内共用文档全局脚注符号；定义起始处围栏和缩进代码优先，定义可结束段落或表格。容器前缀和晚定义规则见[容器内定义](#容器内定义)。
+定义起始行允许至多三个前导空格，冒号后可紧接正文，也可省略恰好一个 space/tab；其余空白原样保留。空正文有效。`footnote_content` 仍读取原始源码包络；排除最后一个物理行的 LF/CRLF，保留内部换行、裸 CR、续行缩进和容器前缀。独立的 Markdown 正文结构见[正文索引](#脚注-markdown-正文索引)。第一个合法定义生效，后续同标签定义连同续行一起隐藏，但不覆盖正文或改变该符号版本。顶层和容器内共用文档全局脚注符号；定义起始处围栏和缩进代码优先，定义可结束段落或表格。容器前缀和晚定义规则见[容器内定义](#容器内定义)。
 
-续行先匹配定义的确切容器路径，不允许 lazy 省略或打开新容器；列表需先消费该 Item 原有的续行缩进。剩余正文的 space/tab 按物理行四列制表位计算，足够四列时延续定义，并仅去掉这四列，与起始行的缩进无关。容器路径及四列终点均可拆分 tab；终点余下的 1..3 列由 payload 映射为空格，原始内容仍保留 tab。已完成的纯 space/tab 空白行也可延续，不要求额外四格，但仍必须匹配容器路径；足够四列时去掉四列并映射末尾部分 tab，其余空白原样保留。空行直接归入定义，允许多段和连续空行，末尾空行也不撤销。正文中的 `#`、`>`、列表、表格、围栏和另一个 `[^label]:` 均为字面内容，不创建嵌套结构。遇到非续行、路径失配或兄弟条目时封口，然后只分类当前有界前缀；之前正文不回放。脚注内部空行不影响外层列表间距，末尾空行后出现同 Item 的其它子块或兄弟条目则确认 Loose；若同时关闭嵌套容器，尾部分隔沿用[嵌套末尾空行](#列表嵌套末尾空行)规则传递给实际恢复的祖先。
+续行先匹配定义的确切容器路径，不允许 lazy 省略或打开新容器；列表需先消费该 Item 原有的续行缩进。剩余正文的 space/tab 按物理行四列制表位计算，足够四列时延续定义，并仅去掉这四列，与起始行的缩进无关。容器路径及四列终点均可拆分 tab；终点余下的 1..3 列由 payload 映射为空格，原始内容仍保留 tab。已完成的纯 space/tab 空白行也可延续，不要求额外四格，但仍必须匹配容器路径；足够四列时去掉四列并映射末尾部分 tab，其余空白原样保留。空行直接归入定义，允许多段和连续空行，末尾空行也不撤销。原始内容及 payload 中的 `#`、`>`、列表、表格、围栏和另一个 `[^label]:` 保留原始拼写；正文索引另外解析 Markdown 结构。遇到非续行、路径失配或兄弟条目时封口，然后只分类当前有界前缀；之前正文不回放。脚注内部空行不影响外层列表间距，末尾空行后出现同 Item 的其它子块或兄弟条目则确认 Loose；若同时关闭嵌套容器，尾部分隔沿用[嵌套末尾空行](#列表嵌套末尾空行)规则传递给实际恢复的祖先。
 
 沿用 1 KiB 块分类前缀：短行在 LF/EOF 分类，长行到达前缀上限时确认定义或续行，后续正文单遍追加，无正文长度上限。定义标记、完整容器路径及续行必需的四格须在该窗口内；尚未完整的超长纯 tab 行不视为空行分隔符，但若已满足四列缩进则按正文续行流式消费。`FootnoteDefinition { block, content, state }` 与其唯一稳定叶块在 LF 后仍为 Growing，遇非续行边界或 EOF 才变为 Sealed。未分类的短行不加入正文包络；未到 LF 的 CR 暂属正文，后续 LF 到来时只调整尾端。引用在行内解析器读到 `]` 时确认，不等待定义、不转换成后续直接链接；未分类行仍暂时显示原文。`[^` 标签候选本身不跨物理行、块或单元格，失败、超限、EOF 未闭合时不回放已消费前缀，不分配符号或编号；拒绝字节继续按普通行内规则处理。
 
@@ -2412,7 +2412,59 @@ assert_eq!(body.advance(&mut budget).unwrap().unwrap().text, "原始 **正文**"
 
 解析器只保留一个 O(1) 行内候选及当前定义的末尾空行标记；有界 label 使用 BTreeMap 确定性 O(log S) 符号寻址，编号/定义/增长均只更新当前符号。每个成功定义的带前缀续行至多记录一个间隙，重复定义不留间隙，额外存储 O(S + R + G)；全库维持累计 O(n log n)、空间 O(n)，Vec 扩容仍为摊还保证。`Work.footnote_steps` 统计符号操作与定义增长/封口，`footnote_label_bytes` 统计实际 intern 的有界标签，正文与失败候选检查计入已有 input/classified/inline 字节计数。两万次旧引用后首行定义只做两次符号步骤，后续每次增长或封口各一次；千层容器中百万字续行后的逐字追加不回扫正文、祖先或历史引用。读取/存储、400 组范围模型、240 次流式折叠高度模型、UTF-8 分块、预算及缓存验收见 `crates/mdstream-core/tests/footnote_blocks.rs`、`crates/mdstream-core/tests/footnotes.rs`、`crates/mdstream-core/tests/chunking.rs`；`cargo run -p mdstream-core -r --example footnote_blocks` 演示多段映射读取与折叠保持，原 `footnotes` 示例继续演示晚定义。解析不承诺任意大 append/finish 的单次硬时延。
 
-通用显示与 LayoutPass 仍原样显示 `[^label]` 标记，并隐藏顶层及容器内定义；脚注编号上标、文末脚注区、定义正文 Markdown 排版、双向跳转/返回及对象回调仍待接入，读取核心不自动展开或排版脚注区。
+通用主文档显示与 LayoutPass 仍原样显示 `[^label]` 标记，并隐藏顶层及容器内定义。正文索引提供独立的核心布局和对象适配；脚注编号上标、文末脚注区、双向跳转/返回及实际 TUI 对象回调仍待接入，核心不自动展开脚注区。
+
+### 脚注 Markdown 正文索引
+
+`Document::footnote_body(FootnoteId)` 以 O(1) 返回首个获胜定义的 `BodyView`。正文在 append/finish 输入阶段同步送入现有 `Document` parser，真实建立段落、强调/strong/strike/代码、实体与转义、标题、引用/列表/任务、表格、代码块、链接/图片及数学对象。沿用当前 parser 的正式方言和分类边界；查询不会重新分词或隐式 finish。外层定义仍只接纳上述确切路径和四列续行，不新增外层 lazy 续行；投影内的容器与 lazy 规则复用普通 Markdown。
+
+每个获胜定义只有一份追加式去前缀投影。它与 `footnote_payload` 的正文文本一致，封口时省略最终 LF/CRLF；末尾 CR/LF 先用常数状态保留，后续续行到来才追加内部行尾，裸 CR 保留字面。外层前缀按原物理列去除，部分 tab 剩余列存为映射空格；投影中的 Markdown 从列零分类。原始 `Document::source`、主文档 blocks/容器/对象 arena 不改，重复输掉的定义不建立子 parser 或发布子符号。
+
+链接引用定义在整个宿主文档全局可见，没有每脚注局部定义表语义；主文档与各正文中真正确认的定义按原始物理 opener 位置首定义优先，包括局部 parser 判为重复的定义。正文定义可解析之前的主文档使用点，晚主文档定义也可解析已封口正文。每个正文只为实际使用的 key 绑定宿主固定事实，不克隆全局表，不因晚定义访问旧使用点或所有正文。脚注引用共享宿主 `FootnoteId` 和首次真实确认编号；正文内出现的引用也占全局号，编号不按查询顺序分配。正文局部封口不代表宿主 EOF，未定义引用要到宿主 finish 才从 Unresolved 变 Missing。跨脚注引用与循环只形成引用边，不递归展开。
+
+投影中合法的嵌套 `[^label]:` 只将确切 marker 保留字面，不递归创建脚注；冒号后的强调、链接、数学及后续普通块继续解析。普通 inline `[^ref]` 保持全局引用。主文档原 `FootnoteReferenceId` arena 仍只含主文档 occurrence；正文 occurrence 使用 `(BodyKey, local FootnoteReferenceId)`，`BodyFootnoteReference.symbol` 及付费 resolve 返回宿主 canonical 符号/编号。
+
+`BodyKey` 包含宿主 DocumentId、FootnoteId 和获胜定义 BlockId；`BodyId<I>`、`BodySpan`、`BodyRun` 以及 `BodyObject<T>` 均携带该命名空间。`BodyObject.value` 中的原生嵌套 span/ID 须通过其 `span`/`id` 限定后再查询，不能交给主文档接口。结构身份在追加中保持，临时候选使用原有 active/state 规则；错误宿主、错误正文和旧 revision continuation 均可检测。链接 inline 目标/title 位于投影，引用定义目标/title 位于宿主原文，`BodyAddress::Projected` / `Original` 显式区分。解码游标共享 Budget，并组合实体、转义、原前缀间隙与部分 tab 映射。
+
+`map` / `map_caret` 提供双向范围关系和显式 Left/Right 偏置，逐步返回 Raw、Hidden、VirtualTab 或尚未提交的 Pending 映射。每次二分比较和输出片段各付 query/object，不读取正文或祖先；展开 tab 的多个投影字节共同映射到原始一个字节。实体/代码 replacement 的原生来源先由正文显示接口给出，再经该关系转回原文。`source_cursor` 才按实际 bytes 读取投影，不能借映射接口免费读老段落。
+
+显示、链接窗口/activity、ordered style path/marker、活跃 math/footnote、目标/title/payload、显示搜索/摘要、依赖捕获与逐项 validation、真实 `BodyLayoutPass` 共用既有核心机器及调用方 Budget。零预算不求值，1 query / 1 object / 6 bytes（依赖/恢复/tiles 各一）的多帧任务可暂停前进；取消时唯一 resolver memo 逐节点付费退休。`BodyDependencyKey::validation` 可逐条恢复，原 `validate` 保留整组原子预算合同。原始固定元数据查 ID 与构造接口不扫描源码，仍由宿主按调用计费。
+
+普通流式消费使用 `BodyHeights::apply` 和 `BodyCheckpoints::apply` 处理宿主 `Update`；真实子 parser 的更新随 `Update.body_updates` 发布，可 merge。适配器检查宿主 revision 链及私有子 revision/source 链，再应用正文局部失效，保留稳定前缀的已测高度、ticket 和检查点。无关普通主文档追加不重建正文索引；全局引用变更可保守 O(log T) expire 正文区间，旧非零高度继续作估计。`refresh` 是显式 reset。启用宿主 display-shape effects 时，新正文在首字节前同步订阅；`BodyUpdate::facts` 提供带 BodyKey 的真实本地 Update（含原 effect 序列），其 span/ID/sequence/revision 均为局部，宿主全局 binding 通知另外消费，不能将局部 Update 直接套用主文档索引。
+
+```rust
+use mdstream::{BodyDisplayStep, BodyResolveStep, Budget, Document,
+    FootnoteId, FootnoteReferenceId, Style, WorkLimit};
+let mut doc = Document::new();
+doc.append("See [^n].\n\n[^n]: *em* [label][r] [^next]\noutside\n")?;
+doc.append("\n[r]: /late\n")?;
+let body = doc.footnote_body(FootnoteId(0)).unwrap();
+let mut cursor = body.display_cursor();
+let mut visible = String::new();
+loop {
+    let mut frame = Budget::new(WorkLimit {
+        queries: 1, objects: 1, bytes: 6, dependencies: 1, recovery: 1, tiles: 1,
+    });
+    match cursor.next(body, &mut frame)? {
+        BodyDisplayStep::Run(run) => {
+            assert_eq!(run.source.body, body.key());
+            if !run.style.contains(Style::HIDDEN) { visible.push_str(run.text); }
+        }
+        BodyDisplayStep::BudgetExhausted => continue,
+        BodyDisplayStep::Complete => break,
+    }
+}
+assert_eq!(visible, "em label [^next]");
+let id = body.qualify(FootnoteReferenceId(0));
+let mut frame = Budget::new(WorkLimit::unlimited());
+let BodyResolveStep::Resolved(Some(next)) = body.resolve_footnote(id, &mut frame)? else { panic!() };
+assert_eq!(next.number, 2); // 主文档先引用 n，正文再引用 next。
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+复杂度以宿主原始输入 N 计：获胜正文源片段只复制进投影一次，原始/投影总字节 O(N)；前缀间隙/虚拟 tab 的关系记录每物理片段 O(1)，相邻 raw 记录合并，不按 append 保存历史。原始地址转换只查关系端点 O(log N)，title 的间隙仅在该次定义发布时合成。每个子 parser 的累计输入/finish 成本沿用现有 O(n log n)，正文相互不重叠，求和 O(N log N)；本次有限符号 journal 在下一个外部行分类前排空，晚定义只改固定间接事实。总空间 O(N)，每个获胜脚注保留完整复用 parser，当前 x86_64 固定部分实测 11,792 bytes；20,000 个仅这部分为 235,840,000 bytes，另有投影及私有索引，未实现 compact parser。`BodyStorage` 只报告列出的实际 capacity，非总堆；`BodyWork.engine` 汇总真实子 parser Work，峰值字段为各 parser 实际峰值增量之和，不当作操作数。百万逐字追加保持四条关系记录，旧分类、发布/地址步骤及祖先访问不增加；两万历史引用晚定义和两万正文后追加的真实计数见 `footnote_markdown_scaling`。输入 append/finish 仍只有累计保证，单次旧候选失败恢复可以很大，全部计入输入，不冒充小预算查询。
+
+`footnote_markdown`、`footnote_markdown_model`、`footnote_markdown_scaling` 和 `footnote_markdown_updates` 覆盖手写语义与源码预期、LF/CRLF/EOF、UTF-8 每切点/逐前缀、块/对象组合、全局晚定义/循环/重复赢家、真实微预算消费和增量布局。240 个容器/行尾组合来自事先固定的 20 个手写正文 oracle；流式自比较另列为一致性。原官方夹具、HTML、生成器、SHA 及旧黄金数组不改。核心结构和正文布局适配已经提供，脚注区、上标、双向跳转与实际 TUI 回调继续由 TODO 跟踪。
 
 ## 明确支持的 Markdown 方言
 
@@ -2490,6 +2542,7 @@ assert_eq!(text, "first\nsecond\n");
 | `src/inline.rs` | 单遍分隔符、代码和链接状态机 |
 | `src/math.rs` | 行内/独立块数学的共享预算原文/去前缀读取、行内元数据与窗口索引 |
 | `src/footnotes.rs` | 脚注符号/引用、稳定编号、晚定义与预算查询/原文读取 |
+| `src/footnote_body.rs` / `src/footnote_body_query.rs` / `src/footnote_body_update.rs` | 真实正文 Markdown、宿主符号绑定、双向映射及有预算显示/布局/增量适配 |
 | `src/destination.rs` | 链接/定义共享的有界目标及 title 状态机 |
 | `src/display.rs` / `src/entity.rs` | 显示片段、替代文本源码映射、预算游标及字符引用解码 |
 | `src/excerpt.rs` | 限制源码/输出字节和逻辑行数的有预算显示摘要 |

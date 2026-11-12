@@ -41,8 +41,17 @@ impl Document {
             crate::LinkTarget::Direct(_) => &self.direct_title_gaps[id.0][..],
             crate::LinkTarget::Email(_) | crate::LinkTarget::Www(_) => &[],
         };
+        let spaces = match self.links.get(id.0)? {
+            crate::LinkTarget::Reference(symbol) => &self.references.title_spaces[symbol.0][..],
+            _ => &[],
+        };
         Some(LinkTitle {
-            inner: CodeInfo::title(self.source(), self.link_title_span(id)?, gaps),
+            inner: CodeInfo::title_with_spaces(
+                self.source(),
+                self.link_title_span(id)?,
+                gaps,
+                spaces,
+            ),
         })
     }
 }

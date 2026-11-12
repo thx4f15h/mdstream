@@ -79,7 +79,13 @@ type ReferenceCheckpoint = (
 #[derive(Default)]
 pub(crate) struct Footnotes {
     pub(crate) shape: crate::DisplayShapeEffects,
+    pub(crate) journal: Option<Vec<Event>>,
+    pub(crate) body_indices: Vec<Option<usize>>,
+    pub(crate) slots: Vec<std::sync::Arc<crate::symbol_context::Symbol>>,
+    pub(crate) bindings: Vec<Option<std::sync::Arc<crate::symbol_context::Symbol>>>,
     names: BTreeMap<String, FootnoteId>,
+    pub(crate) first_reference: Option<usize>,
+    pub(crate) literal_markers: std::collections::BTreeSet<usize>,
     pub entries: Vec<Footnote>,
     pub references: Vec<FootnoteReference>,
     active: Vec<bool>,
@@ -104,7 +110,29 @@ struct FootnoteGap {
     spaces: u8,
 }
 
+pub(crate) enum Event {
+    Begin,
+    Commit,
+    Rollback,
+    Reference(FootnoteId, Span),
+}
+
 impl Footnotes {
+    pub(crate) fn semantic_revision(&self, id: FootnoteId) -> u64 {
+        self.bindings[id.0]
+            .as_ref()
+            .map_or(self.entries[id.0].revision, |s| s.revision())
+    }
+    pub(crate) fn defined(&self, id: FootnoteId) -> bool {
+        self.bindings[id.0]
+            .as_ref()
+            .map_or(self.entries[id.0].definition.is_some(), |s| s.resolved())
+    }
+    fn publish(&self, id: FootnoteId) {
+        let entry = &self.entries[id.0];
+        self.slots[id.0].publish(entry.definition.is_some(), entry.revision);
+    }
+
     pub(crate) fn confirmation_peak(&self) -> usize {
         self.undo_peak
             .max(self.checkpoint.as_ref().map_or(0, |c| c.2.len()))
@@ -116,6 +144,9 @@ impl Footnotes {
             crate::DisplayShapeDomain::FootnoteReferences,
         ));
         assert!(self.checkpoint.is_none());
+        if let Some(journal) = &mut self.journal {
+            journal.push(Event::Begin);
+        }
         self.reuse.clear();
         self.checkpoint = Some((self.references.len(), self.numbered, BTreeMap::new()));
     }
@@ -128,6 +159,9 @@ impl Footnotes {
         let Some((base, _, saved)) = self.checkpoint.take() else {
             return 0;
         };
+        if let Some(journal) = &mut self.journal {
+            journal.push(Event::Commit);
+        }
         self.undo_peak = self.undo_peak.max(saved.len());
         for id in base..self.references.len() {
             if self.active[id] {
@@ -147,6 +181,9 @@ impl Footnotes {
             crate::DisplayShapeDomain::FootnoteReferences,
         ));
         let (base, numbered, saved) = self.checkpoint.take().unwrap();
+        if let Some(journal) = &mut self.journal {
+            journal.push(Event::Rollback);
+        }
         self.undo_peak = self.undo_peak.max(saved.len());
         let count = self.references.len() - base + saved.len();
         for i in base..self.references.len() {
@@ -162,11 +199,17 @@ impl Footnotes {
         }
         for (id, (number, first_use, revision)) in saved {
             let entry = &mut self.entries[id.0];
+            // A hosted definition may grow while its body's line is pending.
+            // Undo only this line's numbering effect, preserving that growth.
+            if number.is_none() && entry.number.is_some() {
+                entry.revision -= 1;
+            }
+            debug_assert!(entry.revision >= revision);
             entry.number = number;
             entry.first_use = first_use;
-            entry.revision = revision;
             self.shape
                 .emit(crate::DisplayShapeEffectKind::Footnote { id });
+            self.publish(id);
             update.footnotes_changed.push(id);
         }
         self.reuse_peak = self.reuse_peak.max(self.reuse.len());
@@ -226,6 +269,9 @@ impl Footnotes {
         }
         let id = FootnoteId(self.entries.len());
         self.names.insert(label.to_owned(), id);
+        self.body_indices.push(None);
+        self.slots.push(Default::default());
+        self.bindings.push(None);
         self.entries.push(Footnote {
             label: label.to_owned(),
             number: None,
@@ -244,22 +290,10 @@ impl Footnotes {
         work: &mut Work,
     ) {
         work.footnote_steps += 1;
-        let entry = &mut self.entries[symbol.0];
-        if let Some((_, _, saved)) = &mut self.checkpoint {
-            saved
-                .entry(symbol)
-                .or_insert((entry.number, entry.first_use, entry.revision));
+        if let Some(journal) = &mut self.journal {
+            journal.push(Event::Reference(symbol, source));
         }
-        if entry.number.is_none() {
-            self.numbered += 1;
-            entry.number = Some(self.numbered);
-            entry.first_use = Some(source.start);
-            entry.revision += 1;
-            self.revision = update.revision;
-            self.shape
-                .emit(crate::DisplayShapeEffectKind::Footnote { id: symbol });
-            update.footnotes_changed.push(symbol);
-        }
+        self.reference_symbol(symbol, source, update);
         let id = if let Some(id) = self.reuse.remove(&(source.start, source.end, symbol)) {
             id
         } else {
@@ -282,6 +316,35 @@ impl Footnotes {
                 reference: self.references[id.0],
                 state: Some(self.states[id.0]),
             });
+    }
+
+    pub(crate) fn reference_symbol(
+        &mut self,
+        symbol: FootnoteId,
+        source: Span,
+        update: &mut Update,
+    ) {
+        self.first_reference = Some(
+            self.first_reference
+                .map_or(source.start, |old| old.min(source.start)),
+        );
+        let entry = &mut self.entries[symbol.0];
+        if let Some((_, _, saved)) = &mut self.checkpoint {
+            saved
+                .entry(symbol)
+                .or_insert((entry.number, entry.first_use, entry.revision));
+        }
+        if entry.number.is_none() {
+            self.numbered += 1;
+            entry.number = Some(self.numbered);
+            entry.first_use = Some(source.start);
+            entry.revision += 1;
+            self.revision = update.revision;
+            self.shape
+                .emit(crate::DisplayShapeEffectKind::Footnote { id: symbol });
+            update.footnotes_changed.push(symbol);
+        }
+        self.publish(symbol);
     }
 
     pub fn define(
@@ -348,8 +411,10 @@ impl Footnotes {
         self.revision = update.revision;
         self.shape
             .emit(crate::DisplayShapeEffectKind::Footnote { id: symbol });
+        let first_use = entry.first_use;
+        self.publish(symbol);
         update.footnotes_changed.push(symbol);
-        if let Some(start) = entry.first_use {
+        if let Some(start) = first_use {
             // Conservative propagation for object renderers; no occurrence scan.
             update.change(Span::new(start, source_end), ChangeKind::Structure);
         }
@@ -401,6 +466,7 @@ impl Document {
             return false;
         };
         self.footnotes.trailing_blank = blank;
+        self.prefix_body(symbol, id, span.start, payload, spaces, update);
         if payload > span.start && self.footnotes.entries[symbol.0].definition.unwrap().block == id
         {
             self.footnotes.gaps.push(FootnoteGap {

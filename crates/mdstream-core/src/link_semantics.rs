@@ -188,7 +188,7 @@ pub(crate) fn available(document: &Document, id: LinkId) -> bool {
     match document.links[id.0] {
         LinkTarget::Direct(_) | LinkTarget::Email(_) | LinkTarget::Www(_) => true,
         LinkTarget::Reference(symbol) => {
-            document.references.entries[symbol.0].destination.is_some()
+            crate::references::Lookup::resolved(&document.references, symbol)
         }
     }
 }
@@ -268,7 +268,7 @@ impl Evaluation {
                     if let (Some(symbol), Some(dependencies)) =
                         (symbol, &mut resolution.dependencies)
                     {
-                        dependencies.push((symbol, document.references.entries[symbol.0].revision));
+                        dependencies.push((symbol, document.references.semantic_revision(symbol)));
                     }
                     resolution.values.insert(id, available(document, link));
                 }
@@ -417,7 +417,7 @@ impl LinkActivity {
         }
         resolution.work.target_reads += 1;
         if let (Some(symbol), Some(dependencies)) = (symbol, &mut resolution.dependencies) {
-            dependencies.push((symbol, document.references.entries[symbol.0].revision));
+            dependencies.push((symbol, document.references.semantic_revision(symbol)));
         }
         let result = if available(document, self.id) {
             LinkDisposition::Active
@@ -634,7 +634,7 @@ impl Resolution {
             }
             mark.link = owner;
         } else {
-            mark.style = mark.effective_style(&doc.references.entries, &doc.links);
+            mark.style = mark.effective_style(&doc.references, &doc.links);
         }
         mark
     }

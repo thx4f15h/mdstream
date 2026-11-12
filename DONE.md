@@ -3094,3 +3094,18 @@ TUI WidthMeasure 保存真实 style_pair/深度，跨 tile 条件测量只恢复
 全部实际编译输入（包括 README）及官方输入/HTML/生成器/SHA/golden、TUI 输入/ANSI、hook/rustfmt 的基线核对、完整冻结验证命令与结果记录于 `/tmp/mdtui3-codex-todo/018-prototypes/phase3-core/`；旧 phase1/phase2 原型及归档保留。原有 `bare_autolinks.rs` bool assertion 的 all-target strict-clippy 基线问题单独记录，不改旧测试。
 
 交付仅为核心桥接。TUI 生产源码不改，完整 giant UI 未完成；后续消费者仍需迁移 GCB/width 输入索引、payload/source refs、Cell/Screen/diff、逐帧 wire 事务、选择复制搜索、表格/End 与 fold fragment 恢复。完整超长字素 TODO 保持未勾选。
+
+
+## 2026-11-13 脚注 Markdown 正文核心交付
+
+固定整合基点 `b3c8a26b3d1f4dda0fc423ef7269d6298bff29b5`，完整保留原 DONE 前缀与 010/017/019/018 交付。获胜脚注定义在输入阶段同步复用真实 Document parser，建立段落/样式/实体/转义/代码、标题/引用/列表/任务/表格/代码块、链接/图片及数学结构；查询不重分词。原始 source/raw payload 及主文档 arenas 保持，单份追加投影组合前缀、partial tab、内部行尾和最终 CR/LF，提供付费双向范围及 caret bias 映射。嵌套定义只保留精确 marker 字面，其后普通 Markdown 继续；重复输掉的外层定义无子符号副作用。
+
+正文与主文档共享 canonical 全局链接/脚注符号和首次确认编号，链接定义以原物理 opener 先后决定赢家，有限真实事件先发布再 local first-win。每正文只绑定实际用到的固定 Arc 事实，不克隆全局表、不为晚定义遍历旧 uses/正文。循环引用仅为边。BodyKey 绑定宿主、脚注和获胜 BlockId，局部对象/Span/StylePair 与主 arena 明确分开；inline 目标/title 为投影地址，全局定义目标/title 为原文地址。局部 body seal 与宿主 EOF 分离。
+
+BodyView 的显示、窗口/activity、ordered style/marker、活跃 math/footnote、payload/目标/title、搜索/摘要、依赖捕获与逐项 validation、真实 LayoutPass 适配共用核心 Budget/resolver，0/1q/1o/6b 停步/恢复及唯一 memo 逐节点退休有实际验收。真实子 Update 随宿主 Update 发布并 merge；BodyHeights/BodyCheckpoints 校验两级 revision/source 链，保留稳定前缀的 99 行测量/ticket/checkpoint，无关普通外部追加不 rebuild。全局变更惰性区间 expire 保留非零估计。018 shape 订阅在新正文首字节前继承，实际 effects 携 BodyKey，宿主 binding 通知仍独立消费。
+
+四组正文测试覆盖固定手写语义 oracle 与 240 个容器/行尾组合、UTF-8 每切点/逐前缀、全局晚定义/循环/重复、一般表头撤销与代码失败/active ID 顺序、原文和投影映射、真实布局/搜索/依赖/旧任务及增量合并。百万逐字追加不增加旧分类/符号发布/地址或祖先访问，仅四条映射；两万旧引用晚定义实际 Work 与原 arena 不变，两万已封口正文后追加无正文访问。当前完整复用 parser 固定部分 11,792 bytes，20k 个为 235,840,000 bytes（不含动态私有索引）；capacity、Work、输入失败恢复和查询账目明确分开，不宣称总堆或 append/finish 的单次硬时延。累计 O(N log N)、空间 O(N)。
+
+完整编译输入（README 在内）、基点关联、命令/退出/计数与冻结后 debug/release/doc/docbuild/fmt/strict-clippy 证据位于 `/tmp/mdtui3-codex-todo/012-prototypes/implementation/`；模型原包保留在 `model-before-implementation/`。官方输入/HTML/生成器/SHA、旧黄金数组、TUI fixtures/ANSI、Cargo/hook/rustfmt 不改；原 bare_autolinks bool lint 单列。核心零运行时依赖/unsafe 禁用保持。此项为待根审查的核心交付，未自行 commit/push；父 TODO94 和 TUI 上标、脚注区、双向跳转及实际对象回调继续未完成。
+
+首次完整 debug 冻结发现并修复 title 映射使原读取游标超出 96 字节上限的问题；原大小/工作量断言保留。旧脚注正文引用现在真实发布 opaque/x/a 等全局符号，按确切源码和独立编号/原始位置模型调整旧 scalar 预期。三个历史输入的 24 个确切 EOF 前缀在小 helper 中先核验新增 unresolved a 记录及带宿主命名空间的正文对象，再与未修改的旧黄金数组比较所有其余字段与 Work；不重生成黄金数据。首次失败冻结和后续 99 项专项通过日志保留，最终全量以重新冻结结果为准。

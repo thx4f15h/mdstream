@@ -58,14 +58,14 @@ impl DependencyKey {
             if key.source != self.key.source
                 || key.syntax_revision != self.key.syntax_revision
                 || self.footnotes.iter().any(|(id, version)| {
-                    let note = document.footnote(*id).unwrap();
-                    note.revision != *version
-                        || (note.definition.is_none() && self.finished != document.is_finished())
+                    document.footnotes.semantic_revision(*id) != *version
+                        || (!document.footnotes.defined(*id)
+                            && self.finished != document.is_finished())
                 })
                 || self
                     .symbols
                     .iter()
-                    .any(|(id, version)| document.references()[id.0].revision != *version)
+                    .any(|(id, version)| document.references.semantic_revision(*id) != *version)
             {
                 CacheValidity::Changed
             } else {
@@ -219,7 +219,7 @@ impl DependencyCapture {
                                 .dependencies
                                 .as_mut()
                                 .unwrap()
-                                .push((symbol, document.references()[symbol.0].revision));
+                                .push((symbol, document.references.semantic_revision(symbol)));
                         }
                         if self.phase == 1 && document.link_order.nested(id) {
                             let label = document.link_info(id).unwrap().label;
@@ -295,7 +295,7 @@ impl DependencyCapture {
                     let reference = &entries[self.foot_at];
                     self.footnotes.push((
                         reference.symbol,
-                        document.footnote(reference.symbol).unwrap().revision,
+                        document.footnotes.semantic_revision(reference.symbol),
                     ));
                     self.foot_at =
                         document.footnotes.next[self.foot_at].map_or(usize::MAX, |id| id.0);
@@ -450,6 +450,92 @@ mod reference_boundary_tests {
                 key.validate(&doc, &mut Budget::new(WorkLimit::unlimited())),
                 Ok(CacheValidity::Changed)
             );
+        }
+    }
+}
+
+/// Resumable validation of an existing direct dependency key. Each symbol or
+/// footnote fact is inspected in its own paid step; a small frame need not fit
+/// the entire dependency list. The original atomic validate remains available.
+pub struct DependencyValidation<'a> {
+    key: &'a DependencyKey,
+    revision: Option<u64>,
+    phase: u8,
+    index: usize,
+    result: Option<CacheValidity>,
+}
+impl DependencyKey {
+    pub fn validation(&self) -> DependencyValidation<'_> {
+        DependencyValidation {
+            key: self,
+            revision: None,
+            phase: 0,
+            index: 0,
+            result: None,
+        }
+    }
+}
+impl DependencyValidation<'_> {
+    pub fn advance(
+        &mut self,
+        document: &Document,
+        budget: &mut Budget,
+    ) -> Result<CacheValidity, LayoutError> {
+        if self.key.key.document != document.id() {
+            return Err(LayoutError::WrongDocument);
+        }
+        if self
+            .revision
+            .is_some_and(|revision| revision != document.revision())
+        {
+            return Err(LayoutError::StaleContinuation);
+        }
+        if let Some(result) = self.result {
+            return Ok(result);
+        }
+        loop {
+            if self.phase == 1 && self.index == self.key.symbols.len() {
+                self.phase = 2;
+                self.index = 0;
+            }
+            if self.phase == 2 && self.index == self.key.footnotes.len() {
+                self.result = Some(CacheValidity::Valid);
+                return Ok(CacheValidity::Valid);
+            }
+            if !budget.charge(WorkLimit {
+                queries: 1,
+                objects: 1,
+                dependencies: usize::from(self.phase != 0),
+                ..Default::default()
+            }) {
+                return Ok(CacheValidity::BudgetExhausted);
+            }
+            let changed = match self.phase {
+                0 => {
+                    self.revision = Some(document.revision());
+                    self.phase = 1;
+                    document.tile_key(self.key.tile).is_none_or(|key| {
+                        key.source != self.key.key.source
+                            || key.syntax_revision != self.key.key.syntax_revision
+                    })
+                }
+                1 => {
+                    let (id, version) = self.key.symbols[self.index];
+                    self.index += 1;
+                    document.references.semantic_revision(id) != version
+                }
+                _ => {
+                    let (id, version) = self.key.footnotes[self.index];
+                    self.index += 1;
+                    document.footnotes.semantic_revision(id) != version
+                        || (!document.footnotes.defined(id)
+                            && self.key.finished != document.is_finished())
+                }
+            };
+            if changed {
+                self.result = Some(CacheValidity::Changed);
+                return Ok(CacheValidity::Changed);
+            }
         }
     }
 }

@@ -38,7 +38,9 @@ mod fold_navigation;
 mod fold_projection;
 mod fold_ranges;
 mod folding;
+mod footnote_body;
 mod footnotes;
+pub use footnote_body::*;
 mod frame;
 mod header_effects;
 pub use header_effects::ConfirmationStats;
@@ -67,6 +69,7 @@ mod search;
 mod source_fold_restore;
 mod source_folds;
 mod structural_prefix;
+mod symbol_context;
 mod table;
 mod table_preview;
 mod utf8;
@@ -80,7 +83,8 @@ pub use autolink::MAX_AUTOLINK_BYTES;
 pub use block::{BLOCK_LOOKAHEAD, MAX_FENCE_LENGTH};
 pub use budget::{Budget, Completion, WorkLimit};
 pub use cache::{
-    CacheValidity, DependencyCapture, DependencyCaptureStep, DependencyKey, SourceSnapshot,
+    CacheValidity, DependencyCapture, DependencyCaptureStep, DependencyKey, DependencyValidation,
+    SourceSnapshot,
 };
 pub use checkpoints::{
     CheckpointCompaction, CheckpointCompactionStats, CheckpointIndex, CheckpointToken,
@@ -274,6 +278,8 @@ struct StreamingPrefix {
 pub struct Document {
     shape: DisplayShapeEffects,
     id: DocumentId,
+    clock: std::sync::Arc<symbol_context::Clock>,
+    host_clock: Option<std::sync::Arc<symbol_context::Clock>>,
     source: String,
     tiles: Vec<Span>,
     blocks: Vec<Block>,
@@ -309,6 +315,7 @@ pub struct Document {
     table_row: Option<table::RowParser>,
     references: References,
     footnotes: footnotes::Footnotes,
+    bodies: footnote_body::Bodies,
     annotations: Annotations,
     inline_styles: inline_styles::Styles,
     display: display::DisplayIndex,
@@ -465,10 +472,14 @@ impl Document {
         }
     }
     pub fn is_finished(&self) -> bool {
-        self.finished
+        self.host_clock.as_ref().map_or(self.finished, |clock| {
+            clock.finished.load(std::sync::atomic::Ordering::Relaxed)
+        })
     }
     pub fn revision(&self) -> u64 {
-        self.revision
+        self.host_clock.as_ref().map_or(self.revision, |clock| {
+            clock.revision.load(std::sync::atomic::Ordering::Relaxed)
+        })
     }
     pub fn work(&self) -> Work {
         let inline = self.inline.undo_stats();
@@ -646,12 +657,9 @@ impl Document {
             .lower_bound(offset, &mut 0)
             .map(|id| self.link_info[id.0].source.start);
         let end = object.unwrap_or(self.source.len());
-        let text = self.annotations.next_visible_resolving(
-            offset,
-            end,
-            &self.references.entries,
-            &self.links,
-        );
+        let text =
+            self.annotations
+                .next_visible_resolving(offset, end, &self.references, &self.links);
         text.into_iter().chain(object).chain(conditional).min()
     }
 
@@ -789,6 +797,9 @@ impl Document {
             return Ok(());
         }
         self.revision += 1;
+        self.clock
+            .revision
+            .store(self.revision, std::sync::atomic::Ordering::Relaxed);
         update.revision = self.revision;
         self.source.push_str(text);
         self.shape
@@ -973,6 +984,9 @@ impl Document {
             return;
         }
         self.revision += 1;
+        self.clock
+            .revision
+            .store(self.revision, std::sync::atomic::Ordering::Relaxed);
         update.revision = self.revision;
         if self.structural_prefix.take().is_some() {
             self.work.structural_prefix_steps += 1;
@@ -1012,12 +1026,12 @@ impl Document {
         self.fence = None;
         self.finished = true;
         self.shape.emit(DisplayShapeEffectKind::Finish);
-        if let Some(first) = self.footnotes.references.first() {
+        self.clock
+            .finished
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(first) = self.footnotes.first_reference {
             self.footnotes.revision = self.revision;
-            update.change(
-                Span::new(first.source.start, self.source.len()),
-                ChangeKind::Structure,
-            );
+            update.change(Span::new(first, self.source.len()), ChangeKind::Structure);
         }
         self.complete_update(update);
     }
@@ -1025,6 +1039,8 @@ impl Document {
     fn begin_update(&self, start: usize, update: &mut Update) {
         let mut display_shape = std::mem::take(&mut update.display_shape);
         display_shape.reset_update(&self.shape);
+        let mut body_updates = std::mem::take(&mut update.body_updates);
+        body_updates.clear();
         let mut dirty = std::mem::take(&mut update.dirty);
         let mut footnotes_changed = std::mem::take(&mut update.footnotes_changed);
         let mut references_changed = std::mem::take(&mut update.references_changed);
@@ -1050,6 +1066,7 @@ impl Document {
             new_blocks: self.blocks.len()..self.blocks.len(),
             new_tiles: self.tiles.len()..self.tiles.len(),
             dirty,
+            body_updates,
             references_changed,
             new_headings: self.headings.entries().len()..self.headings.entries().len(),
             new_tables: self.tables.len()..self.tables.len(),
@@ -1446,6 +1463,7 @@ impl Document {
                 self.mark(self.blocks[id.0].source, Style::default(), update);
             }
             if let BlockKind::FootnoteDefinition { symbol } = self.blocks[id.0].kind {
+                self.seal_body(symbol, id, update);
                 self.footnotes
                     .seal(symbol, id, self.source.len(), update, &mut self.work);
             }
@@ -1827,9 +1845,14 @@ impl Document {
         gaps: Vec<Span>,
         update: &mut Update,
     ) {
-        let winner = self
-            .references
-            .define(symbol, destination, title, gaps, self.revision);
+        let winner = self.references.define(
+            symbol,
+            self.blocks[block.0].source.start,
+            destination,
+            title,
+            gaps,
+            self.revision,
+        );
         if winner {
             update.references_changed.push(symbol);
             if let Some(start) = self.reference_use_start(symbol) {
@@ -2471,6 +2494,18 @@ impl Document {
                 self.mark(list.source, Style::default(), update);
             }
         }
+        if self.footnotes.journal.is_some()
+            && let Line::FootnoteDefinition { label, .. } = classification
+        {
+            self.footnotes.literal_markers.insert(label.start - 2);
+            table_text = true;
+            classification = container_line
+                .as_ref()
+                .map_or(Line::Text, |line| Line::Container {
+                    prefix: line.prefix,
+                    kind: line.kind.clone(),
+                });
+        }
         if let Some(header) = header {
             if header.container == self.containers.inner()
                 && !lazy
@@ -2800,6 +2835,7 @@ impl Document {
                 update,
                 &mut self.work,
             );
+            self.start_body(symbol, id, span, content, update);
             self.mark(span, Style::HIDDEN, update);
             let line = StreamingLine {
                 block: id,
@@ -3168,6 +3204,7 @@ impl Document {
                 update,
                 &mut self.work,
             );
+            self.feed_body(symbol, span, update);
         }
         if let Some((_, content)) = &mut self.container_title {
             content.end = block::body_end(&self.source, self.blocks[line.block.0].source);

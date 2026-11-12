@@ -307,6 +307,29 @@ impl<S> CheckpointIndex<S> {
         Ok(())
     }
 
+    pub(crate) fn apply_hosted(
+        &mut self,
+        document: &Document,
+        base: u64,
+        revision: u64,
+        start: Option<usize>,
+    ) -> Result<(), LayoutError> {
+        if self.document != Some(document.id()) {
+            return Err(LayoutError::WrongDocument);
+        }
+        if self.revision != Some(base) || document.revision() != revision {
+            return Err(LayoutError::OutOfOrderUpdate);
+        }
+        if let Some(start) = start
+            && let Some(tile) = document.tile_at(start)
+            && tile.0 < self.capacity
+        {
+            self.invalidate(tile.0..self.capacity)?;
+        }
+        self.revision = Some(revision);
+        Ok(())
+    }
+
     /// Explicitly evict payloads before a tile. Scan at most the shared object
     /// budget, returning ownership so user destructors run at the caller's chosen
     /// time. `cursor` is an arena position, reset to zero for a new collection pass.

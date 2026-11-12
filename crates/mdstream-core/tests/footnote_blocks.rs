@@ -108,7 +108,15 @@ fn indentation_blank_paragraphs_and_raw_spelling_have_explicit_semantics() {
             assert!(doc.maths().is_empty());
             assert!(doc.links().is_empty());
             assert!(doc.footnote_references().is_empty());
-            assert_eq!(doc.footnotes().len(), 1);
+            // The mapped spelling stays raw; its new Markdown view publishes
+            // the actual body reference without adding a root occurrence.
+            assert_eq!(
+                doc.footnotes()
+                    .iter()
+                    .map(|n| n.label.as_str())
+                    .collect::<Vec<_>>(),
+                ["n", "raw"]
+            );
             assert_eq!(visible(&doc), "after\n");
         }
     }

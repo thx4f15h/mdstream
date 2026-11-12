@@ -762,6 +762,34 @@ impl HeightIndex {
         Ok(())
     }
 
+    // The caller already validated body-local parser revisions. Only the host
+    // revision is translated; source coordinates and changes remain body-local.
+    pub(crate) fn apply_hosted(
+        &mut self,
+        document: &Document,
+        base: u64,
+        revision: u64,
+        start: Option<usize>,
+    ) -> Result<(), LayoutError> {
+        if self.document != Some(document.id()) {
+            return Err(LayoutError::WrongDocument);
+        }
+        if self.revision != Some(base)
+            || document.revision() != revision
+            || self.len > document.tile_count()
+        {
+            return Err(LayoutError::OutOfOrderUpdate);
+        }
+        self.grow_to(document.tile_count())?;
+        if let Some(start) = start
+            && let Some(tile) = document.tile_at(start)
+        {
+            self.expire(tile.0..self.len)?;
+        }
+        self.revision = Some(revision);
+        Ok(())
+    }
+
     pub(crate) fn validate_update(
         &self,
         document: &Document,

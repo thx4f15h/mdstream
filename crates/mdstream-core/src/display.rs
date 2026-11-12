@@ -630,7 +630,7 @@ impl DisplayCursor {
                 let mut run = run;
                 run.style = run
                     .style
-                    .union(mark.effective_style(&document.references.entries, &document.links));
+                    .union(mark.effective_style(&document.references, &document.links));
                 self.position = run.source.end;
                 return Ok(DisplayStep::Run(run));
             }

@@ -1,3 +1,5 @@
+#[path = "support/footnote_markdown_legacy.rs"]
+mod body_legacy;
 #[path = "support/code_replay_changes.rs"]
 mod code_changes;
 #[path = "support/style_confirmation_changes.rs"]
@@ -118,7 +120,10 @@ fn observed(source: &[u8], bytewise: bool) -> u64 {
         assert_eq!(doc.references()[0].first_use, Some(0));
         assert_eq!(doc.references()[0].destination, None);
     }
-    let snapshot = format!("{:?}", support::snapshot(stream.document()));
+    let snapshot = format!(
+        "{:?}",
+        body_legacy::snapshot(stream.document(), support::snapshot(stream.document()))
+    );
     snapshot.bytes().fold(0xcbf29ce484222325, |h, b| {
         (h ^ u64::from(b)).wrapping_mul(0x100000001b3)
     })
