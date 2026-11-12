@@ -218,7 +218,7 @@ pub struct Work {
     pub atx_bytes: u64,
     /// Actual inline visits, including a confirmed code-inherited header's
     /// opaque prefix followed by its independent cell parse. That extra pass
-    /// is bounded by table_bytes; failed candidates never replay the prefix.
+    /// is bounded by table_bytes. Failed-code release is counted separately.
     /// Raw Setext edge summaries share this scan; confirmation never rescans.
     /// Hidden root paragraph indentation is charged here before inline parsing.
     /// A partially consumed container tab adds at most three virtual-space visits.
@@ -249,13 +249,22 @@ pub struct Work {
     pub link_fallback_steps: u64,
     /// Run resolution, opener pushes/pops/rebasing, and isolated cross-line
     /// emphasis/code pairs committed or discarded once when a header resolves.
-    /// Includes linear failed-code summary indexing and greedy matching visits.
+    /// Replayed ordinary delimiter operations are included; index work is separate.
     pub delimiter_steps: u64,
+    /// Actual raw/virtual byte visits during one failed primary-code release.
+    pub code_fallback_bytes: u64,
+    /// Producer event recording/coalescing, index construction and release events/queries.
+    pub code_fallback_steps: u64,
+    /// Failed-code run sorting, source-event seek and future-closer comparisons.
+    pub code_fallback_comparisons: u64,
+    /// Equivalent release byte visits in the non-publishing eligibility cores.
+    pub code_fallback_eligibility_bytes: u64,
+    /// Eligibility event/index/comparison work, kept outside legacy observer counters.
+    pub code_fallback_eligibility_steps: u64,
     /// Emphasis opener-category probes, at most six per run/match attempt.
     /// Categories retain original run length modulo three and can-close;
     /// partial consumption never searches old text or walks failed openers.
-    /// Also counts failed-code run sort comparisons, O(r log(r + 1)) for r
-    /// summaries in one candidate; no comparison reads candidate body bytes.
+    /// Failed-code index comparisons have their own code_fallback_comparisons counter.
     pub delimiter_search_steps: u64,
     /// Emphasis boundary classifications and fixed Unicode 17.0.0 range
     /// comparisons; <= 12 per boundary (two per supported emphasis run).

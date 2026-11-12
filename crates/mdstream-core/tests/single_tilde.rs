@@ -139,11 +139,11 @@ fn live_maximal_run_waits_for_next_byte_or_eof_without_partial_consumption() {
 }
 
 #[test]
-fn objects_keep_existing_priority_and_failed_candidates_stay_opaque() {
+fn objects_keep_priority_and_failed_code_replays_strike() {
     for (source, text, code, maths, links) in [
         ("~a `~raw~` b~", "a ~raw~ b", true, 0, 0),
         ("`~raw~` ~yes~", "~raw~ yes", true, 0, 0),
-        ("`~raw~ ~unfinished", "`~raw~ ~unfinished", false, 0, 0),
+        ("`~raw~ ~unfinished", "`raw ~unfinished", false, 0, 0),
         ("~a $~raw~$ b~", "a ~raw~ b", false, 1, 0),
         ("$~raw~$ ~yes~", "~raw~ yes", false, 1, 0),
         ("$~raw~ ~unfinished", "$~raw~ ~unfinished", false, 0, 0),
@@ -171,7 +171,10 @@ fn objects_keep_existing_priority_and_failed_candidates_stay_opaque() {
             );
         }
         if source.starts_with('`') || source.starts_with('$') {
-            assert!(!style_at(&doc, "raw").contains(Style::STRIKE));
+            assert_eq!(
+                style_at(&doc, "raw").contains(Style::STRIKE),
+                source == "`~raw~ ~unfinished"
+            );
         }
         if source.starts_with("~a ") {
             assert!(style_at(&doc, "raw").contains(Style::STRIKE));

@@ -149,9 +149,9 @@ fn early_and_late_container_tables_seal_previous_tail_only_on_success() {
                     .filter(|r| !r.style.contains(Style::HIDDEN))
                     .map(|r| r.text)
                     .collect();
-                // Failed opaque candidates retain their existing internal-break
-                // fallback. Successful tables always terminate the old paragraph.
-                let expected = if success || matches!(first.as_bytes()[0], b'a' | b'[') {
+                // Failed code now restores ordinary internal-break trimming;
+                // unmatched math retains its existing opaque fallback.
+                let expected = if success || matches!(first.as_bytes()[0], b'a' | b'[' | b'`') {
                     format!("{}\n", first.trim_end_matches([' ', '\t', '\n']))
                 } else {
                     first.to_owned()

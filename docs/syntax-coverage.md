@@ -13,7 +13,7 @@ The `commonmark_autolinks_official` suite includes `commonmark_autolinks_officia
 | --- | --- | --- | --- | --- | --- | --- |
 | `commonmark_atx` / ATX headings | 62–79 | `pinned_commonmark_atx_report` | `scripts/generate_commonmark_atx.py` | 62–69, 71–79 | 70 | — |
 | `commonmark_autolinks_official` / Autolinks | 594–612 | `pinned_commonmark_autolinks_report` | `scripts/generate_commonmark_autolinks_official.py` | 594–605, 607, 609–610 | 606, 608, 611–612 | — |
-| `commonmark_backslash_escapes` / Backslash escapes | 12–24 | `pinned_commonmark_backslash_escapes_report` | `scripts/generate_commonmark_backslash_escapes.py` | 12–13, 15–20, 22–24 | 14 | 21 |
+| `commonmark_backslash_escapes` / Backslash escapes | 12–24 | `pinned_commonmark_backslash_escapes_report` | `scripts/generate_commonmark_backslash_escapes.py` | 12–20, 22–24 | — | 21 |
 | `commonmark_blank_lines` / Blank lines | 227 | `pinned_commonmark_blank_lines_report` | `scripts/generate_commonmark_blank_lines.py` | 227 | — | — |
 | `commonmark_block_quotes` / Block quotes | 228–252 | `pinned_commonmark_block_quotes_report` | `scripts/generate_commonmark_block_quotes.py` | 228–237, 239–251 | 238, 252 | — |
 | `commonmark_code_spans` / Code spans | 328–349 | `pinned_commonmark_code_spans_report` | `scripts/generate_commonmark_code_spans.py` | 328–343, 345–349 | — | 344 |
@@ -59,5 +59,5 @@ Explicit chapter exclusions (no silent omissions):
 Examples containing HTML within included non-HTML chapters remain scored as Unsupported where appropriate; only the two complete CommonMark HTML chapters are excluded.
 Unsupported and deliberate differences retain exact chapter observations/rejection checks and the remaining implementation TODOs. Coverage does not convert either category to Supported.
 
-commonmark: 588 executed examples; 523 supported, 32 deliberate differences, 33 unsupported.
+commonmark: 588 executed examples; 524 supported, 31 deliberate differences, 33 unsupported.
 gfm: 27 executed examples; 27 supported, 0 deliberate differences, 0 unsupported.

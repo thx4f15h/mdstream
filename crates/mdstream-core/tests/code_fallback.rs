@@ -42,7 +42,7 @@ fn codes(doc: &Document) -> Vec<String> {
 }
 
 #[test]
-fn failed_outer_recovers_codes_but_keeps_other_syntax_literal() {
+fn failed_outer_recovers_codes_and_ordinary_syntax() {
     for (source, expected, spans) in [
         ("`foo``bar``\n", "`foobar\n", vec!["bar"]),
         ("a `x`` 中🙂 `` y", "a `x中🙂 y", vec!["中🙂"]),
@@ -51,10 +51,10 @@ fn failed_outer_recovers_codes_but_keeps_other_syntax_literal() {
         ("`x``a```b`` y", "`xa```b y", vec!["a```b"]),
         ("`x```a``b`` y", "`x```ab y", vec!["b"]),
         ("`x``a`` y```b``` z", "`xa yb z", vec!["a", "b"]),
-        ("`*x* &amp; ``a`` $y$", "`*x* &amp; a $y$", vec!["a"]),
+        ("`*x* &amp; ``a`` $y$", "`x & a y", vec!["a"]),
         ("`x``a``y`", "x``a``y", vec!["x``a``y"]),
         ("`x``a``y` `z", "x``a``y `z", vec!["x``a``y"]),
-        ("`x\\``a``", "`x\\a", vec!["a"]),
+        ("`x\\``a``", "`x``a``", vec![]),
         ("> `x``a\n> b`` y\n", "`xa b y\n", vec!["a b"]),
         ("- `x``a`` y\n", "`xa y\n", vec!["a"]),
         ("# `x``a`` y\n", "`xa y\n", vec!["a"]),
@@ -65,7 +65,7 @@ fn failed_outer_recovers_codes_but_keeps_other_syntax_literal() {
         assert_eq!(visible(&doc), expected, "{source:?}");
         assert_eq!(codes(&doc), spans, "{source:?}");
         assert!(doc.links().is_empty());
-        assert!(doc.maths().is_empty());
+        assert_eq!(doc.maths().len(), usize::from(source.contains("$y$")));
     }
 }
 
@@ -172,7 +172,7 @@ fn million_byte_candidate_and_indexed_matching_do_not_rescan() {
     assert_eq!(sealed.inline_bytes, before_finish.inline_bytes);
     assert_eq!(sealed.classified_bytes, before_finish.classified_bytes);
     assert_eq!(sealed.container_bytes, before_finish.container_bytes);
-    assert_eq!(sealed.delimiter_steps - before_finish.delimiter_steps, 6);
+    assert_eq!(sealed.delimiter_steps - before_finish.delimiter_steps, 2);
     assert!(sealed.tree_visits - before_finish.tree_visits < 1000);
     assert_eq!(
         codes(&doc),
@@ -188,18 +188,15 @@ fn million_byte_candidate_and_indexed_matching_do_not_rescan() {
     let before = doc.work();
     doc.finish();
     assert_eq!(doc.work().inline_bytes, before.inline_bytes);
-    assert_eq!(
-        doc.work().delimiter_steps - before.delimiter_steps,
-        4 * 32 - 1
-    );
+    assert_eq!(doc.work().delimiter_steps - before.delimiter_steps, 32);
     assert_eq!(visible(&doc), source);
 
     let source = "`x``a``\n\n".repeat(4096);
     let doc = parse(&source);
     assert_eq!(codes(&doc).len(), 4096);
     assert!(doc.work().inline_bytes <= source.len() as u64);
-    // Three run resolutions plus six index/greedy visits per candidate.
-    assert_eq!(doc.work().delimiter_steps, 9 * 4096);
+    // Three original and two replayed run resolutions per candidate.
+    assert_eq!(doc.work().delimiter_steps, 5 * 4096);
 }
 
 #[test]

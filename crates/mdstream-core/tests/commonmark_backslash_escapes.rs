@@ -157,10 +157,6 @@ fn project(doc: &Document) -> String {
 
 enum Assessment {
     Supported,
-    Deliberate {
-        reason: &'static str,
-        observed: &'static str,
-    },
     Unsupported {
         reason: &'static str,
         observed: &'static str,
@@ -170,11 +166,7 @@ enum Assessment {
 // Independent observations never replace the verbatim upstream oracle.
 fn assessment(number: usize) -> Assessment {
     match number {
-        12..=13 | 15..=20 | 22..=24 => Assessment::Supported,
-        14 => Assessment::Deliberate {
-            reason: "unclosed code candidate does not replay other inline syntax",
-            observed: "<p>*not emphasized*\n&lt;br/&gt; not a tag\n[not a link](/foo)\n`not code`\n1\\. not a list\n\\* not a list\n\\# not a heading\n\\[foo]: /url &quot;not a reference&quot;\n\\&amp;ouml; not a character entity</p>\n",
-        },
+        12..=20 | 22..=24 => Assessment::Supported,
         21 => Assessment::Unsupported {
             reason: "raw HTML is outside project requirements",
             observed: "<p>&lt;a href=&quot;/bar/)&quot;&gt;</p>\n",
@@ -188,7 +180,7 @@ fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
     link_metadata::snapshot(doc);
     match assessment(number) {
         Assessment::Supported => assert_eq!(actual, expected, "example {number}"),
-        Assessment::Deliberate { observed, .. } | Assessment::Unsupported { observed, .. } => {
+        Assessment::Unsupported { observed, .. } => {
             assert_ne!(
                 actual, expected,
                 "example {number} now matches; review classification"
@@ -235,15 +227,14 @@ fn pinned_commonmark_backslash_escapes_report() {
         check_case(number, markdown, expected, &parse(markdown));
         let (category, label, reason) = match assessment(number) {
             Assessment::Supported => (0, "supported", "matches upstream"),
-            Assessment::Deliberate { reason, .. } => (1, "deliberate difference", reason),
             Assessment::Unsupported { reason, .. } => (2, "unsupported", reason),
         };
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [11, 1, 1]);
+    assert_eq!(counts, [12, 0, 1]);
     eprintln!(
-        "CommonMark 0.31.2 Backslash escapes (12–24): 11 supported, 1 deliberate difference, 1 unsupported; other sections not scored by this test"
+        "CommonMark 0.31.2 Backslash escapes (12–24): 12 supported, 0 deliberate differences, 1 unsupported; other sections not scored by this test"
     );
 }
 

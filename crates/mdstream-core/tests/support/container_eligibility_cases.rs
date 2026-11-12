@@ -99,6 +99,7 @@ pub fn old_work(work: mdstream::Work) -> String {
         .split(", ")
         .filter(|field| {
             !field.starts_with("container_eligibility_")
+                && !field.starts_with("code_fallback_")
                 && !field.starts_with("fence_candidate_")
                 && !field.starts_with("link_title_gap_steps:")
                 && !field.starts_with("link_fallback_")

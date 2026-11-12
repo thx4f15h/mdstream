@@ -322,7 +322,7 @@ fn objects_failed_candidates_and_scope_boundaries_keep_existing_priority() {
     for (source, text, links, maths) in [
         ("a*\"[x](/u)\"*", "a*\"x\"*", 1, 0),
         ("*a `*raw*` b*!", "a *raw* b!", 0, 0),
-        ("`*raw* *unfinished", "`*raw* *unfinished", 0, 0),
+        ("`*raw* *unfinished", "`raw *unfinished", 0, 0),
         ("*a $*raw*$ b*!", "a *raw* b!", 0, 1),
         ("$*raw* *unfinished", "$*raw* *unfinished", 0, 0),
         ("[*label*!](/u)", "label!", 1, 0),

@@ -1,3 +1,5 @@
+#[path = "support/code_replay_changes.rs"]
+mod code_changes;
 use mdstream::*;
 #[allow(dead_code)]
 #[path = "support/shortcut_text_hashes.rs"]
@@ -1069,7 +1071,10 @@ fn body_old_eligibility_first_pipe_eager_opaque_and_table_decisions_match_head()
             }
             _ => assert_eq!(
                 format!("{:016x}", digest(&format!("{:?}", support::snapshot(&doc)))),
-                hash,
+                format!(
+                    "{:016x}",
+                    code_changes::snapshot(source, u64::from_str_radix(hash, 16).unwrap())
+                ),
                 "unchanged {index}: {source:?}"
             ),
         }

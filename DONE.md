@@ -2919,3 +2919,19 @@ README、TODO 精准同步：核心范围扩展单独勾选，实际选区控件
 独立分支冻结验收：项目 nix develop 中 check、专项 **32/32**、完整 debug/release 各 **1882/1882**、doc **77/77**、fmt、rustdoc 及本项生产代码/改动测试 clippy `-D warnings` 全部 exit 0。398 个 Rust 文件哈希匹配，审查文件未变化，官方夹具/生成器、依赖和 rustfmt 配置与基线逐字相同。全目标 clippy 的基线 bare_autolinks.rs:594 布尔断言 lint 未修改，本项 lint 集通过；没有把该全目标失败描述为通过。完整日志、计数、冻结哈希及迁移说明见 `/tmp/mdtui3-codex-todo/003-final-validation.json` 和 `003-final-source.sha256`；组合后的验证另行记录。
 
 与失败裸 URL、全量评分、长围栏及统一容器列模型组合后，check、fmt、完整 debug/release 各 **1916/1916**、doc **78/78** 通过；402 个 Rust 文件的冻结记录未变化，见 `/tmp/mdtui3-codex-todo/integration-003/result.json`。实际执行 38 份覆盖报告后，需求内 CommonMark 当前 **523/32/33**、GFM 四扩展 **27/0/0**，覆盖清单已重新生成。
+
+## 2026-11-13 未闭合代码候选完整行内失败重放交付
+
+未闭合代码候选在真正逻辑 scope 结束、EOF 或已确认表头截断后，恢复普通行内语法及有效内部代码对。开放时仍暂定字面；晚到的同长度 closer 保持外层最高优先级，内部不提前发布普通样式、链接/图片、数学或脚注对象。CommonMark Backslash escapes 14 通过真实核心修复，完整章节现为 **12 支持 / 0 刻意差异 / 1 未支持**；官方 Markdown/HTML 和投影算法保持。38 份实际执行的章节评分只改变该例及总统计，HTML 范围不扩展。
+
+按逻辑 scope 保存一次原 producer 的 raw/virtual/prefix 事件，连续 raw 合并，当前标签只保存长度及 overflow 检查点；旧 opener、嵌套 frame、free-list delimiter journal 和已有对象 ID 原位保留，不复制正文或祖先。失败时二分定位当前后缀，排序既有原始反引号串；普通 Inline 遇到实际 opener 时查询未来原始同长度 closer，无 closer 就保持字面，有则正常消费不透明代码，因此不会递归回放失配长尾。转义缩短 opener、closer 位于其它语法原始区间、数学/链接后缀吞掉未到达 ticks 均覆盖。所有字节固定次数处理、run 索引/查询 O(log n)，累计 O(n log n)、空间 O(n)，零运行时依赖且 forbid unsafe。
+
+`Work.code_fallback_bytes/steps/comparisons` 分别计实际 raw/virtual 释放、事件/摘要/查询和比较，Eligibility 额外工作单独累计；普通语法、bare Recovery 与原子后缀回退继续实际计数。晚表头确认只释放旧行事件前缀并保留原 paragraph mode 完成旧帧，当前行独立解析；取消保留候选。映射、Active 对象选择、稳定 ID 与源码顺序、共享 Budget、dirty、DependencyKey、测量 ticket、LayoutPass continuation 和 resolver 退休保持。
+
+新增 16 项公开回归和一项私有事件所有权验收，另保留既有代码配对独立模型。覆盖全 UTF-8 切点/逐前缀 EOF、真正流式预览/晚 closer、旧 opener/标签、嵌套图片与晚定义、显式/lazy/partial-tab 容器、晚表头/单元格、跨 tile 映射、0/1/6 共享帧、真实 LayoutPass 及不受样式尺寸策略影响的文本失效；970 层百万字、5000 旧标签帧、2048 组混合语法与 4096 异长串及 16384 混合串均检查实际计数。4096 异长串正文 8,439,811 字节，释放 8,439,808 字节、8195 步、104502 次比较；增长追加不重扫旧候选。独立模型 41853 例通过，真实前驱 9589 份快照/旧 Work 对照仅有 146 份源码的 426 条精确变化，块/容器/表格结构全部保持；原夹具不改，新增字段单独排除、旧字段仍精确核对。另对 60000 个随机标签与真实旧核心逐源比较，新增 8489 个被代码失败释放的标签 witness，原有 26552 个全部保留；变化源均包含反引号。
+
+普通显式链接所有失败 suffix 的完整 lexer、其它候选的通用失败重放、强调完整顺序/身份、通用晚表头与完整标准兼容性继续保留对应 TODO。数学/脚注及其它已记录方言不在本项扩展。
+
+最终冻结验收经项目 `nix develop`：`cargo check --workspace --all-targets`；专项 nextest **134/134**（补齐历史期望后的专项另 **83/83**）；完整 workspace/all-targets debug/release nextest 各 **1933/1933**；doc **78/78**、doc build、fmt check、生产库 clippy `-D warnings` 均通过。官方 Backslash escapes 夹具离线校验、38 份实际章节报告及六个相关 release 示例通过，原始 fixtures、Cargo/flake 依赖与 rustfmt 配置保持；405 个 Rust 文件及编译输入在全套前冻结、全套后 SHA 保持，`git diff --check` 通过。
+
+额外全目标 clippy 仅被既有 `tests/bare_autolinks.rs:594` 的 `bool_assert_comparison` 阻断，该旧断言未改；本次新增测试 lint 已清除，生产库严格 clippy 通过。

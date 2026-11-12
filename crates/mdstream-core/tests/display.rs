@@ -120,8 +120,8 @@ fn code_whitespace_uses_normalized_endpoints_and_preserves_interior_spaces() {
         ("x `\u{a0}a\u{a0}`", "x \u{a0}a\u{a0}"),
         ("x `` ` ``", "x `"),
         ("x ` &amp; *a* `", "x &amp; *a*"),
-        ("x ` \na", "x ` \na"),
-        ("x `` \n`", "x `` \n`"),
+        ("x ` \na", "x `\na"),
+        ("x `` \n`", "x ``\n`"),
     ] {
         assert_eq!(whole(&parse(source)), expected, "{source:?}");
     }

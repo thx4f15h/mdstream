@@ -1,7 +1,10 @@
 use mdstream::{Budget, DisplayStep, LinkId, Span, Style, Utf8Document, WorkLimit};
 
 fn main() {
-    let source = format!("p [keep](/u) `q{}", "`` 中😀 ``x".repeat(40));
+    let source = format!(
+        "p [keep](/u) `q{} &amp; *em* [new](/v)",
+        "`` 中😀 ``x".repeat(40)
+    );
     let mut streamed = Utf8Document::new();
     for chunk in source.as_bytes().chunks(7) {
         streamed.append(chunk).unwrap();
@@ -27,8 +30,15 @@ fn main() {
             DisplayStep::BudgetExhausted => panic!("six bytes must advance"),
         }
     }
-    assert_eq!(shown, format!("p keep `q{}", "中😀x".repeat(40)));
+    assert_eq!(shown, format!("p keep `q{} & em new", "中😀x".repeat(40)));
     assert_eq!(doc.link_destination(LinkId(0)), Some("/u"));
+    assert_eq!(
+        doc.link_activity(LinkId(1))
+            .unwrap()
+            .advance(doc, &mut Budget::new(WorkLimit::unlimited()))
+            .unwrap(),
+        Some(mdstream::LinkDisposition::Active)
+    );
     println!("80 secondary runs recovered into 40 code spans with six-byte frames");
     println!("work: {:?}", doc.work());
 }

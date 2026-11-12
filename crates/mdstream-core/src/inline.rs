@@ -5,6 +5,8 @@ use crate::references::{MAX_LABEL_BYTES, References, normalize_label};
 mod atom_fallback;
 #[path = "bare_autolink.rs"]
 mod bare_autolink;
+#[path = "code_fallback.rs"]
+mod code_fallback;
 #[path = "flanking.rs"]
 mod flanking;
 #[path = "label_journal.rs"]
@@ -15,6 +17,7 @@ use crate::{
     ChangeKind, LinkId, LinkInfo, LinkKind, LinkTarget, Span, Style, SyntaxState, Update, Work,
 };
 use atom_fallback::AtomTrace;
+use code_fallback::{Checkpoint as CodeCheckpoint, CodeFallback, Event as CodeEvent};
 use label_journal::List as LabelList;
 
 pub(crate) struct Publishing<'a> {
@@ -487,6 +490,8 @@ struct Run {
     byte: u8,
     source: Span,
     before: Option<char>,
+    label_len: usize,
+    label_overflow: bool,
 }
 
 // Source/flanking summaries only. An unresolved label must not consume outer
@@ -526,82 +531,6 @@ impl Code {
             pos - usize::from(byte == b'\n' && previous == Some(b'\r')),
             pos + 1,
         );
-    }
-}
-
-// Summaries between mismatched backtick runs, never copied/replayed body text.
-// At resolution, index equal-length successors in O(r log r), then greedily
-// match in source order. Each run belongs to only one primary candidate.
-// Other inline syntax stays opaque even when the outer opener fails.
-#[derive(Default)]
-#[cfg_attr(test, derive(Debug))]
-struct CodeFallback {
-    runs: Vec<Code>,
-    // A late table header ends the old sequence at the preceding line. Keep
-    // its last summary; later payload must not affect the preceding sequence.
-    boundary: Option<(usize, Option<Code>)>,
-}
-
-impl CodeFallback {
-    fn clear(&mut self) {
-        self.runs.clear();
-        self.boundary = None;
-    }
-
-    fn push(&mut self, open: Span) {
-        self.runs.push(Code::new(open));
-    }
-
-    fn isolate(&mut self) {
-        self.boundary = Some((self.runs.len(), self.runs.last().copied()));
-    }
-
-    fn confirm_header(&mut self, effects: &mut Effects<'_>) {
-        if let Some((len, last)) = self.boundary.take() {
-            self.runs.truncate(len);
-            if let Some(last) = last {
-                self.runs[len - 1] = last;
-            }
-            self.commit(effects);
-        }
-    }
-
-    fn commit(&mut self, effects: &mut Effects<'_>) {
-        let len = self.runs.len();
-        let mut order: Vec<_> = (0..len).collect();
-        let mut next = vec![len; len];
-        effects.work.delimiter_steps += 2 * len as u64;
-        order.sort_unstable_by(|&a, &b| {
-            effects.work.delimiter_search_steps += 1;
-            (self.runs[a].open.len(), a).cmp(&(self.runs[b].open.len(), b))
-        });
-        for pair in order.windows(2) {
-            effects.work.delimiter_steps += 1;
-            let (a, b) = (pair[0], pair[1]);
-            if self.runs[a].open.len() == self.runs[b].open.len() {
-                next[a] = b;
-            }
-        }
-        let mut i = 0;
-        while i < len {
-            effects.work.delimiter_steps += 1;
-            let j = next[i];
-            if j < len {
-                let mut code = self.runs[i];
-                code.all_spaces &= j == i + 1;
-                code.last = self.runs[j - 1].last;
-                code.last_space = self.runs[j - 1].last_space;
-                CodePair {
-                    code,
-                    close: self.runs[j].open,
-                }
-                .commit(effects);
-                i = j + 1;
-            } else {
-                i += 1;
-            }
-        }
-        self.clear();
     }
 }
 
@@ -843,7 +772,8 @@ enum HeaderLinkSuffix {
 }
 
 /// Single-pass byte scanner. Each emphasis delimiter is pushed/popped once.
-/// Failed code matches indexed run summaries; it never replays body bytes.
+/// A failed primary code candidate releases its logical payload once, using
+/// indexed future closers to prevent recursively rescanning failed suffixes.
 #[derive(Default)]
 #[cfg_attr(test, derive(Debug))]
 pub(crate) struct Inline {
@@ -862,6 +792,8 @@ pub(crate) struct Inline {
     run: Option<Run>,
     code: Option<Code>,
     code_fallback: CodeFallback,
+    // Present only during one synchronous failure release; no nested journal.
+    code_recovery: Option<Vec<Span>>,
     math: Option<MathCandidate>,
     footnote: Option<usize>,
     bracket: Option<Bracket>,
@@ -974,6 +906,9 @@ impl Eligibility {
         debug_assert_eq!(w.link_title_gap_steps, 0);
         debug_assert_eq!(w.link_fallback_bytes, 0);
         debug_assert_eq!(w.link_fallback_steps, 0);
+        total.code_fallback_eligibility_bytes += w.code_fallback_bytes;
+        total.code_fallback_eligibility_steps +=
+            w.code_fallback_steps + w.code_fallback_comparisons;
         total.bare_eligibility_bytes += w.bare_autolink_bytes;
         total.link_label_steps += w.link_label_steps;
         let steps = w.inline_bytes
@@ -1089,6 +1024,9 @@ impl Inline {
     }
 
     pub fn component_prefix(&mut self, prefix: Span, work: &mut Work) {
+        if self.code_recovery.is_none() {
+            self.code_fallback.record(CodeEvent::Prefix(prefix), work);
+        }
         if let Some(Tail::Destination {
             parser, title_gaps, ..
         }) = &mut self.tail
@@ -1114,11 +1052,19 @@ impl Inline {
     /// Used before nonblank container text (new or continuing), so it can
     /// neither create a delimiter nor become a trailing ordinary line break.
     pub fn virtual_spaces(&mut self, at: usize, columns: u8, effects: &mut Effects<'_>) {
+        if self.code_recovery.is_none() {
+            self.code_fallback
+                .record(CodeEvent::Virtual { at, columns }, effects.work);
+        }
         self.math_prefix(at, effects);
         let title_body = self.container_paragraph
             && matches!(&self.tail, Some(Tail::Destination { parser, .. }) if parser.open_title());
         for _ in 0..columns {
-            effects.work.inline_bytes += 1;
+            if self.code_recovery.is_some() {
+                effects.work.code_fallback_bytes += 1;
+            } else {
+                effects.work.inline_bytes += 1;
+            }
             if !title_body {
                 self.byte(b' ', at, Origin::Virtual, effects);
             }
@@ -1259,6 +1205,18 @@ impl Inline {
     /// is instead parsed once as a cell during the existing row scan. Never
     /// finish its pending run: that could publish a cross-line mapping/object.
     pub fn confirm_header(&mut self, effects: &mut Effects<'_>) -> bool {
+        if self.code_fallback.truncate_header() {
+            // The current row has no committed effects while inherited code is
+            // opaque (or its closure isolated). Finish only the old paragraph,
+            // preserving its frames/mode, then use the existing fresh-cell path.
+            effects.work.delimiter_steps += u64::from(self.header_code.take().is_some());
+            self.clear_header();
+            self.bare = None;
+            self.run = None;
+            self.code = Some(Code::new(self.code_fallback.checkpoint.unwrap().open));
+            self.finish(effects);
+            return false;
+        }
         self.finish_emails(self.header_email_pending, effects);
         self.header_email_pending = 0;
         self.root_paragraph = false;
@@ -1266,7 +1224,6 @@ impl Inline {
         self.paragraph_key = None;
         self.root_separator_seen = false;
         debug_assert!(!self.header_crossed);
-        self.code_fallback.confirm_header(effects);
         let old_open = self.header_bracket;
         let mut inherited = if let Some(candidate) = &mut self.header_link {
             Some(std::mem::take(&mut candidate.journal))
@@ -1363,19 +1320,29 @@ impl Inline {
         if span.is_empty() {
             return;
         }
+        if self.code_recovery.is_none() {
+            self.code_fallback
+                .record(CodeEvent::Raw(span), effects.work);
+        }
         self.math_prefix(span.start, effects);
         for pos in span.range() {
             let byte = effects.source.as_bytes()[pos];
-            effects.work.inline_bytes += 1;
-            if let Some(cr) = self.raw_cr.take()
-                && byte != b'\n'
-            {
-                self.raw_nonspace(cr);
+            if self.code_recovery.is_some() {
+                effects.work.code_fallback_bytes += 1;
+            } else {
+                effects.work.inline_bytes += 1;
             }
-            match byte {
-                b'\r' => self.raw_cr = Some(pos),
-                b' ' | b'\t' | b'\n' => (),
-                _ => self.raw_nonspace(pos),
+            if self.code_recovery.is_none() {
+                if let Some(cr) = self.raw_cr.take()
+                    && byte != b'\n'
+                {
+                    self.raw_nonspace(cr);
+                }
+                match byte {
+                    b'\r' => self.raw_cr = Some(pos),
+                    b' ' | b'\t' | b'\n' => (),
+                    _ => self.raw_nonspace(pos),
+                }
             }
             self.byte(byte, pos, Origin::Raw, effects);
             self.previous = Some(byte);
@@ -1653,6 +1620,8 @@ impl Inline {
         if let Some(run) = &mut self.run {
             if byte == run.byte {
                 run.source.end = pos + 1;
+                run.label_len = self.label.len();
+                run.label_overflow = self.label_overflow;
                 return;
             }
             let next = if byte.is_ascii() {
@@ -1698,9 +1667,6 @@ impl Inline {
                 self.start_run(byte, pos);
             } else {
                 code.payload(byte, pos, self.previous);
-                if let Some(inner) = self.code_fallback.runs.last_mut() {
-                    inner.payload(byte, pos, self.previous);
-                }
             }
             return;
         }
@@ -2026,6 +1992,8 @@ impl Inline {
             byte,
             source: Span::new(pos, pos + 1),
             before: self.previous_scalar,
+            label_len: self.label.len(),
+            label_overflow: self.label_overflow,
         });
     }
 
@@ -2080,10 +2048,23 @@ impl Inline {
                     code.all_spaces = false;
                     code.last = run.source;
                     code.last_space = false;
-                    self.code_fallback.push(run.source);
+                    if self.code_recovery.is_none() {
+                        self.code_fallback.push(run.source);
+                    }
                 }
-            } else {
+            } else if self
+                .code_recovery
+                .as_ref()
+                .is_none_or(|index| code_fallback::has_closer(index, run.source, effects.work))
+            {
                 self.code = Some(Code::new(run.source));
+                if self.code_recovery.is_none() {
+                    self.code_fallback.checkpoint = Some(CodeCheckpoint {
+                        open: run.source,
+                        label_len: run.label_len,
+                        label_overflow: run.label_overflow,
+                    });
+                }
             }
             return;
         }
@@ -2424,9 +2405,52 @@ impl Inline {
         effects.seal_link(candidate.link);
     }
 
+    fn recover_code(&mut self, effects: &mut Effects<'_>) {
+        let checkpoint = self
+            .code_fallback
+            .checkpoint
+            .expect("primary code checkpoint");
+        let events = std::mem::take(&mut self.code_fallback.events);
+        let first = events.partition_point(|event| {
+            effects.work.code_fallback_comparisons += 1;
+            event.end() <= checkpoint.open.end
+        });
+        self.code_recovery = Some(self.code_fallback.index(effects));
+        self.code = None;
+        self.run = None;
+        self.label.truncate(checkpoint.label_len);
+        self.label_overflow = checkpoint.label_overflow;
+        self.previous = Some(b'`');
+        self.previous_scalar = Some('`');
+        self.spaces = None;
+        self.whitespace = None;
+        self.carriage = false;
+        self.line_break = None;
+        for event in events[first..].iter().copied() {
+            effects.work.code_fallback_steps += 1;
+            match event {
+                CodeEvent::Raw(span) => self.feed(
+                    Span::new(span.start.max(checkpoint.open.end), span.end),
+                    effects,
+                ),
+                CodeEvent::Virtual { at, columns } => self.virtual_spaces(at, columns, effects),
+                CodeEvent::Prefix(span) => self.component_prefix(span, effects.work),
+            }
+        }
+        self.flush_bare(None, effects);
+        self.finish_run(None, effects);
+        debug_assert!(self.code.is_none(), "indexed replay code must close");
+        self.code_recovery = None;
+        self.code_fallback.events = events;
+    }
+
     pub fn finish(&mut self, effects: &mut Effects<'_>) {
         self.flush_bare(None, effects);
         self.cancel_header(effects);
+        self.finish_run(None, effects);
+        if self.code.is_some() {
+            self.recover_code(effects);
+        }
         self.raw_content = None;
         self.raw_cr = None;
         if let Some(tail) = self.tail.take() {
@@ -2449,9 +2473,6 @@ impl Inline {
             candidate.children = bracket.children;
             self.fail_candidate(candidate, effects);
             effects.work.link_label_steps += 1;
-        }
-        if self.code.is_some() {
-            self.code_fallback.commit(effects);
         }
         self.finish_emails(usize::MAX, effects);
         self.email_pending.clear();
@@ -2480,6 +2501,8 @@ impl Inline {
         self.container_paragraph = false;
         self.paragraph_key = None;
         self.root_separator_seen = false;
+        self.code_fallback.clear();
+        self.code_fallback.events.clear();
         self.account_labels(effects);
     }
 }
@@ -3126,6 +3149,51 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn code_trace_keeps_producer_payload_virtuals_and_prefixes_once() {
+        let lead = "p".repeat(1100);
+        let mut doc = Document::new();
+        doc.append(&format!("- {lead} ` a")).unwrap();
+        let capacity = doc.inline.code_fallback.events.capacity();
+        for _ in 0..1000 {
+            doc.append("b").unwrap();
+            assert_eq!(doc.inline.code_fallback.events.capacity(), capacity);
+        }
+        doc.append("\n\tc &amp;\n").unwrap();
+        let mut logical = String::new();
+        let mut virtuals = 0;
+        let mut prefixes = 0;
+        for event in &doc.inline.code_fallback.events {
+            match *event {
+                CodeEvent::Raw(span) => logical.push_str(&doc.source[span.range()]),
+                CodeEvent::Virtual { at, columns } => {
+                    assert_eq!(&doc.source[at..at + 1], "\t");
+                    assert_eq!(columns, 2);
+                    logical.push_str(&" ".repeat(usize::from(columns)));
+                    virtuals += 1;
+                }
+                CodeEvent::Prefix(_) => prefixes += 1,
+            }
+        }
+        assert_eq!(
+            logical,
+            format!("{lead} ` a{}\n  c &amp;\n", "b".repeat(1000))
+        );
+        assert_eq!(virtuals, 1);
+        assert!(prefixes >= 1);
+        assert_eq!(doc.display.space_mappings().len(), 1);
+        let expected = format!(" a{}\n  c &amp;\n", "b".repeat(1000));
+        doc.finish();
+        assert_eq!(doc.work.code_fallback_bytes, expected.len() as u64);
+        assert_eq!(doc.display.space_mappings().len(), 1);
+        assert!(doc.inline.code_fallback.events.is_empty());
+        assert!(doc.inline.code_fallback.checkpoint.is_none());
+        assert!(doc.inline.code_recovery.is_none());
+        let work = doc.work();
+        doc.finish();
+        assert_eq!(doc.work(), work);
     }
 
     #[test]

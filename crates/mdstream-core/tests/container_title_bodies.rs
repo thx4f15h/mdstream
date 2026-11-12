@@ -1,3 +1,5 @@
+#[path = "support/code_replay_changes.rs"]
+mod code_changes;
 use mdstream::*;
 #[path = "support/container_title_model.rs"]
 mod model;
@@ -175,6 +177,7 @@ fn real_predecessor_controls_and_all_eof_work_use_exact_source_allowlists() {
                     shortcut_hashes::source(d.source(), bytewise, expected.0),
                     nested_changes::work(d.source(), expected.1),
                 );
+                let expected = code_changes::pair(d.source(), expected);
                 assert_eq!(
                     (
                         corpus::hash(&format!("{:?}", support::snapshot(d))),
@@ -751,13 +754,17 @@ fn old_header_eligibility_at_window_and_late_pipe_keeps_real_table_shapes() {
                     corpus::hash(&format!("{:?}", support::snapshot(d))),
                     corpus::hash(&corpus::old_work(d.work()))
                 ),
-                (expected.0, nested_changes::work(d.source(), expected.1)),
+                code_changes::pair(
+                    d.source(),
+                    (expected.0, nested_changes::work(d.source(), expected.1))
+                ),
                 "{index}"
             );
             let full_work = format!("{:?}", d.work())
                 .split(", ")
                 .filter(|field| {
                     !field.starts_with("link_title_gap_steps:")
+                        && !field.starts_with("code_fallback_")
                         && !field.starts_with("fence_candidate_")
                         && !field.starts_with("link_fallback_")
                         && !field.starts_with("bare_")
@@ -788,12 +795,15 @@ fn old_header_eligibility_at_window_and_late_pipe_keeps_real_table_shapes() {
             };
             assert_eq!(
                 corpus::hash(&full_work),
-                nested_changes::work(d.source(), work_expected),
+                code_changes::work(d.source(), nested_changes::work(d.source(), work_expected)),
                 "all old Work {index}"
             );
             assert_eq!(
                 format!("{:016x}", corpus::hash(&model::table_shape(d))),
-                old[5],
+                format!(
+                    "{:016x}",
+                    code_changes::snapshot(d.source(), u64::from_str_radix(old[5], 16).unwrap())
+                ),
                 "shape {index}"
             );
             index += 1;

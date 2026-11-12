@@ -662,5 +662,7 @@ fn random_labels_supplement_the_explicit_base_visible_witnesses() {
             }
         }
     }
-    assert_eq!(accepted, 26_552);
+    // Primary-code failure now releases the label-closing bracket and normal
+    // grammar. The 60,000-source predecessor audit adds 8489 witnesses.
+    assert_eq!(accepted, 35_041);
 }
