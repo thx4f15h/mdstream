@@ -210,6 +210,8 @@ impl Document {
             position: source.start,
             end: source.end,
             scratch: QueryScratch::default(),
+            resolver: crate::LinkResolver::new(self),
+            pending: None,
         })
     }
 }
@@ -353,6 +355,87 @@ pub struct DisplayCursor {
     position: usize,
     end: usize,
     scratch: QueryScratch,
+    resolver: crate::LinkResolver,
+    pending: Option<PreparedDisplay>,
+}
+
+#[derive(Clone, Copy)]
+enum PreparedText {
+    Source,
+    Entity(usize),
+    Static(&'static str),
+}
+struct PreparedDisplay {
+    source: Span,
+    replacement: Option<Span>,
+    text: PreparedText,
+    block: Option<BlockId>,
+    style: Style,
+    emphasis_depth: usize,
+    strong_depth: usize,
+    task: crate::link_semantics::MarkTask,
+}
+impl PreparedDisplay {
+    fn new(document: &Document, run: DisplayRun<'_>, mark: crate::annotations::Mark) -> Self {
+        let text = if run.replacement.is_none() {
+            PreparedText::Source
+        } else {
+            match run.text {
+                "" => PreparedText::Static(""),
+                " " => PreparedText::Static(" "),
+                "  " => PreparedText::Static("  "),
+                "   " => PreparedText::Static("   "),
+                _ => {
+                    let at = document
+                        .display
+                        .entries
+                        .partition_point(|entry| entry.source.end <= run.source.start);
+                    assert!(matches!(document.display.entries[at].kind, Kind::Entity(_)));
+                    PreparedText::Entity(at)
+                }
+            }
+        };
+        Self {
+            source: run.source,
+            replacement: run.replacement,
+            text,
+            block: run.block,
+            style: run.style,
+            emphasis_depth: run.emphasis_depth,
+            strong_depth: run.strong_depth,
+            task: crate::link_semantics::MarkTask::new(mark),
+        }
+    }
+    fn emit<'a>(&mut self, document: &'a Document, end: usize) -> DisplayRun<'a> {
+        let source = Span::new(self.source.start, end);
+        let text = match self.text {
+            PreparedText::Source => &document.source()[source.range()],
+            PreparedText::Static(text) => text,
+            PreparedText::Entity(at) => match &document.display.entries[at].kind {
+                Kind::Entity(text) => text.as_str(),
+                _ => unreachable!(),
+            },
+        };
+        if matches!(self.text, PreparedText::Entity(_)) {
+            self.text = PreparedText::Static("");
+        }
+        self.source.start = end;
+        let (hidden, link) = self.task.result.unwrap();
+        DisplayRun {
+            source,
+            replacement: self.replacement,
+            text,
+            block: self.block,
+            style: if hidden {
+                self.style.union(Style::HIDDEN)
+            } else {
+                self.style
+            },
+            emphasis_depth: self.emphasis_depth,
+            strong_depth: self.strong_depth,
+            link,
+        }
+    }
 }
 
 impl DisplayCursor {
@@ -376,39 +459,127 @@ impl DisplayCursor {
         document: &'a Document,
         budget: &mut Budget,
     ) -> Result<DisplayStep<'a>, LayoutError> {
+        self.resolver.check(document)?;
+        let mut resolution = self.resolver.resolution.take();
+        let result = self.next_in(document, &mut resolution, budget);
+        self.resolver.resolution = resolution;
+        result
+    }
+    /// Share conditional target/parent memoization with layout and hit queries.
+    pub(crate) fn validate(&self, document: &Document) -> Result<(), LayoutError> {
         if self.document != document.id() {
             return Err(LayoutError::WrongDocument);
         }
         if self.revision != document.revision() {
             return Err(LayoutError::StaleContinuation);
         }
-        if self.position == self.end {
-            return Ok(DisplayStep::Complete);
+        self.resolver.check(document)
+    }
+    pub fn next_with_resolver<'a>(
+        &mut self,
+        document: &'a Document,
+        resolver: &mut crate::LinkResolver,
+        budget: &mut Budget,
+    ) -> Result<DisplayStep<'a>, LayoutError> {
+        self.validate(document)?;
+        resolver.check(document)?;
+        self.next_in(document, &mut resolver.resolution, budget)
+    }
+    pub fn take_link_resolver(&mut self) -> crate::LinkResolver {
+        let empty = self.resolver.empty_like();
+        std::mem::replace(&mut self.resolver, empty)
+    }
+    pub fn swap_link_resolver(
+        &mut self,
+        resolver: &mut crate::LinkResolver,
+    ) -> Result<(), LayoutError> {
+        resolver.check_binding(self.document, self.revision)?;
+        std::mem::swap(&mut self.resolver, resolver);
+        Ok(())
+    }
+    pub fn retire(&mut self, budget: &mut Budget) -> crate::Completion {
+        self.resolver.retire(budget)
+    }
+    pub fn link_resolution_work(&self) -> crate::LinkResolutionWork {
+        self.resolver.work()
+    }
+    fn next_in<'a>(
+        &mut self,
+        document: &'a Document,
+        resolution: &mut crate::link_semantics::Resolution,
+        budget: &mut Budget,
+    ) -> Result<DisplayStep<'a>, LayoutError> {
+        if self.document != document.id() {
+            return Err(LayoutError::WrongDocument);
         }
-        let remaining = budget.remaining();
-        // Up to two adjacent bytes are inspected for code CRLF mapping.
-        let window = remaining.bytes.saturating_sub(2).min(TILE_BYTES);
-        let mut end = self.position.saturating_add(window).min(self.end);
-        while !document.source().is_char_boundary(end) {
-            end -= 1;
+        if self.revision != document.revision() {
+            return Err(LayoutError::StaleContinuation);
         }
-        if end == self.position
-            || !budget.charge(WorkLimit {
-                queries: 1,
-                objects: 1,
-                bytes: end - self.position + 2,
-                ..Default::default()
-            })
-        {
-            return Ok(DisplayStep::BudgetExhausted);
+        loop {
+            if self.position == self.end {
+                return Ok(DisplayStep::Complete);
+            }
+            if let Some(pending) = &mut self.pending {
+                if !pending.task.advance(document, resolution, budget, 0) {
+                    return Ok(DisplayStep::BudgetExhausted);
+                }
+                let window = budget.remaining().bytes.saturating_sub(2).min(TILE_BYTES);
+                let mut end = self.position.saturating_add(window).min(pending.source.end);
+                while !document.source().is_char_boundary(end) {
+                    end -= 1;
+                }
+                if end == self.position
+                    || !budget.charge(WorkLimit {
+                        queries: 1,
+                        objects: 1,
+                        bytes: end - self.position + 2,
+                        ..Default::default()
+                    })
+                {
+                    return Ok(DisplayStep::BudgetExhausted);
+                }
+                let run = pending.emit(document, end);
+                self.position = end;
+                if pending.source.is_empty() {
+                    self.pending = None;
+                }
+                return Ok(DisplayStep::Run(run));
+            }
+            let window = budget.remaining().bytes.saturating_sub(2).min(TILE_BYTES);
+            let mut end = self.position.saturating_add(window).min(self.end);
+            while !document.source().is_char_boundary(end) {
+                end -= 1;
+            }
+            if end == self.position
+                || !budget.charge(WorkLimit {
+                    queries: 1,
+                    objects: 1,
+                    bytes: end - self.position + 2,
+                    ..Default::default()
+                })
+            {
+                return Ok(DisplayStep::BudgetExhausted);
+            }
+            let (run, mark) = {
+                let mut runs = document
+                    .display_runs_in_with_scratch(Span::new(self.position, end), &mut self.scratch)
+                    .unwrap();
+                runs.runs.runs.raw = true;
+                let run = runs.next().unwrap();
+                let mark = runs.runs.runs.last_mark;
+                (run, mark)
+            };
+            if crate::link_semantics::Resolution::needs(document, mark) {
+                self.pending = Some(PreparedDisplay::new(document, run, mark));
+            } else {
+                let mut run = run;
+                run.style = run
+                    .style
+                    .union(mark.effective_style(&document.references.entries, &document.links));
+                self.position = run.source.end;
+                return Ok(DisplayStep::Run(run));
+            }
         }
-        let run = document
-            .display_runs_in_with_scratch(Span::new(self.position, end), &mut self.scratch)
-            .unwrap()
-            .next()
-            .unwrap();
-        self.position = run.source.end;
-        Ok(DisplayStep::Run(run))
     }
 }
 

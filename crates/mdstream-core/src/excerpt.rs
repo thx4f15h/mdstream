@@ -81,6 +81,18 @@ impl DisplayExcerpt {
         })
     }
 
+    pub fn take_link_resolver(&mut self) -> crate::LinkResolver {
+        self.cursor.take_link_resolver()
+    }
+    pub fn swap_link_resolver(
+        &mut self,
+        resolver: &mut crate::LinkResolver,
+    ) -> Result<(), LayoutError> {
+        self.cursor.swap_link_resolver(resolver)
+    }
+    pub fn retire(&mut self, budget: &mut Budget) -> crate::Completion {
+        self.cursor.retire(budget)
+    }
     pub fn revision(&self) -> u64 {
         self.revision
     }

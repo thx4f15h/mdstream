@@ -62,9 +62,9 @@ for tile in heights.viewport(100..124, 4, 32) {
 | 一条新定义生效 | O(log n)，与已有引用使用次数无关 |
 | Setext 将长段落改成标题 | O(log n)，块类型本身修改为 O(1) |
 | 定位源码所属块、片段 | O(log n) |
-| 读取可见片段的语义 runs | O(log n + V)，迭代器 O(log n) 临时空间；实际按区间节点遍历 |
+| 读取可见片段的语义 runs | 基础 O(log n + R)，条件对象另付 V 个依赖的 memo 工作，见嵌套核心 |
 | 读取显示语义片段 | O(log n + V)，普通文本借用原文，实体/代码规范化保留原始区间 |
-| 查找下一个未隐藏的位置 | O(log n)，跨越任意长度隐藏区间 |
+| 查找下一个未隐藏的位置 | 永久隐藏汇总 O(log n)，条件标签另含所检查候选/依赖工作，帧使用有预算游标 |
 | 高度修正、区间失效、区间置零、行号定位、前缀高度 | O(log T) |
 | 按行号获取一屏及 overscan | O((K + 1) log T)，输出空间 O(K) |
 | 宽度改变后重置所有高度估计 | O(1) |
@@ -539,7 +539,7 @@ assert_eq!(visible, "one\ntwo\n");
 
 ## 容器跨行链接与图片标签
 
-同一确切容器的连续正文可包含跨物理行 `[label](url)`、`![alt](url)`、shortcut `[label]`、collapsed `[label][]` 及 full `[label][key]`。显式、等价前缀和 lazy 续行共享候选；`!` 必须紧邻开括号，新的 `[` 替换旧候选，`<` 丢弃旧候选，代码/数学中的 `]` 不关闭标签。这是既有单候选方言的扩展，不新增嵌套链接解析。目标、title 和 full 引用的后缀 `[key]` 继续限单物理行。
+同一确切容器的连续正文可包含跨物理行 `[label](url)`、`![alt](url)`、shortcut `[label]`、collapsed `[label][]` 及 full `[label][key]`。显式、等价前缀和 lazy 续行共享候选；`!` 必须紧邻开括号，代码/数学中的 `]` 不关闭标签。嵌套 opener、孩子保留及链接内禁止链接现在由[嵌套核心](#链接与图片的嵌套候选核心)统一处理。目标、title 和 full 引用的后缀 `[key]` 继续限单物理行。
 
 `LinkInfo.label` 是原始源码包络，包含中间 LF/CRLF 和容器前缀；`Document::text(label)` 因此仍返回这些原始字节。显示/alt 使用 `display_runs_in(label)`，帧内消费则使用 `display_cursor(label)`，忽略 `Style::HIDDEN` 的片段。可见片段保留绝对源码区间、实体/代码替换映射及同一个 LinkId；前缀仍可按源码定位，整段 label 不复制成另一个字符串。显示搜索复用同一片段流，跨行命中的源码包络可包含隐藏前缀；源码搜索保持原始字节。
 
@@ -1357,7 +1357,7 @@ assert_eq!(display, "中 & a b 🙂");
 
 实体跨查询/tile 边界时只在包含 `&` 的片段输出替代文字，其余片段输出空串并保留完整映射。因此相邻查询拼接不会重复；若查询从实体中间开始，不会补发之前的文字，宿主可通过 replacement 找到实体入口。代码 CRLF 的空格归 LF，CR 片段输出空串，两者映射到同一原始 CRLF；裁掉的首尾空白也以空文本保留映射。实体解码结果不会重新参与 Markdown 解析。
 
-需要共享整帧预算时，创建 `display_cursor(请求区间)`，反复调用 `DisplayCursor::next(&doc, &mut budget)`，处理 `Run`、`BudgetExhausted` 和 `Complete`。游标在耗尽后保存源码位置；文档 revision 改变后返回 `StaleContinuation`，需按源码锚点重建。每步预先消费一次 query、一个 object 和至多 `TILE_BYTES + 2` 源码字节的检查窗口，包含最多两个相邻 CRLF 字节；返回片段较短时仍保守计入整个检查窗口。预算为 1 query、1 object、6 bytes 即可容纳任意一个 UTF-8 标量并保证前进，替代输出最多 8 字节。调用方的排版回调成本仍需另外约束。可运行流程见 `crates/mdstream-core/examples/display.rs`；现有 `LayoutSink::text(RenderRun)` 仍接收源码文本。
+需要共享整帧预算时，创建 `display_cursor(请求区间)`，反复调用 `DisplayCursor::next(&doc, &mut budget)`，处理 `Run`、`BudgetExhausted` 和 `Complete`。游标在耗尽后保存源码位置；文档 revision 改变后返回 `StaleContinuation`，需按源码锚点重建。普通文本步骤预先消费一次 query、一个 object 和至多 `TILE_BYTES + 2` 源码字节的检查窗口（条件标签另有可恢复元数据步骤），包含最多两个相邻 CRLF 字节；返回片段较短时仍保守计入整个检查窗口。预算为 1 query、1 object、6 bytes 即可容纳任意一个 UTF-8 标量并保证前进，替代输出最多 8 字节。调用方的排版回调成本仍需另外约束。可运行流程见 `crates/mdstream-core/examples/display.rs`；现有 `LayoutSink::text(RenderRun)` 仍接收源码文本。
 
 命名引用支持固定的 2125 个 WHATWG 分号结尾名称（最长 31 字节），表在 `crates/mdstream-core/src/entity_names.rs`，附来源和输入 SHA-256；更新时用 `scripts/generate_entities.py` 读取另行下载的 [WHATWG 数据](https://html.spec.whatwg.org/entities.json)，构建和测试不联网。数字引用及代码 span 规范化依据 [CommonMark 0.31.2 字符引用](https://spec.commonmark.org/0.31.2/#entity-and-numeric-character-references)和[代码 span](https://spec.commonmark.org/0.31.2/#code-spans)：十进制 1..7 位、十六进制 1..6 位，必需分号；零值、代理码点及越界值替换为 U+FFFD。代码换行变为空格，首尾均为空格且并非全空格时各去掉一个；其它空白和内部连续空格保留。顶层段落物理行首缩进在行内解析前已隐藏，见[段落行首规则](#顶层段落行首缩进)。
 
@@ -1386,7 +1386,7 @@ assert!(display.iter().any(|run| run.text == "&"));
 
 scratch 无文档引用或可恢复语义，只保留 Vec 容量；每次从当前文档索引重新查询，允许在追加/迟确认之后或不同文档之间复用。查询期间文档保持不可变借用；无效范围不改 scratch，空范围不分配。遍历仍是 O(log n + 请求范围)，栈按树深度增长；预热工作集后不增长，切换到更深查询可能继续分配。容量保留到 drop 或赋值 `QueryScratch::default()`；没有全局或线程局部缓存，不需要 unsafe。
 
-`QueryScratch::stats()` O(1) 返回保留容量及生命周期累计分配/扩容调用，查询之间 `nodes = 0`；迭代器的 `scratch_stats()` 返回待处理帧、当前容量及**本查询**新增分配调用。`DisplayCursor` 自动复用自己的栈，`scratch_stats()` 为该游标各步骤累计统计；每步只保留容量，仍按原规则重查有限窗口、预先扣费并检查文档/revision，预算耗尽和错误不会分配或改变继续位置。游标销毁释放容量；重建游标重新预热。其它高层消费者是否使用此接口取决于各自实现，未声称全部调用链零分配。
+`QueryScratch::stats()` O(1) 返回保留容量及生命周期累计分配/扩容调用，查询之间 `nodes = 0`；迭代器的 `scratch_stats()` 返回待处理帧、当前容量及**本查询**新增分配调用。`DisplayCursor` 自动复用自己的栈，`scratch_stats()` 为该游标各步骤累计统计；每步只保留容量，仍按原规则重查有限窗口、预先扣费并检查文档/revision，零预算和错误不会分配或改变继续位置；已支付的条件元数据可在同一源码位置保存进度。游标的查询栈销毁释放容量，条件 memo 则按嵌套核心的退役协议处理；重建游标重新预热。其它高层消费者是否使用此接口取决于各自实现，未声称全部调用链零分配。
 
 分配、访问数、预算及独立结果模型见 [查询 scratch 测量](docs/storage.md#查询-scratch-复用实验)。这些计数只覆盖标注遍历栈，不等于全局 allocator、总堆峰值或实际终端时延。
 
@@ -2530,7 +2530,7 @@ nix develop -c cargo nextest run --test commonmark_precedence
 
 新增 Precedence 42 保留官方两条列表项中失配反引号的输入/HTML；独立公开 API 投影核对真实 List/Item、正文叶块与 code 样式，证明块边界先于行内匹配。另验 UTF-8 逐字节切分/前缀、逐标量 EOF、原始源码切片与六字节共享预算；只省略借用源码的物理叶块终止 LF，实体生成的 LF 与尾空格保留。生成器保留 John MacFarlane / CC BY-SA 4.0 归属、规范行号，校验完整源 SHA 和 Precedence 章节成员，不修改官方期望或解析核心。
 
-本次快照的 40 个 Unsupported 均有明确归属：10 个含需求外 HTML 的例子（21、31、344、475–477、491、494、642–643）仍保留在所属章节评分；17 个同类强调深度例子仍受旧样式位投影限制，不能据此重开已交付的深度核心需求；5 个样式同时开始的顺序/身份例子（413、416、430、467–468）及 419 的链接标签强调作用域，归现有“完整强调作用域、确认/撤销及嵌套顺序”；512、517、520、528、531 归“链接标签嵌套及强调作用域剩余范围”，574–575 归“Images 样例暴露的嵌套与回退缺口”。具体条目见 [TODO](TODO.md)，本次不增加总括未完成项，也不将刻意方言转为新增需求。分类未来以各章实际报告为准。
+当前快照的 33 个 Unsupported 均有明确归属：10 个含需求外 HTML 的例子（21、31、344、475–477、491、494、642–643）仍保留所属章节评分；17 个同类强调深度例子受旧样式位投影限制，不是深度核心缺口；5 个多样式顺序/身份例子（413、416、430、467–468）及 419 的标签作用域，归现有“完整强调作用域、确认/撤销及嵌套顺序”。512、517、520、528、531、574–575 已由嵌套候选核心转为支持。具体 ID 与最新三类总数以[覆盖清单](docs/syntax-coverage.md)及各章实际报告为准；刻意方言不自动成为新增需求。
 
 `annotation_arena_stats`、高度树/检查点的 `arena_stats`、高度依赖树的 `dependency_arena_stats` 返回 Vec 容量字节数、节点数与实际容量增长分配次数。统计不包含 allocator 元数据、碎片、其它 String/Vec 或用户状态的间接堆分配。`scaling` 示例同时记录操作计数、查询分位数与容量；`one_byte_reused` 对照复用通知缓冲的逐字符输入。
 
@@ -3412,13 +3412,13 @@ nix develop -c cargo nextest run --test commonmark_lists
 
 ## CommonMark Images 标准样例评分
 
-`tests/commonmark_images.rs` 固定 [CommonMark 0.31.2 Images](https://spec.commonmark.org/0.31.2/#images) 完整章节 572–593，共 22 例：**19 支持、1 刻意差异、2 未支持**。`scripts/generate_commonmark_images.py` 从固定 SHA-256 的官方 `spec.json` 离线逐字提取 Markdown/HTML，`--check` 校验夹具；独立差异观察不参与投影。
+`tests/commonmark_images.rs` 固定 [CommonMark 0.31.2 Images](https://spec.commonmark.org/0.31.2/#images) 完整章节 572–593，共 22 例：**22 支持、0 刻意差异、0 未支持**。`scripts/generate_commonmark_images.py` 从固定 SHA-256 的官方 `spec.json` 离线逐字提取 Markdown/HTML，`--check` 校验夹具；独立差异观察不参与投影。
 
 投影只读取公开 `LinkInfo.kind/label/source`、显示片段和目标/title 解码游标，按源码包络输出图片或链接，因此空 alt 也保留图片对象。图片 alt 使用已解码的可见标签文字，不输出强调/代码样式标签；保留内部空白和换行，外部普通文字按已有样式输出。对象标签之外的语法必须由核心标为隐藏，投影不重新解析 Markdown、不补括号、不合成外层对象。输出只覆盖本章 ASCII URI，主动拒绝未评分的 URI 编码、块结构及样式组合；这不是通用 HTML 渲染器。
 
-574/575 的嵌套图片/链接会替换外层图片候选，尚不能生成规范要求的外层图片；590 保留未定义引用隐藏方括号的既有方言。其它样例覆盖 inline/full/collapsed/shortcut 图片、大小写归一、强调 alt、空 alt、title、转义感叹号/方括号和跨行分离后缀。上述缺口、完整图片/引用失败回退及宽泛标准覆盖继续见 TODO。
+574/575 由嵌套核心提供真实父图片及孩子对象，alt 消费核心显示片段；590 的字面边界也已修复。其它样例覆盖 inline/full/collapsed/shortcut 图片、大小写归一、强调 alt、空 alt、title、转义感叹号/方括号和跨行分离后缀。完整图片/引用失败回退及宽泛标准覆盖继续见 TODO。
 
-六项回归验证 723 个切点、701 个逐字符前缀及逐前缀 EOF、完整公开快照、源码/切片映射、零预算停步及六字节显示/元数据恢复与无限预算对照；另验证 UTF-8/实体/转义、首定义优先、晚定义身份、空与缺失 title、投影属性敏感性及拒绝范围。本轮只增加评分设施和文档，核心解析、运行时依赖、追加复杂度及预算契约保持。
+六项回归验证 723 个切点、701 个逐字符前缀及逐前缀 EOF、完整公开快照、源码/切片映射、零预算停步及六字节显示/元数据恢复与无限预算对照；另验证 UTF-8/实体/转义、首定义优先、晚定义身份、空与缺失 title、投影属性敏感性及拒绝范围。初次评分仅增加设施；本次嵌套核心使 574/575 转支持，运行时依赖及累计追加复杂度保持。
 
 ## CommonMark Inlines 标准样例评分
 
@@ -3478,9 +3478,9 @@ nix develop -c cargo nextest run --test commonmark_lists
 
 ## CommonMark 链接标签与嵌套组合子集评分（2026-11-04）
 
-新增 [CommonMark 0.31.2 Links 样例 512–538](https://spec.commonmark.org/0.31.2/#example-512) 的离线评分，共 **27 例：18 支持、4 刻意差异、5 未支持**（标签左右边界修复后）。覆盖标签括号/转义、标签内强调与代码、链接/图片嵌套、强调边界、代码/自动链接优先级及 full 引用组合。结合此前 482–511、539–552、553–571，Links 482–571 的官方样例现已分四个子集评分；这不表示完整 Links 兼容性已经实现。
+新增 [CommonMark 0.31.2 Links 样例 512–538](https://spec.commonmark.org/0.31.2/#example-512) 的离线评分，共 **27 例：24 支持、3 刻意差异、0 未支持**（嵌套核心交付后）。覆盖标签括号/转义、标签内强调与代码、链接/图片嵌套、强调边界、代码/自动链接优先级及 full 引用组合。结合此前 482–511、539–552、553–571，Links 482–571 的官方样例现已分四个子集评分；这不表示完整 Links 兼容性已经实现。
 
-512/528 的未转义嵌套括号、517/531 的图片内嵌于链接、520 的外层图片均暴露单候选覆盖外层对象的缺口；535 的标签内未配对 opener 越过右边界已由[标签终点交付](#已发布标签的未配对分隔符终点)修复；521/534 的外入内跨界已由下方[标签左边界隔离](#已发布标签左边界的强调隔离)修复。513/523 保留未定义引用隐藏括号的既有方言，523 的外部与标签内部星号现在均保持字面；524/536 保留原始 HTML 字面处理、不提供 HTML 语法屏蔽的方言。多行后缀/定义、完整失败回退及嵌套/强调确认撤销模型继续待办。
+512/528 的未转义嵌套括号、517/531 的链接内图片和 520 的图片内链接均由嵌套核心提供真实对象，原始官方 HTML 直接匹配。513 的字面边界、535 的右边界及 521/534 的左边界均已交付。523 仍保留词法强调隔离差异；524/536 仍为需求范围外原始 HTML 的字面方言，保留父候选后已独立更新当前观察。完整后缀字面回退、523 和完整有序强调表示仍待办。
 
 官方输入/HTML 固定于 `tests/fixtures/commonmark_link_labels.rs`，离线生成器 `scripts/generate_commonmark_link_labels.py` 校验固定 SHA-256 和连续章节成员。投影只读取公开块、对象范围、显示样式及核心目标/title 解码游标；按覆盖整个对象包络的样式保留外层强调，支持本子集的 em 外包 strong/code，拒绝未评分的歧义/反向样式嵌套。投影不重解析 Markdown、不补括号或创建缺失外层对象；URI 百分号编码仅属于输出层，不改变原始目标。
 
@@ -3524,7 +3524,7 @@ URL 排除尾部 `? ! . , : * _ ~`；只在尾部移除超过全地址左括号�
 
 失败 HTTP(S)/`www.` 候选在封口后可恢复内部有效 email、`www.`、HTTP(S)、`mailto:`/`xmpp:`，例如 `http://foo_bar@bar.com` 得到 `mailto:foo_bar@bar.com`。有效外层 URL 保持整条，不重复发布内部地址。失败区间只建立一次临时主机后缀索引：反向处理每个主机字符，保存点号、空段和末两段下划线的摘要；另一次有界尾部检查判断尾点能否被标点、右括号、实体形后缀全部裁掉。主机中没有左括号，任何路径左括号都会阻止裁剪到主机，因此这项准入无需对每个起点重新数括号。一次普通行内恢复按原优先级消费该区间，仅准许最终能成立的内部 Web 起点进入长候选；失败的 `www.` 保留 Local/email 可能，失败 HTTP(S) 的冒号交回普通语法。内部候选互不重叠，普通释放禁用重识别，源嵌套深度不增加调用深度；65,536 层 `http://a_/(` 前缀也只共享同一个索引。email 的晚强调和表头隔离沿用原 owner/配对结算，索引在本次恢复结束即释放，不复制正文或保留逐修订历史。每字节只参与固定次数的索引、恢复、校验/普通释放，新增索引 O(n) 时间/空间；整体仍累计 O(n log n)、空间 O(n)。本项不扩展显式链接的完整失败后缀、代码失败回放、全部嵌套标签或原始 HTML。独立期望、主机后缀穷举、实际工作计数及真实布局验收见[失败裸 URL 恢复交付](DONE.md#2026-11-12-失败裸-url-内部地址恢复交付)。
 
-边界/EOF 前不发布 LinkId，原始字节始终可见。例如 `a@b.c` 后再追加 `-` 会整条拒绝，`www.a.test/a))` 后追加 `+ok` 会把右括号保留在地址内部，`&hl` 后追加 `;` 会排除实体形尾部；都不需要撤销已经公开的对象。确认后一次发布 sealed 对象及范围失效，已发布 ID、源码范围与目标不再变化。为允许较早 email 在较晚链接后确认，LinkId 保持分配顺序且永不重排，`links()` 返回分配顺序；`links_in()` / `next_drawable()` 及 LayoutPass 使用独立源码有序索引，以 O(log L + 结果数) 查询。LayoutPass 每个已计费对象至多做一次 O(log L) 索引后继查找，不扫描对象历史。裸地址的 `LinkInfo.source == label`，`LinkTarget::Www(Span)` 表示隐含 `http://`，Email 表示隐含 `mailto:`，其它协议使用 Direct；原目标/显示文本借用源码。`link_url` 只为 Www/Email 分配带前缀 URL；`decoded_link_destination` 仍按字面和原始字节映射读取，不补前缀，六字节共享预算契约保持。
+边界/EOF 前不发布 LinkId，原始字节始终可见。例如 `a@b.c` 后再追加 `-` 会整条拒绝，`www.a.test/a))` 后追加 `+ok` 会把右括号保留在地址内部，`&hl` 后追加 `;` 会排除实体形尾部；都不需要撤销已经公开的对象。确认后一次发布 sealed 对象及范围失效，已发布 ID、源码范围与目标不再变化。为允许较早 email 在较晚链接后确认，LinkId 保持分配顺序且永不重排，`links()` 返回分配顺序；`links_in()` / `next_drawable()` 及 LayoutPass 使用独立源码有序索引，以 O(log L + 结果数) 查询。LayoutPass 使用可恢复的嵌套相交游标，窗口 O(log L + 结果数)，不按每个对象重新从根查找后继，不扫描对象历史。裸地址的 `LinkInfo.source == label`，`LinkTarget::Www(Span)` 表示隐含 `http://`，Email 表示隐含 `mailto:`，其它协议使用 Direct；原目标/显示文本借用源码。`link_url` 只为 Www/Email 分配带前缀 URL；`decoded_link_destination` 仍按字面和原始字节映射读取，不补前缀，六字节共享预算契约保持。
 
 `Work.bare_autolink_bytes` 单独计收集、校验输入、失败 Web 索引/恢复与普通释放；`bare_eligibility_bytes` 计两个非发布准入机的同类工作，不改原有计数含义。21 项独立核心回归含 270 组 URL 域名/侧界模型、162 组 email/协议模型、尾部反例、未完成/EOF、任意 UTF-8 字节分块/逐前缀、源码/tile/共享六字节预算、长表头确认/失败、970 层容器与百万字候选逐字增长、十万组实体/标点尾部和 4096 行/旧引用身份。已完成范围及完整回归记录见[交付记录](DONE.md#2026-11-12-gfm-裸自动链接核心交付)。
 
@@ -3728,7 +3728,7 @@ run 等待后继标量或 EOF 再定长；未完成/失败外层不贡献深度�
 
 晚表头成功时，旧标签前一行摘要作为原段落处理一次，当前行摘要用于独立首单元格；失败才按标签确认路径发布。若未发布的继承候选被新 `[` 或自动链接起始替换，释放摘要时先处理旧行，再以其剩余栈恢复当前行的继承边界；旧行内部配对立即保留，跨行配对继续等待表头决定，长短表头结果一致。此衔接不扩展不可隔离表头的一般确认/撤销。每个摘要只处理一次，每次 closer 查固定六个分类头并按源码位置排除外部 opener；局部配对后沿用终点清退。摘要占 O(run 数) 空间并复用容量，处理/移交计入 `Work.delimiter_steps`；无正文增长回扫，累计解析 O(n log n)、空间 O(n)、零运行时依赖、禁止 unsafe 与整帧共享预算保持。
 
-官方 521/534/564 及同一规则覆盖的 473/474 均经独立观察后匹配原 HTML；512–538 当前为 **19/3/5**，553–571 为 **17/2/0**，460–481 为 **12/0/10**（支持/刻意差异/未支持）。523 仍有强调隔离差异，当前独立观察为字面 `*foo [bar* baz]`；官方 Markdown/HTML、生成器和评分投影算法保持。419、嵌套链接/图片、多候选、跨行定义/后缀、完整失败回退、混合样式顺序与 UI 继续待办。
+官方 521/534/564 及同一规则覆盖的 473/474 均经独立观察后匹配原 HTML；该左边界交付时 512–538 为 **19/3/5**，553–571 为 **17/2/0**，460–481 为 **12/0/10**（支持/刻意差异/未支持）。523 仍有强调隔离差异，当前独立观察为字面 `*foo [bar* baz]`；官方 Markdown/HTML、生成器和评分投影算法保持。419、523、其余跨行后缀/完整失败回退、混合样式顺序与 UI 继续待办；嵌套链接/图片及多候选已由文末核心交付。
 
 复跑：`nix develop -c cargo nextest run --test label_delimiters --test commonmark_link_labels --test commonmark_reference_forms --test commonmark_emphasis_final --test commonmark_emphasis_partial --test single_tilde --lib --no-fail-fast`。模型、UTF-8 分块/EOF、稳定身份/原始映射、共享预算与长输入计数见[交付记录](DONE.md#2026-11-11-已发布标签左边界的强调隔离交付)。
 
@@ -3884,7 +3884,7 @@ raw title 直接借用连续真实源码，CRLF 计两个 title/suffix 字节；
 
 私有条件 annotation 与永久 HIDDEN 分开；永久隐藏优先。条件 owner 现为稳定 LinkId，读取该对象当前目标，已解析 a 升级到未解析 b 时原 marker 可重新显示。Direct 与未先发布合法 shortcut 的完整 full 仍永久隐藏；已有 shortcut 的 full/collapsed 完整升级见下节，引用目标选择保持。Runs、scratch/display、raw LayoutPass、可见位置查找和基于 display 的搜索/摘要均读取有效样式；SourceSearch 和 raw summary 保留源码。晚定义另发 Visibility，因此 references_affect_size=false 也会使旧测量失效。
 
-当前离线统计（支持/刻意差异/未支持）：定义章 **26/1/0**；Links 482–511 **27/1/2**、512–538 **19/3/5**、539–552 **13/1/0**、553–571 **17/2/0**；Images **20/0/2**；实体章 **16/0/1**。以上替代前文各历史交付时的计数。官方输入/HTML、生成器及评分投影不变；full/collapsed 回选、完整失败 lexer、HTML、嵌套图片与其余宽 TODO 仍未交付。
+当前离线统计（支持/刻意差异/未支持）：定义章 **26/1/0**；Links 482–511 **27/1/2**、512–538 **24/3/0**、539–552 **13/1/0**、553–571 **17/2/0**；Images **22/0/0**；实体章 **16/0/1**。以上替代前文各历史交付时的计数。官方输入/HTML、生成器不变；嵌套评分投影只消费真实公开对象/选择及显示语义。full/collapsed 的其余回选、完整失败 lexer、HTML 与其余宽 TODO 仍未交付。
 
 `tests/shortcut_boundaries.rs` 和私有 annotation 回归覆盖真实前驱快照、typed marker/ID/映射、UTF-8/EOF、hard LF/全空格 code/math、微预算、late winner/策略失效、FoldView、百万字追加及两万旧对象。纯 shortcut 的条件标记只占原 marker 的至多三个 ASCII 字节；下节合格完整升级还覆盖整个后缀。每个合法 shortcut label 保留 base-visible scalar，配合永久隐藏树汇总使 next_visible 保持 O(log n)。没有新 boundary/uses 索引或旧正文回扫，累计 O(n log n)、空间 O(n)、零运行时依赖和禁止 unsafe 保持。
 
@@ -3910,3 +3910,47 @@ backtick/tilde opener 至少三个同字符，closer 同字符且不短于 opene
 `tests/streaming_fences.rs` 的独立物理行模型覆盖 180 组 opener/info、5,760 组 closer，另验证 3/1023/1024/4096/百万 marker、五组百万次逐字增长、晚失败和反复拒绝、完整深路径只剩一个窗口字节、CRLF/所有 UTF-8 字节切点/逐前缀与 EOF、作用域中断、表头/既有表格身份、跨 tile 映射、0/1/6 共享预算和真实布局/测量失效。既有长度模型扩展到 756 组；官方 119–147 的输入、HTML、评分投影和 29/0/0 分类保持。
 
 `MAX_FENCE_LENGTH` 保留历史值 1023 并 deprecated（历史曾为 32），不再用于语法判断；仓内消费者已改用有限代表长度或明确非法后缀，调用方不能用它分配/遍历“所有合法长度”。完整容器及一般叶块 tab、不完整路径、一般晚表头确认和完整行内代码失败重放继续属于原 TODO。复跑：`nix develop -c cargo nextest run --test streaming_fences --test long_fences --test commonmark_fenced_code --no-fail-fast`。
+
+## 链接与图片的嵌套候选核心
+
+允许图片标签内含图片/链接，链接标签内含图片及未转义的成对方括号；链接不能通过任何图片路径再包含有效链接，内层链接优先。例如 `[![a](v)](u)` 保留两个对象，`![a [b](v)](u)` 保留图片及内层链接，`[![a [b](v)](w)](u)` 的外层链接被禁止。代码、数学与尖括号地址沿用原有识别和不透明失败方言，裸地址仍不在显式标签内识别；原始 HTML 不参与解析。无效尖括号片段现在保留其所在标签候选，不能再把父标签当成单候选替换的副作用丢弃。
+
+每个 opener 保存固定摘要、直接孩子链和待定分隔符 journal。孩子确认即发布稳定 LinkId，父标签确认时只给直接孩子写一次 `link_parent`；父候选失败、未完成或 EOF 保留这些真实孩子。失败 journal 常数时间接回父标签，确认后只处理本标签的摘要；`*`/`_`/单双 `~` 均遵守标签左右边界。已发布候选的词法强调隔离（包括未解析 shortcut 的 523 及条件失效父候选）继续保留，未交付完整有序强调树或通用后缀字面回放。
+
+晚引用可以使已发布父链接失效，也可启用原 full 后缀的真实回退候选；连续 full 标签为两种解释逐个发布互补门控，每个新标签至多一个新候选，允许任意长链，不重放前缀。`links()` 是稳定分配顺序，`links_in(span)` 是原始候选按源码起点/ID 排序的相交查询，包含 Active、Unresolved、Suppressed，不能仅凭原始 destination 判定交互对象。`link_info`、raw destination/title、`link_parent` 都为 O(1)，不求值远端依赖；`LinkActivity::advance_with(doc, resolver, budget)` 可恢复地返回 `LinkDisposition`，同一 revision 的多个对象与显示游标应共享一个 `LinkResolver`。Unresolved 保留已有字面边界，Suppressed 不应显示为命中或交互对象；父图片 alt 通过真实显示 runs 读取，父链接内的图片通过真实对象消费，不重新解析标签文本。
+
+源码索引使用叶 AVL 与按 source.end 提升的 priority search tree，允许条件回退产生的交叉包络。一次 key 插入至多两次 AVL 旋转，每次只修复 O(log L) 个 heap 位置；目标升级只调整 end 和一个 heap 槽。窗口以 O(log L + K) 报告全部相交候选，保留遍历位置；起点在窗口之前的结果用固定机器字基数排序恢复源码顺序，O(K) 工作/临时空间，小集合使用有固定上限的插入排序。`LinkWindow::advance` 的遍历、排序、输出都消费共享 query/object 预算，构造和零预算不扫描历史。`LinkWindowWork` 暴露实际节点、排序与对象计数。
+
+条件谓词共享基础 descendant 非图片目标的 OR 图，不复制祖先路径或完整 AST。基础候选中任一可用内层链接必有一个最内层可用链接，因此这些目标的 OR 与“存在有效内层链接”等价；图片不阻挡传播。后缀互补分支共享同一个 P：正分支已经由 P 见证，负分支可能引入首个链接，以其 raw target 合入包含 P 的祖先摘要；负分支直接成功时，P 或该成功必有一个成立，可直接确认祖先 blocker。每个后缀只增加常数个槽/边。目标槽在外层闭合前已定型，晚定义只更新符号及最早保守失效端点，不回访旧使用点。每字节/括号/journal 至多常数次处理，每个对象至多一次 parent 写入，每个 guard 至多常数个新边；累计解析 O(n log n)、核心空间 O(n)，无运行时依赖或 unsafe，原始源码只追加。深度相关操作使用 Vec/平衡索引，语法深链不递归。
+
+显示/布局求值的额外 V 个依赖、parent 与 owner 节点按 query/object 逐步计费，memo 的有序映射操作 O(log(V + 1))，空间 O(V)。共享 memo 对 owner 路径作付费压缩，避免逐标签重新走祖先。无预算的 `runs_in`、`display_runs_in`、`next_visible`/`next_drawable` 是便利读取，可能需要窗口外 V；帧应使用 DisplayCursor、LinkWindow、LinkActivity 和 LayoutPass，不能把便利入口当硬帧预算。显示游标和真实 LayoutPass 都可在源码位置不变时先支付元数据步骤，6 bytes/1 query/1 object 多帧可持续推进。LayoutPass 默认共享自己的 memo，`object_with_disposition` 只交付 Active/Unresolved；跨折叠 overlay 重启时用一个单调源码游标防止父对象重复交付。
+
+`DependencyCapture` 按同一 Budget 可恢复地收集窗口、远端 guard 及一个保守标签包络内的真实目标依赖，避免按每个深层祖先重扫孩子；完成后得到原 `DependencyKey`。旧 atomic `capture` 在预算不足时可当缓存 miss；其临时节点只来自本次已支付工作。DisplaySearch/HeadingSearch、DisplayExcerpt、HeadingAnchors 同样消费核心显示语义；跨标题复用 memo，避免切标题时同步释放或重复求值大量依赖。
+
+revision 改变后，**旧 memo 的析构也是工作**。BTreeMap 的 Drop 为 O(V)；帧内应先从旧 pass/cursor/search/excerpt/anchor 取出 `take_link_resolver()`，再释放空任务，把这个唯一旧 memo 用 `retire(&mut budget)` 分帧移除。每个 map 节点计 1 query/1 object，零预算保留所有节点；`memo_entries` 与 `work().retired_entries` 可核对付费释放数。Covered 后可 O(1) `reset(&doc)` 绑定最新 revision，非空 reset 返回 InvalidRange。不要每次 append 排队一份旧 memo。独立 LinkActivity 和可恢复 DependencyCapture 也提供 retire；直接丢弃未退役的大任务不承诺帧时限。
+
+```rust
+use mdstream::{Budget, Completion, Document, LinkDisposition, LinkId, WorkLimit};
+let mut doc = Document::new();
+doc.append("[a [r]](u)\n\n").unwrap();
+let parent = doc.links_in(mdstream::Span::new(0, 1)).next().unwrap().0;
+let mut resolver = doc.link_resolver();
+let mut activity = doc.link_activity(parent).unwrap();
+loop {
+    let mut budget = Budget::new(WorkLimit { queries: 1, objects: 1, ..Default::default() });
+    if let Some(state) = activity.advance_with(&doc, &mut resolver, &mut budget).unwrap() {
+        assert_eq!(state, LinkDisposition::Active);
+        break;
+    }
+}
+doc.append("[r]: /r\n").unwrap();
+loop {
+    let mut budget = Budget::new(WorkLimit { queries: 1, objects: 1, ..Default::default() });
+    if resolver.retire(&mut budget) == Completion::Covered { break; }
+}
+resolver.reset(&doc).unwrap();
+assert_eq!(resolver.memo_entries(), 0);
+let _stable_id: LinkId = parent;
+```
+
+`tests/nested_links.rs` 包含独立森林优先级模型、UTF-8 任意字节分块/逐前缀/EOF、显式/lazy 容器、失败父候选、强调与删除线、晚定义与稳定身份、远端缓存依赖、跨 tile/source overlay 和真实 LayoutPass、共享微预算、16,384 层深链及百万字增长；索引单元模型另验证交叉区间、同起点及历史稀疏窗口。`Work.link_label_steps/link_index_steps/link_gate_steps`、各查询 work 和三份实际 arena capacity 统计分别覆盖解析、查询和空间。原型的反例/复杂度证据与冻结验证记录见 [DONE](DONE.md#2026-11-13-链接图片嵌套候选核心交付)。

@@ -2,6 +2,8 @@ use mdstream::*;
 
 #[path = "support/shortcut_snapshot.rs"]
 mod model;
+#[path = "support/nested_changes.rs"]
+mod nested_changes;
 #[allow(dead_code)]
 #[path = "support/reference_boundary_hashes.rs"]
 mod reference_hashes;
@@ -104,12 +106,14 @@ fn late_winner_changes_visibility_without_replacing_identity() {
 #[test]
 fn predecessor_structures_payloads_and_scalar_semantics_are_frozen() {
     for (index, &(source, markers, expected)) in BASELINE.iter().enumerate() {
+        let original = reference_hashes::shortcut(index, source, expected);
+        let changed = nested_changes::shortcut(source, original);
         assert_eq!(
-            model::describe(&parse(source), markers, true)
+            model::describe(&parse(source), markers, changed.is_none())
                 .bytes()
                 .fold(0xcbf29ce484222325u64, |h, b| (h ^ u64::from(b))
                     .wrapping_mul(0x100000001b3)),
-            reference_hashes::shortcut(index, source, expected),
+            changed.unwrap_or(original),
             "{source:?}"
         );
     }

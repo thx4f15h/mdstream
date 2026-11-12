@@ -28,11 +28,11 @@ The `commonmark_autolinks_official` suite includes `commonmark_autolinks_officia
 | `commonmark_entities` / Entity and numeric character references | 25–41 | `pinned_commonmark_entities_report` | `scripts/generate_commonmark_entities.py` | 25–30, 32–41 | — | 31 |
 | `commonmark_fenced_code` / Fenced code blocks | 119–147 | `pinned_commonmark_fenced_code_report` | `scripts/generate_commonmark_fenced_code.py` | 119–147 | — | — |
 | `commonmark_hard_breaks` / Hard line breaks | 633–647 | `pinned_commonmark_hard_breaks_report` | `scripts/generate_commonmark_hard_breaks.py` | 633–635, 638–641, 644–647 | 636–637 | 642–643 |
-| `commonmark_images` / Images | 572–593 | `pinned_commonmark_images_report` | `scripts/generate_commonmark_images.py` | 572–573, 576–593 | — | 574–575 |
+| `commonmark_images` / Images | 572–593 | `pinned_commonmark_images_report` | `scripts/generate_commonmark_images.py` | 572–593 | — | — |
 | `commonmark_indented_code` / Indented code blocks | 107–118 | `pinned_commonmark_indented_code_report` | `scripts/generate_commonmark_indented_code.py` | 107–109, 114–118 | 110–113 | — |
 | `commonmark_inline_links` / Links | 482–511 | `pinned_commonmark_inline_links_report` | `scripts/generate_commonmark_inline_links.py` | 482–490, 492, 495–511 | 493 | 491, 494 |
 | `commonmark_inlines` / Inlines | 327 | `pinned_commonmark_inlines_report` | `scripts/generate_commonmark_inlines.py` | 327 | — | — |
-| `commonmark_link_labels` / Links | 512–538 | `pinned_commonmark_link_labels_report` | `scripts/generate_commonmark_link_labels.py` | 513–516, 518–519, 521–522, 525–527, 529–530, 532–535, 537–538 | 523–524, 536 | 512, 517, 520, 528, 531 |
+| `commonmark_link_labels` / Links | 512–538 | `pinned_commonmark_link_labels_report` | `scripts/generate_commonmark_link_labels.py` | 512–522, 525–535, 537–538 | 523–524, 536 | — |
 | `commonmark_list_items` / List items | 253–300 | `pinned_commonmark_list_items_report` | `scripts/generate_commonmark_list_items.py` | 253–263, 265–288, 290, 292–300 | 264, 289, 291 | — |
 | `commonmark_lists` / Lists | 301–326 | `pinned_commonmark_lists_report` | `scripts/generate_commonmark_lists.py` | 301–307, 310–311, 313–326 | 308–309, 312 | — |
 | `commonmark_paragraphs` / Paragraphs | 219–226 | `pinned_commonmark_paragraphs_report` | `scripts/generate_commonmark_paragraphs.py` | 219–222, 224–226 | 223 | — |
@@ -59,5 +59,5 @@ Explicit chapter exclusions (no silent omissions):
 Examples containing HTML within included non-HTML chapters remain scored as Unsupported where appropriate; only the two complete CommonMark HTML chapters are excluded.
 Unsupported and deliberate differences retain exact chapter observations/rejection checks and the remaining implementation TODOs. Coverage does not convert either category to Supported.
 
-commonmark: 588 executed examples; 516 supported, 32 deliberate differences, 40 unsupported.
+commonmark: 588 executed examples; 523 supported, 32 deliberate differences, 33 unsupported.
 gfm: 27 executed examples; 27 supported, 0 deliberate differences, 0 unsupported.

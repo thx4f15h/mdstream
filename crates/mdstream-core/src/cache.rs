@@ -21,59 +21,19 @@ pub enum CacheValidity {
 }
 
 impl DependencyKey {
-    /// A tile has at most TILE_BYTES object starts plus one overlapping object.
-    /// If exhausted, no partial key is published; consumed charges remain spent.
+    /// Capture atomically within this call. If exhausted, no partial key is
+    /// published; use DependencyCapture to preserve progress across frames.
     pub fn capture(
         document: &Document,
         tile: TileId,
         budget: &mut Budget,
     ) -> Result<Option<Self>, LayoutError> {
-        let key = document.tile_key(tile).ok_or(LayoutError::InvalidRange)?;
-        if !budget.charge(WorkLimit {
-            queries: 1,
-            ..Default::default()
-        }) {
-            return Ok(None);
+        let mut task = DependencyCapture::new(document, tile)?;
+        match task.advance(document, budget)? {
+            DependencyCaptureStep::Captured(key) => Ok(Some(key)),
+            DependencyCaptureStep::BudgetExhausted => Ok(None),
+            DependencyCaptureStep::Complete => unreachable!(),
         }
-        let mut symbols = Vec::new();
-        for (id, _) in document.links_in(key.source) {
-            if !budget.charge(WorkLimit {
-                objects: 1,
-                dependencies: 1,
-                ..Default::default()
-            }) {
-                return Ok(None);
-            }
-            if let LinkTarget::Reference(symbol) = document.links()[id.0] {
-                symbols.push((symbol, document.references()[symbol.0].revision));
-            }
-        }
-        let mut footnotes = Vec::new();
-        let entries = document.footnote_references();
-        let start = entries.partition_point(|r| r.source.end <= key.source.start);
-        for reference in entries[start..]
-            .iter()
-            .take_while(|r| r.source.start < key.source.end)
-        {
-            if !budget.charge(WorkLimit {
-                objects: 1,
-                dependencies: 1,
-                ..Default::default()
-            }) {
-                return Ok(None);
-            }
-            footnotes.push((
-                reference.symbol,
-                document.footnote(reference.symbol).unwrap().revision,
-            ));
-        }
-        Ok(Some(Self {
-            tile,
-            key,
-            symbols,
-            footnotes,
-            finished: document.is_finished(),
-        }))
     }
 
     pub fn validate(
@@ -112,6 +72,237 @@ impl DependencyKey {
                 CacheValidity::Valid
             },
         )
+    }
+}
+
+/// A completed atomic key, a paid pause, or an already consumed result.
+#[derive(Debug)]
+pub enum DependencyCaptureStep {
+    Captured(DependencyKey),
+    BudgetExhausted,
+    Complete,
+}
+
+/// Resumable dependency capture, including nested label content and remote
+/// target guards. No label text is scanned or reparsed. A single conservative
+/// label envelope is queried once, so deep ancestors never repeatedly traverse
+/// the same descendants. Constructors allocate no document-sized buffers.
+pub struct DependencyCapture {
+    document: crate::DocumentId,
+    revision: u64,
+    tile: TileId,
+    key: Option<TileKey>,
+    phase: u8,
+    window: Option<crate::LinkWindow>,
+    current: Option<crate::LinkId>,
+    activity: Option<crate::LinkActivity>,
+    resolution: crate::link_semantics::Resolution,
+    seen: std::collections::BTreeSet<crate::LinkId>,
+    expanded: Option<Span>,
+    foot_source: Span,
+    foot_at: usize,
+    footnotes: Vec<(crate::FootnoteId, u64)>,
+}
+impl DependencyCapture {
+    pub fn new(document: &Document, tile: TileId) -> Result<Self, LayoutError> {
+        if tile.0 >= document.tile_count() {
+            return Err(LayoutError::InvalidRange);
+        }
+        Ok(Self {
+            document: document.id(),
+            revision: document.revision(),
+            tile,
+            key: None,
+            phase: 0,
+            window: None,
+            current: None,
+            activity: None,
+            resolution: crate::link_semantics::Resolution::capturing(),
+            seen: Default::default(),
+            expanded: None,
+            foot_source: Span::new(0, 0),
+            foot_at: 0,
+            footnotes: Vec::new(),
+        })
+    }
+    pub fn memo_entries(&self) -> usize {
+        self.seen.len() + self.resolution.memo_entries()
+    }
+    /// Cancel a resumable capture (including after Captured) and pay for its
+    /// BTree memo/seen nodes before destruction. Copy-only buffers release once.
+    pub fn retire(&mut self, budget: &mut Budget) -> crate::Completion {
+        self.phase = 6;
+        self.activity = None;
+        self.window = None;
+        if self.resolution.retire(budget) == crate::Completion::BudgetExhausted {
+            return crate::Completion::BudgetExhausted;
+        }
+        while !self.seen.is_empty() {
+            if !budget.charge(WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            }) {
+                return crate::Completion::BudgetExhausted;
+            }
+            self.seen.pop_first();
+            self.resolution.work.retired_entries += 1;
+        }
+        crate::Completion::Covered
+    }
+    pub fn object_count(&self) -> usize {
+        self.seen.len()
+    }
+    pub fn link_resolution_work(&self) -> crate::LinkResolutionWork {
+        self.resolution.work
+    }
+    pub fn advance(
+        &mut self,
+        document: &Document,
+        budget: &mut Budget,
+    ) -> Result<DependencyCaptureStep, LayoutError> {
+        if self.document != document.id() {
+            return Err(LayoutError::WrongDocument);
+        }
+        if self.revision != document.revision() {
+            return Err(LayoutError::StaleContinuation);
+        }
+        loop {
+            match self.phase {
+                0 => {
+                    if !budget.charge(WorkLimit {
+                        queries: 1,
+                        ..Default::default()
+                    }) {
+                        return Ok(DependencyCaptureStep::BudgetExhausted);
+                    }
+                    let key = document.tile_key(self.tile).unwrap();
+                    self.foot_source = key.source;
+                    self.foot_at = document
+                        .footnote_references()
+                        .partition_point(|r| r.source.end <= key.source.start);
+                    let mut window = document.link_window(key.source);
+                    window.seed(document);
+                    self.window = Some(window);
+                    self.key = Some(key);
+                    self.phase = 1;
+                }
+                1 | 2 => {
+                    if let Some(id) = self.current {
+                        if let Some(activity) = &mut self.activity {
+                            if activity
+                                .advance_in(document, &mut self.resolution, budget, 0)?
+                                .is_none()
+                            {
+                                return Ok(DependencyCaptureStep::BudgetExhausted);
+                            }
+                            self.activity = None;
+                            self.current = None;
+                            continue;
+                        }
+                        if !budget.charge(WorkLimit {
+                            dependencies: 1,
+                            ..Default::default()
+                        }) {
+                            return Ok(DependencyCaptureStep::BudgetExhausted);
+                        }
+                        if let LinkTarget::Reference(symbol) = document.links()[id.0] {
+                            self.resolution
+                                .dependencies
+                                .as_mut()
+                                .unwrap()
+                                .push((symbol, document.references()[symbol.0].revision));
+                        }
+                        if self.phase == 1 && document.link_order.nested(id) {
+                            let label = document.link_info(id).unwrap().label;
+                            self.expanded = Some(self.expanded.map_or(label, |old| {
+                                Span::new(old.start.min(label.start), old.end.max(label.end))
+                            }));
+                        }
+                        if !document.link_order.gate(id).unconditional() {
+                            self.activity = document.link_activity(id);
+                        } else {
+                            self.current = None;
+                        }
+                        continue;
+                    }
+                    match self.window.as_mut().unwrap().advance(document, budget)? {
+                        crate::LinkStep::Object(id, _) => {
+                            if self.seen.insert(id) {
+                                self.current = Some(id);
+                            }
+                        }
+                        crate::LinkStep::BudgetExhausted => {
+                            return Ok(DependencyCaptureStep::BudgetExhausted);
+                        }
+                        crate::LinkStep::Complete => {
+                            let source = self.key.as_ref().unwrap().source;
+                            if self.phase == 1
+                                && self.expanded.is_some_and(|span| {
+                                    span.start < source.start || source.end < span.end
+                                })
+                            {
+                                self.phase = 4;
+                            } else {
+                                self.phase = 3;
+                            }
+                        }
+                    }
+                }
+                4 => {
+                    if !budget.charge(WorkLimit {
+                        queries: 1,
+                        ..Default::default()
+                    }) {
+                        return Ok(DependencyCaptureStep::BudgetExhausted);
+                    }
+                    let label = self.expanded.unwrap();
+                    let source = self.key.as_ref().unwrap().source;
+                    self.foot_source =
+                        Span::new(label.start.min(source.start), label.end.max(source.end));
+                    self.foot_at = document
+                        .footnote_references()
+                        .partition_point(|r| r.source.end <= self.foot_source.start);
+                    let mut window = document.link_window(self.foot_source);
+                    window.seed(document);
+                    self.window = Some(window);
+                    self.phase = 2;
+                }
+                3 => {
+                    let entries = document.footnote_references();
+                    if self.foot_at >= entries.len()
+                        || entries[self.foot_at].source.start >= self.foot_source.end
+                    {
+                        self.phase = 5;
+                        continue;
+                    }
+                    if !budget.charge(WorkLimit {
+                        objects: 1,
+                        dependencies: 1,
+                        ..Default::default()
+                    }) {
+                        return Ok(DependencyCaptureStep::BudgetExhausted);
+                    }
+                    let reference = &entries[self.foot_at];
+                    self.footnotes.push((
+                        reference.symbol,
+                        document.footnote(reference.symbol).unwrap().revision,
+                    ));
+                    self.foot_at += 1;
+                }
+                5 => {
+                    self.phase = 6;
+                    return Ok(DependencyCaptureStep::Captured(DependencyKey {
+                        tile: self.tile,
+                        key: self.key.take().unwrap(),
+                        symbols: std::mem::take(self.resolution.dependencies.as_mut().unwrap()),
+                        footnotes: std::mem::take(&mut self.footnotes),
+                        finished: document.is_finished(),
+                    }));
+                }
+                _ => return Ok(DependencyCaptureStep::Complete),
+            }
+        }
     }
 }
 

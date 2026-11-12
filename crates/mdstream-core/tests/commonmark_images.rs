@@ -1,8 +1,8 @@
 //! Offline scoring of CommonMark 0.31.2 Images (572–593).
 //! Only public source ranges, kinds, display runs and decoded metadata are used.
 use mdstream::{
-    BlockKind, Budget, Completion, DisplayStep, Document, LinkId, LinkKind, LinkTarget, Span,
-    Style, WorkLimit,
+    BlockKind, Budget, Completion, DisplayStep, Document, LinkDisposition, LinkId, LinkKind,
+    LinkTarget, Span, Style, WorkLimit,
 };
 
 #[path = "support/snapshot.rs"]
@@ -169,13 +169,22 @@ fn project(doc: &Document) -> String {
     assert!(doc.headings().entries().is_empty());
     assert!(doc.tables().is_empty() && doc.maths().is_empty() && doc.footnotes().is_empty());
     let metadata = metadata_snapshot(doc);
+    let mut resolver = doc.link_resolver();
     let mut objects: Vec<_> = metadata
         .iter()
         .enumerate()
         .filter_map(|(i, data)| {
             assert!(!matches!(doc.links()[i], LinkTarget::Email(_)));
+            let id = LinkId(i);
+            let active = doc
+                .link_activity(id)
+                .unwrap()
+                .advance_with(doc, &mut resolver, &mut Budget::new(WorkLimit::unlimited()))
+                .unwrap()
+                == Some(LinkDisposition::Active);
             data.as_ref()
-                .map(|data| (doc.link_info(LinkId(i)).unwrap(), data))
+                .filter(|_| active)
+                .map(|data| (doc.link_info(id).unwrap(), data))
         })
         .collect();
     objects.sort_by_key(|(info, _)| info.source.start);
@@ -247,6 +256,18 @@ fn project(doc: &Document) -> String {
                 html.push_str(&text(doc, info.label, false, false));
                 html.push_str("</a>");
             }
+            // Contained candidates remain real objects. An image's alt uses
+            // their public display text; a link's label emits its child images.
+            while objects
+                .peek()
+                .is_some_and(|(child, _)| child.source.start < info.source.end)
+            {
+                let (child, _) = objects.next().unwrap();
+                assert!(
+                    info.label.start <= child.source.start && child.source.end <= info.label.end,
+                    "crossing active objects"
+                );
+            }
             position = info.source.end;
         }
         html.push_str(&text(
@@ -263,25 +284,12 @@ fn project(doc: &Document) -> String {
 
 enum Assessment {
     Supported,
-    Unsupported {
-        reason: &'static str,
-        observed: &'static str,
-    },
 }
 
 // Frozen observations are separate from the verbatim upstream oracle.
 fn assessment(number: usize) -> Assessment {
     match number {
-        572 | 573 | 576 | 577 | 578 | 579 | 580 | 581 | 582 | 583 | 584 | 585 | 586 | 587 | 588
-        | 589 | 590 | 591 | 592 | 593 => Assessment::Supported,
-        574 => Assessment::Unsupported {
-            reason: "a nested image replaces the outer bracket candidate",
-            observed: "<p>![foo <img src=\"/url\" alt=\"bar\" />](/url2)</p>\n",
-        },
-        575 => Assessment::Unsupported {
-            reason: "a nested link replaces the outer image bracket candidate",
-            observed: "<p>![foo <a href=\"/url\">bar</a>](/url2)</p>\n",
-        },
+        572..=593 => Assessment::Supported,
         _ => panic!("unclassified upstream example {number}"),
     }
 }
@@ -297,16 +305,6 @@ fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
     metadata_snapshot(doc);
     match assessment(number) {
         Assessment::Supported => assert_eq!(actual, expected, "example {number}"),
-        Assessment::Unsupported { observed, .. } => {
-            assert_ne!(
-                actual, expected,
-                "example {number} now matches upstream; review classification"
-            );
-            assert_eq!(
-                actual, observed,
-                "example {number}; upstream is {expected:?}"
-            );
-        }
     }
     assert_eq!(doc.source(), markdown);
     let mut end = 0;
@@ -334,14 +332,13 @@ fn pinned_commonmark_images_report() {
         check_case(number, markdown, expected, &parse(markdown));
         let (category, label, reason) = match assessment(number) {
             Assessment::Supported => (0, "supported", "matches upstream"),
-            Assessment::Unsupported { reason, .. } => (2, "unsupported", reason),
         };
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [20, 0, 2]);
+    assert_eq!(counts, [22, 0, 0]);
     eprintln!(
-        "CommonMark 0.31.2 Images (572–593): 20 supported, 0 deliberate differences, 2 unsupported; other sections not scored by this test"
+        "CommonMark 0.31.2 Images (572–593): 22 supported, 0 deliberate differences, 0 unsupported; other sections not scored by this test"
     );
 }
 

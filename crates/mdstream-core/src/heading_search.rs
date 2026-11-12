@@ -41,6 +41,18 @@ impl HeadingSearch {
         })
     }
 
+    pub fn take_link_resolver(&mut self) -> crate::LinkResolver {
+        self.search.take_link_resolver()
+    }
+    pub fn swap_link_resolver(
+        &mut self,
+        resolver: &mut crate::LinkResolver,
+    ) -> Result<(), LayoutError> {
+        self.search.swap_link_resolver(resolver)
+    }
+    pub fn retire(&mut self, budget: &mut Budget) -> Completion {
+        self.search.retire(budget)
+    }
     pub fn revision(&self) -> u64 {
         self.search.revision()
     }

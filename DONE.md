@@ -2895,3 +2895,27 @@ README、TODO 精准同步：核心范围扩展单独勾选，实际选区控件
 - 只扩展现有只读路径探测、结构提交和叶块分类；游标/空白末端摘要为固定状态，首次失配不遍历缺失祖先，每个关闭节点只弹一次，不扫描增长正文、不复制历史路径。沿用原 Work 字段计量，无新增索引、依赖、unsafe、长度或深度上限；累计 O(n log n)、空间 O(n)。
 - 验证：10 项新专项包含独立列单元格/路径解释器的 3,048 组缺失路径、3,291 组混合 Quote/Item 路径及 2,181 组叶块列宽，另验异类空/错位兄弟、UTF-8 全字节切点与逐前缀/EOF、块边界及表头/定义/脚注/数学/代码交互、精确 inline/virtual 消费、单字节/切片/tile 映射、0/1/6 共享预算、真实 LayoutPass 与 dirty/ticket/continuation。千层、百万字及 4096 行无前缀 lazy/空行、兄弟切换检查实际累计计数；旧 Work 黄金约束未放宽。80 项组合专项、完整 debug/release 各 1,898 项、77 项 doc、文档构建、fmt、生产及新增测试 clippy 全通过。
 - 38 份官方章节报告重新执行，588 CM + 27 GFM 的完整审计快照与基线一致，官方夹具/投影未改。容器/叶块 tab 核心完成；一般分类前缀扩展、通用晚表头确认/已发布语义撤销、完整行内失败重放、额外数学/脚注解析和实际终端段落间距仍属各自待办。缩进代码中断段落、空白封口及容器正文前导空白等既定差异保持。
+
+## 2026-11-13 链接图片嵌套候选核心交付
+
+交付 574/575、512/528、517/531、520 的完整嵌套候选单元：允许图片内的图片/链接、链接内的图片和成对普通括号；禁止链接通过图片路径包含有效链接，内层链接优先。孩子按确认时间发布稳定 ID，父对象只为直接孩子写一次 parent 边；父失败/EOF 保留真实孩子。待定强调/删除线以 free-list journal 常数时间接回父标签，确认后一次结算并隔离左右边界。晚引用可禁止旧父链接并启用已发布的 full 后缀回退对象；连续 full 标签逐个发布互补门控，正分支复用既有 blocker，负分支合入祖先摘要，4,096 标签链每标签恰一个新候选，晚定义不回访槽；目标、身份和原始源码映射保持，无增长标签回扫、祖先链副本或完整 AST。代码/数学/尖括号分类及裸地址的显式标签排除、原后缀/引用长度与容器方言保留；失败尖括号片段及脚注不再因单候选替换而丢失父标签。
+
+采用 flat candidate 栈、共享 target/OR 谓词、单次 parent 边和条件 marker。独立模型覆盖 122,640 个 image/link 森林赋值、81,880 个发布/失败森林、4,095 个 journal 模型、200,000 层失败/谓词链、2,040 个预算模型、209 个流式直接候选切点、9,840 个单调依赖见证及 30,000 个折叠重启比较。共享根反例中逐根求值访问 16,777,216 次，memo 后为线性；晚定义模型读取旧 target 槽为零。
+
+原先仅查相邻前驱会漏深层外包络，逐结果从根重查又不满足原 O(log L + K) 契约。最终使用叶 AVL + end-priority search tree，支持条件后缀产生的交叉区间；插入至多两次旋转，每次修复 O(log L) heap 位置，end 升级同样 O(log L)。窗口保留遍历状态，以 O(log L + K) 报告相交候选；前置覆盖结果用固定机器字基数排序 O(K) 恢复源码顺序。独立任意交叉/update 模型 34,020 个窗口通过；50,000 点为 99,999 skeleton 节点、高度 17、2,473,960 mutation steps。生产索引另有 6,944 个精确窗口及稀疏深链/同起点/过期/零和六单位预算测试，没有放宽原访问上界。
+
+公开增加 LinkWindow/LinkStep、LinkActivity/LinkDisposition、LinkResolver、link_parent 和实际 work/storage 统计。原 links_in 返回原始候选（含 Suppressed），raw link_info/destination/title 保持 O(1) 不求值窗口外依赖；交互对象须显式检查当前 disposition。DisplayCursor、LayoutPass、DisplaySearch/HeadingSearch、DisplayExcerpt、HeadingAnchors 及 DependencyCapture 消费同一核心语义。真实 LayoutPass 只交付 Active/Unresolved，折叠 overlay 重启以单调源码位置避免重复父对象；缓存按预算捕获 guard 与一个保守标签包络内的真实子对象依赖，不逐祖先重扫正文。晚定义仅改符号和保守最早失效点，不遍历旧引用使用点。
+
+父选择/owner 的额外 V 个节点按共享 query/object 支付，有序 memo 操作 O(log(V + 1))、空间 O(V)，owner 路径付费压缩。BTreeMap memo 的释放同样受预算控制：提供 take_link_resolver、逐项 retire 和仅空 memo 可 reset；1,024 节点及零预算替换的回归固定这项约束。真实 LayoutPass 分帧算完 512 个远端依赖后追加一个字节，旧 memo 零预算保留全部节点，后续每帧恰释放一个付费节点；retired_entries 与移除数一致，不队列旧 revision。Search/Excerpt/Anchors 等转发生命周期接口，跨标题保留同一 memo；独立 Activity 和可恢复 Capture 也可付费退役。直接 Drop 未退役大 memo 仍为 O(V)，无预算便利 runs/visible/drawable 也可能读取远端依赖，不能当帧入口。
+
+新增 14 项 nested_links 回归，覆盖 256 个独立森林选择、UTF-8 任意字节分块/逐前缀/EOF、显式/lazy 容器、失败父候选、强调/删除线作用域、晚定义稳定对象、跨 tile 远端缓存、真实布局/搜索/折叠、零/小/六字节共享预算、16,384 层深链、百万字标签及两万历史对象。生产稀疏窗口在 0/20,000 个历史对象时只返回一个父候选，index_visits 为 4/21；后者实际索引 60,005 个 node/slot、容量 8,388,608 bytes。百万字后的 1,000 次追加不增加候选/journal 容量或操作数；全库仍累计 O(n log n)、核心空间 O(n)、零运行时依赖、禁止 unsafe，原始源码只追加。
+
+官方 Markdown/HTML、固定 SHA 来源与生成器保持。Images 572–593 为 22/0/0；Links 标签 512–538 为 24/3/0，整个 Links 482–571 合计 81/7/2（支持/刻意差异/未支持）。评分只消费真实公开对象/选择和显示片段；父 image alt 不重解析，父 link label 只输出真实子图片。524/536 的 HTML 字面方言观察随保留父候选精确更新；523 及条件失效父候选的词法强调隔离、419、完整 ordered emphasis、完整代码失败重放、所有不透明后缀字面回放、其余 full/collapsed 回选、长度/窗口放宽和 UI 继续待办。
+
+补充后缀链反例：`[a [b][r]][x][y]` 原先只保留一条解释，先失败再以互补门控修复；后续 full/直接后缀和外层祖先的 64 组可用性模型、4,096 标签计数及晚定义稳定槽通过。无公开 ID 的 Eligibility 也有独立失败复现，使用语法条件位而非 effect-only guard root，保持每字节观察器一致。
+
+旧基线夹具不改。与独立编译的 a751b5a 核心比较，86 份精确 source/scalar 快照差异单列于 support/nested_changes.rs；work 差异只对应常数时间 journal 切分移除旧 Vec-copy 工作及保留父候选多一个待定 delimiter，精确旧/新哈希保留，未删除或放宽旧断言。原 hooks、rustfmt 配置与依赖未改。失败裸 URL 的 Recovery 已由独立子项提供。TUI 消费须使用预算游标、共享 memo、过滤 Suppressed 并在 revision 切换前付费退役，README 提供迁移协议。
+
+独立分支冻结验收：项目 nix develop 中 check、专项 **32/32**、完整 debug/release 各 **1882/1882**、doc **77/77**、fmt、rustdoc 及本项生产代码/改动测试 clippy `-D warnings` 全部 exit 0。398 个 Rust 文件哈希匹配，审查文件未变化，官方夹具/生成器、依赖和 rustfmt 配置与基线逐字相同。全目标 clippy 的基线 bare_autolinks.rs:594 布尔断言 lint 未修改，本项 lint 集通过；没有把该全目标失败描述为通过。完整日志、计数、冻结哈希及迁移说明见 `/tmp/mdtui3-codex-todo/003-final-validation.json` 和 `003-final-source.sha256`；组合后的验证另行记录。
+
+与失败裸 URL、全量评分、长围栏及统一容器列模型组合后，check、fmt、完整 debug/release 各 **1916/1916**、doc **78/78** 通过；402 个 Rust 文件的冻结记录未变化，见 `/tmp/mdtui3-codex-todo/integration-003/result.json`。实际执行 38 份覆盖报告后，需求内 CommonMark 当前 **523/32/33**、GFM 四扩展 **27/0/0**，覆盖清单已重新生成。

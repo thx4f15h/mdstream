@@ -7,16 +7,25 @@ pub(crate) struct Mark {
     pub emphasis_depth: usize,
     pub strong_depth: usize,
     pub link: Option<LinkId>,
-    pub hide_when_target_available: Option<LinkId>,
+    pub hide_when_target_available: Option<NonZeroUsize>,
+    pub hide_alternative: Option<NonZeroUsize>,
+    link_syntax: bool,
     pub revision: u64,
     // Several link rewrites may occur in one append/revision.
     serial: u64,
 }
 
 impl Mark {
+    pub(crate) fn hide_owner(self) -> Option<LinkId> {
+        self.hide_when_target_available
+            .map(|id| LinkId(id.get() - 1))
+    }
+    pub(crate) fn alternative_owner(self) -> Option<LinkId> {
+        self.hide_alternative.map(|id| LinkId(id.get() - 1))
+    }
     pub fn effective_style(self, references: &[Reference], links: &[LinkTarget]) -> Style {
         if !self.style.contains(Style::HIDDEN)
-            && self.hide_when_target_available.is_some_and(|id| {
+            && self.hide_owner().is_some_and(|id| {
                 target_available(id, references, links, &mut VisibilityWork::default())
             })
         {
@@ -39,17 +48,34 @@ impl Mark {
             }
             (a, b) => a.or(b),
         };
-        let link = if other.link.is_some() && other.serial >= self.serial {
-            other.link
-        } else {
-            self.link
-        };
+        // Bracket children are published before their enclosing label. Late
+        // bare objects have disjoint label spans. Thus allocation priority is
+        // sufficient ONLY for overlapping syntax labels, not for source order.
+        let replace = other.link.is_some()
+            && if self.link_syntax && other.link_syntax {
+                other.link < self.link || (other.link == self.link && other.serial >= self.serial)
+            } else {
+                other.serial >= self.serial
+            };
+        let link = if replace { other.link } else { self.link };
         Self {
             style: self.style.union(other.style),
             emphasis_depth: self.emphasis_depth + other.emphasis_depth,
             strong_depth: self.strong_depth + other.strong_depth,
             link,
             hide_when_target_available,
+            hide_alternative: match (self.hide_alternative, other.hide_alternative) {
+                (Some(a), Some(b)) => {
+                    assert_eq!(a, b);
+                    Some(a)
+                }
+                (a, b) => a.or(b),
+            },
+            link_syntax: if replace {
+                other.link_syntax
+            } else {
+                self.link_syntax
+            },
             revision: self.revision.max(other.revision),
             serial: self.serial.max(other.serial),
         }
@@ -109,11 +135,42 @@ impl Annotations {
         );
     }
 
+    pub(crate) fn apply_object(&mut self, span: Span, style: Style, id: LinkId, revision: u64) {
+        self.apply_mark(
+            span,
+            Mark {
+                style,
+                link: Some(id),
+                link_syntax: true,
+                revision,
+                emphasis_depth: usize::from(style.contains(Style::EMPHASIS)),
+                strong_depth: usize::from(style.contains(Style::STRONG)),
+                ..Mark::default()
+            },
+        );
+    }
+    pub(crate) fn hide_when_either(
+        &mut self,
+        span: Span,
+        id: LinkId,
+        alternative: LinkId,
+        revision: u64,
+    ) {
+        self.apply_mark(
+            span,
+            Mark {
+                hide_when_target_available: NonZeroUsize::new(id.0 + 1),
+                hide_alternative: NonZeroUsize::new(alternative.0 + 1),
+                revision,
+                ..Mark::default()
+            },
+        );
+    }
     pub fn hide_when_resolved(&mut self, span: Span, id: LinkId, revision: u64) {
         self.apply_mark(
             span,
             Mark {
-                hide_when_target_available: Some(id),
+                hide_when_target_available: NonZeroUsize::new(id.0 + 1),
                 revision,
                 ..Mark::default()
             },
@@ -221,17 +278,52 @@ impl Annotations {
         targets: (&[Reference], &[LinkTarget]),
         work: &mut VisibilityWork,
     ) -> Option<usize> {
+        self.find_visible_by(id, span, query, work, &mut |mark, work| {
+            if let Some(owner) = mark.hide_owner() {
+                work.gate();
+                target_available(owner, targets.0, targets.1, work)
+            } else {
+                false
+            }
+        })
+    }
+    pub(crate) fn next_visible_using(
+        &self,
+        offset: usize,
+        end: usize,
+        hidden: &mut impl FnMut(Mark) -> bool,
+    ) -> Option<usize> {
+        if offset >= end {
+            return None;
+        }
+        if offset >= self.capacity {
+            return Some(offset);
+        }
+        self.find_visible_by(
+            self.root,
+            Span::new(0, self.capacity),
+            Span::new(offset, end),
+            &mut VisibilityWork::default(),
+            &mut |mark, _| hidden(mark),
+        )
+        .or_else(|| (self.capacity < end).then_some(self.capacity))
+    }
+    fn find_visible_by(
+        &self,
+        id: usize,
+        span: Span,
+        query: Span,
+        work: &mut VisibilityWork,
+        hidden: &mut impl FnMut(Mark, &mut VisibilityWork) -> bool,
+    ) -> Option<usize> {
         work.node();
         let (lo, hi) = (span.start, span.end);
         let (offset, end) = (query.start, query.end);
         if self.nodes[id].hidden || offset >= hi || end <= lo {
             return None;
         }
-        if let Some(owner) = self.nodes[id].tag.hide_when_target_available {
-            work.gate();
-            if target_available(owner, targets.0, targets.1, work) {
-                return None;
-            }
+        if hidden(self.nodes[id].tag, work) {
+            return None;
         }
         if hi - lo == 1 {
             return Some(lo);
@@ -241,7 +333,7 @@ impl Annotations {
             if offset < stop && start < end {
                 let found = match self.nodes[id].child(side) {
                     Some(child) => {
-                        self.find_visible(child, Span::new(start, stop), query, targets, work)
+                        self.find_visible_by(child, Span::new(start, stop), query, work, hidden)
                     }
                     None => Some(start.max(offset)),
                 };
@@ -663,7 +755,7 @@ mod tests {
         };
         let a = crate::SymbolId(0);
         let mark = doc.annotations.at(0);
-        assert_eq!(mark.hide_when_target_available, Some(LinkId(0)));
+        assert_eq!(mark.hide_owner(), Some(LinkId(0)));
         for target in [
             LinkTarget::Reference(a),
             LinkTarget::Reference(b),

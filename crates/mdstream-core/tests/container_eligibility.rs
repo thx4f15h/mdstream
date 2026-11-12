@@ -1,6 +1,8 @@
 use mdstream::*;
 #[path = "support/container_eligibility_cases.rs"]
 mod corpus;
+#[path = "support/nested_changes.rs"]
+mod nested_changes;
 #[allow(dead_code)]
 #[path = "support/reference_boundary_hashes.rs"]
 mod reference_hashes;
@@ -80,7 +82,7 @@ fn container_eligibility_preserves_head_snapshots_and_every_old_work_counter() {
                             shortcut_hashes::container(case, end, bytewise, expected.0),
                         ),
                     ),
-                    expected.1,
+                    nested_changes::work(d.document().source(), expected.1),
                 );
                 assert_eq!(
                     (

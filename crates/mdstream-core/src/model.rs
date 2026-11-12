@@ -199,6 +199,12 @@ pub struct Reference {
 pub struct Work {
     /// Final container-paragraph endpoints inserted; no per-leaf/byte updates.
     pub paragraph_closures: u64,
+    /// Bracket lifetimes and linked delimiter journal operations.
+    pub link_label_steps: u64,
+    /// Source-index, frontier and one-time parent mutation steps, including heap repair.
+    pub link_index_steps: u64,
+    /// Shared guard nodes created; no historical uses are visited by definitions.
+    pub link_gate_steps: u64,
     pub input_bytes: u64,
     pub classified_bytes: u64,
     /// Bytes inspected by physical-line fence probes, including bounded
@@ -309,6 +315,15 @@ pub struct ArenaStats {
     pub nodes: usize,
     pub capacity_bytes: usize,
     pub allocation_calls: u64,
+}
+
+/// Current candidate Vec/inline-slot and delimiter-node storage. Source/targets,
+/// allocator headers, unrelated parser state and query memo maps are excluded.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LinkParserStats {
+    pub candidates: ArenaStats,
+    pub delimiters: ArenaStats,
+    pub label_key_capacity: usize,
 }
 
 /// Consume updates in order. Ranges invalidate caches without listing old tiles.

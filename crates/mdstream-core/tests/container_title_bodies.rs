@@ -57,6 +57,8 @@ mod changes;
 #[allow(dead_code)]
 #[path = "support/container_eligibility_cases.rs"]
 mod corpus;
+#[path = "support/nested_changes.rs"]
+mod nested_changes;
 include!("fixtures/container_title_controls_changes.rs");
 
 fn shown(d: &Document) -> String {
@@ -171,7 +173,7 @@ fn real_predecessor_controls_and_all_eof_work_use_exact_source_allowlists() {
                 };
                 let expected = (
                     shortcut_hashes::source(d.source(), bytewise, expected.0),
-                    expected.1,
+                    nested_changes::work(d.source(), expected.1),
                 );
                 assert_eq!(
                     (
@@ -749,7 +751,7 @@ fn old_header_eligibility_at_window_and_late_pipe_keeps_real_table_shapes() {
                     corpus::hash(&format!("{:?}", support::snapshot(d))),
                     corpus::hash(&corpus::old_work(d.work()))
                 ),
-                expected,
+                (expected.0, nested_changes::work(d.source(), expected.1)),
                 "{index}"
             );
             let full_work = format!("{:?}", d.work())
@@ -759,6 +761,9 @@ fn old_header_eligibility_at_window_and_late_pipe_keeps_real_table_shapes() {
                         && !field.starts_with("fence_candidate_")
                         && !field.starts_with("link_fallback_")
                         && !field.starts_with("bare_")
+                        && !field.starts_with("link_label_steps:")
+                        && !field.starts_with("link_index_steps:")
+                        && !field.starts_with("link_gate_steps:")
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
@@ -783,7 +788,7 @@ fn old_header_eligibility_at_window_and_late_pipe_keeps_real_table_shapes() {
             };
             assert_eq!(
                 corpus::hash(&full_work),
-                work_expected,
+                nested_changes::work(d.source(), work_expected),
                 "all old Work {index}"
             );
             assert_eq!(

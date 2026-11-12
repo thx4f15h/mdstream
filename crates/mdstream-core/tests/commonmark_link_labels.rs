@@ -1,8 +1,8 @@
 //! Offline scoring of CommonMark 0.31.2 Links label/nesting subset (512–538).
 //! Only public source ranges, kinds, display runs and decoded metadata are used.
 use mdstream::{
-    BlockKind, Budget, Completion, DisplayStep, Document, LinkId, LinkKind, LinkTarget, Span,
-    Style, WorkLimit,
+    BlockKind, Budget, Completion, DisplayStep, Document, LinkDisposition, LinkId, LinkKind,
+    LinkTarget, Span, Style, WorkLimit,
 };
 
 #[path = "support/snapshot.rs"]
@@ -208,7 +208,58 @@ impl Text {
 
 fn label(doc: &Document, span: Span, alt: bool, inherited: &[&str]) -> String {
     let mut text = Text::default();
-    text.write(doc, span, alt, false, inherited);
+    if alt {
+        text.write(doc, span, true, false, inherited);
+        return text.finish();
+    }
+    let mut position = span.start;
+    let mut resolver = doc.link_resolver();
+    for (id, info) in doc.links_in(span) {
+        if info.source.start < position || info.source.end > span.end {
+            continue;
+        }
+        if doc
+            .link_activity(id)
+            .unwrap()
+            .advance_with(doc, &mut resolver, &mut Budget::new(WorkLimit::unlimited()))
+            .unwrap()
+            != Some(LinkDisposition::Active)
+        {
+            continue;
+        }
+        assert_eq!(info.kind, LinkKind::Image, "active link inside link");
+        for syntax in [
+            Span::new(info.source.start, info.label.start),
+            Span::new(info.label.end, info.source.end),
+        ] {
+            assert!(
+                doc.display_runs_in(syntax)
+                    .unwrap()
+                    .all(|r| r.style.contains(Style::HIDDEN))
+            );
+        }
+        text.write(
+            doc,
+            Span::new(position, info.source.start),
+            false,
+            false,
+            inherited,
+        );
+        text.transition(Vec::new());
+        let (destination, title) = metadata(doc, id, SIX_BYTES).unwrap();
+        text.html.push_str(&format!(
+            "<img src=\"{}\" alt=\"{}\"",
+            url(&destination),
+            label(doc, info.label, true, inherited)
+        ));
+        if let Some(title) = title {
+            text.html
+                .push_str(&format!(" title=\"{}\"", escape(&title)));
+        }
+        text.html.push_str(" />");
+        position = info.source.end;
+    }
+    text.write(doc, Span::new(position, span.end), false, false, inherited);
     text.finish()
 }
 
@@ -234,13 +285,22 @@ fn project(doc: &Document) -> String {
     assert!(doc.headings().entries().is_empty());
     assert!(doc.tables().is_empty() && doc.maths().is_empty() && doc.footnotes().is_empty());
     let metadata = metadata_snapshot(doc);
+    let mut resolver = doc.link_resolver();
     let mut objects: Vec<_> = metadata
         .iter()
         .enumerate()
         .filter_map(|(i, data)| {
             assert!(!matches!(doc.links()[i], LinkTarget::Email(_)));
+            let id = LinkId(i);
+            let active = doc
+                .link_activity(id)
+                .unwrap()
+                .advance_with(doc, &mut resolver, &mut Budget::new(WorkLimit::unlimited()))
+                .unwrap()
+                == Some(LinkDisposition::Active);
             data.as_ref()
-                .map(|data| (doc.link_info(LinkId(i)).unwrap(), data))
+                .filter(|_| active)
+                .map(|data| (doc.link_info(id).unwrap(), data))
         })
         .collect();
     objects.sort_by_key(|(info, _)| info.source.start);
@@ -319,6 +379,18 @@ fn project(doc: &Document) -> String {
                     .push_str(&label(doc, info.label, false, &inherited));
                 text.html.push_str("</a>");
             }
+            // Contained candidates remain real objects. An image's alt uses
+            // their public display text; a link's label emits its child images.
+            while objects
+                .peek()
+                .is_some_and(|(child, _)| child.source.start < info.source.end)
+            {
+                let (child, _) = objects.next().unwrap();
+                assert!(
+                    info.label.start <= child.source.start && child.source.end <= info.label.end,
+                    "crossing active objects"
+                );
+            }
             position = info.source.end;
         }
         text.write(doc, Span::new(position, block.source.end), false, true, &[]);
@@ -335,48 +407,24 @@ enum Assessment {
         reason: &'static str,
         observed: &'static str,
     },
-    Unsupported {
-        reason: &'static str,
-        observed: &'static str,
-    },
 }
 
 // Frozen observations are reviewed separately from the verbatim upstream oracle.
 fn assessment(number: usize) -> Assessment {
     match number {
-        513 | 514 | 515 | 516 | 518 | 519 | 521 | 522 | 525 | 526 | 527 | 529 | 530 | 532 | 533
-        | 534 | 535 | 537 | 538 => Assessment::Supported,
-        512 => Assessment::Unsupported {
-            reason: "nested unescaped brackets replace the outer link candidate",
-            observed: "<p>[link [foo [bar]]](/uri)</p>\n",
-        },
-        517 => Assessment::Unsupported {
-            reason: "an inner image replaces the outer link candidate",
-            observed: "<p>[<img src=\"moon.jpg\" alt=\"moon\" />](/uri)</p>\n",
-        },
-        520 => Assessment::Unsupported {
-            reason: "the inner link replaces the outer image candidate",
-            observed: "<p>![[<a href=\"uri1\">foo</a>](uri2)](uri3)</p>\n",
-        },
+        512 | 513 | 514 | 515 | 516 | 517 | 518 | 519 | 520 | 521 | 522 | 525 | 526 | 527 | 528
+        | 529 | 530 | 531 | 532 | 533 | 534 | 535 | 537 | 538 => Assessment::Supported,
         523 => Assessment::DeliberateDifference {
             reason: "unresolved shortcut references retain literal brackets and isolate label emphasis",
             observed: "<p>*foo [bar* baz]</p>\n",
         },
         524 => Assessment::DeliberateDifference {
             reason: "raw HTML is outside the project dialect and stays literal",
-            observed: "<p>[foo &lt;bar attr=&quot;](baz)&quot;&gt;</p>\n",
-        },
-        528 => Assessment::Unsupported {
-            reason: "nested brackets replace the outer full reference candidate",
-            observed: "<p>[link [foo [bar]]]<a href=\"/uri\">ref</a></p>\n",
-        },
-        531 => Assessment::Unsupported {
-            reason: "an inner image replaces the outer full reference candidate",
-            observed: "<p>[<img src=\"moon.jpg\" alt=\"moon\" />]<a href=\"/uri\">ref</a></p>\n",
+            observed: "<p><a href=\"baz\">foo &lt;bar attr=&quot;</a>&quot;&gt;</p>\n",
         },
         536 => Assessment::DeliberateDifference {
             reason: "raw HTML is literal and does not suppress reference recognition",
-            observed: "<p>[foo &lt;bar attr=&quot;]<a href=\"/uri\">ref</a>&quot;&gt;</p>\n",
+            observed: "<p><a href=\"/uri\">foo &lt;bar attr=&quot;</a>&quot;&gt;</p>\n",
         },
         _ => panic!("unclassified upstream example {number}"),
     }
@@ -393,8 +441,7 @@ fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
     metadata_snapshot(doc);
     match assessment(number) {
         Assessment::Supported => assert_eq!(actual, expected, "example {number}"),
-        Assessment::DeliberateDifference { observed, .. }
-        | Assessment::Unsupported { observed, .. } => {
+        Assessment::DeliberateDifference { observed, .. } => {
             assert_ne!(
                 actual, expected,
                 "example {number} now matches upstream; review classification"
@@ -432,14 +479,13 @@ fn pinned_commonmark_link_labels_report() {
         let (category, label, reason) = match assessment(number) {
             Assessment::Supported => (0, "supported", "matches upstream"),
             Assessment::DeliberateDifference { reason, .. } => (1, "deliberate difference", reason),
-            Assessment::Unsupported { reason, .. } => (2, "unsupported", reason),
         };
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [19, 3, 5]);
+    assert_eq!(counts, [24, 3, 0]);
     eprintln!(
-        "CommonMark 0.31.2 Links subset (512–538): 19 supported, 3 deliberate differences, 5 unsupported; 482–511 and 539–571 outside this score"
+        "CommonMark 0.31.2 Links subset (512–538): 24 supported, 3 deliberate differences, 0 unsupported; 482–511 and 539–571 outside this score"
     );
 }
 
@@ -543,8 +589,13 @@ fn link_label_samples_preserve_mapping_when_sliced_and_read_with_six_byte_budget
         while cursor.source_position() < markdown.len() {
             let old = cursor.source_position();
             let mut budget = Budget::new(limit);
-            let DisplayStep::Run(run) = cursor.next(&doc, &mut budget).unwrap() else {
-                panic!("small-budget reader made no progress");
+            let step = cursor.next(&doc, &mut budget).unwrap();
+            if step == DisplayStep::BudgetExhausted {
+                assert_ne!(budget.used(), WorkLimit::default());
+                continue;
+            }
+            let DisplayStep::Run(run) = step else {
+                panic!("incomplete source");
             };
             assert_eq!(run.source.start, old);
             check_mapping(markdown, run.source, run.text, run.replacement);
@@ -642,7 +693,9 @@ fn link_label_raw_spans_identity_and_shared_display_destination_title_budget() {
                             }
                         }
                         DisplayStep::Complete => display_done = true,
-                        other => panic!("fresh frame failed display: {other:?}"),
+                        DisplayStep::BudgetExhausted => {
+                            assert_ne!(budget.used(), WorkLimit::default());
+                        }
                     }
                 }
                 if !destination_done {
@@ -756,7 +809,7 @@ fn link_label_projection_preserves_nested_styles_objects_and_literal_failures() 
         ),
         (
             "[![中](x)](/y)\n",
-            "<p>[<img src=\"x\" alt=\"中\" />](/y)</p>\n",
+            "<p><a href=\"/y\"><img src=\"x\" alt=\"中\" /></a></p>\n",
         ),
         (
             "<https://e.test/?x=[中]&y=%5D>\n",
@@ -867,8 +920,9 @@ fn late_definitions_resolve_existing_label_objects_without_rebuilding_outer_cand
             .unwrap();
         doc.finish();
         assert_eq!(doc.links(), targets);
-        // Example 528 has an unresolved inner [bar], which the new definition
-        // legitimately resolves; it still cannot recreate the missing outer link.
+        // Example 528 retains all three stable candidates: the inner [bar],
+        // outer full reference and guarded suffix fallback. Defining bar
+        // suppresses the outer link and activates the existing suffix object.
         for (i, old) in resolved.iter().enumerate() {
             assert_eq!(doc.link_info(LinkId(i)), Some(&infos[i]));
             if old.is_some() {
@@ -876,10 +930,18 @@ fn late_definitions_resolve_existing_label_objects_without_rebuilding_outer_cand
             }
         }
         if number == 528 {
-            assert_eq!(doc.links().len(), 2);
+            assert_eq!(doc.links().len(), 3);
             assert_eq!(doc.link_destination(LinkId(0)), Some("/ignored"));
             assert_eq!(doc.text(infos[0].label), Some("bar"));
-            assert_eq!(doc.text(infos[1].label), Some("ref"));
+            assert_eq!(doc.text(infos[1].label), Some("link [foo [bar]]"));
+            assert_eq!(doc.text(infos[2].label), Some("ref"));
+            let mut selection = doc.link_activity(LinkId(1)).unwrap();
+            assert_eq!(
+                selection
+                    .advance(&doc, &mut Budget::new(WorkLimit::unlimited()))
+                    .unwrap(),
+                Some(LinkDisposition::Suppressed)
+            );
         }
     }
 }

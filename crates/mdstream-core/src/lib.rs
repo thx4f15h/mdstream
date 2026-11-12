@@ -46,6 +46,8 @@ mod index_boundaries;
 mod inline;
 mod layout;
 mod link_destination;
+mod link_index;
+mod link_semantics;
 mod link_title;
 mod math;
 mod model;
@@ -67,7 +69,9 @@ pub use autolink::MAX_AUTOLINK_BYTES;
 #[allow(deprecated)]
 pub use block::{BLOCK_LOOKAHEAD, MAX_FENCE_LENGTH};
 pub use budget::{Budget, Completion, WorkLimit};
-pub use cache::{CacheValidity, DependencyKey, SourceSnapshot};
+pub use cache::{
+    CacheValidity, DependencyCapture, DependencyCaptureStep, DependencyKey, SourceSnapshot,
+};
 pub use checkpoints::{
     CheckpointCompaction, CheckpointCompactionStats, CheckpointIndex, CheckpointToken,
 };
@@ -101,6 +105,8 @@ pub use layout::{
     VisibleTile,
 };
 pub use link_destination::{LinkDestination, LinkDestinationChunk};
+pub use link_index::{LinkObjects, LinkStep, LinkWindow, LinkWindowWork};
+pub use link_semantics::{LinkActivity, LinkDisposition, LinkResolutionWork, LinkResolver};
 pub use link_title::{LinkTitle, LinkTitleChunk};
 pub use math::{Math, MathChunk, MathContent, MathId, MathKind, MathObjects};
 pub use model::*;
@@ -250,7 +256,8 @@ pub struct Document {
     containers: containers::Containers,
     links: Vec<LinkTarget>,
     link_info: Vec<LinkInfo>,
-    link_order: std::collections::BTreeMap<usize, LinkId>,
+    link_order: link_index::LinkIndex,
+    link_guards: link_semantics::Guards,
     // Parallel stable LinkId slots; candidates move their structural gaps here.
     direct_title_gaps: Vec<Vec<Span>>,
     maths: Vec<Math>,
@@ -336,31 +343,40 @@ impl Document {
     pub fn link_info(&self, id: LinkId) -> Option<&LinkInfo> {
         self.link_info.get(id.0)
     }
+    /// Nearest currently published enclosing label. A later outer confirmation
+    /// assigns a parent once and widens changed_links to include the old child.
+    pub fn link_parent(&self, id: LinkId) -> Option<LinkId> {
+        self.link_order.parent(id)
+    }
+    /// Candidate activation under the caller's shared budget. Raw destinations
+    /// remain O(1) even when a nested reference suppresses this candidate.
+    pub fn link_activity(&self, id: LinkId) -> Option<LinkActivity> {
+        LinkActivity::new(self, id)
+    }
+    pub fn link_resolver(&self) -> LinkResolver {
+        LinkResolver::new(self)
+    }
+    pub fn link_guard_stats(&self) -> ArenaStats {
+        self.link_guards.stats()
+    }
+    pub fn link_parser_stats(&self) -> LinkParserStats {
+        self.inline.parser_stats()
+    }
     /// Locate link/image objects overlapping a viewport in O(log links + results).
     /// Includes empty-alt images, which have no visible label run to hit-test.
-    pub fn links_in(&self, span: Span) -> impl Iterator<Item = (LinkId, &LinkInfo)> {
-        let start = self
-            .link_order
-            .range(..=span.start)
-            .next_back()
-            .filter(|(_, id)| self.link_info[id.0].source.end > span.start)
-            .map_or(span.start, |(&at, _)| at);
-        let end = if span.is_empty() {
-            start
-        } else {
-            span.end.max(start)
-        };
-        self.link_order
-            .range(start..end)
-            .map(|(_, &id)| (id, &self.link_info[id.0]))
+    pub fn links_in(&self, span: Span) -> LinkObjects<'_> {
+        LinkObjects::new(self, span)
     }
 
-    pub(crate) fn next_link(&self, id: LinkId) -> Option<LinkId> {
-        let start = self.link_info(id)?.source.start;
-        self.link_order
-            .range((std::ops::Bound::Excluded(start), std::ops::Bound::Unbounded))
-            .next()
-            .map(|(_, &id)| id)
+    /// An owned, revision-bound window query for the shared frame budget.
+    pub fn link_window(&self, span: Span) -> LinkWindow {
+        LinkWindow::new(self, span)
+    }
+
+    /// Actual source-index node/slot capacities; excludes targets and titles.
+    pub fn link_index_stats(&self) -> ArenaStats {
+        debug_assert_eq!(self.link_order.len(), self.links.len());
+        self.link_order.stats()
     }
 
     pub fn headings(&self) -> &HeadingIndex {
@@ -387,6 +403,8 @@ impl Document {
     pub fn work(&self) -> Work {
         Work {
             tree_visits: self.annotations.visits,
+            link_index_steps: self.link_order.steps,
+            link_gate_steps: self.link_guards.stats().nodes as u64,
             ..self.work
         }
     }
@@ -447,25 +465,67 @@ impl Document {
         if !self.source.is_char_boundary(offset) {
             return None;
         }
-        self.annotations.next_visible_resolving(
-            offset,
-            self.source.len(),
-            &self.references.entries,
-            &self.links,
-        )
+        let mut resolution = link_semantics::Resolution::default();
+        self.annotations
+            .next_visible_using(offset, self.source.len(), &mut |mark| {
+                resolution.hidden(self, mark)
+            })
     }
 
-    /// First text OR drawable object. Unlike next_visible, this cannot skip an
-    /// empty-alt image. A query inside an object's source keeps that object alive.
+    /// First visible text or selected candidate, including empty-alt images.
+    /// This explicit unlimited convenience query may inspect conditional target
+    /// dependencies; LayoutPass uses its paid cursors instead.
     pub fn next_drawable(&self, offset: usize) -> Option<usize> {
         if !self.source.is_char_boundary(offset) || offset >= self.source.len() {
             return None;
         }
         let text = self.next_visible(offset);
+        let end = text.map_or(self.source.len(), |at| at + 1);
+        let mut resolution = link_semantics::Resolution::default();
+        let mut object = None;
+        for (id, info) in self.links_in(Span::new(offset, end)) {
+            let mut activity = self.link_activity(id).unwrap();
+            if activity
+                .advance_in(
+                    self,
+                    &mut resolution,
+                    &mut Budget::new(WorkLimit::unlimited()),
+                    0,
+                )
+                .unwrap()
+                != Some(LinkDisposition::Suppressed)
+            {
+                object = Some(info.source.start.max(offset));
+                break;
+            }
+        }
+        match (text, object) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
+    // A conservative layout anchor. Candidate envelopes avoid conditional
+    // visibility evaluation in the frame's hidden-region optimization. The
+    // actual candidate and text semantics are paid by the resumable cursors.
+    pub(crate) fn next_layout_anchor(&self, offset: usize) -> Option<usize> {
+        if !self.source.is_char_boundary(offset) || offset >= self.source.len() {
+            return None;
+        }
+        if self.link_order.covering(offset) {
+            return Some(offset);
+        }
         let object = self
-            .links_in(Span::new(offset, self.source.len()))
-            .next()
-            .map(|(_, info)| info.source.start.max(offset));
+            .link_order
+            .lower_bound(offset, &mut 0)
+            .map(|id| self.link_info[id.0].source.start);
+        let end = object.unwrap_or(self.source.len());
+        let text = self.annotations.next_visible_resolving(
+            offset,
+            end,
+            &self.references.entries,
+            &self.links,
+        );
         match (text, object) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
@@ -581,6 +641,9 @@ impl Document {
                 .partition_point(|block| block.source.end <= span.start),
             marks,
             pending: None,
+            resolution: link_semantics::Resolution::default(),
+            raw: false,
+            last_mark: annotations::Mark::default(),
         }
     }
 
@@ -847,7 +910,11 @@ impl Document {
                 .start
                 .min(update.new_blocks.start.saturating_sub(1))
                 ..self.blocks.len();
-            update.changed_links = update.new_links.start.saturating_sub(1)..self.links.len();
+            update.changed_links = update
+                .changed_links
+                .start
+                .min(update.new_links.start.saturating_sub(1))
+                ..self.links.len();
             update.changed_headings =
                 update.new_headings.start.saturating_sub(1)..self.headings.entries().len();
         }
@@ -887,6 +954,7 @@ impl Document {
                 links: &mut self.links,
                 link_info: &mut self.link_info,
                 link_order: &mut self.link_order,
+                link_guards: &mut self.link_guards,
                 direct_title_gaps: &mut self.direct_title_gaps,
                 maths: &mut self.maths,
                 math_gaps: &mut self.math_gaps,
@@ -1449,11 +1517,21 @@ impl Document {
             self.references
                 .define_title(symbol, title, Vec::new(), self.revision);
             update.references_changed.push(symbol);
-            if let Some(start) = self.references.entries[symbol.0].first_use {
+            if let Some(start) = self.reference_use_start(symbol) {
                 update.change(Span::new(start, self.source.len()), ChangeKind::Reference);
             }
         }
         true
+    }
+
+    fn reference_use_start(&self, symbol: SymbolId) -> Option<usize> {
+        match (
+            self.references.entries[symbol.0].first_use,
+            self.link_guards.first_use,
+        ) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
     }
 
     fn finish_definition(
@@ -1470,7 +1548,7 @@ impl Document {
             .define(symbol, destination, title, gaps, self.revision);
         if winner {
             update.references_changed.push(symbol);
-            if let Some(start) = self.references.entries[symbol.0].first_use {
+            if let Some(start) = self.reference_use_start(symbol) {
                 update.change(Span::new(start, self.source.len()), ChangeKind::Reference);
                 update.change(Span::new(start, self.source.len()), ChangeKind::Visibility);
             }
@@ -1794,7 +1872,7 @@ impl Document {
                 self.references
                     .define_title(symbol, title.unwrap(), gaps, self.revision);
                 update.references_changed.push(symbol);
-                if let Some(start) = self.references.entries[symbol.0].first_use {
+                if let Some(start) = self.reference_use_start(symbol) {
                     update.change(Span::new(start, self.source.len()), ChangeKind::Reference);
                 }
             }
@@ -3162,6 +3240,9 @@ pub struct Runs<'a> {
     block: usize,
     marks: annotations::Segments<'a>,
     pending: Option<(Span, annotations::Mark)>,
+    resolution: link_semantics::Resolution,
+    pub(crate) raw: bool,
+    pub(crate) last_mark: annotations::Mark,
 }
 
 /// A semantic iterator that returns its traversal storage on drop. Text borrows
@@ -3198,6 +3279,10 @@ impl Drop for RunsWithScratch<'_, '_> {
 
 impl Runs<'_> {
     /// Tree nodes traversed by this query; independent of parser mutation work.
+    pub fn link_resolution_work(&self) -> LinkResolutionWork {
+        self.resolution.work
+    }
+
     pub fn annotation_visits(&self) -> u64 {
         self.marks.visits
     }
@@ -3237,18 +3322,24 @@ impl<'a> Iterator for Runs<'a> {
             None => (None, self.end),
         };
         let (span, mut first) = self.pending.take().or_else(|| self.marks.next())?;
-        first.style =
-            first.effective_style(&self.document.references.entries, &self.document.links);
+        self.last_mark = first;
+        if !self.raw {
+            first = self.resolution.mark(self.document, first);
+        }
         let mut end = span.end.min(limit);
         self.pending = (span.end > end).then_some((span, first));
         while end < limit {
             let (span, mut mark) = self.marks.next()?;
-            mark.style =
-                mark.effective_style(&self.document.references.entries, &self.document.links);
+            if !self.raw {
+                mark = self.resolution.mark(self.document, mark);
+            }
             if mark.style != first.style
                 || mark.link != first.link
                 || mark.emphasis_depth != first.emphasis_depth
                 || mark.strong_depth != first.strong_depth
+                || (self.raw
+                    && (mark.hide_when_target_available != first.hide_when_target_available
+                        || mark.hide_alternative != first.hide_alternative))
             {
                 self.pending = Some((span, mark));
                 break;

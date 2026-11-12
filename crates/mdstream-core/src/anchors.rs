@@ -87,6 +87,7 @@ pub struct HeadingAnchors {
     entries: Vec<Entry>,
     nodes: Vec<Node>,
     building: Option<Building>,
+    resolver: crate::LinkResolver,
 }
 
 impl HeadingAnchors {
@@ -98,9 +99,26 @@ impl HeadingAnchors {
             entries: Vec::new(),
             nodes: vec![Node::default()],
             building: None,
+            resolver: document.link_resolver(),
         }
     }
 
+    /// Selection memo only; the separately paid slug trie retains its lifecycle.
+    pub fn take_link_resolver(&mut self) -> crate::LinkResolver {
+        let empty = self.resolver.empty_like();
+        std::mem::replace(&mut self.resolver, empty)
+    }
+    pub fn swap_link_resolver(
+        &mut self,
+        resolver: &mut crate::LinkResolver,
+    ) -> Result<(), LayoutError> {
+        resolver.check_binding(self.document, self.revision)?;
+        std::mem::swap(&mut self.resolver, resolver);
+        Ok(())
+    }
+    pub fn retire_link_resolver(&mut self, budget: &mut Budget) -> Completion {
+        self.resolver.retire(budget)
+    }
     pub fn revision(&self) -> u64 {
         self.revision
     }
@@ -155,6 +173,7 @@ impl HeadingAnchors {
         budget: &mut Budget,
     ) -> Result<Completion, LayoutError> {
         self.validate(document)?;
+        self.resolver.check(document)?;
         loop {
             if self.is_complete() {
                 return Ok(Completion::EndOfDocument);
@@ -200,7 +219,10 @@ impl HeadingAnchors {
             }
             if current.reading {
                 if current.pending_pos == current.pending.len() {
-                    match current.cursor.next(document, budget)? {
+                    match current
+                        .cursor
+                        .next_with_resolver(document, &mut self.resolver, budget)?
+                    {
                         DisplayStep::BudgetExhausted => return Ok(Completion::BudgetExhausted),
                         DisplayStep::Complete => {
                             current.reading = false;

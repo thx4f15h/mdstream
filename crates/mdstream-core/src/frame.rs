@@ -1,7 +1,7 @@
 use crate::folding::{FoldSegment, FoldState};
 use crate::{
     BlockId, Budget, Completion, Document, DocumentId, HeightIndex, LayoutError, LinkId, LinkInfo,
-    RenderRun, Span, TileId, WorkLimit,
+    RenderRun, Span, Style, TileId, WorkLimit,
 };
 use crate::{FoldPlaceholder, FoldView};
 
@@ -12,6 +12,18 @@ pub trait LayoutSink {
     fn begin_tile(&mut self, tile: TileId);
     fn text(&mut self, run: RenderRun<'_>);
     fn object(&mut self, id: LinkId, object: &LinkInfo);
+    /// Selected candidates only. Unresolved keeps literal source semantics;
+    /// suppressed alternatives never reach this callback. The default preserves
+    /// existing sinks, while hosts may distinguish activation without requerying.
+    fn object_with_disposition(
+        &mut self,
+        id: LinkId,
+        object: &LinkInfo,
+        disposition: crate::LinkDisposition,
+    ) {
+        let _ = disposition;
+        self.object(id, object);
+    }
     fn end_tile(&mut self, tile: TileId) -> u64;
 }
 
@@ -45,6 +57,11 @@ pub struct LayoutPass {
     cursor: usize,
     object: usize,
     objects_ready: bool,
+    object_window: Option<crate::LinkWindow>,
+    last_object: Option<(usize, usize)>,
+    resolver: crate::LinkResolver,
+    object_activity: Option<crate::LinkActivity>,
+    pending_run: Option<PreparedLayout>,
     active: bool,
     rows: u128,
     wanted: u128,
@@ -54,6 +71,45 @@ pub struct LayoutPass {
     fold_segment: Option<FoldSegment>,
     paragraph_end: Option<BlockId>,
     ended_paragraph: Option<BlockId>,
+}
+
+struct PreparedLayout {
+    source: Span,
+    block: Option<BlockId>,
+    style: Style,
+    emphasis_depth: usize,
+    strong_depth: usize,
+    task: crate::link_semantics::MarkTask,
+}
+impl PreparedLayout {
+    fn new(run: RenderRun<'_>, mark: crate::annotations::Mark) -> Self {
+        Self {
+            source: run.source,
+            block: run.block,
+            style: run.style,
+            emphasis_depth: run.emphasis_depth,
+            strong_depth: run.strong_depth,
+            task: crate::link_semantics::MarkTask::new(mark),
+        }
+    }
+    fn emit<'a>(&mut self, document: &'a Document, end: usize) -> RenderRun<'a> {
+        let source = Span::new(self.source.start, end);
+        self.source.start = end;
+        let (hidden, link) = self.task.result.unwrap();
+        RenderRun {
+            source,
+            text: &document.source()[source.range()],
+            block: self.block,
+            style: if hidden {
+                self.style.union(Style::HIDDEN)
+            } else {
+                self.style
+            },
+            emphasis_depth: self.emphasis_depth,
+            strong_depth: self.strong_depth,
+            link,
+        }
+    }
 }
 
 impl LayoutPass {
@@ -79,6 +135,11 @@ impl LayoutPass {
             cursor,
             object: 0,
             objects_ready: false,
+            object_window: None,
+            last_object: None,
+            resolver: document.link_resolver(),
+            object_activity: None,
+            pending_run: None,
             active: false,
             rows: 0,
             wanted: u128::from(rows),
@@ -150,6 +211,27 @@ impl LayoutPass {
         Ok(Some(pass))
     }
 
+    /// Reuse this pass's revision-bound conditional memo for display and hits.
+    /// Move the memo out in O(1) before retiring/replacing this pass.
+    pub fn take_link_resolver(&mut self) -> crate::LinkResolver {
+        let empty = self.resolver.empty_like();
+        std::mem::replace(&mut self.resolver, empty)
+    }
+    pub fn swap_link_resolver(
+        &mut self,
+        resolver: &mut crate::LinkResolver,
+    ) -> Result<(), LayoutError> {
+        resolver.check_binding(self.document, self.revision)?;
+        std::mem::swap(&mut self.resolver, resolver);
+        Ok(())
+    }
+    pub fn retire(&mut self, budget: &mut Budget) -> Completion {
+        self.resolver.retire(budget)
+    }
+    pub fn link_resolver(&mut self) -> &mut crate::LinkResolver {
+        &mut self.resolver
+    }
+
     pub fn source_position(&self) -> usize {
         self.cursor
     }
@@ -217,7 +299,42 @@ impl LayoutPass {
         if self.revision != document.revision() || self.view != heights.version() {
             return Err(LayoutError::StaleContinuation);
         }
+        self.resolver.check(document)?;
         loop {
+            if let Some(pending) = &mut self.pending_run {
+                let recovery = usize::from(self.tile < self.recovery_until);
+                if !pending
+                    .task
+                    .advance(document, &mut self.resolver.resolution, budget, recovery)
+                {
+                    return Ok(Completion::BudgetExhausted);
+                }
+                let mut end = self
+                    .cursor
+                    .saturating_add(budget.remaining().bytes)
+                    .min(pending.source.end);
+                while !document.source().is_char_boundary(end) {
+                    end -= 1;
+                }
+                if end == self.cursor
+                    || !budget.charge(WorkLimit {
+                        queries: 1,
+                        objects: 1,
+                        bytes: end - self.cursor,
+                        recovery,
+                        ..Default::default()
+                    })
+                {
+                    return Ok(Completion::BudgetExhausted);
+                }
+                let run = pending.emit(document, end);
+                self.cursor = end;
+                if pending.source.is_empty() {
+                    self.pending_run = None;
+                }
+                sink.text(run);
+                continue;
+            }
             if let Some(block) = self.paragraph_end {
                 // A crossing union can extend the same owner's frontier over
                 // several paid steps. End its paragraph once, also when this
@@ -305,11 +422,12 @@ impl LayoutPass {
                         self.paragraph_end = folds.and_then(|f| f.paragraph(candidate.id));
                     }
                     self.objects_ready = false;
+                    self.object_window = None;
                     continue;
                 }
                 // Both text and objects participate. Whole hidden interiors are
                 // removed by one range operation, independent of their byte count.
-                let mut next = document.next_drawable(span.start);
+                let mut next = document.next_layout_anchor(span.start);
                 // Fold placeholders are drawable even when all underlying
                 // syntax is hidden (e.g. an empty fenced code block).
                 if let Some(segment) = self.fold_segment {
@@ -359,26 +477,62 @@ impl LayoutPass {
                     self.paragraph_end = folds.and_then(|f| f.paragraph(candidate.id));
                 }
                 self.objects_ready = false;
+                self.object_window = None;
                 continue;
             }
             if !self.objects_ready {
-                if !budget.charge(WorkLimit {
-                    queries: 1,
-                    recovery,
-                    ..Default::default()
-                }) {
-                    return Ok(Completion::BudgetExhausted);
+                let window = self.object_window.get_or_insert_with(|| {
+                    document.link_window(Span::new(self.cursor, document.source().len()))
+                });
+                match window.advance_with_recovery(document, budget, recovery)? {
+                    crate::LinkStep::Object(id, _) => self.object = id.0,
+                    crate::LinkStep::Complete => self.object = document.links().len(),
+                    crate::LinkStep::BudgetExhausted => return Ok(Completion::BudgetExhausted),
                 }
-                self.object = document
-                    .links_in(Span::new(self.cursor, document.source().len()))
-                    .next()
-                    .map_or(document.links().len(), |(id, _)| id.0);
                 self.objects_ready = true;
             }
             if let Some(info) = document.link_info(LinkId(self.object))
                 && info.source.start <= self.cursor
                 && info.source.start < span.end
             {
+                let key = (info.source.start, self.object);
+                if self.last_object.is_some_and(|last| key <= last) {
+                    if !budget.charge(WorkLimit {
+                        objects: 1,
+                        recovery,
+                        ..Default::default()
+                    }) {
+                        return Ok(Completion::BudgetExhausted);
+                    }
+                    self.objects_ready = false;
+                    self.object_activity = None;
+                    continue;
+                }
+                let disposition = if document
+                    .link_order
+                    .gate(LinkId(self.object))
+                    .unconditional()
+                {
+                    if crate::link_semantics::available(document, LinkId(self.object)) {
+                        crate::LinkDisposition::Active
+                    } else {
+                        crate::LinkDisposition::Unresolved
+                    }
+                } else {
+                    let activity = self.object_activity.get_or_insert_with(|| {
+                        document.link_activity(LinkId(self.object)).unwrap()
+                    });
+                    let Some(disposition) = activity.advance_in(
+                        document,
+                        &mut self.resolver.resolution,
+                        budget,
+                        recovery,
+                    )?
+                    else {
+                        return Ok(Completion::BudgetExhausted);
+                    };
+                    disposition
+                };
                 if !budget.charge(WorkLimit {
                     objects: 1,
                     recovery,
@@ -386,10 +540,12 @@ impl LayoutPass {
                 }) {
                     return Ok(Completion::BudgetExhausted);
                 }
-                sink.object(LinkId(self.object), info);
-                self.object = document
-                    .next_link(LinkId(self.object))
-                    .map_or(document.links().len(), |id| id.0);
+                if disposition != crate::LinkDisposition::Suppressed {
+                    sink.object_with_disposition(LinkId(self.object), info, disposition);
+                }
+                self.last_object = Some(key);
+                self.objects_ready = false;
+                self.object_activity = None;
                 continue;
             }
             let remaining = budget.remaining();
@@ -415,11 +571,13 @@ impl LayoutPass {
             if end == self.cursor {
                 return Ok(Completion::BudgetExhausted);
             }
-            let run = document
-                .runs_in(Span::new(self.cursor, end))
-                .unwrap()
-                .next()
-                .unwrap();
+            let (run, mark) = {
+                let mut runs = document.runs_in(Span::new(self.cursor, end)).unwrap();
+                runs.raw = true;
+                let run = runs.next().unwrap();
+                let mark = runs.last_mark;
+                (run, mark)
+            };
             let consumed = run.source.len();
             let charged = budget.charge(WorkLimit {
                 queries: 1,
@@ -429,8 +587,16 @@ impl LayoutPass {
                 ..Default::default()
             });
             debug_assert!(charged);
-            self.cursor = run.source.end;
-            sink.text(run);
+            if crate::link_semantics::Resolution::needs(document, mark) {
+                self.pending_run = Some(PreparedLayout::new(run, mark));
+            } else {
+                let mut run = run;
+                run.style = run
+                    .style
+                    .union(mark.effective_style(&document.references.entries, &document.links));
+                self.cursor = run.source.end;
+                sink.text(run);
+            }
         }
     }
 }

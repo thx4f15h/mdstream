@@ -72,6 +72,19 @@ impl DisplaySearch {
         })
     }
 
+    /// Move the selection memo out before dropping/replacing an old revision.
+    pub fn take_link_resolver(&mut self) -> crate::LinkResolver {
+        self.cursor.take_link_resolver()
+    }
+    pub fn swap_link_resolver(
+        &mut self,
+        resolver: &mut crate::LinkResolver,
+    ) -> Result<(), LayoutError> {
+        self.cursor.swap_link_resolver(resolver)
+    }
+    pub fn retire(&mut self, budget: &mut Budget) -> Completion {
+        self.cursor.retire(budget)
+    }
     pub fn revision(&self) -> u64 {
         self.revision
     }
@@ -112,13 +125,15 @@ impl DisplaySearch {
         if document.revision() != self.revision {
             return Err(LayoutError::StaleContinuation);
         }
-        Ok(())
+        self.cursor.validate(document)
     }
 
     /// Reuse the prepared pattern for another independent range in the same
     /// revision. Old ring entries need no clearing: a new full match overwrites
     /// all of them before reading its source start. The caller validates first.
-    pub(crate) fn reset(&mut self, cursor: DisplayCursor) {
+    pub(crate) fn reset(&mut self, mut cursor: DisplayCursor) {
+        let mut resolver = self.cursor.take_link_resolver();
+        cursor.swap_link_resolver(&mut resolver).unwrap();
         self.cursor = cursor;
         self.matched = 0;
         self.display_position = 0;
