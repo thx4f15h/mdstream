@@ -1,7 +1,7 @@
 use crate::Span;
 
-/// General block classification prefix bound (+3 to finish UTF-8). A long
-/// table header/separator or fence can defer a raw suffix without copying it.
+/// Initial classification chunk (+3 to finish UTF-8), not a grammar bound.
+/// Undecided structure keeps a streaming summary and borrowed raw endpoints.
 pub const BLOCK_LOOKAHEAD: usize = 1024;
 /// Historical bounded-classifier threshold, retained for source compatibility.
 /// This is **not** a fence length limit: opening/closing runs have no grammar
@@ -152,7 +152,7 @@ pub(crate) fn classify_indented(
         fence_start += 1;
     }
     let fence_text = &body[fence_start..];
-    // Independent math blocks require a complete, bounded delimiter line.
+    // Independent math blocks require a complete delimiter line.
     // Their body stays literal; opening indentation is not stripped from it.
     if complete
         && fence_indent <= 3
@@ -552,7 +552,7 @@ fn definition(source: &str, start: usize, end: usize) -> Option<Line> {
     .map(|parser| Line::DefinitionTitle { label, parser })
 }
 
-/// A complete bounded physical target line; all offsets borrow original source.
+/// A complete physical target line; syntax data retains Destination's limits.
 /// Leading indentation on this continuation is horizontal whitespace, including
 /// four or more columns. Independent title lines use definition_title instead.
 pub(crate) fn definition_target(source: &str, span: Span) -> Option<(Span, Option<Span>)> {

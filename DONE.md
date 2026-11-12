@@ -2935,3 +2935,29 @@ README、TODO 精准同步：核心范围扩展单独勾选，实际选区控件
 最终冻结验收经项目 `nix develop`：`cargo check --workspace --all-targets`；专项 nextest **134/134**（补齐历史期望后的专项另 **83/83**）；完整 workspace/all-targets debug/release nextest 各 **1933/1933**；doc **78/78**、doc build、fmt check、生产库 clippy `-D warnings` 均通过。官方 Backslash escapes 夹具离线校验、38 份实际章节报告及六个相关 release 示例通过，原始 fixtures、Cargo/flake 依赖与 rustfmt 配置保持；405 个 Rust 文件及编译输入在全套前冻结、全套后 SHA 保持，`git diff --check` 通过。
 
 额外全目标 clippy 仅被既有 `tests/bare_autolinks.rs:594` 的 `bool_assert_comparison` 阻断，该旧断言未改；本次新增测试 lint 已清除，生产库严格 clippy 通过。
+
+## 2026-11-13 一般结构分类前缀窗口扩展交付
+
+一般结构不再以 `BLOCK_LOOKAHEAD=1024` 为语法长度上限。覆盖新显式 Quote/List/Item 任意深度、兄弟和现有/缺失路径的列宽路由，完整空白、Setext、thematic rule、独立 `$$`，深前缀后的 ATX、task 与其空白、围栏/info/closer、缩进代码、数学、表头与链接/脚注定义，以及多行定义来源。保留原 paragraph interruption/lazy/list-tightness/确切作用域/标题/表格优先级；同 tab 的物理四列与虚拟余量只交给原映射一次。九位 ordered marker、999 字节标签、destination/title/suffix 的明确语法限额继续有效；原始 HTML、完整 TeX/脚注正文、一般晚表头语义撤销和行内 suffix 失败回放仍在原 TODO。
+
+独立 `structural_prefix` 扫描器对未决新物理行保存固定语法状态与原始端点。原文在 tile 中暂显，不先发布可被 rule 推翻的容器；首次排除候选后立即分类新前缀并进入原流式路径，普通百万字行无需等 EOF。整行候选在 LF/CRLF/EOF 决议一次。混合 marker 的最长同字符 rule 后缀由一次反向摘要回答每层优先级，避免每个 marker 重扫整个后缀。新深路径到达首个 backtick/tilde 时把候选交给已有 FenceProbe，完整 info/run/closer 沿用其流式状态；ATX、脚注和 task 等叶块等待真实分类器所需的最小完整前缀。
+
+定义源账本解除物理 Span 长度检查，保留来源有序性、数量/data 限额和非 Clone 的 SourceOwner。目标/标题资格探测仅复制固定大小 Destination 状态，不复制旧正文或祖先；内部空白至多额外读一次，按原 trim 排除的尾空白保持待确认。失格的定义 continuation 先单次交回其真实来源，随后长 delimiter 观察正确的最近表头；失败表格探测保留已有 HeaderSummary 和恢复资格，不扩大一般行内撤销范围。长 delimiter 在首个拒绝标量即停止读取，保证整块追加与逐字追加使用同一决议位置。dirty、旧 ticket/DisplayCursor/LayoutPass 失效与原稳定对象 ID 均沿真实 source 通知。
+
+`Work.structural_prefix_bytes/steps` 记录资格字节/延迟空白访问及实际状态分派、建立与决议；分类、列匹配、rule 摘要、祖先开闭和索引另有既有 Work 字段。每字节/前缀事件只经过常数个状态，无增长旧行重扫、每行旧祖先复制或深栈快照。累计扫描 O(n)、解析 O(n log n)、空间 O(n)，单个未决扫描器 O(1)，核心零运行时依赖且禁止 unsafe；长候选决议和解析调用不承诺硬帧时延。查询与实际 LayoutPass 保留共享 Budget。
+
+验证包括独立朴素物理列/优先级模型与真实公开 API、8 项实际前驱红探针、所有 UTF-8 切点/逐前缀及 EOF、4097/8193 层混合路径与 128 KiB 线程栈析构、正/负/未完成的 rule/list/Setext/math/blank/definition/table/fence/task、部分 tab/省略路径、原始/虚拟显示映射与稳定旧身份、dirty/旧 ticket/continuation、0/1/6 共享预算及真实 LayoutPass、五类百万次逐字追加和两万旧定义后的百万正文增长。固定官方输入/HTML/生成器/SHA、黄金数组保持原字节；历史窗口断言只按原输入改为新语义，深 title 旧 shape hash 通过完整 source 等值断言的一条精确 delta 保存。其余历史快照与旧 Work 字段继续严格对照。
+
+复跑专项：`nix develop -c cargo nextest run --test structural_prefix --test streaming_fences --test long_delimiters --test long_delimiter_tabs --test container_title_bodies --test container_eligibility --no-fail-fast`。完整验收：`cargo check --workspace --all-targets`、debug/release 的 `cargo build --workspace --all-targets`、`cargo nextest run --workspace --no-fail-fast` 及其 `--release` 各 **1944/1944** 通过，`cargo test --workspace --doc` 共 **78/78** 通过，`cargo doc --workspace --no-deps`、`cargo fmt --all -- --check`、生产 `cargo clippy --workspace --lib --bins --examples -- -D warnings` 与全部本次修改测试的 clippy 均通过；上述 cargo 命令均在项目 `nix develop` 中运行。围栏 parent 的既有列宽、长围栏与一般前缀分类依赖均已交付并关闭；TODO 88 的真实间距与通用晚表头需求继续保留。
+
+实际逐字累计计数（包含最终 LF；`=` 另含此前六字节标题正文）：
+
+| 单字节追加内容 | input_bytes | classified_bytes | structural_prefix_bytes | structural_prefix_steps | inline_bytes | container_steps |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 一百万 `x` | 1,000,001 | 1,024 | 1 | 4 | 1,000,001 | 0 |
+| 一百万 `>` | 1,000,001 | 1,000,002 | 1,000,001 | 2,000,002 | 0 | 2,000,000 |
+| 一百万 `*` | 1,000,001 | 1,000,001 | 1,000,001 | 2,000,002 | 0 | 0 |
+| 一百万空格 | 1,000,001 | 1,000,001 | 1,000,001 | 2,000,002 | 0 | 0 |
+| 一百万 `=` | 1,000,007 | 1,000,007 | 1,000,001 | 2,000,002 | 6 | 0 |
+
+一百万引用标记最终建立并关闭一百万真实 Quote；普通 `x` 在 EOF 前已消费全部正文，后续追加不增加分类或祖先操作。两万旧定义加 4097 层引用后追加百万正文，inline 增量恰为一百万，classified/container_steps/label_bytes 不变；8193 层作用域在 128 KiB 线程栈中直接析构通过。

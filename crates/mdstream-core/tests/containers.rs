@@ -404,7 +404,7 @@ fn ancestry_queries_are_borrowed_bounded_and_resume_without_repeating_nodes() {
 }
 
 #[test]
-fn bounded_prefix_policy_is_chunk_invariant_at_every_observed_prefix() {
+fn unbounded_prefix_policy_is_chunk_invariant_at_every_observed_prefix() {
     let samples = [
         format!("{}tail\n", ">".repeat(BLOCK_LOOKAHEAD + 20)),
         format!("{}9. x\n", ">".repeat(BLOCK_LOOKAHEAD - 1)),
@@ -431,6 +431,6 @@ fn bounded_prefix_policy_is_chunk_invariant_at_every_observed_prefix() {
         assert_eq!(streamed.blocks(), whole.blocks());
     }
     let doc = parsed(&format!("{}tail", ">".repeat(BLOCK_LOOKAHEAD + 20)));
-    assert_eq!(doc.container_count(), BLOCK_LOOKAHEAD);
-    assert_eq!(visible(&doc), format!("{}tail", ">".repeat(20)));
+    assert_eq!(doc.container_count(), BLOCK_LOOKAHEAD + 20);
+    assert_eq!(visible(&doc), "tail");
 }

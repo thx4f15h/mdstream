@@ -130,17 +130,16 @@ fn failures_window_and_literal_contexts_keep_their_dialect() {
         let source = format!("{}>\t > body\n", ">".repeat(depth));
         let doc = parse(&source);
         let indent = 4 - (depth + 1) % 4; // Tab residue plus one real space.
-        let expected = (depth + 1).min(BLOCK_LOOKAHEAD)
-            + usize::from(depth + 4 <= BLOCK_LOOKAHEAD && indent <= 3);
+        let expected = depth + 1 + usize::from(indent <= 3);
         assert_eq!(quotes(&doc), expected, "depth {depth}");
         if depth == 1021 {
-            // The next marker is the first byte outside the window. It must
-            // not commit even the outer quote's speculative tab separator.
+            // The next marker crosses the initial chunk. Both quotes now
+            // commit their structural bytes, including the original tab.
             let tab = source.find('\t').unwrap();
             assert!(
                 doc.display_runs_in(Span::new(tab, tab + 1))
                     .unwrap()
-                    .all(|r| !r.style.contains(Style::HIDDEN))
+                    .all(|r| r.style.contains(Style::HIDDEN))
             );
         }
     }

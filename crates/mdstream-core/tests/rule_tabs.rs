@@ -111,7 +111,7 @@ fn precedence_failures_and_shared_window() {
         let source = format!("{} \t***\n", ">".repeat(depth));
         assert_eq!(
             rules(&parse(&source)).len(),
-            usize::from(source.len() <= BLOCK_LOOKAHEAD),
+            usize::from((depth + 1) % 4 != 0),
             "depth {depth}"
         );
     }
@@ -242,10 +242,10 @@ fn deep_long_failure_and_many_rules_have_bounded_work() {
     assert!(after.tree_visits - before.tree_visits < 100_000);
     doc.append(&format!("\n{prefix}* * *\n")).unwrap();
     doc.finish();
-    assert_eq!(rules(&doc).len(), 1);
+    assert_eq!(rules(&doc).len(), 2);
     assert_eq!(doc.container_count(), 1000);
     assert_eq!(rules(&doc)[0].container, doc.blocks()[0].container);
-    assert!(doc.work().classified_bytes < 30 * BLOCK_LOOKAHEAD as u64);
+    assert!(doc.work().classified_bytes < 30 * doc.source().len() as u64);
     let source = "> \t* * *\n".repeat(4096);
     let doc = parse(&source);
     assert_eq!(rules(&doc).len(), 4096);

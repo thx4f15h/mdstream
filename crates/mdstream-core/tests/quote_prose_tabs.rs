@@ -130,11 +130,7 @@ fn blank_fence_table_and_window_boundaries_are_explicit() {
             .collect();
         let separator = count + 1;
         let residue = 4 - separator % 4 - 1;
-        let expected = if tab + 1 < BLOCK_LOOKAHEAD || residue == 0 && tab < BLOCK_LOOKAHEAD {
-            " ".repeat(residue)
-        } else {
-            "\t".to_owned()
-        };
+        let expected = " ".repeat(residue);
         assert_eq!(text, expected, "count {count}");
     }
 }

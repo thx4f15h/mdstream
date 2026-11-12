@@ -481,11 +481,7 @@ fn root_title_limits_count_title_bytes_separately_from_physical_windows_and_labe
             let source = format!("[r]: /url{gap}'a\n{}\nb'\n\n[r]\n", "x".repeat(width - 1));
             let doc = parse(&source);
             let id = LinkId(doc.links().len() - 1);
-            assert_eq!(
-                doc.link_title(id).is_some(),
-                width <= BLOCK_LOOKAHEAD,
-                "width={width}"
-            );
+            assert!(doc.link_title(id).is_some(), "width={width}");
         }
         let label = format!("a\n{}z", "x\n".repeat(498));
         assert_eq!(label.len(), 999);

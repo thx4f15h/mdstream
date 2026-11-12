@@ -237,11 +237,11 @@ fn classification_window_commits_once_including_failed_and_incomplete_candidates
         doc.finish();
         assert!(doc.references().iter().all(|r| r.destination.is_none()));
     }
-    // Whitespace-only bounded prefixes cannot retain a paragraph, even if
-    // later bytes would have supplied nonblank content.
+    // A long whitespace prefix remains undecided until its actual payload;
+    // the existing missing-path lazy rule then retains the paragraph.
     let doc = parse(&format!("> first\n{}tail\n", " ".repeat(BLOCK_LOOKAHEAD)));
-    assert_eq!(doc.blocks()[1].container, None);
-    assert!(matches!(doc.blocks()[1].kind, BlockKind::Code { .. }));
+    assert_eq!(doc.blocks()[1].container, Some(ContainerId(0)));
+    assert!(matches!(doc.blocks()[1].kind, BlockKind::Paragraph));
 }
 
 #[test]

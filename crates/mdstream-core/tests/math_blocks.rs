@@ -219,13 +219,10 @@ fn pending_delimiters_and_long_failures_never_reclassify_old_text() {
     assert!(info(&doc, BlockId(0)).1);
     for prefix in ["", "> "] {
         let long = format!("{prefix}$${}\n", " ".repeat(BLOCK_LOOKAHEAD));
-        assert!(ids(&parse(&long)).is_empty());
+        assert_eq!(ids(&parse(&long)).len(), 1);
         let doc = parse(&format!("{prefix}$$\n{long}{prefix}$$\n"));
-        assert_eq!(ids(&doc).len(), 1);
-        assert_eq!(
-            read(&doc, BlockId(0), true),
-            format!("$${}\n", " ".repeat(BLOCK_LOOKAHEAD))
-        );
+        assert_eq!(ids(&doc).len(), 2);
+        assert_eq!(read(&doc, BlockId(0), true), "");
     }
 }
 

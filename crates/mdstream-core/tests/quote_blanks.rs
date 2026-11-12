@@ -254,13 +254,13 @@ fn quote_blanks_are_stable_at_every_split_prefix_and_eof() {
 
 #[test]
 fn blank_classification_is_bounded_and_does_not_rescan_old_text_or_ancestors() {
-    // An incomplete classification window keeps its existing prose/code kind;
-    // a later LF or finish cannot reinterpret a previously published long line.
+    // Long whitespace remains provisional; LF or EOF confirms its blank
+    // identity once without publishing an earlier prose/code interpretation.
     for end in ["", "\n"] {
         let short = parse(&format!(">{}{end}", " ".repeat(BLOCK_LOOKAHEAD - 2)));
         assert_eq!(short.blocks()[0].kind, BlockKind::Blank);
         let long = parse(&format!(">{}{end}", " ".repeat(BLOCK_LOOKAHEAD)));
-        assert!(!matches!(long.blocks()[0].kind, BlockKind::Blank));
+        assert_eq!(long.blocks()[0].kind, BlockKind::Blank);
     }
     let prefix = ">".repeat(980);
     let mut doc = Document::new();

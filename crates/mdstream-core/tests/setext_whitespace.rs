@@ -138,12 +138,9 @@ fn rejected_underlines_trim_break_whitespace_and_closed_root_tails() {
     let source = format!("  old \t\n{}\n===\n", "=".repeat(BLOCK_LOOKAHEAD + 1));
     let doc = parse(&source);
     let title = doc.headings().entries()[0];
-    // The overlong underline is ordinary text; the preceding internal break
-    // trims its raw space/tab suffix without changing the title envelope.
-    assert_eq!(
-        visible(&doc, title.content),
-        format!("old\n{}", "=".repeat(BLOCK_LOOKAHEAD + 1))
-    );
+    // The first long underline confirms the original title. The later
+    // underline is a new ordinary line and does not enlarge that heading.
+    assert_eq!(visible(&doc, title.content), "old");
     let doc = parse(">   old \t\n>\n>   new \t\n> ===\n");
     assert_eq!(visible(&doc, doc.headings().entries()[0].content), "new");
     let doc = parse("- a\n  - child\n    \n  b \t\n  ===\n");

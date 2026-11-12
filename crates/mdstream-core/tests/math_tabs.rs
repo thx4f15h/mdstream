@@ -189,7 +189,11 @@ fn closing_math_blocks_counts_virtual_columns_and_keeps_bounded_failures() {
         let doc = parse(&source);
         assert_eq!(
             read(doc.math_block_payload(BlockId(0)).unwrap()),
-            format!("  {candidate}\n")
+            if candidate.starts_with("$$ ") {
+                String::new()
+            } else {
+                format!("  {candidate}\n")
+            }
         );
         assert!(matches!(
             doc.blocks()[0].kind,

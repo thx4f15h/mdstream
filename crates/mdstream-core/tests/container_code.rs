@@ -213,7 +213,7 @@ fn streaming_identity_pending_exit_eof_and_updates_are_stable() {
 }
 
 #[test]
-fn failed_and_overlong_candidates_never_reclassify_old_input() {
+fn failed_candidates_and_long_prefixes_have_one_final_classification() {
     for source in [
         "> ``short\n",
         "> ```bad`info\n",
@@ -233,7 +233,7 @@ fn failed_and_overlong_candidates_never_reclassify_old_input() {
     assert_eq!(codes(&doc), [BlockId(0), BlockId(1)]);
     assert_eq!(visible(&doc, doc.blocks()[0].source), "");
     let prefix = ">".repeat(BLOCK_LOOKAHEAD);
-    assert!(codes(&parse(&format!("{prefix}```\n"))).is_empty());
+    assert_eq!(codes(&parse(&format!("{prefix}```\n"))), [BlockId(0)]);
     // A late backtick rejects the raw info candidate and consumes it once.
     let mut doc = Document::new();
     doc.append(&format!("> ```{}", "x".repeat(BLOCK_LOOKAHEAD)))

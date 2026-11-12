@@ -372,7 +372,7 @@ impl Containers {
         })
     }
 
-    /// Read-only probe of the bounded physical prefix. A long separator may
+    /// Read-only probe of the new physical prefix. A long separator may
     /// retain exactly the header's path, never create siblings or use lazy text.
     pub fn delimiter_prefix(
         &self,
@@ -386,7 +386,7 @@ impl Containers {
         }
         // Extend only paths rejected by the original byte-aligned probe.
         // Match atomically; four residual columns still belong to code. Both
-        // walks inspect this bounded physical prefix, never retained ancestors
+        // walks inspect this new physical prefix, never retained ancestors
         // without input or the growing separator tail.
         let mut prefix = self
             .delimiter_cursor(source, span, scope, true, work)
@@ -447,7 +447,7 @@ impl Containers {
         self.continuation_source(source, span, scope, true, None, work)
     }
 
-    // Probe a bounded new physical source in the existing paragraph. Target
+    // Probe a new physical source in the existing paragraph. Target
     // keeps its established indentation exception; ordinary sources require
     // actual Text and stop before a real delimiter for the preceding header.
     // Offsets/columns are metadata: only ledger admission grants consumption.
@@ -460,9 +460,6 @@ impl Containers {
         header_columns: Option<usize>,
         work: &mut Work,
     ) -> Option<(usize, Span, u8)> {
-        if span.len() > crate::BLOCK_LOOKAHEAD + 3 {
-            return None;
-        }
         let partial = (!target && scope.is_some())
             .then(|| {
                 self.partial_prefix(
@@ -587,7 +584,7 @@ impl Containers {
             }
         };
         let inspected = structure.inspected;
-        // The caller only confirms complete bounded physical lines. Matching
+        // The caller only confirms complete physical lines. Matching
         // the old path alone does not exclude a new nested Quote/List. Reuse
         // the same marker and paragraph interruption rules as line(), without
         // mutating containers or classifying any old candidate text.
@@ -861,7 +858,7 @@ impl Containers {
             code_fence,
         } = options;
         let mut prefix = Prefix::new(source, span, complete);
-        // A single bounded reverse scan makes rule priority O(1) per frame,
+        // A single reverse scan makes rule priority O(1) per frame,
         // even for long chains of failed `* ` list prefixes.
         let rule_suffix = if complete { prefix.rule_suffix() } else { None };
         let mut keep = 0;
@@ -872,7 +869,7 @@ impl Containers {
         let mut sibling_marker = false;
         // Commit a new list/quote, sibling marker, or ended empty item
         // after matching its ancestors. Failed probes leave the original path intact.
-        // Each matched frame consumes positive columns in this bounded prefix;
+        // Each matched frame consumes positive columns in this new prefix;
         // the whitespace endpoint stays cached across all list ancestors.
         if partial_container {
             let mut probe = prefix;
@@ -1045,8 +1042,8 @@ impl Containers {
                 break;
             }
         }
-        // Blank classification is bounded by the physical prefix window. No
-        // long-line retry and no missing quote is retained. The only scan below
+        // Blank classification uses the complete physical line. No
+        // missing quote is retained. The only scan below
         // is over the new line's remaining bytes, not the unmatched stack.
         let blank = complete && new_item.is_none() && {
             prefix.inspected += (prefix.end - prefix.pos) as u64;
@@ -1135,7 +1132,7 @@ impl Containers {
             }
             // Only a delimiter in the header's exact retained scope wins over
             // a new list marker (e.g. `> - | -`). Sibling items already changed
-            // identity above. Inspect at most one bounded payload per line.
+            // identity above. Inspect at most one payload per line.
             if complete
                 && let Some((scope, columns)) = table_header
                 && Some(scope) == self.inner()
@@ -1191,7 +1188,7 @@ impl Containers {
             } else if let Some(marker) = prefix.marker() {
                 // Empty markers and ordered starts other than 1 cannot
                 // interrupt prose in this exact retained scope. Only complete
-                // bounded lines prove emptiness; the parsed number is already
+                // physical lines prove emptiness; the parsed number is already
                 // final even for a long line. Siblings replaced their Item
                 // above, and new containers have a different identity.
                 if !marker.interrupts_paragraph(complete, prefix.end)
@@ -1415,7 +1412,7 @@ impl<'a> Prefix<'a> {
         sibling_marker: bool,
         work: &mut Work,
     ) -> bool {
-        // Only the bounded, as-yet-unconsumed payload is examined. No probe
+        // Only the new, as-yet-unconsumed payload is examined. No probe
         // mutates the path or consumes text that must remain visible.
         let payload = Span::new(self.pos, span.end);
         self.inspected += payload.len() as u64;
@@ -1469,7 +1466,7 @@ impl<'a> Prefix<'a> {
     }
 
     /// Atomically accept an explicit quote followed by tab-containing code
-    /// indentation. Only inspect this bounded prefix; failed probes preserve
+    /// indentation. Only inspect this new prefix; failed probes preserve
     /// the old quote/leaf spelling. Carry the final tab's unused columns.
     fn quote_code(&mut self) -> Option<Self> {
         let mut probe = *self;

@@ -194,7 +194,7 @@ fn failures_window_and_four_column_continuations() {
                     .iter()
                     .filter(|n| n.definition.is_some())
                     .count(),
-                usize::from(opener.len() <= BLOCK_LOOKAHEAD),
+                1,
                 "depth {depth}, {ending:?}"
             );
         }

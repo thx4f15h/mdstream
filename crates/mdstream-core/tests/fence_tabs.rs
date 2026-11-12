@@ -228,7 +228,7 @@ fn streaming_indent_crosses_window_and_million_byte_body_without_rescan() {
     doc.append("\t").unwrap();
     assert_eq!(doc.work().container_bytes, before.container_bytes);
     assert_eq!(doc.work().container_steps, before.container_steps);
-    assert_eq!(doc.work().classified_bytes - before.classified_bytes, 1);
+    assert_eq!(doc.work().classified_bytes, before.classified_bytes);
     doc.append(&"x".repeat(1_000_000)).unwrap();
     let before = doc.work();
     for _ in 0..1000 {

@@ -187,11 +187,11 @@ fn empty_marker_decisions_are_bounded_by_the_classification_window() {
     for ending in ["", "\n"] {
         let short = format!("text\n*{}{ending}", " ".repeat(BLOCK_LOOKAHEAD - 2));
         assert_eq!(parse(&short).container_count(), 0);
-        // The window commits before an unobserved suffix can prove emptiness.
+        // Whole-line emptiness retains paragraph priority at every length.
         for tail in ["", "body"] {
             let long = format!("text\n*{}{tail}{ending}", " ".repeat(BLOCK_LOOKAHEAD));
             let whole = parse(&long);
-            assert_eq!(whole.container_count(), 2);
+            assert_eq!(whole.container_count(), if tail.is_empty() { 0 } else { 2 });
             for split in [5, 6, BLOCK_LOOKAHEAD + 4, BLOCK_LOOKAHEAD + 5, long.len()] {
                 let mut doc = Document::new();
                 doc.append(&long[..split]).unwrap();

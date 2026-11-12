@@ -224,7 +224,10 @@ fn empty_indent_window_and_eof_are_bounded() {
     for tail in ["", "text"] {
         let source = format!("-{}{tail}\n  next\n", " ".repeat(BLOCK_LOOKAHEAD));
         let doc = parse(&source);
-        assert!(!matches!(doc.blocks()[0].kind, BlockKind::Blank));
+        assert_eq!(
+            matches!(doc.blocks()[0].kind, BlockKind::Blank),
+            tail.is_empty()
+        );
         for at in [1, BLOCK_LOOKAHEAD - 1, BLOCK_LOOKAHEAD, BLOCK_LOOKAHEAD + 1] {
             let mut split = Document::new();
             split.append(&source[..at]).unwrap();

@@ -1,6 +1,6 @@
-//! Owned, bounded physical sources awaiting either confirmation or ordinary replay.
+//! Owned physical sources awaiting either confirmation or ordinary replay.
 //! No text, historical containers, or published inline objects are copied here.
-use crate::{BLOCK_LOOKAHEAD, BlockId, ContainerId, MAX_LABEL_BYTES, MAX_LINK_SUFFIX_BYTES, Span};
+use crate::{BlockId, ContainerId, MAX_LABEL_BYTES, MAX_LINK_SUFFIX_BYTES, Span};
 
 // Each open label/title source contributes at least one real byte to its
 // phase's bound. Add the closing-label, target and final physical sources.
@@ -55,7 +55,7 @@ impl DeferredSources {
         };
         assert!(
             sources.push(first).is_ok(),
-            "first deferred physical source is bounded"
+            "first deferred physical source is valid"
         );
         sources
     }
@@ -68,7 +68,6 @@ impl DeferredSources {
             .is_none_or(|last| last.source.end == fragment.source.start);
         if !ordered
             || fragment.source.start >= fragment.source.end
-            || fragment.source.len() > BLOCK_LOOKAHEAD + 3
             || fragment.raw.start < fragment.source.start
             || fragment.raw.end != fragment.source.end
             || fragment.raw.start > fragment.raw.end
@@ -1095,7 +1094,8 @@ mod tests {
         let mut ledger = DeferredSources::new(BlockId(0), None, fragment(0, 1));
         assert!(ledger.push(fragment(0, 1)).is_err());
         assert!(ledger.push(fragment(2, 3)).is_err());
-        assert!(ledger.push(fragment(1, BLOCK_LOOKAHEAD + 5)).is_err());
+        let long = DeferredSources::new(BlockId(0), None, fragment(0, BLOCK_LOOKAHEAD + 5));
+        assert_eq!(long.confirm(), Span::new(0, BLOCK_LOOKAHEAD + 5));
         for i in 1..MAX_DEFERRED_SOURCES {
             assert!(ledger.push(fragment(i, i + 1)).is_ok());
         }

@@ -234,12 +234,12 @@ fn title_prefix_gap_steps_and_caps_count_real_source_only() {
             }
         }
     }
-    // Keep the exact large-prefix component control from the predecessor.
+    // The same large-prefix component input now has its complete real path.
     let prefix = "> ".repeat(1000);
     let d = model::parse(&format!(
         "{prefix}[a](\n{prefix}u\n{prefix}'t'\n{prefix})\n"
     ));
-    assert_eq!(d.link_destination(LinkId(0)), None);
+    assert_eq!(d.link_destination(LinkId(0)), Some("u"));
     let d = model::parse("> [a](\n>\tu\n> 'a\n> b')\n");
     assert_eq!(d.link_title(LinkId(0)), Some("a\n> b"));
     assert_eq!(d.work().link_title_gap_steps, 1);
@@ -766,6 +766,7 @@ fn old_header_eligibility_at_window_and_late_pipe_keeps_real_table_shapes() {
                     !field.starts_with("link_title_gap_steps:")
                         && !field.starts_with("code_fallback_")
                         && !field.starts_with("fence_candidate_")
+                        && !field.starts_with("structural_prefix_")
                         && !field.starts_with("link_fallback_")
                         && !field.starts_with("bare_")
                         && !field.starts_with("link_label_steps:")
@@ -813,18 +814,18 @@ fn old_header_eligibility_at_window_and_late_pipe_keeps_real_table_shapes() {
 }
 
 #[test]
-fn depth1000_keeps_real_predecessor_scope_and_only_512_structural_quotes() {
+fn depth1000_extends_the_exact_predecessor_shape_to_the_complete_quote_path() {
     let prefix = "> ".repeat(1000);
-    let d = model::parse(&format!("{prefix}[a](u 'a\n{prefix}b')\n"));
-    // Frozen against the actual predecessor: the producer admits 512 quote
-    // prefixes; the remaining 488 pairs are real payload in the same scope.
+    let source = format!("{prefix}[a](u 'a\n{prefix}b')\n");
+    let d = model::parse(&source);
+    // Exact semantic delta from the frozen 512-quote predecessor shape.
     assert_eq!(
         format!("{:016x}", corpus::hash(&model::table_shape(&d))),
-        "0a581438d4262f7d"
+        structural_shape_delta(&source, "0a581438d4262f7d")
     );
-    assert_eq!(d.container_count(), 512);
+    assert_eq!(d.container_count(), 1000);
     assert!(d.blocks().iter().all(
-        |b| b.kind == BlockKind::Quote { depth: 512 } && b.container == Some(ContainerId(511))
+        |b| b.kind == BlockKind::Quote { depth: 1000 } && b.container == Some(ContainerId(999))
     ));
     changes::assert_plain(
         &d,
@@ -833,7 +834,7 @@ fn depth1000_keeps_real_predecessor_scope_and_only_512_structural_quotes() {
         Span::new(2000, 4012),
         Span::new(2004, 2005),
         Span::new(2007, 4010),
-        &[Span::new(2009, 3033)],
+        &[Span::new(2009, 4009)],
     );
     assert_eq!(
         d.link_title(LinkId(0)),
@@ -845,7 +846,14 @@ fn depth1000_keeps_real_predecessor_scope_and_only_512_structural_quotes() {
             .iter()
             .map(|c| c.1.as_str())
             .collect::<String>(),
-        format!("a\n{}b", "> ".repeat(488))
+        "a\nb"
     );
     assert_eq!(d.work().link_title_gap_steps, 1);
+}
+
+fn structural_shape_delta(source: &str, old: &str) -> &'static str {
+    assert_eq!(old, "0a581438d4262f7d");
+    let prefix = "> ".repeat(1000);
+    assert_eq!(source, format!("{prefix}[a](u 'a\n{prefix}b')\n"));
+    "cedd14f277b1c416"
 }

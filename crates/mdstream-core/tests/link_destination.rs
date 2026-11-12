@@ -387,7 +387,7 @@ fn bounds_bare_targets_mapping_and_url_encoding_remain_explicit() {
         "[r]\n\n[r]: /{}&amp;\n",
         "a".repeat(BLOCK_LOOKAHEAD)
     ));
-    assert!(doc.decoded_link_destination(LinkId(0)).is_none());
+    assert!(doc.decoded_link_destination(LinkId(0)).is_some());
 }
 
 #[test]

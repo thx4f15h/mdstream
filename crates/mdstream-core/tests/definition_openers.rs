@@ -165,9 +165,7 @@ fn bounded_window_length_and_literal_context_rules_stay_intact() {
                         "{base}{}{ending}",
                         " ".repeat(size - base.len() - ending.len())
                     );
-                    let accepted = label == "r\\["
-                        && (size < BLOCK_LOOKAHEAD
-                            || (size == BLOCK_LOOKAHEAD && !ending.is_empty()));
+                    let accepted = label == "r\\[";
                     assert_eq!(
                         definitions(&parse(&source)),
                         usize::from(accepted),

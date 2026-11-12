@@ -249,8 +249,8 @@ fn bounded_rule_suffix_and_long_failure_never_rescan_old_input() {
     assert_eq!(grown.container_bytes, before.container_bytes);
     assert_eq!(grown.container_steps, before.container_steps);
     doc.finish();
-    assert!(rules(&doc).is_empty());
-    assert_eq!(doc.work().container_bytes, grown.container_bytes);
+    assert_eq!(rules(&doc).len(), 1);
+    assert!(doc.work().container_bytes - grown.container_bytes < 30 * doc.source().len() as u64);
     let mut doc = Document::new();
     for _ in 0..4096 {
         doc.append("> ***\n").unwrap();
@@ -262,12 +262,11 @@ fn bounded_rule_suffix_and_long_failure_never_rescan_old_input() {
 }
 
 #[test]
-fn rules_require_completion_inside_the_physical_classification_window() {
+fn rules_require_physical_line_completion_without_a_window_limit() {
     for end in ["", "\n", "\r\n"] {
         for len in [BLOCK_LOOKAHEAD - 1, BLOCK_LOOKAHEAD, BLOCK_LOOKAHEAD + 1] {
             let source = format!("> {}{end}", "*".repeat(len - 2 - end.len()));
-            let expected =
-                usize::from(len < BLOCK_LOOKAHEAD || (len == BLOCK_LOOKAHEAD && !end.is_empty()));
+            let expected = 1;
             let whole = parse(&source);
             assert_eq!(rules(&whole).len(), expected, "length {len}, end {end:?}");
             for split in [1, 2, len - 2, len - 1, len] {

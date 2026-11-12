@@ -322,10 +322,11 @@ fn classification_limits_and_failed_markers_keep_one_pass_semantics() {
         let source = format!("- old\n\t{candidate}\n");
         let doc = parse(&source);
         assert!(doc.headings().entries().is_empty(), "{source:?}");
-        assert!(
+        assert_eq!(
             doc.blocks()
                 .iter()
-                .all(|b| !matches!(b.kind, BlockKind::Code { .. } | BlockKind::Math { .. }))
+                .any(|b| matches!(b.kind, BlockKind::Code { .. } | BlockKind::Math { .. })),
+            candidate.starts_with("$$ ")
         );
         assert!(doc.work().classified_bytes < 6 * BLOCK_LOOKAHEAD as u64);
     }

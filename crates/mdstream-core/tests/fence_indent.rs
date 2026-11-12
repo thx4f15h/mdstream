@@ -268,7 +268,7 @@ fn fence_indent_crosses_classification_limit_without_rescanning_ancestors() {
     }
     let mut doc = Document::new();
     doc.append(&format!("{opener}{prefix}  ")).unwrap();
-    assert!(doc.pending().is_empty());
+    assert!(!doc.pending().is_empty());
     let before = doc.work();
     for _ in 0..2 {
         doc.append(" ").unwrap();

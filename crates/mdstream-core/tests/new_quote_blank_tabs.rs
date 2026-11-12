@@ -278,11 +278,11 @@ fn incomplete_and_long_blank_keep_existing_window_rules() {
     for end in ["", "\n"] {
         let source = format!(">\t{}{end}", " ".repeat(BLOCK_LOOKAHEAD + 10));
         let doc = parse(&source);
-        assert!(!matches!(doc.blocks()[0].kind, BlockKind::Blank));
+        assert_eq!(doc.blocks()[0].kind, BlockKind::Blank);
         assert!(
             doc.display_runs_in(Span::new(1, 2))
                 .unwrap()
-                .all(|r| r.replacement.is_none())
+                .all(|r| r.replacement.is_some())
         );
         let mut streamed = Document::new();
         for ch in source.chars() {

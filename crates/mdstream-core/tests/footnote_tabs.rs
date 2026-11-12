@@ -183,7 +183,7 @@ fn failures_window_and_four_space_continuations() {
                 .iter()
                 .filter(|n| n.definition.is_some())
                 .count(),
-            usize::from(opener.len() <= BLOCK_LOOKAHEAD && (depth + 1) % 4 != 0),
+            usize::from((depth + 1) % 4 != 0),
             "depth {depth}"
         );
     }

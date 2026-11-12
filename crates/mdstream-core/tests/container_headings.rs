@@ -166,12 +166,12 @@ fn setext_spans_continuing_payloads_and_never_crosses_container_boundaries() {
             "{source:?}"
         );
     }
-    // The delimiter must finish within the existing classification prefix.
+    // A complete delimiter is not limited by the initial classification chunk.
     let doc = parse(&format!(
         "> title\n> {}\n",
         "=".repeat(BLOCK_LOOKAHEAD + 10)
     ));
-    assert!(doc.headings().entries().is_empty());
+    assert_eq!(doc.headings().entries().len(), 1);
 }
 
 fn compare(a: &Document, b: &Document) {
@@ -517,11 +517,15 @@ fn many_open_heading_scopes_do_not_add_per_append_or_fold_work() {
 }
 
 #[test]
-fn atx_requires_a_separator_or_complete_line_inside_the_classification_window() {
+fn atx_requires_a_separator_or_complete_line_after_arbitrarily_long_prefixes() {
     for suffix in ["#not-a-heading\n", "#\n", "# title\n", "## title\n"] {
         let source = format!("{}{}", ">".repeat(BLOCK_LOOKAHEAD - 1), suffix);
         let doc = parse(&source);
-        assert!(doc.headings().entries().is_empty(), "{suffix:?}");
+        assert_eq!(
+            doc.headings().entries().len(),
+            usize::from(suffix != "#not-a-heading\n"),
+            "{suffix:?}"
+        );
         let mut split = Document::new();
         split.append(&source[..BLOCK_LOOKAHEAD]).unwrap();
         split.append(&source[BLOCK_LOOKAHEAD..]).unwrap();

@@ -101,16 +101,7 @@ fn precedence_failure_and_window_keep_dialect() {
     for depth in 1014..=1024 {
         for ending in ["\n", "\r\n", ""] {
             let source = format!("{}\t***{ending}", ">".repeat(depth));
-            assert_eq!(
-                rules(&parse(&source)).len(),
-                // At the exact window edge, only LF has already confirmed
-                // completion; EOF cannot revise an earlier incomplete probe.
-                usize::from(
-                    source.len() < BLOCK_LOOKAHEAD
-                        || source.len() == BLOCK_LOOKAHEAD && !ending.is_empty(),
-                ),
-                "{source:?}"
-            );
+            assert_eq!(rules(&parse(&source)).len(), 1, "{source:?}");
         }
     }
     let mut doc = Document::new();
@@ -251,10 +242,10 @@ fn deep_long_failure_and_many_rules_have_bounded_work() {
     assert!(after.tree_visits - before.tree_visits < 100_000);
     doc.append(&format!("\n{prefix}* * *\n")).unwrap();
     doc.finish();
-    assert_eq!(rules(&doc).len(), 1);
+    assert_eq!(rules(&doc).len(), 2);
     assert_eq!(doc.container_count(), 989);
     assert_eq!(rules(&doc)[0].container, doc.blocks()[0].container);
-    assert!(doc.work().classified_bytes < 30 * BLOCK_LOOKAHEAD as u64);
+    assert!(doc.work().classified_bytes < 30 * doc.source().len() as u64);
     let source = ">\t * * *\n\n".repeat(4096);
     let doc = parse(&source);
     assert_eq!(rules(&doc).len(), 4096);

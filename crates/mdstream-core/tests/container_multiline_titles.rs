@@ -551,8 +551,7 @@ fn assert_title_limits_and_windows(prefix: &str) {
                     "x".repeat(width - 3 - ending.len())
                 );
                 let doc = parse(&source);
-                let success =
-                    width <= BLOCK_LOOKAHEAD && (!ending.is_empty() || width < BLOCK_LOOKAHEAD);
+                let success = true;
                 assert_eq!(
                     doc.link_title(LinkId(0)).is_some(),
                     success,

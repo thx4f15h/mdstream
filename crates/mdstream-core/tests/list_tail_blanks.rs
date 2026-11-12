@@ -152,11 +152,7 @@ fn short_tail_waits_for_lf_or_eof_and_long_whitespace_is_not_reclassified() {
         BLOCK_LOOKAHEAD + 4096,
     ] {
         let source = format!("- - child\n{}\n- next\n", " ".repeat(count));
-        let expected = if count < BLOCK_LOOKAHEAD {
-            ListTightness::Loose
-        } else {
-            ListTightness::Tight
-        };
+        let expected = ListTightness::Loose;
         let mut streamed = Document::new();
         for byte in source.as_bytes() {
             streamed

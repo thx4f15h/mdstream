@@ -257,10 +257,10 @@ fn eof_and_bounded_classification_never_retry_long_whitespace_candidates() {
         doc.container(ContainerId(0)).unwrap().state,
         SyntaxState::Sealed
     );
-    // Long all-space lines commit as code at the existing prefix limit. They
-    // are not reclassified as separators when the LF eventually arrives.
+    // Long all-space lines remain provisional until the LF confirms a
+    // separator, exactly like the corresponding short physical line.
     let source = format!("- a\n{}\n  b\n", " ".repeat(BLOCK_LOOKAHEAD + 40));
-    assert_eq!(lists(&parse(&source)), [ListTightness::Tight]);
+    assert_eq!(lists(&parse(&source)), [ListTightness::Loose]);
     let mut stream = Document::new();
     for ch in source.chars() {
         stream.append(&ch.to_string()).unwrap();

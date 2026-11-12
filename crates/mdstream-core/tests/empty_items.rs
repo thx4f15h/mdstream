@@ -235,7 +235,7 @@ fn task_items_nonempty_leaves_code_and_window_boundaries_keep_their_dialect() {
         let short = parse(&format!("-{}{end}", " ".repeat(BLOCK_LOOKAHEAD - 2)));
         assert_eq!(short.blocks()[0].kind, BlockKind::Blank);
         let long = parse(&format!("-{}{end}", " ".repeat(BLOCK_LOOKAHEAD)));
-        assert!(!matches!(long.blocks()[0].kind, BlockKind::Blank));
+        assert_eq!(long.blocks()[0].kind, BlockKind::Blank);
     }
 }
 

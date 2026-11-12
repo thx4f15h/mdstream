@@ -216,8 +216,7 @@ fn failed_candidates_paths_and_window_keep_literal_body() {
     for tail in [1017, 1018, 1019, 2048] {
         for ending in ["\n", "\r\n", ""] {
             let line = format!(">\t $${}{ending}", " ".repeat(tail));
-            let complete = line.len() < BLOCK_LOOKAHEAD
-                || (line.len() == BLOCK_LOOKAHEAD && !ending.is_empty());
+            let complete = true;
             let doc = parse(&line);
             assert_eq!(
                 doc.blocks()
@@ -444,7 +443,7 @@ fn deep_long_body_and_failed_closer_do_not_rescan() {
     ));
     assert_eq!(
         read(doc.math_block_payload(BlockId(0)).unwrap()),
-        format!("\t{}\n   $${}\n", "x".repeat(1_001_000), " ".repeat(3048))
+        format!("\t{}\n", "x".repeat(1_001_000))
     );
     assert_eq!(doc.container_count(), 989);
     assert!(doc.work().classified_bytes < 30 * BLOCK_LOOKAHEAD as u64);

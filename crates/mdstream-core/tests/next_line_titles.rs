@@ -582,8 +582,7 @@ fn next_line_title_bounded_work_window_and_failed_growth_never_retry() {
                     "x".repeat(length - next.len() - ending.len() - 2)
                 );
                 let doc = parse(&source);
-                let accepted =
-                    length <= BLOCK_LOOKAHEAD && (!ending.is_empty() || length < BLOCK_LOOKAHEAD);
+                let accepted = true;
                 assert_eq!(
                     doc.references()[0].title.is_some(),
                     accepted,

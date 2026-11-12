@@ -333,7 +333,7 @@ fn incomplete_missing_and_out_of_window_paths_keep_their_boundaries() {
     for ending in ["", "\n"] {
         let source = format!("- > a\n\t> {}{ending}", " ".repeat(BLOCK_LOOKAHEAD + 10));
         let doc = parse(&source);
-        assert!(!matches!(doc.blocks()[1].kind, BlockKind::Blank));
+        assert_eq!(doc.blocks()[1].kind, BlockKind::Blank);
         let mut streamed = Document::new();
         for ch in source.chars() {
             streamed.append(ch.encode_utf8(&mut [0; 4])).unwrap();

@@ -207,6 +207,11 @@ pub struct Work {
     pub link_gate_steps: u64,
     pub input_bytes: u64,
     pub classified_bytes: u64,
+    /// Actual visits by the undecided structural-prefix scanner. Delayed
+    /// definition whitespace is revisited at most once when it becomes internal.
+    pub structural_prefix_bytes: u64,
+    /// Qualification state dispatches, candidate starts and single decisions.
+    pub structural_prefix_steps: u64,
     /// Bytes inspected by physical-line fence probes, including bounded
     /// qualification and the deferred suffix. Failed raw payload enters its
     /// ordinary consumer once; those visits retain their normal counters.

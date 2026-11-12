@@ -120,7 +120,7 @@ fn failures_opaque_contexts_and_shared_window() {
                 .iter()
                 .filter(|r| r.destination.is_some())
                 .count(),
-            usize::from(definition.len() <= BLOCK_LOOKAHEAD && (depth + 1) % 4 != 0),
+            usize::from((depth + 1) % 4 != 0),
             "depth {depth}"
         );
     }

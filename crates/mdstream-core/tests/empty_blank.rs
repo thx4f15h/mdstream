@@ -155,7 +155,7 @@ fn empty_blank_partial_tabs_children_tasks_and_window() {
         format!("-\n{}\n  text\n", " ".repeat(BLOCK_LOOKAHEAD)),
     ] {
         let doc = parse(&source);
-        assert_eq!(doc.blocks().last().unwrap().container, Some(ContainerId(1)));
+        assert_eq!(doc.blocks().last().unwrap().container, None);
         check_reads(&doc);
     }
 }

@@ -97,8 +97,7 @@ fn failed_pending_and_window_candidates_keep_existing_boundaries() {
                     "{base}{}{ending}",
                     " ".repeat(size - base.len() - ending.len())
                 );
-                let accepted =
-                    size < BLOCK_LOOKAHEAD || (size == BLOCK_LOOKAHEAD && !ending.is_empty());
+                let accepted = true;
                 assert_eq!(
                     definitions(&parse(&source)),
                     usize::from(accepted),

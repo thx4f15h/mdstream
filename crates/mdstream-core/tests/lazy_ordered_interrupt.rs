@@ -301,7 +301,14 @@ fn number_decision_is_final_at_the_bounded_window_and_lazy_depth_is_constant() {
                 " ".repeat(BLOCK_LOOKAHEAD * 2)
             );
             let whole = parse(&source);
-            assert_eq!(whole.container_count(), if number == "1" { 3 } else { 1 });
+            assert_eq!(
+                whole.container_count(),
+                if number == "1" && !tail.is_empty() {
+                    3
+                } else {
+                    1
+                }
+            );
             for split in [
                 7,
                 8,

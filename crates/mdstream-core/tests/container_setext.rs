@@ -150,6 +150,14 @@ fn invalid_and_overlong_underlines_remain_text_and_eof_confirms_only_complete_sy
         let source = format!("> first\n> second\n> {bad}\n");
         let mut doc = Document::new();
         doc.append(&source).unwrap();
+        if bad.bytes().all(|b| b == b'=') {
+            assert_eq!(doc.headings().entries().len(), 1);
+            assert_eq!(
+                visible(&doc, doc.headings().entries()[0].content),
+                "first\nsecond"
+            );
+            continue;
+        }
         assert!(doc.headings().entries().is_empty());
         let before = doc.work();
         doc.append("> ===\n").unwrap();

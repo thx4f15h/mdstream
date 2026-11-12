@@ -376,13 +376,13 @@ fn title_boundaries_mapping_and_original_url_are_preserved() {
     assert_eq!(read(&doc, LinkId(0), 6).0, "\")\n\t");
     assert_eq!(doc.links().len(), 1);
 
-    // Definition recognition still requires the entire line in its window.
+    // Definition recognition retains its title data limit, not a line window.
     let doc = parse(&format!(
         "[r]\n\n[r]: /u \"{}&amp;\"\n",
         "a".repeat(BLOCK_LOOKAHEAD)
     ));
-    assert!(doc.decoded_link_title(LinkId(0)).is_none());
-    assert!(doc.link_destination(LinkId(0)).is_none());
+    assert!(doc.decoded_link_title(LinkId(0)).is_some());
+    assert_eq!(doc.link_destination(LinkId(0)), Some("/u"));
 }
 
 #[test]

@@ -251,7 +251,7 @@ fn classification_limit_and_partial_tabs_do_not_retry_or_retain_failed_paths() {
     }
     for count in [BLOCK_LOOKAHEAD, BLOCK_LOOKAHEAD + 4096] {
         let source = format!("- a\n{}\n- b\n", " ".repeat(count));
-        assert_eq!(lists(&parse(&source)), [ListTightness::Tight]);
+        assert_eq!(lists(&parse(&source)), [ListTightness::Loose]);
     }
     for tail in ["\t# title\n", "\t```\n", "\t$$\n", "\t  literal\n"] {
         let source = format!("- a\n\n{tail}");

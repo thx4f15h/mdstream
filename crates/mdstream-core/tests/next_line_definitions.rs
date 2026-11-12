@@ -1207,14 +1207,7 @@ fn next_line_window_boundaries_and_long_table_probe_keep_single_consumption() {
                     format!("[r]:\n/{}{ending}", "x".repeat(length - 1 - ending.len()))
                 };
                 let doc = parse(&source);
-                assert_eq!(
-                    definitions(&doc),
-                    usize::from(
-                        length <= BLOCK_LOOKAHEAD
-                            && (!ending.is_empty() || length < BLOCK_LOOKAHEAD)
-                    ),
-                    "{first} {length} {ending:?}"
-                );
+                assert_eq!(definitions(&doc), 1, "{first} {length} {ending:?}");
                 assert!(doc.work().classified_bytes < 16 * source.len() as u64);
             }
         }

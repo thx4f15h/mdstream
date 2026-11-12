@@ -90,11 +90,7 @@ fn failed_markers_other_leaves_and_classification_window_keep_dialect() {
     for depth in 1014..=1024 {
         let source = format!("{}>\t# title\n", ">".repeat(depth));
         let doc = parse(&source);
-        assert_eq!(
-            doc.headings().entries().len(),
-            usize::from(depth + 4 <= BLOCK_LOOKAHEAD),
-            "depth {depth}"
-        );
+        assert_eq!(doc.headings().entries().len(), 1, "depth {depth}");
     }
     for source in [">\t ~~~\n> # literal\n> ~~~\n", "> $$\n> # literal\n> $$\n"] {
         assert!(parse(source).headings().entries().is_empty());

@@ -119,15 +119,15 @@ fn failures_empty_titles_fences_and_window_boundaries() {
             assert_eq!(title(&doc, 0), expected, "{source:?}");
         }
     }
-    // The shared window includes containers and indentation. A cut marker
-    // remains ordinary text, even when later input could complete a heading.
+    // Long prefixes retain the same physical tab stops; a four-column
+    // payload indent still starts code instead of a heading.
     for depth in [1016, 1017, 1018, 1019, 1020] {
         let prefix = format!("{} \t", ">".repeat(depth));
         let source = format!("{prefix}### title\n");
         let doc = parse(&source);
         assert_eq!(
             doc.headings().entries().len(),
-            usize::from(prefix.len() + 3 < BLOCK_LOOKAHEAD),
+            usize::from((depth + 1) % 4 != 0),
             "depth {depth}"
         );
     }

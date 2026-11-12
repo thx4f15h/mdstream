@@ -279,11 +279,12 @@ fn bounded_failed_candidates_and_existing_block_precedence_remain_explicit() {
         ),
         "[^bad label]: invalid\n    not a definition\n".to_owned(),
     ] {
-        assert!(
+        assert_eq!(
             parse(&source)
                 .footnotes()
                 .iter()
-                .all(|n| n.definition.is_none())
+                .any(|n| n.definition.is_some()),
+            source.starts_with('>')
         );
     }
     // A tab supplies four columns; the rest of an overlong whitespace line

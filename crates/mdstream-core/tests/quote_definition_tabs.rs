@@ -147,8 +147,7 @@ fn failed_probes_keep_separator_and_window_rules() {
                 "{base}{}{ending}",
                 " ".repeat(size - base.len() - ending.len())
             );
-            let accepted =
-                size < BLOCK_LOOKAHEAD || (size == BLOCK_LOOKAHEAD && !ending.is_empty());
+            let accepted = true;
             assert_eq!(
                 parse(&source)
                     .references()

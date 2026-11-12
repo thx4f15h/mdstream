@@ -29,6 +29,7 @@ pub(crate) enum Progress {
 /// Spans retain escapes verbatim. Root suffixes, container suffixes and definition title
 /// bodies have separate opt-ins for physical line endings.
 #[cfg_attr(test, derive(Debug))]
+#[derive(Clone)]
 pub(crate) struct Destination {
     pub start: usize,
     stage: Stage,

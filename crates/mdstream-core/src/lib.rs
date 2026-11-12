@@ -57,6 +57,7 @@ mod references;
 mod search;
 mod source_fold_restore;
 mod source_folds;
+mod structural_prefix;
 mod table;
 mod table_preview;
 mod utf8;
@@ -185,7 +186,8 @@ struct StreamingLine {
     table: bool,
 }
 
-// No new inline/link object is published for these undecided bounded sources.
+// No new inline/link object is published for these grammar-bounded candidates.
+// Physical sources may contain arbitrarily long structure or trimmed whitespace.
 // The first ordinary block preserves paragraph/lazy eligibility through replay.
 enum DefinitionLabel {
     PublishedTitle {
@@ -227,7 +229,7 @@ struct ContainerEligibility {
     prefix_source: Option<usize>,
 }
 
-// The bounded classification result is retained once while a raw physical
+// The classification result is retained once while a raw physical
 // fence candidate grows. No source copies, ancestor paths or inline snapshots.
 struct ClassifiedLine {
     span: Span,
@@ -245,6 +247,11 @@ struct ClassifiedLine {
 struct StreamingFence {
     line: ClassifiedLine,
     probe: block::FenceProbe,
+}
+
+struct StreamingPrefix {
+    prefix: Span,
+    scanner: structural_prefix::Scanner,
 }
 
 #[derive(Default)]
@@ -289,6 +296,7 @@ pub struct Document {
     current: Option<BlockId>,
     fence: Option<Fence>,
     streaming_fence: Option<StreamingFence>,
+    structural_prefix: Option<StreamingPrefix>,
     line_start: usize,
     streaming: Option<StreamingLine>,
     finished: bool,
@@ -417,15 +425,18 @@ impl Document {
     }
 
     /// A bounded provisional line prefix, already included in the tiles as raw
-    /// text. It is classified at newline, EOF, or the lookahead limit. A long
-    /// separator/fence probe retains this bounded prefix while its raw tail grows.
+    /// text. Ordinary text is classified at the initial lookahead chunk;
+    /// undecided structure/separators/fences keep this bounded prefix while
+    /// their raw tail grows, then decide once at failure, newline or EOF.
     /// A fence candidate publishes no Code/info until LF/EOF; its raw tail is
     /// visible from pending().end to source().len().
     /// An eligible long header has already been classified; its deferred payload
     /// (after a late first pipe, or the whole early-pipe header) is kept separately
     /// and does not enlarge this pending prefix.
     pub fn pending(&self) -> Span {
-        if let Some(candidate) = &self.streaming_fence {
+        let mut pending = if let Some(candidate) = &self.structural_prefix {
+            candidate.prefix
+        } else if let Some(candidate) = &self.streaming_fence {
             candidate.line.span
         } else if let Some(delimiter) = &self.table_delimiter {
             delimiter.prefix
@@ -433,7 +444,14 @@ impl Document {
             Span::new(self.source.len(), self.source.len())
         } else {
             Span::new(self.line_start, self.source.len())
+        };
+        if pending.len() > BLOCK_LOOKAHEAD {
+            pending.end = pending.start + BLOCK_LOOKAHEAD;
+            while !self.source.is_char_boundary(pending.end) {
+                pending.end += 1;
+            }
         }
+        pending
     }
 
     pub fn text(&self, span: Span) -> Option<&str> {
@@ -673,7 +691,39 @@ impl Document {
         let end = self.source.len();
         let mut cursor = old_end;
         while cursor < end {
-            if let Some(mut candidate) = self.streaming_fence.take() {
+            if let Some(mut candidate) = self.structural_prefix.take() {
+                let mut held = true;
+                while cursor < end {
+                    let at = cursor;
+                    cursor += 1;
+                    self.work.input_bytes += 1;
+                    held &=
+                        candidate
+                            .scanner
+                            .feed(&self.source, Span::new(at, cursor), &mut self.work);
+                    if candidate.scanner.take_definition_rejection() {
+                        self.flush_definition_candidate(update);
+                    }
+                    if self.source.as_bytes()[at] == b'\n'
+                        || (!held && self.source.is_char_boundary(cursor))
+                    {
+                        break;
+                    }
+                }
+                let complete = self.source.as_bytes()[cursor - 1] == b'\n';
+                if complete || !held {
+                    self.work.structural_prefix_steps += 1;
+                    if !complete && self.probe_long_delimiter(Span::new(self.line_start, cursor)) {
+                        continue;
+                    }
+                    self.commit_line(Span::new(self.line_start, cursor), complete, true, update);
+                    if complete {
+                        self.line_start = cursor;
+                    }
+                } else {
+                    self.structural_prefix = Some(candidate);
+                }
+            } else if let Some(mut candidate) = self.streaming_fence.take() {
                 let start = cursor;
                 while cursor < end {
                     let newline = self.source.as_bytes()[cursor] == b'\n';
@@ -695,17 +745,19 @@ impl Document {
                     self.streaming_fence = Some(candidate);
                 }
             } else if let Some(mut delimiter) = self.table_delimiter.take() {
-                let start = cursor;
+                let mut valid = true;
                 while cursor < end {
+                    let start = cursor;
                     let newline = self.source.as_bytes()[cursor] == b'\n';
-                    cursor += 1;
-                    self.work.input_bytes += 1;
-                    if newline {
+                    cursor += self.source[cursor..].chars().next().unwrap().len_utf8();
+                    self.work.input_bytes += (cursor - start) as u64;
+                    valid = delimiter.feed(&self.source[start..cursor], &mut self.work);
+                    if newline || !valid {
                         break;
                     }
                 }
                 let complete = self.source.as_bytes()[cursor - 1] == b'\n';
-                if !delimiter.feed(&self.source[start..cursor], &mut self.work) {
+                if !valid {
                     self.reject_long_delimiter(delimiter.prefix, cursor, complete, update);
                 } else if complete {
                     self.finish_long_delimiter(delimiter, cursor, update);
@@ -778,7 +830,10 @@ impl Document {
                     && self.source.is_char_boundary(cursor);
                 if newline || limit {
                     let span = Span::new(self.line_start, cursor);
-                    if !newline && self.probe_long_delimiter(span, update) {
+                    if !newline && self.probe_long_delimiter(span) {
+                        continue;
+                    }
+                    if !newline && self.probe_structural_prefix(span, update) {
                         continue;
                     }
                     self.commit_line(span, newline, true, update);
@@ -807,7 +862,15 @@ impl Document {
         }
         self.revision += 1;
         update.revision = self.revision;
-        if let Some(candidate) = self.streaming_fence.take() {
+        if self.structural_prefix.take().is_some() {
+            self.work.structural_prefix_steps += 1;
+            self.commit_line(
+                Span::new(self.line_start, self.source.len()),
+                true,
+                true,
+                update,
+            );
+        } else if let Some(candidate) = self.streaming_fence.take() {
             self.resolve_streaming_fence(candidate, self.source.len(), true, true, update);
         } else if let Some(delimiter) = self.table_delimiter.take() {
             self.finish_long_delimiter(delimiter, self.source.len(), update);
@@ -1311,14 +1374,14 @@ impl Document {
         }
     }
 
-    fn probe_long_delimiter(&mut self, span: Span, update: &mut Update) -> bool {
+    fn probe_long_delimiter(&mut self, span: Span) -> bool {
         if self.definition_candidate.as_ref().is_some_and(|candidate| {
             candidate.title.is_some()
                 || matches!(candidate.label, DefinitionLabel::Multiline { .. })
         }) {
-            // The growing trigger hit its physical window. Replay before the
-            // ordinary long-delimiter probe so it sees the last real header.
-            self.flush_definition_candidate(update);
+            // The structural scanner now owns the undecided physical source;
+            // complete classification preserves definition/table precedence.
+            return false;
         }
         let Some(header) = &self.table_header else {
             return false;
@@ -1335,6 +1398,55 @@ impl Document {
         }
         self.table_delimiter = Some(delimiter);
         true
+    }
+
+    fn probe_structural_prefix(&mut self, span: Span, update: &mut Update) -> bool {
+        use structural_prefix::Continuation;
+        let continuation = self
+            .definition_candidate
+            .as_ref()
+            .map(|candidate| {
+                if let Some(title) = &candidate.title {
+                    Continuation::Body(title.parser.clone())
+                } else {
+                    match &candidate.label {
+                        DefinitionLabel::Multiline {
+                            raw, closed: false, ..
+                        } => Continuation::Label(MAX_LABEL_BYTES - raw.len()),
+                        _ => Continuation::Target,
+                    }
+                }
+            })
+            .or_else(|| {
+                self.definition_title_candidate
+                    .as_ref()
+                    .map(|_| Continuation::Title)
+            });
+        let prose = self.container_inline.is_some()
+            || self
+                .current
+                .is_some_and(|id| self.blocks[id.0].kind == BlockKind::Paragraph);
+        let mut scanner = structural_prefix::Scanner::new(
+            span.start,
+            continuation,
+            prose,
+            self.containers.inner().is_none(),
+            &mut self.work,
+        );
+        let held = scanner.feed(&self.source, span, &mut self.work);
+        if scanner.take_definition_rejection() {
+            self.flush_definition_candidate(update);
+        }
+        if held {
+            self.structural_prefix = Some(StreamingPrefix {
+                prefix: span,
+                scanner,
+            });
+            true
+        } else {
+            self.work.structural_prefix_steps += 1;
+            false
+        }
     }
 
     fn finish_long_delimiter(
@@ -1370,17 +1482,31 @@ impl Document {
         complete: bool,
         update: &mut Update,
     ) {
-        // Reclassify only the original bounded prefix, using the same incomplete
-        // line rules as before this extension. Consume the delayed suffix once;
-        // it cannot become another header/probe or trigger a full-line retry.
-        self.commit_line(prefix, false, false, update);
-        let line = self.streaming.unwrap();
-        if end > prefix.end {
-            self.extend_line(line, Span::new(prefix.end, end), update);
+        // If the original prefix already excludes structure, retain the old
+        // failure consumer and its header eligibility. No later suffix can
+        // turn that ordinary prefix back into a rule or container path.
+        if !self.probe_structural_prefix(prefix, update) {
+            self.commit_line(prefix, false, false, update);
+            let line = self.streaming.unwrap();
+            if end > prefix.end {
+                self.extend_line(line, Span::new(prefix.end, end), update);
+            }
+            if complete {
+                self.end_line(line, update);
+                self.streaming = None;
+                self.line_start = end;
+            }
+            return;
         }
+        self.structural_prefix = None;
+        let span = Span::new(prefix.start, end);
+        if !complete && self.probe_structural_prefix(span, update) {
+            return;
+        }
+        // One final classification, never repeated as the line grows. A failed
+        // delimiter may still be a long rule or a prefix of nested containers.
+        self.commit_line(span, complete, false, update);
         if complete {
-            self.end_line(line, update);
-            self.streaming = None;
             self.line_start = end;
         }
     }
@@ -2343,7 +2469,7 @@ impl Document {
             _ => None,
         };
         let mut summary = table::HeaderSummary::default();
-        if table_text && (complete || allow_long_header) {
+        if table_text && allow_long_header {
             summary.feed(&self.source[content.range()], &mut self.work);
         }
         if let Some(DefinitionLabel::Multiline { columns, .. }) = &mut candidate_label {

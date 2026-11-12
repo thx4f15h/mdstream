@@ -110,9 +110,16 @@ fn missing_pipes_columns_and_eof_use_original_incomplete_prefix_fallback() {
         let source = format!("**a**|b\n{}{tail}", "-".repeat(4096));
         let doc = parse(&source);
         assert!(doc.tables().is_empty());
-        assert!(doc.headings().entries().is_empty()); // No late Setext retry.
+        assert_eq!(doc.headings().entries().len(), usize::from(tail.is_empty()));
         assert_eq!(doc.blocks().len(), 1);
-        assert_eq!(doc.blocks()[0].kind, BlockKind::Paragraph);
+        assert_eq!(
+            doc.blocks()[0].kind,
+            if tail.is_empty() {
+                BlockKind::Heading { level: 2 }
+            } else {
+                BlockKind::Paragraph
+            }
+        );
         assert!(doc.work().inline_bytes <= source.len() as u64);
     }
     let doc = parse(&format!("a|b\n{}", "-".repeat(BLOCK_LOOKAHEAD)));
@@ -300,7 +307,7 @@ fn late_header_pipe_requires_isolatable_inline_state_and_other_limits_remain() {
             .is_empty()
         );
         let source = format!("{prefix}title\n{prefix}{}\n", "=".repeat(2048));
-        assert!(parse(&source).headings().entries().is_empty());
+        assert_eq!(parse(&source).headings().entries().len(), 1);
     }
 }
 

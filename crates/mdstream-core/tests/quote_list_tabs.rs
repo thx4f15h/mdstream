@@ -148,16 +148,16 @@ fn failures_priorities_and_window_keep_their_dialect() {
     }
     assert_eq!(lists(&parse(">\t -\n")), 1);
     assert_eq!(lists(&parse(">\t 42)\n")), 1);
-    // A marker ending exactly at the incomplete window lacks its required
-    // separator. It remains ordinary text with visible separator residue.
+    // A marker crossing the initial chunk keeps its required separator and
+    // consumes the original tab through the same column cursor.
     let source = format!("{}>\t- body\n", ">".repeat(1021));
     let doc = parse(&source);
-    assert_eq!(lists(&doc), 0);
+    assert_eq!(lists(&doc), 1);
     let tab = source.find('\t').unwrap();
     assert!(
         doc.display_runs_in(Span::new(tab, tab + 1))
             .unwrap()
-            .all(|r| !r.style.contains(Style::HIDDEN))
+            .all(|r| r.style.contains(Style::HIDDEN))
     );
     assert_eq!(
         lists(&parse(&format!("{}>\t- body\n", ">".repeat(1020)))),
@@ -165,7 +165,7 @@ fn failures_priorities_and_window_keep_their_dialect() {
     );
     assert_eq!(
         lists(&parse(&format!("{}>\t- body\n", ">".repeat(1023)))),
-        0
+        1
     );
 }
 
