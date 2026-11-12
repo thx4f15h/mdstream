@@ -1,0 +1,132 @@
+---
+source: tests/static_render.rs
+---
+==== width=1 rows=78 content=74 blank=4 groups=5 math=0 ====
+0000 |T| styles=0-1:H1
+0001 ||
+0002 |P|
+0003 |a|
+0004 |r|
+0005 |a|
+0006 |g|
+0007 |r|
+0008 |a|
+0009 |p|
+0010 |h|
+0011 ||
+0012 |b|
+0013 |e|
+0014 |f|
+0015 |o|
+0016 |r|
+0017 |e|
+0018 ||
+0019 |o|
+0020 |v|
+0021 |e|
+0022 |r|
+0023 |w|
+0024 |i|
+0025 |d|
+0026 |e|
+0027 ||
+0028 |b|
+0029 |l|
+0030 |o|
+0031 |c|
+0032 |k|
+0033 |s|
+0034 |.|
+0035 ||
+0036 |[| styles=0-1:meta
+0037 || styles=0-1:code
+0038 ||
+0039 |┌| styles=0-1:table-border
+0040 |│| styles=0-1:table-border
+0041 |╞| styles=0-1:table-border
+0042 |│| styles=0-1:table-border
+0043 |│| styles=0-1:table-border
+0044 |└| styles=0-1:table-border
+0045 ||
+0046 |P|
+0047 |a|
+0048 |r|
+0049 |a|
+0050 |g|
+0051 |r|
+0052 |a|
+0053 |p|
+0054 |h|
+0055 ||
+0056 |a|
+0057 |f|
+0058 |t|
+0059 |e|
+0060 |r|
+0061 ||
+0062 |o|
+0063 |v|
+0064 |e|
+0065 |r|
+0066 |w|
+0067 |i|
+0068 |d|
+0069 |e|
+0070 ||
+0071 |b|
+0072 |l|
+0073 |o|
+0074 |c|
+0075 |k|
+0076 |s|
+0077 |.|
+==== width=20 rows=17 content=13 blank=4 groups=5 math=0 ====
+0000 |This heading is deli| styles=0-20:H1
+0001 ||
+0002 |Paragraph before ove|
+0003 |rwide blocks.|
+0004 ||
+0005 |[text]| styles=0-6:meta
+0006 |  This deliberately| styles=0-20:code
+0007 ||
+0008 |┌───────────┐| styles=0-13:table-border
+0009 |│ column-01 │| styles=0-2:table-border,11-13:table-border
+0010 |╞═══════════╡| styles=0-13:table-border
+0011 |│ value-01  │| styles=0-2:table-border,10-13:table-border
+0012 |│ 中文中文  │| styles=0-2:table-border,10-13:table-border wide=base@2:2,cont@3,base@4:2,cont@5,base@6:2,cont@7,base@8:2,cont@9
+0013 |└───────────┘| styles=0-13:table-border
+0014 ||
+0015 |Paragraph after over|
+0016 |wide blocks.|
+==== width=80 rows=15 content=11 blank=4 groups=5 math=0 ====
+0000 |This heading is deliberately wider than one hundred and twenty terminal columns| styles=0-80:H1
+0001 ||
+0002 |Paragraph before overwide blocks.|
+0003 ||
+0004 |[text]| styles=0-6:meta
+0005 |  This deliberately long code line is also wider than one hundred and twenty ter| styles=0-80:code
+0006 ||
+0007 |┌───────────┬───────────┬───────────┬───────────┬───────────┬───────────┐| styles=0-73:table-border
+0008 |│ column-01 │ column-02 │ column-03 │ column-04 │ column-05 │ column-06 │| styles=0-2:table-border,11-14:table-border,23-26:table-border,35-38:table-border,47-50:table-border,59-62:table-border,71-73:table-border
+0009 |╞═══════════╪═══════════╪═══════════╪═══════════╪═══════════╪═══════════╡| styles=0-73:table-border
+0010 |│ value-01  │ value-02  │ value-03  │ value-04  │ value-05  │ value-06  │| styles=0-2:table-border,10-14:table-border,22-26:table-border,34-38:table-border,46-50:table-border,58-62:table-border,70-73:table-border
+0011 |│ 中文中文  │ emoji 🙂  │ value-03  │ value-04  │ value-05  │ value-06  │| styles=0-2:table-border,10-14:table-border,22-26:table-border,34-38:table-border,46-50:table-border,58-62:table-border,70-73:table-border wide=base@2:2,cont@3,base@4:2,cont@5,base@6:2,cont@7,base@8:2,cont@9,base@20:2,cont@21
+0012 |└───────────┴───────────┴───────────┴───────────┴───────────┴───────────┘| styles=0-73:table-border
+0013 ||
+0014 |Paragraph after overwide blocks.|
+==== width=120 rows=15 content=11 blank=4 groups=5 math=0 ====
+0000 |This heading is deliberately wider than one hundred and twenty terminal columns because it must exercise clipping withou| styles=0-120:H1
+0001 ||
+0002 |Paragraph before overwide blocks.|
+0003 ||
+0004 |[text]| styles=0-6:meta
+0005 |  This deliberately long code line is also wider than one hundred and twenty terminal columns so TUI clipping and once b| styles=0-120:code
+0006 ||
+0007 |┌───────────┬───────────┬───────────┬───────────┬───────────┬───────────┬───────────┬───────────┬───────────┐| styles=0-109:table-border
+0008 |│ column-01 │ column-02 │ column-03 │ column-04 │ column-05 │ column-06 │ column-07 │ column-08 │ column-09 │| styles=0-2:table-border,11-14:table-border,23-26:table-border,35-38:table-border,47-50:table-border,59-62:table-border,71-74:table-border,83-86:table-border,95-98:table-border,107-109:table-border
+0009 |╞═══════════╪═══════════╪═══════════╪═══════════╪═══════════╪═══════════╪═══════════╪═══════════╪═══════════╡| styles=0-109:table-border
+0010 |│ value-01  │ value-02  │ value-03  │ value-04  │ value-05  │ value-06  │ value-07  │ value-08  │ value-09  │| styles=0-2:table-border,10-14:table-border,22-26:table-border,34-38:table-border,46-50:table-border,58-62:table-border,70-74:table-border,82-86:table-border,94-98:table-border,106-109:table-border
+0011 |│ 中文中文  │ emoji 🙂  │ value-03  │ value-04  │ value-05  │ value-06  │ value-07  │ value-08  │ value-09  │| styles=0-2:table-border,10-14:table-border,22-26:table-border,34-38:table-border,46-50:table-border,58-62:table-border,70-74:table-border,82-86:table-border,94-98:table-border,106-109:table-border wide=base@2:2,cont@3,base@4:2,cont@5,base@6:2,cont@7,base@8:2,cont@9,base@20:2,cont@21
+0012 |└───────────┴───────────┴───────────┴───────────┴───────────┴───────────┴───────────┴───────────┴───────────┘| styles=0-109:table-border
+0013 ||
+0014 |Paragraph after overwide blocks.|

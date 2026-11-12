@@ -2961,3 +2961,23 @@ README、TODO 精准同步：核心范围扩展单独勾选，实际选区控件
 | 一百万 `=` | 1,000,007 | 1,000,007 | 1,000,001 | 2,000,002 | 6 | 0 |
 
 一百万引用标记最终建立并关闭一百万真实 Quote；普通 `x` 在 EOF 前已消费全部正文，后续追加不增加分类或祖先操作。两万旧定义加 4097 层引用后追加百万正文，inline 增量恰为一百万，classified/container_steps/label_bytes 不变；8193 层作用域在 128 KiB 线程栈中直接析构通过。
+
+## 2026-11-13 终端阅读器 workspace 集成
+
+复用 `experiment/tui-render` 的 `f8d58d8fe6a80ba4a04ab5c4f52aeb16cc9120eb`，接入 `crates/mdtui-tui`，统一 workspace 依赖与 lock，并消费当前嵌套候选及完整代码失败重放核心。核心生产代码和测试未改动，仍零运行时依赖并禁止 unsafe；终端 crate 也禁止 unsafe。来源、参考样式 SHA 与逐项证据见 [集成说明](docs/tui-integration.md)，运行命令及键位见 [阅读器 README](crates/mdtui-tui/README.md)。
+
+已接入字素/列宽与软换行、cell/diff、未 EOF 流式首屏、按键滚动及源码 reconcile、表格 Alignment/高度/宽度失效、目录侧栏及同 tile 精确跳转、链接焦点/fragment/外链激活和只读任务框。图片 alt 平铺子文本，有效外层链接拥有点击目标；完整空显示 alt 只产生一个外层占位。未解析对象保留自己的原始边界，失效父对象不覆盖子图片，旧焦点激活先按预算复核。
+
+交互只准备窗口及有界邻近区域。显示游标、LayoutPass、目录 excerpt、EOF anchors、表宽和激活复核共享 resolver，旧 memo/父归属索引逐节点退役，连续 append 不排队旧 memo。源码/对象/深容器/字素上下文/容量分别计数；LayoutSink 回调不查询 Document。百万字围栏确认后按索引跳隐藏前缀；Code 构造查询不求值后方 guard。代码失败释放的实体、样式、嵌套图片、源码映射和旧 ticket 均有消费者回归；百万字收尾后局部窗口仍只扫描 82 个逻辑字节，显示上下文及边缘探测另计。
+
+表宽元数据按预算只准备终端宽度所需前缀加两个邻近列，未知全宽保持暂定；首次 snapshot 无 rows×columns 分配。80 列视口面对 10 万列表，只准备 28 列、跟踪容量 2,176 字节，零预算无列状态/读取。每列最多 32 项出序观测，淘汰保留测量最大值和扫描前沿；2 万行离散观测后，append/离屏各清理 320 项，裁窄清理 64 项，实际 resize 清理剩余 256 项。清理量不随滚动历史增长。
+
+输入支持普通文件和 Unix FIFO。q 取消并断开接收端，只 join 已结束线程，不等待任意阻塞 Read；实际 PTY 保持 FIFO 写端打开，首屏后 q 正常退出并恢复终端。正常 EOF、读取错误及 debug 故障注入继续验证。21 份原输入 fixture、11 份原 raw ANSI golden 保持，新增图片 golden；仅五份 cell 快照因图片可见、未解析引用字面及 Alignment 更新。
+
+目录面包屑/级别与名称筛选/树展开、折叠/搜索/选区/任务编辑 UI、End 持续跟随、完整巨型字素绘制仍待办。表格横向滚动/宽度配置及超出单帧字节额度 cell 的可恢复精测继续待办；巨大 cell 保持暂定布局，EOF 校准可待定，仍可按键重绘和退出。容器实际间距排版、数学/脚注排版及其它既有待办保持；原始 HTML 不在需求内。
+
+验收均在本 workspace 的 `nix develop` 执行：全目标 check、完整 nextest debug **2,457** 项 / release **2,453** 项、doc **78** 项、文档构建、fmt、生产及 TUI 全目标 clippy 通过；嵌套/代码释放/宽表/流式退出/窗口复杂度专项 **61** 项通过。严格 workspace 全目标 clippy `-D warnings` 仅受旧 core `bare_autolinks.rs:594` 的 bool assert lint 阻断，无关测试未修改。
+
+三项 64 MiB 用例全部复验：首帧读取 65,536 字节，回调 Document 查询为零；连续滚动检查点峰值 120 项 / arena 281 节点，移出 277,648 项，容量不冒充进程总堆峰值。固定 TERM/COLORTERM/LANG，以私有 tmux 从 120×40 和 80×24 启动 release CLI；50 步覆盖嵌套/未解析图片、代码释放、滚动、目录选择/跳转、双向 resize 和 q。两组退出码均为 0，退出后 capture 并清理；cell/raw ANSI/PTY 回归同步通过。
+
+与一般结构分类窗口扩展组合后再次冻结验证：全目标 check、fmt、完整 debug **2468/2468**、release **2464/2464**、doc **78/78**，生产及 TUI 全目标严格 clippy 均通过。407 份核心与 86 份 TUI Rust 文件分别保持此前冻结字节，493 份组合源在全部门禁前后哈希一致；组合证据见 `/tmp/mdtui3-codex-todo/integration-005/result.json`。

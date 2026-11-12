@@ -1,16 +1,25 @@
-# mdstream 核心库
+# mdstream 核心与终端阅读器
 
-只追加的 Markdown 解析器，以及按视口读取语义、维护排版高度和恢复排版状态的数据结构。零运行时依赖，禁止 unsafe。这里交付的是核心库，不包含终端绘制、HTML 输出、字体塑形或自动换行实现。
+只追加的 Markdown 解析器，以及按视口读取语义、维护排版高度和恢复排版状态的数据结构。零运行时依赖，禁止 unsafe。核心库不包含终端绘制、HTML 输出或字体塑形；工作区内的 `mdtui-tui` 提供终端列宽、软换行和交互阅读。
 
 目标是：即使输入逐字符到达、一个段落长达数百万字、分隔符很晚才闭合、引用定义出现在文末，也不反复扫描旧文档。支持的方言有明确限制，以换取可证明的复杂度。
 
-当前开发方向（2026-10-30 确认）：先把地基打牢，在既定需求和复杂度约束内支持尽量丰富、可复用的基础功能，再在其上搭建完整项目。现阶段交付核心库与可运行示例，终端 UI 留到后续阶段；按依赖关系和实现容易程度持续推进 TODO 中的核心能力。具体范围见 [开发阶段与推进原则](TODO.md#开发阶段与推进原则)。
+当前开发方向（2026-10-30 确认）：先把地基打牢，在既定需求和复杂度约束内支持尽量丰富、可复用的基础功能，再在其上搭建完整项目。当前已交付核心库、可运行示例与终端阅读器基础；核心语法、目录筛选、折叠和搜索等未完成要求继续按 TODO 分项推进。具体范围见 [开发阶段与推进原则](TODO.md#开发阶段与推进原则)。
 
 已交付任务及验收记录见 [DONE](DONE.md)。后续优化见 [核心改进顺序与验收条件](TODO.md#核心改进顺序与验收条件)：优先保证整帧实际重排受窗口和恢复预算约束，再改善缓存复用与扩展语义支持。
 
 ## 工作区结构
 
-仓库是 Cargo workspace。当前只有核心 crate `crates/mdstream-core`：package 名称为 `mdstream-core`，库 crate 名称保持 `mdstream`。终端渲染 crate 留到后续阶段加入；根目录保留跨 crate 的 README、TODO/DONE、docs、scripts 和 flake。
+仓库是 Cargo workspace：`crates/mdstream-core` 的 package 名称为 `mdstream-core`，库名称为 `mdstream`；`crates/mdtui-tui` 是终端阅读器。TUI 依赖及固定 Unicode 表版本集中在根 manifest，核心仍为零运行时依赖。根目录保留共享文档、scripts、flake 和格式化配置。
+
+从工作区运行阅读器：
+
+```bash
+nix develop -c cargo r -r -p mdtui-tui -- README.md
+nix develop -c cargo r -r -p mdtui-tui -- --once crates/mdtui-tui/tests/fixtures/spec/images.md
+```
+
+输入支持普通文件和 Unix FIFO；首屏不等待 EOF，写端暂停时仍可 `q` 退出。交互模式支持方向键、翻页、Home/End、`s` 目录侧栏、Tab 焦点、Enter 跳转；End 只跳到当前末尾。图片显示可点击 alt，空 alt 显示 `[image]`。详细键位、尺寸和限制见 [阅读器使用说明](crates/mdtui-tui/README.md)，来源、预算及验收见 [终端集成说明](docs/tui-integration.md)。
 
 ## 接入
 
@@ -3959,6 +3968,7 @@ let _stable_id: LinkId = parent;
 
 `tests/nested_links.rs` 包含独立森林优先级模型、UTF-8 任意字节分块/逐前缀/EOF、显式/lazy 容器、失败父候选、强调与删除线、晚定义与稳定身份、远端缓存依赖、跨 tile/source overlay 和真实 LayoutPass、共享微预算、16,384 层深链及百万字增长；索引单元模型另验证交叉区间、同起点及历史稀疏窗口。`Work.link_label_steps/link_index_steps/link_gate_steps`、各查询 work 和三份实际 arena capacity 统计分别覆盖解析、查询和空间。原型的反例/复杂度证据与冻结验证记录见 [DONE](DONE.md#2026-11-13-链接图片嵌套候选核心交付)。
 
+工作区终端阅读器已经接入这套选择/显示/排版协议，按预算处理嵌套图片 alt、父链接点击归属和旧 memo 退役；独立 cell、微预算及取消计数见 [终端集成说明](docs/tui-integration.md#嵌套对象选择与-memo-生命周期)。
 
 ## 一般结构分类前缀无窗口上限
 

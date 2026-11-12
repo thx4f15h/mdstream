@@ -1,0 +1,17 @@
+[package]
+name = "mdtui-tui"
+version.workspace = true
+edition.workspace = true
+description = "Terminal Markdown reader for mdstream-core"
+
+[dependencies]
+crossterm = { workspace = true, default-features = false, features = ["events"] }
+mdtui3.workspace = true
+unicode-segmentation.workspace = true
+unicode-width = { workspace = true, default-features = false }
+
+[dev-dependencies]
+insta = { workspace = true, default-features = false }
+portable-pty.workspace = true
+tempfile.workspace = true
+vt100.workspace = true

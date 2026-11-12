@@ -1,0 +1,339 @@
+---
+source: tests/static_render.rs
+---
+==== width=1 rows=267 content=263 blank=4 groups=5 math=0 ====
+0000 |L| styles=0-1:H1
+0001 ||
+0002 |T|
+0003 |h|
+0004 |e|
+0005 ||
+0006 |o|
+0007 |p|
+0008 |e|
+0009 |n|
+0010 |i|
+0011 |n|
+0012 |g|
+0013 ||
+0014 |p|
+0015 |a|
+0016 |r|
+0017 |a|
+0018 |g|
+0019 |r|
+0020 |a|
+0021 |p|
+0022 |h|
+0023 ||
+0024 |s|
+0025 |t|
+0026 |a|
+0027 |y|
+0028 |s|
+0029 ||
+0030 |d|
+0031 |e|
+0032 |t|
+0033 |e|
+0034 |r|
+0035 |m|
+0036 |i|
+0037 |n|
+0038 |i|
+0039 |s|
+0040 |t|
+0041 |i|
+0042 |c|
+0043 ||
+0044 |a|
+0045 |n|
+0046 |d|
+0047 ||
+0048 |c|
+0049 |o|
+0050 |n|
+0051 |t|
+0052 |a|
+0053 |i|
+0054 |n|
+0055 |s|
+0056 ||
+0057 |e|
+0058 |n|
+0059 |o|
+0060 |u|
+0061 |g|
+0062 |h|
+0063 ||
+0064 |w|
+0065 |o|
+0066 |r|
+0067 |d|
+0068 |s|
+0069 ||
+0070 |t|
+0071 |o|
+0072 ||
+0073 |e|
+0074 |x|
+0075 |e|
+0076 |r|
+0077 |c|
+0078 |i|
+0079 |s|
+0080 |e|
+0081 ||
+0082 |t|
+0083 |h|
+0084 |e|
+0085 ||
+0086 |f|
+0087 |i|
+0088 |r|
+0089 |s|
+0090 |t|
+0091 ||
+0092 |v|
+0093 |i|
+0094 |s|
+0095 |i|
+0096 |b|
+0097 |l|
+0098 |e|
+0099 ||
+0100 |v|
+0101 |i|
+0102 |e|
+0103 |w|
+0104 |p|
+0105 |o|
+0106 |r|
+0107 |t|
+0108 ||
+0109 |b|
+0110 |e|
+0111 |f|
+0112 |o|
+0113 |r|
+0114 |e|
+0115 ||
+0116 |a|
+0117 |n|
+0118 |y|
+0119 ||
+0120 |g|
+0121 |e|
+0122 |n|
+0123 |e|
+0124 |r|
+0125 |a|
+0126 |t|
+0127 |e|
+0128 |d|
+0129 ||
+0130 |m|
+0131 |i|
+0132 |d|
+0133 |d|
+0134 |l|
+0135 |e|
+0136 ||
+0137 |s|
+0138 |e|
+0139 |c|
+0140 |t|
+0141 |i|
+0142 |o|
+0143 |n|
+0144 ||
+0145 |i|
+0146 |s|
+0147 ||
+0148 |a|
+0149 |p|
+0150 |p|
+0151 |e|
+0152 |n|
+0153 |d|
+0154 |e|
+0155 |d|
+0156 |.|
+0157 ||
+0158 |┌| styles=0-1:table-border
+0159 |│| styles=0-1:table-border
+0160 |╞| styles=0-1:table-border
+0161 |│| styles=0-1:table-border
+0162 |│| styles=0-1:table-border
+0163 |│| styles=0-1:table-border
+0164 |│| styles=0-1:table-border
+0165 |│| styles=0-1:table-border
+0166 |└| styles=0-1:table-border
+0167 ||
+0168 |G|
+0169 |e|
+0170 |n|
+0171 |e|
+0172 |r|
+0173 |a|
+0174 |t|
+0175 |e|
+0176 |d|
+0177 ||
+0178 |m|
+0179 |i|
+0180 |d|
+0181 |d|
+0182 |l|
+0183 |e|
+0184 ||
+0185 |s|
+0186 |e|
+0187 |c|
+0188 |t|
+0189 |i|
+0190 |o|
+0191 |n|
+0192 |s|
+0193 ||
+0194 |s|
+0195 |h|
+0196 |o|
+0197 |u|
+0198 |l|
+0199 |d|
+0200 ||
+0201 |r|
+0202 |e|
+0203 |p|
+0204 |e|
+0205 |a|
+0206 |t|
+0207 ||
+0208 |t|
+0209 |h|
+0210 |i|
+0211 |s|
+0212 ||
+0213 |s|
+0214 |h|
+0215 |a|
+0216 |p|
+0217 |e|
+0218 ||
+0219 |w|
+0220 |i|
+0221 |t|
+0222 |h|
+0223 ||
+0224 |m|
+0225 |o|
+0226 |n|
+0227 |o|
+0228 |t|
+0229 |o|
+0230 |n|
+0231 |i|
+0232 |c|
+0233 |a|
+0234 |l|
+0235 |l|
+0236 |y|
+0237 ||
+0238 |i|
+0239 |n|
+0240 |c|
+0241 |r|
+0242 |e|
+0243 |a|
+0244 |s|
+0245 |i|
+0246 |n|
+0247 |g|
+0248 ||
+0249 |r|
+0250 |o|
+0251 |w|
+0252 ||
+0253 |i|
+0254 |d|
+0255 |e|
+0256 |n|
+0257 |t|
+0258 |i|
+0259 |f|
+0260 |i|
+0261 |e|
+0262 |r|
+0263 |s|
+0264 |.|
+0265 ||
+0266 |L| styles=0-1:H1
+==== width=20 rows=28 content=24 blank=4 groups=5 math=0 ====
+0000 |Large stream fixture| styles=0-20:H1
+0001 ||
+0002 |The opening paragrap|
+0003 |h stays deterministi|
+0004 |c and contains enoug|
+0005 |h words to exercise|
+0006 |the first visible vi|
+0007 |ewport before any ge|
+0008 |nerated middle secti|
+0009 |on is appended.|
+0010 ||
+0011 |┌───────────┐| styles=0-13:table-border
+0012 |│ key       │| styles=0-2:table-border,5-13:table-border
+0013 |╞═══════════╡| styles=0-13:table-border
+0014 |│ seed-0000 │| styles=0-2:table-border,11-13:table-border
+0015 |│ seed-0001 │| styles=0-2:table-border,11-13:table-border
+0016 |│ seed-0002 │| styles=0-2:table-border,11-13:table-border
+0017 |│ seed-0003 │| styles=0-2:table-border,11-13:table-border
+0018 |│ seed-0004 │| styles=0-2:table-border,11-13:table-border
+0019 |└───────────┘| styles=0-13:table-border
+0020 ||
+0021 |Generated middle sec|
+0022 |tions should repeat|
+0023 |this shape with mono|
+0024 |tonically increasing|
+0025 | row identifiers.|
+0026 ||
+0027 |Large stream fixture| styles=0-20:H1
+==== width=80 rows=19 content=15 blank=4 groups=5 math=0 ====
+0000 |Large stream fixture start| styles=0-26:H1
+0001 ||
+0002 |The opening paragraph stays deterministic and contains enough words to exercise|
+0003 |the first visible viewport before any generated middle section is appended.|
+0004 ||
+0005 |┌───────────┬───────────────────────────────┐| styles=0-45:table-border
+0006 |│ key       │ value                         │| styles=0-2:table-border,5-14:table-border,19-45:table-border
+0007 |╞═══════════╪═══════════════════════════════╡| styles=0-45:table-border
+0008 |│ seed-0000 │ deterministic table row zero  │| styles=0-2:table-border,11-14:table-border,42-45:table-border
+0009 |│ seed-0001 │ deterministic table row one   │| styles=0-2:table-border,11-14:table-border,41-45:table-border
+0010 |│ seed-0002 │ deterministic table row two   │| styles=0-2:table-border,11-14:table-border,41-45:table-border
+0011 |│ seed-0003 │ deterministic table row three │| styles=0-2:table-border,11-14:table-border,43-45:table-border
+0012 |│ seed-0004 │ deterministic table row four  │| styles=0-2:table-border,11-14:table-border,42-45:table-border
+0013 |└───────────┴───────────────────────────────┘| styles=0-45:table-border
+0014 ||
+0015 |Generated middle sections should repeat this shape with monotonically increasing|
+0016 | row identifiers.|
+0017 ||
+0018 |Large stream fixture end| styles=0-24:H1
+==== width=120 rows=18 content=14 blank=4 groups=5 math=0 ====
+0000 |Large stream fixture start| styles=0-26:H1
+0001 ||
+0002 |The opening paragraph stays deterministic and contains enough words to exercise the first visible viewport before any ge|
+0003 |nerated middle section is appended.|
+0004 ||
+0005 |┌───────────┬───────────────────────────────┐| styles=0-45:table-border
+0006 |│ key       │ value                         │| styles=0-2:table-border,5-14:table-border,19-45:table-border
+0007 |╞═══════════╪═══════════════════════════════╡| styles=0-45:table-border
+0008 |│ seed-0000 │ deterministic table row zero  │| styles=0-2:table-border,11-14:table-border,42-45:table-border
+0009 |│ seed-0001 │ deterministic table row one   │| styles=0-2:table-border,11-14:table-border,41-45:table-border
+0010 |│ seed-0002 │ deterministic table row two   │| styles=0-2:table-border,11-14:table-border,41-45:table-border
+0011 |│ seed-0003 │ deterministic table row three │| styles=0-2:table-border,11-14:table-border,43-45:table-border
+0012 |│ seed-0004 │ deterministic table row four  │| styles=0-2:table-border,11-14:table-border,42-45:table-border
+0013 |└───────────┴───────────────────────────────┘| styles=0-45:table-border
+0014 ||
+0015 |Generated middle sections should repeat this shape with monotonically increasing row identifiers.|
+0016 ||
+0017 |Large stream fixture end| styles=0-24:H1

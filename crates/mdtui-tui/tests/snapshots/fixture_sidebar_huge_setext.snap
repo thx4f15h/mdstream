@@ -1,0 +1,11 @@
+---
+source: tests/static_render.rs
+---
+==== width=1 rows=1 content=1 blank=0 groups=1 math=0 ====
+0000 |T| styles=0-1:H1
+==== width=20 rows=1 content=1 blank=0 groups=1 math=0 ====
+0000 |This deliberately lo| styles=0-20:H1
+==== width=80 rows=1 content=1 blank=0 groups=1 math=0 ====
+0000 |This deliberately long Setext title repeats a deterministic phrase to exercise s| styles=0-80:H1
+==== width=120 rows=1 content=1 blank=0 groups=1 math=0 ====
+0000 |This deliberately long Setext title repeats a deterministic phrase to exercise sidebar read budgets and one-time anchor| styles=0-120:H1

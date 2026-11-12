@@ -1,0 +1,148 @@
+---
+source: crates/mdtui-tui/tests/static_render.rs
+---
+==== width=1 rows=72 content=62 blank=10 groups=11 math=0 ====
+0000 |H| styles=0-1:H1
+0001 ||
+0002 |H| styles=0-1:H2
+0003 ||
+0004 |H| styles=0-1:H3
+0005 ||
+0006 |H| styles=0-1:H4
+0007 ||
+0008 |H| styles=0-1:H5
+0009 ||
+0010 |H| styles=0-1:H6
+0011 ||
+0012 |S| styles=0-1:H1
+0013 ||
+0014 |S| styles=0-1:H2
+0015 ||
+0016 |A| styles=0-1:H1
+0017 ||
+0018 |T|
+0019 |h|
+0020 |i|
+0021 |s|
+0022 ||
+0023 |i|
+0024 |s|
+0025 ||
+0026 |a|
+0027 ||
+0028 |s|
+0029 |e|
+0030 |p|
+0031 |a|
+0032 |r|
+0033 |a|
+0034 |t|
+0035 |e|
+0036 ||
+0037 |p|
+0038 |a|
+0039 |r|
+0040 |a|
+0041 |g|
+0042 |r|
+0043 |a|
+0044 |p|
+0045 |h|
+0046 ||
+0047 |a|
+0048 |f|
+0049 |t|
+0050 |e|
+0051 |r|
+0052 ||
+0053 |t|
+0054 |h|
+0055 |e|
+0056 ||
+0057 |A|
+0058 |T|
+0059 |X|
+0060 ||
+0061 |h|
+0062 |e|
+0063 |a|
+0064 |d|
+0065 |i|
+0066 |n|
+0067 |g|
+0068 |.|
+0069 ||
+0070 |Q| styles=0-1:H3
+0071 |│| styles=0-1:quote
+==== width=20 rows=25 content=15 blank=10 groups=11 math=0 ====
+0000 |H1   code  dropped i| styles=0-20:H1 links=11-20:LinkId(1)
+0001 ||
+0002 |H2| styles=0-2:H2
+0003 ||
+0004 |H3| styles=0-2:H3
+0005 ||
+0006 |H4| styles=0-2:H4
+0007 ||
+0008 |H5| styles=0-2:H5
+0009 ||
+0010 |H6| styles=0-2:H6
+0011 ||
+0012 |Setext level one spa| styles=0-20:H1
+0013 ||
+0014 |Setext level two spa| styles=0-20:H2
+0015 ||
+0016 |ATX only this line| styles=0-18:H1
+0017 ||
+0018 |This is a separate p|
+0019 |aragraph after the A|
+0020 |TX heading.|
+0021 ||
+0022 |Quoted heading| styles=0-14:H3
+0023 |│ Quoted heading bod| styles=0-2:quote
+0024 |│ y.| styles=0-2:quote
+==== width=80 rows=22 content=12 blank=10 groups=11 math=0 ====
+0000 |H1   code  dropped image strikeemphasisstrong| styles=0-45:H1 links=11-24:LinkId(1)
+0001 ||
+0002 |H2| styles=0-2:H2
+0003 ||
+0004 |H3| styles=0-2:H3
+0005 ||
+0006 |H4| styles=0-2:H4
+0007 ||
+0008 |H5| styles=0-2:H5
+0009 ||
+0010 |H6| styles=0-2:H6
+0011 ||
+0012 |Setext level one spans multiple physical lines| styles=0-46:H1
+0013 ||
+0014 |Setext level two spans multiple physical lines| styles=0-46:H2
+0015 ||
+0016 |ATX only this line| styles=0-18:H1
+0017 ||
+0018 |This is a separate paragraph after the ATX heading.|
+0019 ||
+0020 |Quoted heading| styles=0-14:H3
+0021 |│ Quoted heading body.| styles=0-2:quote
+==== width=120 rows=22 content=12 blank=10 groups=11 math=0 ====
+0000 |H1   code  dropped image strikeemphasisstrong| styles=0-45:H1 links=11-24:LinkId(1)
+0001 ||
+0002 |H2| styles=0-2:H2
+0003 ||
+0004 |H3| styles=0-2:H3
+0005 ||
+0006 |H4| styles=0-2:H4
+0007 ||
+0008 |H5| styles=0-2:H5
+0009 ||
+0010 |H6| styles=0-2:H6
+0011 ||
+0012 |Setext level one spans multiple physical lines| styles=0-46:H1
+0013 ||
+0014 |Setext level two spans multiple physical lines| styles=0-46:H2
+0015 ||
+0016 |ATX only this line| styles=0-18:H1
+0017 ||
+0018 |This is a separate paragraph after the ATX heading.|
+0019 ||
+0020 |Quoted heading| styles=0-14:H3
+0021 |│ Quoted heading body.| styles=0-2:quote

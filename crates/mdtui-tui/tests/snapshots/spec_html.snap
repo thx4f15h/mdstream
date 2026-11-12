@@ -1,0 +1,195 @@
+---
+source: tests/static_render.rs
+---
+==== width=1 rows=156 content=151 blank=5 groups=6 math=0 ====
+0000 |I|
+0001 |n|
+0002 |l|
+0003 |i|
+0004 |n|
+0005 |e|
+0006 ||
+0007 |b|
+0008 |o|
+0009 |l|
+0010 |d|
+0011 |-|
+0012 |l|
+0013 |i|
+0014 |k|
+0015 |e|
+0016 ||
+0017 |t|
+0018 |e|
+0019 |x|
+0020 |t|
+0021 ||
+0022 |k|
+0023 |e|
+0024 |e|
+0025 |p|
+0026 |s|
+0027 ||
+0028 |t|
+0029 |h|
+0030 |e|
+0031 ||
+0032 |s|
+0033 |u|
+0034 |r|
+0035 |r|
+0036 |o|
+0037 |u|
+0038 |n|
+0039 |d|
+0040 |i|
+0041 |n|
+0042 |g|
+0043 ||
+0044 |w|
+0045 |o|
+0046 |r|
+0047 |d|
+0048 |s|
+0049 |.|
+0050 ||
+0051 |A|
+0052 |t|
+0053 |t|
+0054 |r|
+0055 |i|
+0056 |b|
+0057 |u|
+0058 |t|
+0059 |e|
+0060 |s|
+0061 ||
+0062 |i|
+0063 |n|
+0064 |s|
+0065 |i|
+0066 |d|
+0067 |e|
+0068 ||
+0069 |r|
+0070 |e|
+0071 |m|
+0072 |a|
+0073 |i|
+0074 |n|
+0075 ||
+0076 |t|
+0077 |e|
+0078 |x|
+0079 |t|
+0080 |.|
+0081 ||
+0082 |S|
+0083 |e|
+0084 |l|
+0085 |f|
+0086 ||
+0087 |c|
+0088 |l|
+0089 |o|
+0090 |s|
+0091 |i|
+0092 |n|
+0093 |g|
+0094 ||
+0095 ||
+0096 |l|
+0097 |i|
+0098 |n|
+0099 |e|
+0100 ||
+0101 |b|
+0102 |r|
+0103 |e|
+0104 |a|
+0105 |k|
+0106 ||
+0107 |t|
+0108 |a|
+0109 |g|
+0110 ||
+0111 |d|
+0112 |i|
+0113 |s|
+0114 |a|
+0115 |p|
+0116 |p|
+0117 |e|
+0118 |a|
+0119 |r|
+0120 |s|
+0121 |.|
+0122 ||
+0123 ||
+0124 ||
+0125 |P|
+0126 |a|
+0127 |r|
+0128 |a|
+0129 |g|
+0130 |r|
+0131 |a|
+0132 |p|
+0133 |h|
+0134 ||
+0135 |a|
+0136 |f|
+0137 |t|
+0138 |e|
+0139 |r|
+0140 ||
+0141 |t|
+0142 |h|
+0143 |e|
+0144 ||
+0145 |H|
+0146 |T|
+0147 |M|
+0148 |L|
+0149 ||
+0150 |b|
+0151 |l|
+0152 |o|
+0153 |c|
+0154 |k|
+0155 |.|
+==== width=20 rows=14 content=9 blank=5 groups=6 math=0 ====
+0000 |Inline bold-like tex|
+0001 |t keeps the surround|
+0002 |ing words.|
+0003 ||
+0004 |Attributes inside re|
+0005 |main text.|
+0006 ||
+0007 |Self closing  line b|
+0008 |reak tag disappears.|
+0009 ||
+0010 ||
+0011 ||
+0012 |Paragraph after the|
+0013 |HTML block.|
+==== width=80 rows=9 content=4 blank=5 groups=6 math=0 ====
+0000 |Inline bold-like text keeps the surrounding words.|
+0001 ||
+0002 |Attributes inside remain text.|
+0003 ||
+0004 |Self closing  line break tag disappears.|
+0005 ||
+0006 ||
+0007 ||
+0008 |Paragraph after the HTML block.|
+==== width=120 rows=9 content=4 blank=5 groups=6 math=0 ====
+0000 |Inline bold-like text keeps the surrounding words.|
+0001 ||
+0002 |Attributes inside remain text.|
+0003 ||
+0004 |Self closing  line break tag disappears.|
+0005 ||
+0006 ||
+0007 ||
+0008 |Paragraph after the HTML block.|

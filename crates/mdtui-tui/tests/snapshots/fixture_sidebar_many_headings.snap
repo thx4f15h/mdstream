@@ -1,0 +1,83 @@
+---
+source: tests/static_render.rs
+---
+==== width=1 rows=19 content=10 blank=9 groups=10 math=0 ====
+0000 |S| styles=0-1:H1
+0001 ||
+0002 |S| styles=0-1:H2
+0003 ||
+0004 |S| styles=0-1:H3
+0005 ||
+0006 |R| styles=0-1:H2
+0007 ||
+0008 |R| styles=0-1:H2
+0009 ||
+0010 |A| styles=0-1:H3
+0011 ||
+0012 |S| styles=0-1:H2
+0013 ||
+0014 |S| styles=0-1:H2
+0015 ||
+0016 |S| styles=0-1:H3
+0017 ||
+0018 |S| styles=0-1:H4
+==== width=20 rows=19 content=10 blank=9 groups=10 math=0 ====
+0000 |Section 00001| styles=0-13:H1
+0001 ||
+0002 |Section 00001.1| styles=0-15:H2
+0003 ||
+0004 |Section 00001.1.1| styles=0-17:H3
+0005 ||
+0006 |Repeated heading| styles=0-16:H2
+0007 ||
+0008 |Repeated heading| styles=0-16:H2
+0009 ||
+0010 |A deliberately long| styles=0-20:H3
+0011 ||
+0012 |Section 00002| styles=0-13:H2
+0013 ||
+0014 |Section 00003| styles=0-13:H2
+0015 ||
+0016 |Section 00003.1| styles=0-15:H3
+0017 ||
+0018 |Section 00003.1.1| styles=0-17:H4
+==== width=80 rows=19 content=10 blank=9 groups=10 math=0 ====
+0000 |Section 00001| styles=0-13:H1
+0001 ||
+0002 |Section 00001.1| styles=0-15:H2
+0003 ||
+0004 |Section 00001.1.1| styles=0-17:H3
+0005 ||
+0006 |Repeated heading| styles=0-16:H2
+0007 ||
+0008 |Repeated heading| styles=0-16:H2
+0009 ||
+0010 |A deliberately long sidebar heading that should be truncated by the visible side| styles=0-80:H3
+0011 ||
+0012 |Section 00002| styles=0-13:H2
+0013 ||
+0014 |Section 00003| styles=0-13:H2
+0015 ||
+0016 |Section 00003.1| styles=0-15:H3
+0017 ||
+0018 |Section 00003.1.1| styles=0-17:H4
+==== width=120 rows=19 content=10 blank=9 groups=10 math=0 ====
+0000 |Section 00001| styles=0-13:H1
+0001 ||
+0002 |Section 00001.1| styles=0-15:H2
+0003 ||
+0004 |Section 00001.1.1| styles=0-17:H3
+0005 ||
+0006 |Repeated heading| styles=0-16:H2
+0007 ||
+0008 |Repeated heading| styles=0-16:H2
+0009 ||
+0010 |A deliberately long sidebar heading that should be truncated by the visible sidebar width instead of forcing a full-docu| styles=0-120:H3
+0011 ||
+0012 |Section 00002| styles=0-13:H2
+0013 ||
+0014 |Section 00003| styles=0-13:H2
+0015 ||
+0016 |Section 00003.1| styles=0-15:H3
+0017 ||
+0018 |Section 00003.1.1| styles=0-17:H4

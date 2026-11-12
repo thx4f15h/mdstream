@@ -1,0 +1,155 @@
+---
+source: crates/mdtui-tui/tests/static_render.rs
+---
+==== width=1 rows=37 content=32 blank=5 groups=6 math=0 ====
+0000 |┌| styles=0-1:table-border
+0001 |│| styles=0-1:table-border
+0002 |╞| styles=0-1:table-border
+0003 |│| styles=0-1:table-border
+0004 |│| styles=0-1:table-border
+0005 |└| styles=0-1:table-border
+0006 ||
+0007 |┌| styles=0-1:table-border
+0008 |│| styles=0-1:table-border
+0009 |╞| styles=0-1:table-border
+0010 ||
+0011 |┌| styles=0-1:table-border
+0012 |│| styles=0-1:table-border
+0013 |╞| styles=0-1:table-border
+0014 |│| styles=0-1:table-border
+0015 |│| styles=0-1:table-border
+0016 |└| styles=0-1:table-border
+0017 ||
+0018 |┌| styles=0-1:table-border
+0019 |│| styles=0-1:table-border
+0020 |╞| styles=0-1:table-border
+0021 |│| styles=0-1:table-border
+0022 |└| styles=0-1:table-border
+0023 ||
+0024 |┌| styles=0-1:table-border
+0025 |│| styles=0-1:table-border
+0026 |╞| styles=0-1:table-border
+0027 |│| styles=0-1:table-border
+0028 |│| styles=0-1:table-border
+0029 |└| styles=0-1:table-border
+0030 ||
+0031 |┌| styles=0-1:table-border
+0032 |│| styles=0-1:table-border
+0033 |╞| styles=0-1:table-border
+0034 |│| styles=0-1:table-border
+0035 |│| styles=0-1:table-border
+0036 |└| styles=0-1:table-border
+==== width=20 rows=37 content=32 blank=5 groups=6 math=0 ====
+0000 |┌───────┬───────┐| styles=0-17:table-border
+0001 |│ Name  │ Value │| styles=0-2:table-border,6-10:table-border,15-17:table-border
+0002 |╞═══════╪═══════╡| styles=0-17:table-border
+0003 |│ alpha │   1   │| styles=0-2:table-border,7-12:table-border,13-17:table-border
+0004 |│ beta  │   2   │| styles=0-2:table-border,6-12:table-border,13-17:table-border
+0005 |└───────┴───────┘| styles=0-17:table-border
+0006 ||
+0007 |┌─────────────┐| styles=0-15:table-border
+0008 |│ Header only │| styles=0-2:table-border,13-15:table-border
+0009 |╞═════════════╡| styles=0-15:table-border
+0010 ||
+0011 |┌─────┬─────┐| styles=0-13:table-border
+0012 |│ A   │ B   │| styles=0-2:table-border,3-8:table-border,9-13:table-border
+0013 |╞═════╪═════╡| styles=0-13:table-border
+0014 |│ one │     │| styles=0-2:table-border,5-13:table-border
+0015 |│     │ two │| styles=0-8:table-border,11-13:table-border
+0016 |└─────┴─────┘| styles=0-13:table-border
+0017 ||
+0018 |┌─────┬─────┐| styles=0-13:table-border
+0019 |│ A   │ B   │| styles=0-2:table-border,3-8:table-border,9-13:table-border
+0020 |╞═════╪═════╡| styles=0-13:table-border
+0021 |│ one │ two │| styles=0-2:table-border,5-8:table-border,11-13:table-border
+0022 |└─────┴─────┘| styles=0-13:table-border
+0023 ||
+0024 |┌──────┐| styles=0-8:table-border
+0025 |│ 中文 │| styles=0-2:table-border,6-8:table-border wide=base@2:2,cont@3,base@4:2,cont@5
+0026 |╞══════╡| styles=0-8:table-border
+0027 |│ 宽   │| styles=0-2:table-border,4-8:table-border wide=base@2:2,cont@3
+0028 |│ 🙂   │| styles=0-2:table-border,4-8:table-border wide=base@2:2,cont@3
+0029 |└──────┘| styles=0-8:table-border
+0030 ||
+0031 |┌─────┬───────┐| styles=0-15:table-border
+0032 |│ A   │ B     │| styles=0-2:table-border,3-8:table-border,9-15:table-border
+0033 |╞═════╪═══════╡| styles=0-15:table-border
+0034 |│ one │       │| styles=0-2:table-border,5-15:table-border
+0035 |│ two │ three │| styles=0-2:table-border,5-8:table-border,13-15:table-border
+0036 |└─────┴───────┘| styles=0-15:table-border
+==== width=80 rows=37 content=32 blank=5 groups=6 math=0 ====
+0000 |┌───────┬───────┬────────┐| styles=0-26:table-border
+0001 |│ Name  │ Value │  Notes │| styles=0-2:table-border,6-10:table-border,15-19:table-border,24-26:table-border
+0002 |╞═══════╪═══════╪════════╡| styles=0-26:table-border
+0003 |│ alpha │   1   │  first │| styles=0-2:table-border,7-12:table-border,13-19:table-border,24-26:table-border
+0004 |│ beta  │   2   │ second │| styles=0-2:table-border,6-12:table-border,13-18:table-border,24-26:table-border
+0005 |└───────┴───────┴────────┘| styles=0-26:table-border
+0006 ||
+0007 |┌─────────────┐| styles=0-15:table-border
+0008 |│ Header only │| styles=0-2:table-border,13-15:table-border
+0009 |╞═════════════╡| styles=0-15:table-border
+0010 ||
+0011 |┌─────┬─────┬───────┐| styles=0-21:table-border
+0012 |│ A   │ B   │ C     │| styles=0-2:table-border,3-8:table-border,9-14:table-border,15-21:table-border
+0013 |╞═════╪═════╪═══════╡| styles=0-21:table-border
+0014 |│ one │     │ three │| styles=0-2:table-border,5-14:table-border,19-21:table-border
+0015 |│     │ two │       │| styles=0-8:table-border,11-21:table-border
+0016 |└─────┴─────┴───────┘| styles=0-21:table-border
+0017 ||
+0018 |┌─────┬─────┐| styles=0-13:table-border
+0019 |│ A   │ B   │| styles=0-2:table-border,3-8:table-border,9-13:table-border
+0020 |╞═════╪═════╡| styles=0-13:table-border
+0021 |│ one │ two │| styles=0-2:table-border,5-8:table-border,11-13:table-border
+0022 |└─────┴─────┘| styles=0-13:table-border
+0023 ||
+0024 |┌──────┬───────────────┬───────┐| styles=0-32:table-border
+0025 |│ 中文 │ Style         │ Link  │| styles=0-2:table-border,6-9:table-border,14-25:table-border,29-32:table-border wide=base@2:2,cont@3,base@4:2,cont@5
+0026 |╞══════╪═══════════════╪═══════╡| styles=0-32:table-border
+0027 |│ 宽   │ bold and code │ link  │| styles=0-2:table-border,4-9:table-border,9-13:strong,18-22:code,22-25:table-border,25-29:link,29-32:table-border wide=base@2:2,cont@3
+0028 |│ 🙂   │ strike        │ plain │| styles=0-2:table-border,4-9:table-border,9-15:strike,15-25:table-border,30-32:table-border wide=base@2:2,cont@3
+0029 |└──────┴───────────────┴───────┘| styles=0-32:table-border
+0030 ||
+0031 |┌─────┬───────┐| styles=0-15:table-border
+0032 |│ A   │ B     │| styles=0-2:table-border,3-8:table-border,9-15:table-border
+0033 |╞═════╪═══════╡| styles=0-15:table-border
+0034 |│ one │       │| styles=0-2:table-border,5-15:table-border
+0035 |│ two │ three │| styles=0-2:table-border,5-8:table-border,13-15:table-border
+0036 |└─────┴───────┘| styles=0-15:table-border
+==== width=120 rows=37 content=32 blank=5 groups=6 math=0 ====
+0000 |┌───────┬───────┬────────┐| styles=0-26:table-border
+0001 |│ Name  │ Value │  Notes │| styles=0-2:table-border,6-10:table-border,15-19:table-border,24-26:table-border
+0002 |╞═══════╪═══════╪════════╡| styles=0-26:table-border
+0003 |│ alpha │   1   │  first │| styles=0-2:table-border,7-12:table-border,13-19:table-border,24-26:table-border
+0004 |│ beta  │   2   │ second │| styles=0-2:table-border,6-12:table-border,13-18:table-border,24-26:table-border
+0005 |└───────┴───────┴────────┘| styles=0-26:table-border
+0006 ||
+0007 |┌─────────────┐| styles=0-15:table-border
+0008 |│ Header only │| styles=0-2:table-border,13-15:table-border
+0009 |╞═════════════╡| styles=0-15:table-border
+0010 ||
+0011 |┌─────┬─────┬───────┐| styles=0-21:table-border
+0012 |│ A   │ B   │ C     │| styles=0-2:table-border,3-8:table-border,9-14:table-border,15-21:table-border
+0013 |╞═════╪═════╪═══════╡| styles=0-21:table-border
+0014 |│ one │     │ three │| styles=0-2:table-border,5-14:table-border,19-21:table-border
+0015 |│     │ two │       │| styles=0-8:table-border,11-21:table-border
+0016 |└─────┴─────┴───────┘| styles=0-21:table-border
+0017 ||
+0018 |┌─────┬─────┐| styles=0-13:table-border
+0019 |│ A   │ B   │| styles=0-2:table-border,3-8:table-border,9-13:table-border
+0020 |╞═════╪═════╡| styles=0-13:table-border
+0021 |│ one │ two │| styles=0-2:table-border,5-8:table-border,11-13:table-border
+0022 |└─────┴─────┘| styles=0-13:table-border
+0023 ||
+0024 |┌──────┬───────────────┬───────┐| styles=0-32:table-border
+0025 |│ 中文 │ Style         │ Link  │| styles=0-2:table-border,6-9:table-border,14-25:table-border,29-32:table-border wide=base@2:2,cont@3,base@4:2,cont@5
+0026 |╞══════╪═══════════════╪═══════╡| styles=0-32:table-border
+0027 |│ 宽   │ bold and code │ link  │| styles=0-2:table-border,4-9:table-border,9-13:strong,18-22:code,22-25:table-border,25-29:link,29-32:table-border wide=base@2:2,cont@3
+0028 |│ 🙂   │ strike        │ plain │| styles=0-2:table-border,4-9:table-border,9-15:strike,15-25:table-border,30-32:table-border wide=base@2:2,cont@3
+0029 |└──────┴───────────────┴───────┘| styles=0-32:table-border
+0030 ||
+0031 |┌─────┬───────┐| styles=0-15:table-border
+0032 |│ A   │ B     │| styles=0-2:table-border,3-8:table-border,9-15:table-border
+0033 |╞═════╪═══════╡| styles=0-15:table-border
+0034 |│ one │       │| styles=0-2:table-border,5-15:table-border
+0035 |│ two │ three │| styles=0-2:table-border,5-8:table-border,13-15:table-border
+0036 |└─────┴───────┘| styles=0-15:table-border

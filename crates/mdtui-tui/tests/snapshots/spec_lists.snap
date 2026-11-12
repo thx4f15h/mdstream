@@ -1,0 +1,127 @@
+---
+source: crates/mdtui-tui/tests/static_render.rs
+---
+==== width=1 rows=25 content=25 blank=0 groups=6 math=0 ====
+0000 |•| styles=0-1:list-marker
+0001 |•| styles=0-1:list-marker
+0002 |•| styles=0-1:list-marker
+0003 |3| styles=0-1:list-marker
+0004 |4| styles=0-1:list-marker
+0005 |0| styles=0-1:list-marker
+0006 |1| styles=0-1:list-marker
+0007 |1| styles=0-1:list-marker
+0008 |1| styles=0-1:list-marker
+0009 ||
+0010 ||
+0011 ||
+0012 |•| styles=0-1:list-marker
+0013 || styles=0-1:list-marker
+0014 || styles=0-1:list-marker
+0015 || styles=0-1:list-marker
+0016 || styles=0-1:list-marker
+0017 |•| styles=0-1:list-marker
+0018 |•| styles=0-1:list-marker
+0019 |•| styles=0-1:list-marker
+0020 |•| styles=0-1:list-marker
+0021 |•| styles=0-1:list-marker
+0022 |•| styles=0-1:list-marker
+0023 |•| styles=0-1:list-marker
+0024 |1| styles=0-1:list-marker
+==== width=20 rows=42 content=42 blank=0 groups=6 math=0 ====
+0000 |• dash item| styles=0-2:list-marker
+0001 |• plus item| styles=0-2:list-marker
+0002 |• star item| styles=0-2:list-marker
+0003 |3. starts at three| styles=0-3:list-marker
+0004 |4. next ordered item| styles=0-3:list-marker
+0005 |0. starts at zero| styles=0-3:list-marker
+0006 |1. next ordered item| styles=0-3:list-marker
+0007 |10. starts at ten| styles=0-4:list-marker
+0008 |11. next ordered| styles=0-4:list-marker
+0009 |    item|
+0010 |⬜ unchecked| styles=0-3:list-marker wide=base@0:2,cont@1
+0011 |✅ checked| styles=0-3:task-checked,3-10:strike wide=base@0:2,cont@1
+0012 |✅ checked uppercase| styles=0-3:task-checked,3-20:strike wide=base@0:2,cont@1
+0013 |• bullet parent| styles=0-2:list-marker
+0014 |  • child bullet| styles=0-4:list-marker
+0015 |    1. child ordered| styles=0-7:list-marker
+0016 |       1. deep| styles=0-10:list-marker
+0017 |          ordered|
+0018 |          ⬜ deep| styles=0-13:list-marker wide=base@10:2,cont@11
+0019 |            task|
+0020 |• loose item one| styles=0-2:list-marker
+0021 |• loose item two| styles=0-2:list-marker
+0022 |• tight item one| styles=0-2:list-marker
+0023 |• tight item two| styles=0-2:list-marker
+0024 |• code strikestyle| styles=0-2:list-marker
+0025 |  text|
+0026 |• dropped image| styles=0-2:list-marker links=2-9:LinkId(1),10-15:LinkId(1)
+0027 |• multi - line item| styles=0-2:list-marker
+0028 |  starts here and|
+0029 |  continues on a|
+0030 |  second source line|
+0031 |1. ordered item with| styles=0-3:list-marker
+0032 |   a very long line|
+0033 |   that should wrap|
+0034 |   by words and|
+0035 |   preserve|
+0036 |   deterministic|
+0037 |   text while|
+0038 |   exercising|
+0039 |   continuation|
+0040 |   indentation for|
+0041 |   ordered markers .|
+==== width=80 rows=27 content=27 blank=0 groups=6 math=0 ====
+0000 |• dash item| styles=0-2:list-marker
+0001 |• plus item| styles=0-2:list-marker
+0002 |• star item| styles=0-2:list-marker
+0003 |3. starts at three| styles=0-3:list-marker
+0004 |4. next ordered item| styles=0-3:list-marker
+0005 |0. starts at zero| styles=0-3:list-marker
+0006 |1. next ordered item| styles=0-3:list-marker
+0007 |10. starts at ten| styles=0-4:list-marker
+0008 |11. next ordered item| styles=0-4:list-marker
+0009 |⬜ unchecked| styles=0-3:list-marker wide=base@0:2,cont@1
+0010 |✅ checked| styles=0-3:task-checked,3-10:strike wide=base@0:2,cont@1
+0011 |✅ checked uppercase| styles=0-3:task-checked,3-20:strike wide=base@0:2,cont@1
+0012 |• bullet parent| styles=0-2:list-marker
+0013 |  • child bullet| styles=0-4:list-marker
+0014 |    1. child ordered| styles=0-7:list-marker
+0015 |       1. deep ordered| styles=0-10:list-marker
+0016 |          ⬜ deep task| styles=0-13:list-marker wide=base@10:2,cont@11
+0017 |• loose item one| styles=0-2:list-marker
+0018 |• loose item two| styles=0-2:list-marker
+0019 |• tight item one| styles=0-2:list-marker
+0020 |• tight item two| styles=0-2:list-marker
+0021 |• code strikestyle text| styles=0-2:list-marker
+0022 |• dropped image| styles=0-2:list-marker links=2-9:LinkId(1),10-15:LinkId(1)
+0023 |• multi - line item starts here and continues on a second source line| styles=0-2:list-marker
+0024 |1. ordered item with a very long line that should wrap by words and preserve| styles=0-3:list-marker
+0025 |   deterministic text while exercising continuation indentation for ordered|
+0026 |   markers .|
+==== width=120 rows=26 content=26 blank=0 groups=6 math=0 ====
+0000 |• dash item| styles=0-2:list-marker
+0001 |• plus item| styles=0-2:list-marker
+0002 |• star item| styles=0-2:list-marker
+0003 |3. starts at three| styles=0-3:list-marker
+0004 |4. next ordered item| styles=0-3:list-marker
+0005 |0. starts at zero| styles=0-3:list-marker
+0006 |1. next ordered item| styles=0-3:list-marker
+0007 |10. starts at ten| styles=0-4:list-marker
+0008 |11. next ordered item| styles=0-4:list-marker
+0009 |⬜ unchecked| styles=0-3:list-marker wide=base@0:2,cont@1
+0010 |✅ checked| styles=0-3:task-checked,3-10:strike wide=base@0:2,cont@1
+0011 |✅ checked uppercase| styles=0-3:task-checked,3-20:strike wide=base@0:2,cont@1
+0012 |• bullet parent| styles=0-2:list-marker
+0013 |  • child bullet| styles=0-4:list-marker
+0014 |    1. child ordered| styles=0-7:list-marker
+0015 |       1. deep ordered| styles=0-10:list-marker
+0016 |          ⬜ deep task| styles=0-13:list-marker wide=base@10:2,cont@11
+0017 |• loose item one| styles=0-2:list-marker
+0018 |• loose item two| styles=0-2:list-marker
+0019 |• tight item one| styles=0-2:list-marker
+0020 |• tight item two| styles=0-2:list-marker
+0021 |• code strikestyle text| styles=0-2:list-marker
+0022 |• dropped image| styles=0-2:list-marker links=2-9:LinkId(1),10-15:LinkId(1)
+0023 |• multi - line item starts here and continues on a second source line| styles=0-2:list-marker
+0024 |1. ordered item with a very long line that should wrap by words and preserve deterministic text while exercising| styles=0-3:list-marker
+0025 |   continuation indentation for ordered markers .|

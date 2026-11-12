@@ -1,0 +1,321 @@
+---
+source: tests/static_render.rs
+---
+==== width=1 rows=276 content=272 blank=4 groups=5 math=0 ====
+0000 |i| styles=0-1:link links=0-1:LinkId(0)
+0001 |n| styles=0-1:link links=0-1:LinkId(0)
+0002 |l| styles=0-1:link links=0-1:LinkId(0)
+0003 |i| styles=0-1:link links=0-1:LinkId(0)
+0004 |n| styles=0-1:link links=0-1:LinkId(0)
+0005 |e| styles=0-1:link links=0-1:LinkId(0)
+0006 ||
+0007 |a|
+0008 |n|
+0009 |d|
+0010 ||
+0011 |t| styles=0-1:link links=0-1:LinkId(1)
+0012 |i| styles=0-1:link links=0-1:LinkId(1)
+0013 |t| styles=0-1:link links=0-1:LinkId(1)
+0014 |l| styles=0-1:link links=0-1:LinkId(1)
+0015 |e| styles=0-1:link links=0-1:LinkId(1)
+0016 |d| styles=0-1:link links=0-1:LinkId(1)
+0017 ||
+0018 |a|
+0019 |n|
+0020 |d|
+0021 ||
+0022 |e| styles=0-1:link links=0-1:LinkId(2)
+0023 |m| styles=0-1:link links=0-1:LinkId(2)
+0024 |p| styles=0-1:link links=0-1:LinkId(2)
+0025 |t| styles=0-1:link links=0-1:LinkId(2)
+0026 |y| styles=0-1:link links=0-1:LinkId(2)
+0027 |.|
+0028 ||
+0029 |r| styles=0-1:link links=0-1:LinkId(3)
+0030 |e| styles=0-1:link links=0-1:LinkId(3)
+0031 |f| styles=0-1:link links=0-1:LinkId(3)
+0032 |e| styles=0-1:link links=0-1:LinkId(3)
+0033 |r| styles=0-1:link links=0-1:LinkId(3)
+0034 |e| styles=0-1:link links=0-1:LinkId(3)
+0035 |n| styles=0-1:link links=0-1:LinkId(3)
+0036 |c| styles=0-1:link links=0-1:LinkId(3)
+0037 |e| styles=0-1:link links=0-1:LinkId(3)
+0038 ||
+0039 |a|
+0040 |n|
+0041 |d|
+0042 ||
+0043 |c| styles=0-1:link links=0-1:LinkId(4)
+0044 |o| styles=0-1:link links=0-1:LinkId(4)
+0045 |l| styles=0-1:link links=0-1:LinkId(4)
+0046 |l| styles=0-1:link links=0-1:LinkId(4)
+0047 |a| styles=0-1:link links=0-1:LinkId(4)
+0048 |p| styles=0-1:link links=0-1:LinkId(4)
+0049 |s| styles=0-1:link links=0-1:LinkId(4)
+0050 |e| styles=0-1:link links=0-1:LinkId(4)
+0051 |d| styles=0-1:link links=0-1:LinkId(4)
+0052 ||
+0053 |a|
+0054 |n|
+0055 |d|
+0056 ||
+0057 |s| styles=0-1:link links=0-1:LinkId(5)
+0058 |h| styles=0-1:link links=0-1:LinkId(5)
+0059 |o| styles=0-1:link links=0-1:LinkId(5)
+0060 |r| styles=0-1:link links=0-1:LinkId(5)
+0061 |t| styles=0-1:link links=0-1:LinkId(5)
+0062 |c| styles=0-1:link links=0-1:LinkId(5)
+0063 |u| styles=0-1:link links=0-1:LinkId(5)
+0064 |t| styles=0-1:link links=0-1:LinkId(5)
+0065 |.|
+0066 ||
+0067 |h| styles=0-1:link links=0-1:LinkId(6)
+0068 |t| styles=0-1:link links=0-1:LinkId(6)
+0069 |t| styles=0-1:link links=0-1:LinkId(6)
+0070 |p| styles=0-1:link links=0-1:LinkId(6)
+0071 |s| styles=0-1:link links=0-1:LinkId(6)
+0072 |:| styles=0-1:link links=0-1:LinkId(6)
+0073 |/| styles=0-1:link links=0-1:LinkId(6)
+0074 |/| styles=0-1:link links=0-1:LinkId(6)
+0075 |e| styles=0-1:link links=0-1:LinkId(6)
+0076 |x| styles=0-1:link links=0-1:LinkId(6)
+0077 |a| styles=0-1:link links=0-1:LinkId(6)
+0078 |m| styles=0-1:link links=0-1:LinkId(6)
+0079 |p| styles=0-1:link links=0-1:LinkId(6)
+0080 |l| styles=0-1:link links=0-1:LinkId(6)
+0081 |e| styles=0-1:link links=0-1:LinkId(6)
+0082 |.| styles=0-1:link links=0-1:LinkId(6)
+0083 |c| styles=0-1:link links=0-1:LinkId(6)
+0084 |o| styles=0-1:link links=0-1:LinkId(6)
+0085 |m| styles=0-1:link links=0-1:LinkId(6)
+0086 |/| styles=0-1:link links=0-1:LinkId(6)
+0087 |a| styles=0-1:link links=0-1:LinkId(6)
+0088 |u| styles=0-1:link links=0-1:LinkId(6)
+0089 |t| styles=0-1:link links=0-1:LinkId(6)
+0090 |o| styles=0-1:link links=0-1:LinkId(6)
+0091 |?| styles=0-1:link links=0-1:LinkId(6)
+0092 |q| styles=0-1:link links=0-1:LinkId(6)
+0093 |=| styles=0-1:link links=0-1:LinkId(6)
+0094 |1| styles=0-1:link links=0-1:LinkId(6)
+0095 ||
+0096 |a|
+0097 |n|
+0098 |d|
+0099 ||
+0100 |u| styles=0-1:link links=0-1:LinkId(7)
+0101 |s| styles=0-1:link links=0-1:LinkId(7)
+0102 |e| styles=0-1:link links=0-1:LinkId(7)
+0103 |r| styles=0-1:link links=0-1:LinkId(7)
+0104 |@| styles=0-1:link links=0-1:LinkId(7)
+0105 |e| styles=0-1:link links=0-1:LinkId(7)
+0106 |x| styles=0-1:link links=0-1:LinkId(7)
+0107 |a| styles=0-1:link links=0-1:LinkId(7)
+0108 |m| styles=0-1:link links=0-1:LinkId(7)
+0109 |p| styles=0-1:link links=0-1:LinkId(7)
+0110 |l| styles=0-1:link links=0-1:LinkId(7)
+0111 |e| styles=0-1:link links=0-1:LinkId(7)
+0112 |.| styles=0-1:link links=0-1:LinkId(7)
+0113 |c| styles=0-1:link links=0-1:LinkId(7)
+0114 |o| styles=0-1:link links=0-1:LinkId(7)
+0115 |m| styles=0-1:link links=0-1:LinkId(7)
+0116 ||
+0117 |a|
+0118 |n|
+0119 |d|
+0120 ||
+0121 |m| styles=0-1:link links=0-1:LinkId(8)
+0122 |a| styles=0-1:link links=0-1:LinkId(8)
+0123 |i| styles=0-1:link links=0-1:LinkId(8)
+0124 |l| styles=0-1:link links=0-1:LinkId(8)
+0125 |t| styles=0-1:link links=0-1:LinkId(8)
+0126 |o| styles=0-1:link links=0-1:LinkId(8)
+0127 |:| styles=0-1:link links=0-1:LinkId(8)
+0128 |u| styles=0-1:link links=0-1:LinkId(8)
+0129 |s| styles=0-1:link links=0-1:LinkId(8)
+0130 |e| styles=0-1:link links=0-1:LinkId(8)
+0131 |r| styles=0-1:link links=0-1:LinkId(8)
+0132 |@| styles=0-1:link links=0-1:LinkId(8)
+0133 |e| styles=0-1:link links=0-1:LinkId(8)
+0134 |x| styles=0-1:link links=0-1:LinkId(8)
+0135 |a| styles=0-1:link links=0-1:LinkId(8)
+0136 |m| styles=0-1:link links=0-1:LinkId(8)
+0137 |p| styles=0-1:link links=0-1:LinkId(8)
+0138 |l| styles=0-1:link links=0-1:LinkId(8)
+0139 |e| styles=0-1:link links=0-1:LinkId(8)
+0140 |.| styles=0-1:link links=0-1:LinkId(8)
+0141 |c| styles=0-1:link links=0-1:LinkId(8)
+0142 |o| styles=0-1:link links=0-1:LinkId(8)
+0143 |m| styles=0-1:link links=0-1:LinkId(8)
+0144 |.|
+0145 ||
+0146 |b| styles=0-1:strong+link links=0-1:LinkId(9)
+0147 |o| styles=0-1:strong+link links=0-1:LinkId(9)
+0148 |l| styles=0-1:strong+link links=0-1:LinkId(9)
+0149 |d| styles=0-1:strong+link links=0-1:LinkId(9)
+0150 || styles=0-1:strong+link links=0-1:LinkId(9)
+0151 |l| styles=0-1:strong+link links=0-1:LinkId(9)
+0152 |i| styles=0-1:strong+link links=0-1:LinkId(9)
+0153 |n| styles=0-1:strong+link links=0-1:LinkId(9)
+0154 |k| styles=0-1:strong+link links=0-1:LinkId(9)
+0155 ||
+0156 |a|
+0157 |n|
+0158 |d|
+0159 ||
+0160 |l| styles=0-1:strong+link links=0-1:LinkId(10)
+0161 |i| styles=0-1:strong+link links=0-1:LinkId(10)
+0162 |n| styles=0-1:strong+link links=0-1:LinkId(10)
+0163 |k| styles=0-1:strong+link links=0-1:LinkId(10)
+0164 || styles=0-1:strong+link links=0-1:LinkId(10)
+0165 |i| styles=0-1:strong+link links=0-1:LinkId(10)
+0166 |n| styles=0-1:strong+link links=0-1:LinkId(10)
+0167 |s| styles=0-1:strong+link links=0-1:LinkId(10)
+0168 |i| styles=0-1:strong+link links=0-1:LinkId(10)
+0169 |d| styles=0-1:strong+link links=0-1:LinkId(10)
+0170 |e| styles=0-1:strong+link links=0-1:LinkId(10)
+0171 || styles=0-1:strong+link links=0-1:LinkId(10)
+0172 |s| styles=0-1:strong+link links=0-1:LinkId(10)
+0173 |t| styles=0-1:strong+link links=0-1:LinkId(10)
+0174 |r| styles=0-1:strong+link links=0-1:LinkId(10)
+0175 |o| styles=0-1:strong+link links=0-1:LinkId(10)
+0176 |n| styles=0-1:strong+link links=0-1:LinkId(10)
+0177 |g| styles=0-1:strong+link links=0-1:LinkId(10)
+0178 |.|
+0179 ||
+0180 |A|
+0181 ||
+0182 |l|
+0183 |o|
+0184 |n|
+0185 |g|
+0186 ||
+0187 |l|
+0188 |i|
+0189 |n|
+0190 |e|
+0191 ||
+0192 |w|
+0193 |i|
+0194 |t|
+0195 |h|
+0196 ||
+0197 |f| styles=0-1:link links=0-1:LinkId(11)
+0198 |i| styles=0-1:link links=0-1:LinkId(11)
+0199 |r| styles=0-1:link links=0-1:LinkId(11)
+0200 |s| styles=0-1:link links=0-1:LinkId(11)
+0201 |t| styles=0-1:link links=0-1:LinkId(11)
+0202 |,|
+0203 ||
+0204 |s| styles=0-1:link links=0-1:LinkId(12)
+0205 |e| styles=0-1:link links=0-1:LinkId(12)
+0206 |c| styles=0-1:link links=0-1:LinkId(12)
+0207 |o| styles=0-1:link links=0-1:LinkId(12)
+0208 |n| styles=0-1:link links=0-1:LinkId(12)
+0209 |d| styles=0-1:link links=0-1:LinkId(12)
+0210 |,|
+0211 ||
+0212 |t| styles=0-1:link links=0-1:LinkId(13)
+0213 |h| styles=0-1:link links=0-1:LinkId(13)
+0214 |i| styles=0-1:link links=0-1:LinkId(13)
+0215 |r| styles=0-1:link links=0-1:LinkId(13)
+0216 |d| styles=0-1:link links=0-1:LinkId(13)
+0217 |,|
+0218 ||
+0219 |f| styles=0-1:link links=0-1:LinkId(14)
+0220 |o| styles=0-1:link links=0-1:LinkId(14)
+0221 |u| styles=0-1:link links=0-1:LinkId(14)
+0222 |r| styles=0-1:link links=0-1:LinkId(14)
+0223 |t| styles=0-1:link links=0-1:LinkId(14)
+0224 |h| styles=0-1:link links=0-1:LinkId(14)
+0225 |,|
+0226 ||
+0227 |a|
+0228 |n|
+0229 |d|
+0230 ||
+0231 |m|
+0232 |o|
+0233 |r|
+0234 |e|
+0235 ||
+0236 |t|
+0237 |e|
+0238 |x|
+0239 |t|
+0240 ||
+0241 |t|
+0242 |o|
+0243 ||
+0244 |f|
+0245 |o|
+0246 |r|
+0247 |c|
+0248 |e|
+0249 ||
+0250 |w|
+0251 |r|
+0252 |a|
+0253 |p|
+0254 |p|
+0255 |i|
+0256 |n|
+0257 |g|
+0258 ||
+0259 |a|
+0260 |t|
+0261 ||
+0262 |n|
+0263 |a|
+0264 |r|
+0265 |r|
+0266 |o|
+0267 |w|
+0268 ||
+0269 |w|
+0270 |i|
+0271 |d|
+0272 |t|
+0273 |h|
+0274 |s|
+0275 |.|
+==== width=20 rows=19 content=15 blank=4 groups=5 math=0 ====
+0000 |inline and titled an| styles=0-6:link,11-17:link links=0-6:LinkId(0),11-17:LinkId(1)
+0001 |d empty.| styles=2-7:link links=2-7:LinkId(2)
+0002 ||
+0003 |reference and collap| styles=0-9:link,14-20:link links=0-9:LinkId(3),14-20:LinkId(4)
+0004 |sed and shortcut.| styles=0-3:link,8-16:link links=0-3:LinkId(4),8-16:LinkId(5)
+0005 ||
+0006 |https://example.com/| styles=0-20:link links=0-20:LinkId(6)
+0007 |auto?q=1 and user@ex| styles=0-8:link,13-20:link links=0-8:LinkId(6),13-20:LinkId(7)
+0008 |ample.com and mailto| styles=0-9:link,14-20:link links=0-9:LinkId(7),14-20:LinkId(8)
+0009 |:user@example.com.| styles=0-17:link links=0-17:LinkId(8)
+0010 ||
+0011 |bold link and link i| styles=0-9:strong+link,14-20:strong+link links=0-9:LinkId(9),14-20:LinkId(10)
+0012 |nside strong.| styles=0-12:strong+link links=0-12:LinkId(10)
+0013 ||
+0014 |A long line with fir| styles=17-20:link links=17-20:LinkId(11)
+0015 |st, second, third, f| styles=0-2:link,4-10:link,12-17:link,19-20:link links=0-2:LinkId(11),4-10:LinkId(12),12-17:LinkId(13),19-20:LinkId(14)
+0016 |ourth, and more text| styles=0-5:link links=0-5:LinkId(14)
+0017 | to force wrapping a|
+0018 |t narrow widths.|
+==== width=80 rows=10 content=6 blank=4 groups=5 math=0 ====
+0000 |inline and titled and empty.| styles=0-6:link,11-17:link,22-27:link links=0-6:LinkId(0),11-17:LinkId(1),22-27:LinkId(2)
+0001 ||
+0002 |reference and collapsed and shortcut.| styles=0-9:link,14-23:link,28-36:link links=0-9:LinkId(3),14-23:LinkId(4),28-36:LinkId(5)
+0003 ||
+0004 |https://example.com/auto?q=1 and user@example.com and mailto:user@example.com.| styles=0-28:link,33-49:link,54-77:link links=0-28:LinkId(6),33-49:LinkId(7),54-77:LinkId(8)
+0005 ||
+0006 |bold link and link inside strong.| styles=0-9:strong+link,14-32:strong+link links=0-9:LinkId(9),14-32:LinkId(10)
+0007 ||
+0008 |A long line with first, second, third, fourth, and more text to force wrapping a| styles=17-22:link,24-30:link,32-37:link,39-45:link links=17-22:LinkId(11),24-30:LinkId(12),32-37:LinkId(13),39-45:LinkId(14)
+0009 |t narrow widths.|
+==== width=120 rows=9 content=5 blank=4 groups=5 math=0 ====
+0000 |inline and titled and empty.| styles=0-6:link,11-17:link,22-27:link links=0-6:LinkId(0),11-17:LinkId(1),22-27:LinkId(2)
+0001 ||
+0002 |reference and collapsed and shortcut.| styles=0-9:link,14-23:link,28-36:link links=0-9:LinkId(3),14-23:LinkId(4),28-36:LinkId(5)
+0003 ||
+0004 |https://example.com/auto?q=1 and user@example.com and mailto:user@example.com.| styles=0-28:link,33-49:link,54-77:link links=0-28:LinkId(6),33-49:LinkId(7),54-77:LinkId(8)
+0005 ||
+0006 |bold link and link inside strong.| styles=0-9:strong+link,14-32:strong+link links=0-9:LinkId(9),14-32:LinkId(10)
+0007 ||
+0008 |A long line with first, second, third, fourth, and more text to force wrapping at narrow widths.| styles=17-22:link,24-30:link,32-37:link,39-45:link links=17-22:LinkId(11),24-30:LinkId(12),32-37:LinkId(13),39-45:LinkId(14)

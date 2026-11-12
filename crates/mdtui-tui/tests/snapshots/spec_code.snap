@@ -1,0 +1,290 @@
+---
+source: tests/static_render.rs
+---
+==== width=1 rows=179 content=168 blank=11 groups=12 math=0 ====
+0000 |B|
+0001 |e|
+0002 |f|
+0003 |o|
+0004 |r|
+0005 |e|
+0006 ||
+0007 |t|
+0008 |h|
+0009 |e|
+0010 ||
+0011 |f|
+0012 |i|
+0013 |r|
+0014 |s|
+0015 |t|
+0016 ||
+0017 |f|
+0018 |e|
+0019 |n|
+0020 |c|
+0021 |e|
+0022 |.|
+0023 ||
+0024 |[| styles=0-1:meta
+0025 || styles=0-1:code
+0026 || styles=0-1:code
+0027 || styles=0-1:code
+0028 ||
+0029 |B|
+0030 |e|
+0031 |t|
+0032 |w|
+0033 |e|
+0034 |e|
+0035 |n|
+0036 ||
+0037 |f|
+0038 |e|
+0039 |n|
+0040 |c|
+0041 |e|
+0042 |s|
+0043 |.|
+0044 ||
+0045 || styles=0-1:code
+0046 ||
+0047 |[| styles=0-1:meta
+0048 || styles=0-1:code
+0049 ||
+0050 || styles=0-1:code
+0051 || styles=0-1:code
+0052 ||
+0053 |[| styles=0-1:meta
+0054 || styles=0-1:code
+0055 || styles=0-1:code
+0056 || styles=0-1:code
+0057 ||
+0058 |[| styles=0-1:meta
+0059 || styles=0-1:code
+0060 ||
+0061 |A|
+0062 ||
+0063 |p|
+0064 |a|
+0065 |r|
+0066 |a|
+0067 |g|
+0068 |r|
+0069 |a|
+0070 |p|
+0071 |h|
+0072 ||
+0073 |i|
+0074 |m|
+0075 |m|
+0076 |e|
+0077 |d|
+0078 |i|
+0079 |a|
+0080 |t|
+0081 |e|
+0082 |l|
+0083 |y|
+0084 ||
+0085 |b|
+0086 |e|
+0087 |f|
+0088 |o|
+0089 |r|
+0090 |e|
+0091 ||
+0092 |a|
+0093 |n|
+0094 ||
+0095 |i|
+0096 |n|
+0097 |f|
+0098 |o|
+0099 |-|
+0100 |o|
+0101 |n|
+0102 |l|
+0103 |y|
+0104 ||
+0105 |e|
+0106 |m|
+0107 |p|
+0108 |t|
+0109 |y|
+0110 ||
+0111 |f|
+0112 |e|
+0113 |n|
+0114 |c|
+0115 |e|
+0116 |.|
+0117 ||
+0118 |[| styles=0-1:meta
+0119 ||
+0120 |A|
+0121 ||
+0122 |p|
+0123 |a|
+0124 |r|
+0125 |a|
+0126 |g|
+0127 |r|
+0128 |a|
+0129 |p|
+0130 |h|
+0131 ||
+0132 |i|
+0133 |m|
+0134 |m|
+0135 |e|
+0136 |d|
+0137 |i|
+0138 |a|
+0139 |t|
+0140 |e|
+0141 |l|
+0142 |y|
+0143 ||
+0144 |a|
+0145 |f|
+0146 |t|
+0147 |e|
+0148 |r|
+0149 ||
+0150 |t|
+0151 |h|
+0152 |e|
+0153 ||
+0154 |i|
+0155 |n|
+0156 |f|
+0157 |o|
+0158 |-|
+0159 |o|
+0160 |n|
+0161 |l|
+0162 |y|
+0163 ||
+0164 |e|
+0165 |m|
+0166 |p|
+0167 |t|
+0168 |y|
+0169 ||
+0170 |f|
+0171 |e|
+0172 |n|
+0173 |c|
+0174 |e|
+0175 |.|
+0176 ||
+0177 |[| styles=0-1:meta
+0178 || styles=0-1:code
+==== width=20 rows=38 content=27 blank=11 groups=12 math=0 ====
+0000 |Before the first fen|
+0001 |ce.|
+0002 ||
+0003 |[rust linenos extra=| styles=0-20:meta
+0004 |  fn main() {| styles=0-13:code
+0005 |      println!("hell| styles=0-20:code
+0006 |  }| styles=0-3:code
+0007 ||
+0008 |Between fences.|
+0009 ||
+0010 |  no language inform| styles=0-20:code
+0011 ||
+0012 |[python]| styles=0-8:meta
+0013 |  print("tilde fence| styles=0-20:code
+0014 ||
+0015 |  indented code line| styles=0-20:code
+0016 |  indented code line| styles=0-20:code
+0017 ||
+0018 |[text]| styles=0-6:meta
+0019 |  line one| styles=0-10:code
+0020 || styles=0-2:code
+0021 |  line three after a| styles=0-20:code
+0022 ||
+0023 |[text]| styles=0-6:meta
+0024 |  This is a delibera| styles=0-20:code
+0025 ||
+0026 |A paragraph immediat|
+0027 |ely before an info-o|
+0028 |nly empty fence.|
+0029 ||
+0030 |[python]| styles=0-8:meta
+0031 ||
+0032 |A paragraph immediat|
+0033 |ely after the info-o|
+0034 |nly empty fence.|
+0035 ||
+0036 |[unclosed]| styles=0-10:meta
+0037 |  unclosed code bloc| styles=0-20:code
+==== width=80 rows=33 content=22 blank=11 groups=12 math=0 ====
+0000 |Before the first fence.|
+0001 ||
+0002 |[rust linenos extra=1]| styles=0-22:meta
+0003 |  fn main() {| styles=0-13:code
+0004 |      println!("hello");| styles=0-24:code
+0005 |  }| styles=0-3:code
+0006 ||
+0007 |Between fences.|
+0008 ||
+0009 |  no language information| styles=0-25:code
+0010 ||
+0011 |[python]| styles=0-8:meta
+0012 |  print("tilde fence")| styles=0-22:code
+0013 ||
+0014 |  indented code line one| styles=0-24:code
+0015 |  indented code line two| styles=0-24:code
+0016 ||
+0017 |[text]| styles=0-6:meta
+0018 |  line one| styles=0-10:code
+0019 || styles=0-2:code
+0020 |  line three after a blank code line| styles=0-36:code
+0021 ||
+0022 |[text]| styles=0-6:meta
+0023 |  This is a deliberately long code line with many repeated words to exceed commo| styles=0-80:code
+0024 ||
+0025 |A paragraph immediately before an info-only empty fence.|
+0026 ||
+0027 |[python]| styles=0-8:meta
+0028 ||
+0029 |A paragraph immediately after the info-only empty fence.|
+0030 ||
+0031 |[unclosed]| styles=0-10:meta
+0032 |  unclosed code block stays code to EOF| styles=0-39:code
+==== width=120 rows=33 content=22 blank=11 groups=12 math=0 ====
+0000 |Before the first fence.|
+0001 ||
+0002 |[rust linenos extra=1]| styles=0-22:meta
+0003 |  fn main() {| styles=0-13:code
+0004 |      println!("hello");| styles=0-24:code
+0005 |  }| styles=0-3:code
+0006 ||
+0007 |Between fences.|
+0008 ||
+0009 |  no language information| styles=0-25:code
+0010 ||
+0011 |[python]| styles=0-8:meta
+0012 |  print("tilde fence")| styles=0-22:code
+0013 ||
+0014 |  indented code line one| styles=0-24:code
+0015 |  indented code line two| styles=0-24:code
+0016 ||
+0017 |[text]| styles=0-6:meta
+0018 |  line one| styles=0-10:code
+0019 || styles=0-2:code
+0020 |  line three after a blank code line| styles=0-36:code
+0021 ||
+0022 |[text]| styles=0-6:meta
+0023 |  This is a deliberately long code line with many repeated words to exceed common terminal widths without wrapping: alph| styles=0-120:code
+0024 ||
+0025 |A paragraph immediately before an info-only empty fence.|
+0026 ||
+0027 |[python]| styles=0-8:meta
+0028 ||
+0029 |A paragraph immediately after the info-only empty fence.|
+0030 ||
+0031 |[unclosed]| styles=0-10:meta
+0032 |  unclosed code block stays code to EOF| styles=0-39:code

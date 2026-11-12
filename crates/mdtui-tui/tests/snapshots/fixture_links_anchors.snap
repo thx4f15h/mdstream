@@ -1,0 +1,296 @@
+---
+source: tests/static_render.rs
+---
+==== width=1 rows=197 content=184 blank=13 groups=14 math=0 ====
+0000 |A| styles=0-1:H1
+0001 ||
+0002 |a| styles=0-1:H2
+0003 ||
+0004 |A| styles=0-1:H2
+0005 ||
+0006 ||
+0007 ||
+0008 ||
+0009 ||
+0010 |1| styles=0-1:H1
+0011 ||
+0012 |C| styles=0-1:H1
+0013 ||
+0014 ||
+0015 ||
+0016 ||
+0017 ||
+0018 |a| styles=0-1:H1
+0019 ||
+0020 |A| styles=0-1:H1
+0021 ||
+0022 |a| styles=0-1:H1
+0023 ||
+0024 |a| styles=0-1:H1
+0025 ||
+0026 |d| styles=0-1:link links=0-1:LinkId(0)
+0027 |u| styles=0-1:link links=0-1:LinkId(0)
+0028 |p| styles=0-1:link links=0-1:LinkId(0)
+0029 |l| styles=0-1:link links=0-1:LinkId(0)
+0030 |i| styles=0-1:link links=0-1:LinkId(0)
+0031 |c| styles=0-1:link links=0-1:LinkId(0)
+0032 |a| styles=0-1:link links=0-1:LinkId(0)
+0033 |t| styles=0-1:link links=0-1:LinkId(0)
+0034 |e| styles=0-1:link links=0-1:LinkId(0)
+0035 ||
+0036 |p| styles=0-1:link links=0-1:LinkId(1)
+0037 |e| styles=0-1:link links=0-1:LinkId(1)
+0038 |r| styles=0-1:link links=0-1:LinkId(1)
+0039 |c| styles=0-1:link links=0-1:LinkId(1)
+0040 |e| styles=0-1:link links=0-1:LinkId(1)
+0041 |n| styles=0-1:link links=0-1:LinkId(1)
+0042 |t| styles=0-1:link links=0-1:LinkId(1)
+0043 ||
+0044 |c| styles=0-1:link links=0-1:LinkId(2)
+0045 |a| styles=0-1:link links=0-1:LinkId(2)
+0046 |s| styles=0-1:link links=0-1:LinkId(2)
+0047 |e| styles=0-1:link links=0-1:LinkId(2)
+0048 ||
+0049 |e| styles=0-1:link links=0-1:LinkId(3)
+0050 |m| styles=0-1:link links=0-1:LinkId(3)
+0051 |p| styles=0-1:link links=0-1:LinkId(3)
+0052 |t| styles=0-1:link links=0-1:LinkId(3)
+0053 |y| styles=0-1:link links=0-1:LinkId(3)
+0054 ||
+0055 |m| styles=0-1:link links=0-1:LinkId(4)
+0056 |a| styles=0-1:link links=0-1:LinkId(4)
+0057 |l| styles=0-1:link links=0-1:LinkId(4)
+0058 |f| styles=0-1:link links=0-1:LinkId(4)
+0059 |o| styles=0-1:link links=0-1:LinkId(4)
+0060 |r| styles=0-1:link links=0-1:LinkId(4)
+0061 |m| styles=0-1:link links=0-1:LinkId(4)
+0062 |e| styles=0-1:link links=0-1:LinkId(4)
+0063 |d| styles=0-1:link links=0-1:LinkId(4)
+0064 || styles=0-1:link links=0-1:LinkId(4)
+0065 |p| styles=0-1:link links=0-1:LinkId(4)
+0066 |e| styles=0-1:link links=0-1:LinkId(4)
+0067 |r| styles=0-1:link links=0-1:LinkId(4)
+0068 |c| styles=0-1:link links=0-1:LinkId(4)
+0069 |e| styles=0-1:link links=0-1:LinkId(4)
+0070 |n| styles=0-1:link links=0-1:LinkId(4)
+0071 |t| styles=0-1:link links=0-1:LinkId(4)
+0072 ||
+0073 |u| styles=0-1:link links=0-1:LinkId(5)
+0074 |n| styles=0-1:link links=0-1:LinkId(5)
+0075 |d| styles=0-1:link links=0-1:LinkId(5)
+0076 |e| styles=0-1:link links=0-1:LinkId(5)
+0077 |r| styles=0-1:link links=0-1:LinkId(5)
+0078 |s| styles=0-1:link links=0-1:LinkId(5)
+0079 |c| styles=0-1:link links=0-1:LinkId(5)
+0080 |o| styles=0-1:link links=0-1:LinkId(5)
+0081 |r| styles=0-1:link links=0-1:LinkId(5)
+0082 |e| styles=0-1:link links=0-1:LinkId(5)
+0083 || styles=0-1:link links=0-1:LinkId(5)
+0084 |r| styles=0-1:link links=0-1:LinkId(5)
+0085 |a| styles=0-1:link links=0-1:LinkId(5)
+0086 |w| styles=0-1:link links=0-1:LinkId(5)
+0087 ||
+0088 |u| styles=0-1:link links=0-1:LinkId(6)
+0089 |n| styles=0-1:link links=0-1:LinkId(6)
+0090 |d| styles=0-1:link links=0-1:LinkId(6)
+0091 |e| styles=0-1:link links=0-1:LinkId(6)
+0092 |r| styles=0-1:link links=0-1:LinkId(6)
+0093 |s| styles=0-1:link links=0-1:LinkId(6)
+0094 |c| styles=0-1:link links=0-1:LinkId(6)
+0095 |o| styles=0-1:link links=0-1:LinkId(6)
+0096 |r| styles=0-1:link links=0-1:LinkId(6)
+0097 |e| styles=0-1:link links=0-1:LinkId(6)
+0098 || styles=0-1:link links=0-1:LinkId(6)
+0099 |e| styles=0-1:link links=0-1:LinkId(6)
+0100 |s| styles=0-1:link links=0-1:LinkId(6)
+0101 |c| styles=0-1:link links=0-1:LinkId(6)
+0102 |a| styles=0-1:link links=0-1:LinkId(6)
+0103 |p| styles=0-1:link links=0-1:LinkId(6)
+0104 |e| styles=0-1:link links=0-1:LinkId(6)
+0105 |d| styles=0-1:link links=0-1:LinkId(6)
+0106 ||
+0107 |h| styles=0-1:link links=0-1:LinkId(7)
+0108 |e| styles=0-1:link links=0-1:LinkId(7)
+0109 |x| styles=0-1:link links=0-1:LinkId(7)
+0110 || styles=0-1:link links=0-1:LinkId(7)
+0111 |a| styles=0-1:link links=0-1:LinkId(7)
+0112 ||
+0113 |e| styles=0-1:link links=0-1:LinkId(8)
+0114 |s| styles=0-1:link links=0-1:LinkId(8)
+0115 |c| styles=0-1:link links=0-1:LinkId(8)
+0116 |a| styles=0-1:link links=0-1:LinkId(8)
+0117 |p| styles=0-1:link links=0-1:LinkId(8)
+0118 |e| styles=0-1:link links=0-1:LinkId(8)
+0119 |d| styles=0-1:link links=0-1:LinkId(8)
+0120 || styles=0-1:link links=0-1:LinkId(8)
+0121 |a| styles=0-1:link links=0-1:LinkId(8)
+0122 |m| styles=0-1:link links=0-1:LinkId(8)
+0123 |p| styles=0-1:link links=0-1:LinkId(8)
+0124 || styles=0-1:link links=0-1:LinkId(8)
+0125 |o| styles=0-1:link links=0-1:LinkId(8)
+0126 |n| styles=0-1:link links=0-1:LinkId(8)
+0127 |l| styles=0-1:link links=0-1:LinkId(8)
+0128 |y| styles=0-1:link links=0-1:LinkId(8)
+0129 ||
+0130 |u| styles=0-1:link links=0-1:LinkId(9)
+0131 |p| styles=0-1:link links=0-1:LinkId(9)
+0132 |p| styles=0-1:link links=0-1:LinkId(9)
+0133 |e| styles=0-1:link links=0-1:LinkId(9)
+0134 |r| styles=0-1:link links=0-1:LinkId(9)
+0135 |c| styles=0-1:link links=0-1:LinkId(9)
+0136 |a| styles=0-1:link links=0-1:LinkId(9)
+0137 |s| styles=0-1:link links=0-1:LinkId(9)
+0138 |e| styles=0-1:link links=0-1:LinkId(9)
+0139 || styles=0-1:link links=0-1:LinkId(9)
+0140 |e| styles=0-1:link links=0-1:LinkId(9)
+0141 |n| styles=0-1:link links=0-1:LinkId(9)
+0142 |t| styles=0-1:link links=0-1:LinkId(9)
+0143 |i| styles=0-1:link links=0-1:LinkId(9)
+0144 |t| styles=0-1:link links=0-1:LinkId(9)
+0145 |y| styles=0-1:link links=0-1:LinkId(9)
+0146 ||
+0147 |l| styles=0-1:link links=0-1:LinkId(10)
+0148 |i| styles=0-1:link links=0-1:LinkId(10)
+0149 |t| styles=0-1:link links=0-1:LinkId(10)
+0150 |e| styles=0-1:link links=0-1:LinkId(10)
+0151 |r| styles=0-1:link links=0-1:LinkId(10)
+0152 |a| styles=0-1:link links=0-1:LinkId(10)
+0153 |l| styles=0-1:link links=0-1:LinkId(10)
+0154 || styles=0-1:link links=0-1:LinkId(10)
+0155 |a| styles=0-1:link links=0-1:LinkId(10)
+0156 |m| styles=0-1:link links=0-1:LinkId(10)
+0157 |p| styles=0-1:link links=0-1:LinkId(10)
+0158 || styles=0-1:link links=0-1:LinkId(10)
+0159 |e| styles=0-1:link links=0-1:LinkId(10)
+0160 |n| styles=0-1:link links=0-1:LinkId(10)
+0161 |t| styles=0-1:link links=0-1:LinkId(10)
+0162 |i| styles=0-1:link links=0-1:LinkId(10)
+0163 |t| styles=0-1:link links=0-1:LinkId(10)
+0164 |y| styles=0-1:link links=0-1:LinkId(10)
+0165 ||
+0166 |s| styles=0-1:link links=0-1:LinkId(11)
+0167 |p| styles=0-1:link links=0-1:LinkId(11)
+0168 |a| styles=0-1:link links=0-1:LinkId(11)
+0169 |c| styles=0-1:link links=0-1:LinkId(11)
+0170 |e| styles=0-1:link links=0-1:LinkId(11)
+0171 || styles=0-1:link links=0-1:LinkId(11)
+0172 |h| styles=0-1:link links=0-1:LinkId(11)
+0173 |e| styles=0-1:link links=0-1:LinkId(11)
+0174 |a| styles=0-1:link links=0-1:LinkId(11)
+0175 |d| styles=0-1:link links=0-1:LinkId(11)
+0176 |i| styles=0-1:link links=0-1:LinkId(11)
+0177 |n| styles=0-1:link links=0-1:LinkId(11)
+0178 |g| styles=0-1:link links=0-1:LinkId(11)
+0179 ||
+0180 |h| styles=0-1:link links=0-1:LinkId(12)
+0181 |a| styles=0-1:link links=0-1:LinkId(12)
+0182 |s| styles=0-1:link links=0-1:LinkId(12)
+0183 |h| styles=0-1:link links=0-1:LinkId(12)
+0184 ||
+0185 |s| styles=0-1:link links=0-1:LinkId(13)
+0186 |t| styles=0-1:link links=0-1:LinkId(13)
+0187 |a| styles=0-1:link links=0-1:LinkId(13)
+0188 |r| styles=0-1:link links=0-1:LinkId(13)
+0189 || styles=0-1:link links=0-1:LinkId(13)
+0190 |h| styles=0-1:link links=0-1:LinkId(13)
+0191 |e| styles=0-1:link links=0-1:LinkId(13)
+0192 |a| styles=0-1:link links=0-1:LinkId(13)
+0193 |d| styles=0-1:link links=0-1:LinkId(13)
+0194 |i| styles=0-1:link links=0-1:LinkId(13)
+0195 |n| styles=0-1:link links=0-1:LinkId(13)
+0196 |g| styles=0-1:link links=0-1:LinkId(13)
+==== width=20 rows=35 content=22 blank=13 groups=14 math=0 ====
+0000 |Anchor fixture| styles=0-14:H1
+0001 ||
+0002 |a_b| styles=0-3:H2
+0003 ||
+0004 |A B| styles=0-3:H2
+0005 ||
+0006 |重复| styles=0-4:H2 wide=base@0:2,cont@1,base@2:2,cont@3
+0007 ||
+0008 |重复| styles=0-4:H2 wide=base@0:2,cont@1,base@2:2,cont@3
+0009 ||
+0010 |100% done| styles=0-9:H1
+0011 ||
+0012 |Case Sensitive| styles=0-14:H1
+0013 ||
+0014 |空格 与 中文| styles=0-12:H1 wide=base@0:2,cont@1,base@2:2,cont@3,base@5:2,cont@6,base@8:2,cont@9,base@10:2,cont@11
+0015 ||
+0016 |井号| styles=0-4:H1 wide=base@0:2,cont@1,base@2:2,cont@3
+0017 ||
+0018 |a&b| styles=0-3:H1
+0019 ||
+0020 |A| styles=0-1:H1
+0021 ||
+0022 |a| styles=0-1:H1
+0023 ||
+0024 |a*b| styles=0-3:H1
+0025 ||
+0026 |duplicate percent ca| styles=0-9:link,10-17:link,18-20:link links=0-9:LinkId(0),10-17:LinkId(1),18-20:LinkId(2)
+0027 |se empty malformed p| styles=0-2:link,3-8:link,9-20:link links=0-2:LinkId(2),3-8:LinkId(3),9-20:LinkId(4)
+0028 |ercent underscore ra| styles=0-6:link,7-20:link links=0-6:LinkId(4),7-20:LinkId(5)
+0029 |w underscore escaped| styles=0-1:link,2-20:link links=0-1:LinkId(5),2-20:LinkId(6)
+0030 | hex a escaped amp o| styles=1-6:link,7-20:link links=1-6:LinkId(7),7-20:LinkId(8)
+0031 |nly uppercase entity| styles=0-3:link,4-20:link links=0-3:LinkId(8),4-20:LinkId(9)
+0032 | literal amp entity| styles=1-19:link links=1-19:LinkId(10)
+0033 |space heading hash s| styles=0-13:link,14-18:link,19-20:link links=0-13:LinkId(11),14-18:LinkId(12),19-20:LinkId(13)
+0034 |tar heading| styles=0-11:link links=0-11:LinkId(13)
+==== width=80 rows=29 content=16 blank=13 groups=14 math=0 ====
+0000 |Anchor fixture| styles=0-14:H1
+0001 ||
+0002 |a_b| styles=0-3:H2
+0003 ||
+0004 |A B| styles=0-3:H2
+0005 ||
+0006 |重复| styles=0-4:H2 wide=base@0:2,cont@1,base@2:2,cont@3
+0007 ||
+0008 |重复| styles=0-4:H2 wide=base@0:2,cont@1,base@2:2,cont@3
+0009 ||
+0010 |100% done| styles=0-9:H1
+0011 ||
+0012 |Case Sensitive| styles=0-14:H1
+0013 ||
+0014 |空格 与 中文| styles=0-12:H1 wide=base@0:2,cont@1,base@2:2,cont@3,base@5:2,cont@6,base@8:2,cont@9,base@10:2,cont@11
+0015 ||
+0016 |井号| styles=0-4:H1 wide=base@0:2,cont@1,base@2:2,cont@3
+0017 ||
+0018 |a&b| styles=0-3:H1
+0019 ||
+0020 |A| styles=0-1:H1
+0021 ||
+0022 |a| styles=0-1:H1
+0023 ||
+0024 |a*b| styles=0-3:H1
+0025 ||
+0026 |duplicate percent case empty malformed percent underscore raw underscore escaped| styles=0-9:link,10-17:link,18-22:link,23-28:link,29-46:link,47-61:link,62-80:link links=0-9:LinkId(0),10-17:LinkId(1),18-22:LinkId(2),23-28:LinkId(3),29-46:LinkId(4),47-61:LinkId(5),62-80:LinkId(6)
+0027 | hex a escaped amp only uppercase entity literal amp entity space heading hash s| styles=1-6:link,7-23:link,24-40:link,41-59:link,60-73:link,74-78:link,79-80:link links=1-6:LinkId(7),7-23:LinkId(8),24-40:LinkId(9),41-59:LinkId(10),60-73:LinkId(11),74-78:LinkId(12),79-80:LinkId(13)
+0028 |tar heading| styles=0-11:link links=0-11:LinkId(13)
+==== width=120 rows=28 content=15 blank=13 groups=14 math=0 ====
+0000 |Anchor fixture| styles=0-14:H1
+0001 ||
+0002 |a_b| styles=0-3:H2
+0003 ||
+0004 |A B| styles=0-3:H2
+0005 ||
+0006 |重复| styles=0-4:H2 wide=base@0:2,cont@1,base@2:2,cont@3
+0007 ||
+0008 |重复| styles=0-4:H2 wide=base@0:2,cont@1,base@2:2,cont@3
+0009 ||
+0010 |100% done| styles=0-9:H1
+0011 ||
+0012 |Case Sensitive| styles=0-14:H1
+0013 ||
+0014 |空格 与 中文| styles=0-12:H1 wide=base@0:2,cont@1,base@2:2,cont@3,base@5:2,cont@6,base@8:2,cont@9,base@10:2,cont@11
+0015 ||
+0016 |井号| styles=0-4:H1 wide=base@0:2,cont@1,base@2:2,cont@3
+0017 ||
+0018 |a&b| styles=0-3:H1
+0019 ||
+0020 |A| styles=0-1:H1
+0021 ||
+0022 |a| styles=0-1:H1
+0023 ||
+0024 |a*b| styles=0-3:H1
+0025 ||
+0026 |duplicate percent case empty malformed percent underscore raw underscore escaped hex a escaped amp only uppercase entity| styles=0-9:link,10-17:link,18-22:link,23-28:link,29-46:link,47-61:link,62-80:link,81-86:link,87-103:link,104-120:link links=0-9:LinkId(0),10-17:LinkId(1),18-22:LinkId(2),23-28:LinkId(3),29-46:LinkId(4),47-61:LinkId(5),62-80:LinkId(6),81-86:LinkId(7),87-103:LinkId(8),104-120:LinkId(9)
+0027 | literal amp entity space heading hash star heading| styles=1-19:link,20-33:link,34-38:link,39-51:link links=1-19:LinkId(10),20-33:LinkId(11),34-38:LinkId(12),39-51:LinkId(13)

@@ -5,3 +5,13 @@ resolver = "3"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+
+[workspace.dependencies]
+crossterm = "=0.29.0"
+mdtui3 = { package = "mdstream-core", path = "crates/mdstream-core" }
+unicode-segmentation = "=1.13.3"
+unicode-width = "=0.2.3"
+insta = "=1.49.0"
+portable-pty = "=0.9.0"
+tempfile = "=3.27.0"
+vt100 = "=0.18.1"

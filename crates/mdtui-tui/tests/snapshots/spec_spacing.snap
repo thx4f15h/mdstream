@@ -1,0 +1,358 @@
+---
+source: tests/static_render.rs
+---
+==== width=1 rows=212 content=200 blank=12 groups=19 math=0 ====
+0000 |P|
+0001 |a|
+0002 |r|
+0003 |a|
+0004 |g|
+0005 |r|
+0006 |a|
+0007 |p|
+0008 |h|
+0009 ||
+0010 |A|
+0011 |.|
+0012 ||
+0013 |P|
+0014 |a|
+0015 |r|
+0016 |a|
+0017 |g|
+0018 |r|
+0019 |a|
+0020 |p|
+0021 |h|
+0022 ||
+0023 |B|
+0024 ||
+0025 |a|
+0026 |f|
+0027 |t|
+0028 |e|
+0029 |r|
+0030 ||
+0031 |o|
+0032 |n|
+0033 |e|
+0034 ||
+0035 |b|
+0036 |l|
+0037 |a|
+0038 |n|
+0039 |k|
+0040 ||
+0041 |l|
+0042 |i|
+0043 |n|
+0044 |e|
+0045 |.|
+0046 ||
+0047 |P|
+0048 |a|
+0049 |r|
+0050 |a|
+0051 |g|
+0052 |r|
+0053 |a|
+0054 |p|
+0055 |h|
+0056 ||
+0057 |b|
+0058 |e|
+0059 |f|
+0060 |o|
+0061 |r|
+0062 |e|
+0063 ||
+0064 |a|
+0065 ||
+0066 |l|
+0067 |i|
+0068 |s|
+0069 |t|
+0070 |.|
+0071 |•| styles=0-1:list-marker
+0072 |•| styles=0-1:list-marker
+0073 |•| styles=0-1:list-marker
+0074 |•| styles=0-1:list-marker
+0075 |1| styles=0-1:list-marker
+0076 |2| styles=0-1:list-marker
+0077 |[| styles=0-1:meta
+0078 || styles=0-1:code
+0079 |•| styles=0-1:list-marker
+0080 |─| styles=0-1:rule
+0081 |•| styles=0-1:list-marker
+0082 ||
+0083 |H| styles=0-1:H1
+0084 ||
+0085 |P|
+0086 |a|
+0087 |r|
+0088 |a|
+0089 |g|
+0090 |r|
+0091 |a|
+0092 |p|
+0093 |h|
+0094 ||
+0095 |a|
+0096 |f|
+0097 |t|
+0098 |e|
+0099 |r|
+0100 ||
+0101 |h|
+0102 |e|
+0103 |a|
+0104 |d|
+0105 |i|
+0106 |n|
+0107 |g|
+0108 |.|
+0109 ||
+0110 |│| styles=0-1:quote
+0111 ||
+0112 |P|
+0113 |a|
+0114 |r|
+0115 |a|
+0116 |g|
+0117 |r|
+0118 |a|
+0119 |p|
+0120 |h|
+0121 ||
+0122 |a|
+0123 |f|
+0124 |t|
+0125 |e|
+0126 |r|
+0127 ||
+0128 |q|
+0129 |u|
+0130 |o|
+0131 |t|
+0132 |e|
+0133 |.|
+0134 ||
+0135 |┌| styles=0-1:table-border
+0136 |│| styles=0-1:table-border
+0137 |╞| styles=0-1:table-border
+0138 |│| styles=0-1:table-border
+0139 |└| styles=0-1:table-border
+0140 ||
+0141 |P|
+0142 |a|
+0143 |r|
+0144 |a|
+0145 |g|
+0146 |r|
+0147 |a|
+0148 |p|
+0149 |h|
+0150 ||
+0151 |a|
+0152 |f|
+0153 |t|
+0154 |e|
+0155 |r|
+0156 ||
+0157 |t|
+0158 |a|
+0159 |b|
+0160 |l|
+0161 |e|
+0162 |.|
+0163 ||
+0164 |[| styles=0-1:meta
+0165 || styles=0-1:code
+0166 ||
+0167 |P|
+0168 |a|
+0169 |r|
+0170 |a|
+0171 |g|
+0172 |r|
+0173 |a|
+0174 |p|
+0175 |h|
+0176 ||
+0177 |a|
+0178 |f|
+0179 |t|
+0180 |e|
+0181 |r|
+0182 ||
+0183 |c|
+0184 |o|
+0185 |d|
+0186 |e|
+0187 |.|
+0188 ||
+0189 |─| styles=0-1:rule
+0190 ||
+0191 |P|
+0192 |a|
+0193 |r|
+0194 |a|
+0195 |g|
+0196 |r|
+0197 |a|
+0198 |p|
+0199 |h|
+0200 ||
+0201 |a|
+0202 |f|
+0203 |t|
+0204 |e|
+0205 |r|
+0206 ||
+0207 |r|
+0208 |u|
+0209 |l|
+0210 |e|
+0211 |.|
+==== width=20 rows=57 content=45 blank=12 groups=19 math=0 ====
+0000 |Paragraph A.|
+0001 ||
+0002 |Paragraph B after on|
+0003 |e blank line.|
+0004 ||
+0005 |Paragraph before a l|
+0006 |ist.|
+0007 |• bullet attached to| styles=0-2:list-marker
+0008 |  the paragraph|
+0009 |• second bullet| styles=0-2:list-marker
+0010 |• compact bullet| styles=0-2:list-marker
+0011 |  list|
+0012 |• second compact| styles=0-2:list-marker
+0013 |  bullet|
+0014 |1. compact ordered| styles=0-3:list-marker
+0015 |   list starts after|
+0016 |   a list without a|
+0017 |   blank line|
+0018 |2. second ordered| styles=0-3:list-marker
+0019 |   item|
+0020 |[text]| styles=0-6:meta
+0021 |  code before a list| styles=0-20:code
+0022 |• list attached to| styles=0-2:list-marker
+0023 |  code|
+0024 |────────────────────| styles=0-20:rule
+0025 |• list attached to a| styles=0-2:list-marker
+0026 |  rule|
+0027 ||
+0028 |Heading| styles=0-7:H1
+0029 ||
+0030 |Paragraph after head|
+0031 |ing.|
+0032 ||
+0033 |│ Quoted paragraph.| styles=0-2:quote
+0034 ||
+0035 |Paragraph after quot|
+0036 |e.|
+0037 ||
+0038 |┌─────┬───────┐| styles=0-15:table-border
+0039 |│ key │ value │| styles=0-2:table-border,5-8:table-border,13-15:table-border
+0040 |╞═════╪═══════╡| styles=0-15:table-border
+0041 |│ a   │ b     │| styles=0-2:table-border,3-8:table-border,9-15:table-border
+0042 |└─────┴───────┘| styles=0-15:table-border
+0043 ||
+0044 |Paragraph after tabl|
+0045 |e.|
+0046 ||
+0047 |[text]| styles=0-6:meta
+0048 |  code after paragra| styles=0-20:code
+0049 ||
+0050 |Paragraph after code|
+0051 |.|
+0052 ||
+0053 |────────────────────| styles=0-20:rule
+0054 ||
+0055 |Paragraph after rule|
+0056 |.|
+==== width=80 rows=41 content=29 blank=12 groups=19 math=0 ====
+0000 |Paragraph A.|
+0001 ||
+0002 |Paragraph B after one blank line.|
+0003 ||
+0004 |Paragraph before a list.|
+0005 |• bullet attached to the paragraph| styles=0-2:list-marker
+0006 |• second bullet| styles=0-2:list-marker
+0007 |• compact bullet list| styles=0-2:list-marker
+0008 |• second compact bullet| styles=0-2:list-marker
+0009 |1. compact ordered list starts after a list without a blank line| styles=0-3:list-marker
+0010 |2. second ordered item| styles=0-3:list-marker
+0011 |[text]| styles=0-6:meta
+0012 |  code before a list| styles=0-20:code
+0013 |• list attached to code| styles=0-2:list-marker
+0014 |────────────────────────────────────────────────────────────────────────────────| styles=0-80:rule
+0015 |• list attached to a rule| styles=0-2:list-marker
+0016 ||
+0017 |Heading| styles=0-7:H1
+0018 ||
+0019 |Paragraph after heading.|
+0020 ||
+0021 |│ Quoted paragraph.| styles=0-2:quote
+0022 ||
+0023 |Paragraph after quote.|
+0024 ||
+0025 |┌─────┬───────┐| styles=0-15:table-border
+0026 |│ key │ value │| styles=0-2:table-border,5-8:table-border,13-15:table-border
+0027 |╞═════╪═══════╡| styles=0-15:table-border
+0028 |│ a   │ b     │| styles=0-2:table-border,3-8:table-border,9-15:table-border
+0029 |└─────┴───────┘| styles=0-15:table-border
+0030 ||
+0031 |Paragraph after table.|
+0032 ||
+0033 |[text]| styles=0-6:meta
+0034 |  code after paragraph| styles=0-22:code
+0035 ||
+0036 |Paragraph after code.|
+0037 ||
+0038 |────────────────────────────────────────────────────────────────────────────────| styles=0-80:rule
+0039 ||
+0040 |Paragraph after rule.|
+==== width=120 rows=41 content=29 blank=12 groups=19 math=0 ====
+0000 |Paragraph A.|
+0001 ||
+0002 |Paragraph B after one blank line.|
+0003 ||
+0004 |Paragraph before a list.|
+0005 |• bullet attached to the paragraph| styles=0-2:list-marker
+0006 |• second bullet| styles=0-2:list-marker
+0007 |• compact bullet list| styles=0-2:list-marker
+0008 |• second compact bullet| styles=0-2:list-marker
+0009 |1. compact ordered list starts after a list without a blank line| styles=0-3:list-marker
+0010 |2. second ordered item| styles=0-3:list-marker
+0011 |[text]| styles=0-6:meta
+0012 |  code before a list| styles=0-20:code
+0013 |• list attached to code| styles=0-2:list-marker
+0014 |────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────| styles=0-120:rule
+0015 |• list attached to a rule| styles=0-2:list-marker
+0016 ||
+0017 |Heading| styles=0-7:H1
+0018 ||
+0019 |Paragraph after heading.|
+0020 ||
+0021 |│ Quoted paragraph.| styles=0-2:quote
+0022 ||
+0023 |Paragraph after quote.|
+0024 ||
+0025 |┌─────┬───────┐| styles=0-15:table-border
+0026 |│ key │ value │| styles=0-2:table-border,5-8:table-border,13-15:table-border
+0027 |╞═════╪═══════╡| styles=0-15:table-border
+0028 |│ a   │ b     │| styles=0-2:table-border,3-8:table-border,9-15:table-border
+0029 |└─────┴───────┘| styles=0-15:table-border
+0030 ||
+0031 |Paragraph after table.|
+0032 ||
+0033 |[text]| styles=0-6:meta
+0034 |  code after paragraph| styles=0-22:code
+0035 ||
+0036 |Paragraph after code.|
+0037 ||
+0038 |────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────| styles=0-120:rule
+0039 ||
+0040 |Paragraph after rule.|

@@ -1,0 +1,126 @@
+---
+source: crates/mdtui-tui/tests/static_render.rs
+---
+==== width=1 rows=90 content=86 blank=4 groups=5 math=0 ====
+0000 |s| styles=0-1:link links=0-1:LinkId(0)
+0001 |t| styles=0-1:link links=0-1:LinkId(0)
+0002 |a| styles=0-1:link links=0-1:LinkId(0)
+0003 |n| styles=0-1:link links=0-1:LinkId(0)
+0004 |d| styles=0-1:link links=0-1:LinkId(0)
+0005 |a| styles=0-1:link links=0-1:LinkId(0)
+0006 |l| styles=0-1:link links=0-1:LinkId(0)
+0007 |o| styles=0-1:link links=0-1:LinkId(0)
+0008 |n| styles=0-1:link links=0-1:LinkId(0)
+0009 |e| styles=0-1:link links=0-1:LinkId(0)
+0010 ||
+0011 |B|
+0012 |e|
+0013 |f|
+0014 |o|
+0015 |r|
+0016 |e|
+0017 ||
+0018 |i| styles=0-1:link links=0-1:LinkId(1)
+0019 |n| styles=0-1:link links=0-1:LinkId(1)
+0020 |l| styles=0-1:link links=0-1:LinkId(1)
+0021 |i| styles=0-1:link links=0-1:LinkId(1)
+0022 |n| styles=0-1:link links=0-1:LinkId(1)
+0023 |e| styles=0-1:link links=0-1:LinkId(1)
+0024 || styles=0-1:link links=0-1:LinkId(1)
+0025 |a| styles=0-1:link links=0-1:LinkId(1)
+0026 |l| styles=0-1:link links=0-1:LinkId(1)
+0027 |t| styles=0-1:link links=0-1:LinkId(1)
+0028 ||
+0029 |a|
+0030 |f|
+0031 |t|
+0032 |e|
+0033 |r|
+0034 |.|
+0035 ||
+0036 |[| styles=0-1:link links=0-1:LinkId(2)
+0037 |i| styles=0-1:link links=0-1:LinkId(2)
+0038 |m| styles=0-1:link links=0-1:LinkId(2)
+0039 |a| styles=0-1:link links=0-1:LinkId(2)
+0040 |g| styles=0-1:link links=0-1:LinkId(2)
+0041 |e| styles=0-1:link links=0-1:LinkId(2)
+0042 |]| styles=0-1:link links=0-1:LinkId(2)
+0043 ||
+0044 |t| styles=0-1:link links=0-1:LinkId(3)
+0045 |i| styles=0-1:link links=0-1:LinkId(3)
+0046 |t| styles=0-1:link links=0-1:LinkId(3)
+0047 |l| styles=0-1:link links=0-1:LinkId(3)
+0048 |e| styles=0-1:link links=0-1:LinkId(3)
+0049 |d| styles=0-1:link links=0-1:LinkId(3)
+0050 || styles=0-1:link links=0-1:LinkId(3)
+0051 |i| styles=0-1:link links=0-1:LinkId(3)
+0052 |m| styles=0-1:link links=0-1:LinkId(3)
+0053 |a| styles=0-1:link links=0-1:LinkId(3)
+0054 |g| styles=0-1:link links=0-1:LinkId(3)
+0055 |e| styles=0-1:link links=0-1:LinkId(3)
+0056 ||
+0057 |B|
+0058 |e|
+0059 |f|
+0060 |o|
+0061 |r|
+0062 |e|
+0063 ||
+0064 |f| styles=0-1:link links=0-1:LinkId(4)
+0065 |i| styles=0-1:link links=0-1:LinkId(4)
+0066 |r| styles=0-1:link links=0-1:LinkId(4)
+0067 |s| styles=0-1:link links=0-1:LinkId(4)
+0068 |t| styles=0-1:link links=0-1:LinkId(4)
+0069 ||
+0070 |m|
+0071 |i|
+0072 |d|
+0073 |d|
+0074 |l|
+0075 |e|
+0076 ||
+0077 |s| styles=0-1:link links=0-1:LinkId(5)
+0078 |e| styles=0-1:link links=0-1:LinkId(5)
+0079 |c| styles=0-1:link links=0-1:LinkId(5)
+0080 |o| styles=0-1:link links=0-1:LinkId(5)
+0081 |n| styles=0-1:link links=0-1:LinkId(5)
+0082 |d| styles=0-1:link links=0-1:LinkId(5)
+0083 ||
+0084 |a|
+0085 |f|
+0086 |t|
+0087 |e|
+0088 |r|
+0089 |.|
+==== width=20 rows=11 content=7 blank=4 groups=5 math=0 ====
+0000 |standalone| styles=0-10:link links=0-10:LinkId(0)
+0001 ||
+0002 |Before inline alt af| styles=7-17:link links=7-17:LinkId(1)
+0003 |ter.|
+0004 ||
+0005 |[image]| styles=0-7:link links=0-7:LinkId(2)
+0006 ||
+0007 |titled image| styles=0-12:link links=0-12:LinkId(3)
+0008 ||
+0009 |Before first middle| styles=7-12:link links=7-12:LinkId(4)
+0010 |second after.| styles=0-6:link links=0-6:LinkId(5)
+==== width=80 rows=9 content=5 blank=4 groups=5 math=0 ====
+0000 |standalone| styles=0-10:link links=0-10:LinkId(0)
+0001 ||
+0002 |Before inline alt after.| styles=7-17:link links=7-17:LinkId(1)
+0003 ||
+0004 |[image]| styles=0-7:link links=0-7:LinkId(2)
+0005 ||
+0006 |titled image| styles=0-12:link links=0-12:LinkId(3)
+0007 ||
+0008 |Before first middle second after.| styles=7-12:link,20-26:link links=7-12:LinkId(4),20-26:LinkId(5)
+==== width=120 rows=9 content=5 blank=4 groups=5 math=0 ====
+0000 |standalone| styles=0-10:link links=0-10:LinkId(0)
+0001 ||
+0002 |Before inline alt after.| styles=7-17:link links=7-17:LinkId(1)
+0003 ||
+0004 |[image]| styles=0-7:link links=0-7:LinkId(2)
+0005 ||
+0006 |titled image| styles=0-12:link links=0-12:LinkId(3)
+0007 ||
+0008 |Before first middle second after.| styles=7-12:link,20-26:link links=7-12:LinkId(4),20-26:LinkId(5)

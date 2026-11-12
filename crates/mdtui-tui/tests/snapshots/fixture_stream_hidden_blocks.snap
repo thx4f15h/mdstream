@@ -1,0 +1,413 @@
+---
+source: tests/static_render.rs
+---
+==== width=1 rows=338 content=333 blank=5 groups=10 math=0 ====
+0000 |H| styles=0-1:H1
+0001 ||
+0002 |A|
+0003 ||
+0004 |l|
+0005 |o|
+0006 |n|
+0007 |g|
+0008 ||
+0009 |p|
+0010 |a|
+0011 |r|
+0012 |a|
+0013 |g|
+0014 |r|
+0015 |a|
+0016 |p|
+0017 |h|
+0018 ||
+0019 |b|
+0020 |e|
+0021 |f|
+0022 |o|
+0023 |r|
+0024 |e|
+0025 ||
+0026 |t|
+0027 |h|
+0028 |e|
+0029 ||
+0030 |f|
+0031 |i|
+0032 |r|
+0033 |s|
+0034 |t|
+0035 ||
+0036 |c|
+0037 |o|
+0038 |m|
+0039 |p|
+0040 |l|
+0041 |e|
+0042 |t|
+0043 |e|
+0044 |l|
+0045 |y|
+0046 ||
+0047 |h|
+0048 |i|
+0049 |d|
+0050 |d|
+0051 |e|
+0052 |n|
+0053 ||
+0054 |f|
+0055 |e|
+0056 |n|
+0057 |c|
+0058 |e|
+0059 |d|
+0060 ||
+0061 |b|
+0062 |l|
+0063 |o|
+0064 |c|
+0065 |k|
+0066 ||
+0067 |p|
+0068 |r|
+0069 |o|
+0070 |v|
+0071 |i|
+0072 |d|
+0073 |e|
+0074 |s|
+0075 ||
+0076 |e|
+0077 |n|
+0078 |o|
+0079 |u|
+0080 |g|
+0081 |h|
+0082 ||
+0083 |t|
+0084 |e|
+0085 |x|
+0086 |t|
+0087 ||
+0088 |f|
+0089 |o|
+0090 |r|
+0091 ||
+0092 |t|
+0093 |h|
+0094 |e|
+0095 ||
+0096 |l|
+0097 |a|
+0098 |y|
+0099 |o|
+0100 |u|
+0101 |t|
+0102 ||
+0103 |p|
+0104 |a|
+0105 |s|
+0106 |s|
+0107 ||
+0108 |t|
+0109 |o|
+0110 ||
+0111 |e|
+0112 |n|
+0113 |t|
+0114 |e|
+0115 |r|
+0116 ||
+0117 |a|
+0118 ||
+0119 |n|
+0120 |o|
+0121 |r|
+0122 |m|
+0123 |a|
+0124 |l|
+0125 ||
+0126 |t|
+0127 |e|
+0128 |x|
+0129 |t|
+0130 ||
+0131 |t|
+0132 |i|
+0133 |l|
+0134 |e|
+0135 ||
+0136 |b|
+0137 |e|
+0138 |f|
+0139 |o|
+0140 |r|
+0141 |e|
+0142 ||
+0143 |t|
+0144 |h|
+0145 |e|
+0146 ||
+0147 |e|
+0148 |m|
+0149 |p|
+0150 |t|
+0151 |y|
+0152 ||
+0153 |c|
+0154 |o|
+0155 |d|
+0156 |e|
+0157 ||
+0158 |f|
+0159 |e|
+0160 |n|
+0161 |c|
+0162 |e|
+0163 ||
+0164 |i|
+0165 |s|
+0166 ||
+0167 |e|
+0168 |n|
+0169 |c|
+0170 |o|
+0171 |u|
+0172 |n|
+0173 |t|
+0174 |e|
+0175 |r|
+0176 |e|
+0177 |d|
+0178 |.|
+0179 ||
+0180 |[| styles=0-1:meta
+0181 ||
+0182 |P|
+0183 |a|
+0184 |r|
+0185 |a|
+0186 |g|
+0187 |r|
+0188 |a|
+0189 |p|
+0190 |h|
+0191 ||
+0192 |a|
+0193 |f|
+0194 |t|
+0195 |e|
+0196 |r|
+0197 ||
+0198 |t|
+0199 |h|
+0200 |e|
+0201 ||
+0202 |f|
+0203 |i|
+0204 |r|
+0205 |s|
+0206 |t|
+0207 ||
+0208 |h|
+0209 |i|
+0210 |d|
+0211 |d|
+0212 |e|
+0213 |n|
+0214 ||
+0215 |b|
+0216 |l|
+0217 |o|
+0218 |c|
+0219 |k|
+0220 |.|
+0221 |•| styles=0-1:list-marker
+0222 |•| styles=0-1:list-marker
+0223 |[| styles=0-1:meta
+0224 |•| styles=0-1:list-marker
+0225 |A|
+0226 |n|
+0227 |o|
+0228 |t|
+0229 |h|
+0230 |e|
+0231 |r|
+0232 ||
+0233 |p|
+0234 |a|
+0235 |r|
+0236 |a|
+0237 |g|
+0238 |r|
+0239 |a|
+0240 |p|
+0241 |h|
+0242 ||
+0243 |c|
+0244 |r|
+0245 |e|
+0246 |a|
+0247 |t|
+0248 |e|
+0249 |s|
+0250 ||
+0251 |s|
+0252 |e|
+0253 |p|
+0254 |a|
+0255 |r|
+0256 |a|
+0257 |t|
+0258 |i|
+0259 |o|
+0260 |n|
+0261 ||
+0262 |b|
+0263 |e|
+0264 |f|
+0265 |o|
+0266 |r|
+0267 |e|
+0268 ||
+0269 |t|
+0270 |h|
+0271 |e|
+0272 ||
+0273 |f|
+0274 |i|
+0275 |n|
+0276 |a|
+0277 |l|
+0278 ||
+0279 |e|
+0280 |m|
+0281 |p|
+0282 |t|
+0283 |y|
+0284 |-|
+0285 |i|
+0286 |n|
+0287 |f|
+0288 |o|
+0289 ||
+0290 |f|
+0291 |e|
+0292 |n|
+0293 |c|
+0294 |e|
+0295 |.|
+0296 ||
+0297 |[| styles=0-1:meta
+0298 ||
+0299 |P|
+0300 |a|
+0301 |r|
+0302 |a|
+0303 |g|
+0304 |r|
+0305 |a|
+0306 |p|
+0307 |h|
+0308 ||
+0309 |a|
+0310 |f|
+0311 |t|
+0312 |e|
+0313 |r|
+0314 ||
+0315 |t|
+0316 |h|
+0317 |e|
+0318 ||
+0319 |f|
+0320 |i|
+0321 |n|
+0322 |a|
+0323 |l|
+0324 ||
+0325 |h|
+0326 |i|
+0327 |d|
+0328 |d|
+0329 |e|
+0330 |n|
+0331 ||
+0332 |b|
+0333 |l|
+0334 |o|
+0335 |c|
+0336 |k|
+0337 |.|
+==== width=20 rows=33 content=28 blank=5 groups=10 math=0 ====
+0000 |Hidden block stream| styles=0-20:H1
+0001 ||
+0002 |A long paragraph bef|
+0003 |ore the first comple|
+0004 |tely hidden fenced b|
+0005 |lock provides enough|
+0006 | text for the layout|
+0007 | pass to enter a nor|
+0008 |mal text tile before|
+0009 | the empty code fenc|
+0010 |e is encountered.|
+0011 ||
+0012 |[rust]| styles=0-6:meta
+0013 ||
+0014 |Paragraph after the|
+0015 |first hidden block.|
+0016 |• list item before| styles=0-2:list-marker
+0017 |  another hidden|
+0018 |  block|
+0019 |• second list item| styles=0-2:list-marker
+0020 |[python]| styles=0-8:meta
+0021 |• list item after| styles=0-2:list-marker
+0022 |  the second hidden|
+0023 |  block|
+0024 |Another paragraph cr|
+0025 |eates separation bef|
+0026 |ore the final empty-|
+0027 |info fence.|
+0028 ||
+0029 |[text]| styles=0-6:meta
+0030 ||
+0031 |Paragraph after the|
+0032 |final hidden block.|
+==== width=80 rows=18 content=13 blank=5 groups=10 math=0 ====
+0000 |Hidden block stream seed| styles=0-24:H1
+0001 ||
+0002 |A long paragraph before the first completely hidden fenced block provides enough|
+0003 | text for the layout pass to enter a normal text tile before the empty code fenc|
+0004 |e is encountered.|
+0005 ||
+0006 |[rust]| styles=0-6:meta
+0007 ||
+0008 |Paragraph after the first hidden block.|
+0009 |• list item before another hidden block| styles=0-2:list-marker
+0010 |• second list item| styles=0-2:list-marker
+0011 |[python]| styles=0-8:meta
+0012 |• list item after the second hidden block| styles=0-2:list-marker
+0013 |Another paragraph creates separation before the final empty-info fence.|
+0014 ||
+0015 |[text]| styles=0-6:meta
+0016 ||
+0017 |Paragraph after the final hidden block.|
+==== width=120 rows=17 content=12 blank=5 groups=10 math=0 ====
+0000 |Hidden block stream seed| styles=0-24:H1
+0001 ||
+0002 |A long paragraph before the first completely hidden fenced block provides enough text for the layout pass to enter a nor|
+0003 |mal text tile before the empty code fence is encountered.|
+0004 ||
+0005 |[rust]| styles=0-6:meta
+0006 ||
+0007 |Paragraph after the first hidden block.|
+0008 |• list item before another hidden block| styles=0-2:list-marker
+0009 |• second list item| styles=0-2:list-marker
+0010 |[python]| styles=0-8:meta
+0011 |• list item after the second hidden block| styles=0-2:list-marker
+0012 |Another paragraph creates separation before the final empty-info fence.|
+0013 ||
+0014 |[text]| styles=0-6:meta
+0015 ||
+0016 |Paragraph after the final hidden block.|

@@ -1,0 +1,101 @@
+---
+source: crates/mdtui-tui/tests/static_render.rs
+---
+==== width=1 rows=21 content=16 blank=5 groups=6 math=0 ====
+0000 |│| styles=0-1:quote
+0001 |│| styles=0-1:quote
+0002 ||
+0003 |│| styles=0-1:quote
+0004 ||
+0005 |Q| styles=0-1:H3
+0006 |•| styles=0-1:list-marker
+0007 |[| styles=0-1:meta
+0008 || styles=0-1:code
+0009 |┌| styles=0-1:table-border
+0010 |│| styles=0-1:table-border
+0011 |╞| styles=0-1:table-border
+0012 |│| styles=0-1:table-border
+0013 |└| styles=0-1:table-border
+0014 |─| styles=0-1:rule
+0015 ||
+0016 |│| styles=0-1:quote
+0017 ||
+0018 |│| styles=0-1:quote
+0019 ||
+0020 |│| styles=0-1:quote
+==== width=20 rows=31 content=26 blank=5 groups=6 math=0 ====
+0000 |│ Simple quote parag| styles=0-2:quote
+0001 |│ raph.| styles=0-2:quote
+0002 |│ Second paragraph i| styles=0-2:quote
+0003 |│ n the same quote.| styles=0-2:quote
+0004 ||
+0005 |│ Nested quote stays| styles=0-2:quote
+0006 |│  one prefix deep.| styles=0-2:quote
+0007 ||
+0008 |Quoted heading| styles=0-14:H3
+0009 |• quoted list item| styles=0-2:list-marker
+0010 |[text]| styles=0-6:meta
+0011 |  quoted code| styles=0-13:code
+0012 |┌─────┬───────┐| styles=0-15:table-border
+0013 |│ key │ value │| styles=0-2:table-border,5-8:table-border,13-15:table-border
+0014 |╞═════╪═══════╡| styles=0-15:table-border
+0015 |│ a   │ b     │| styles=0-2:table-border,3-8:table-border,9-15:table-border
+0016 |└─────┴───────┘| styles=0-15:table-border
+0017 |────────────────────| styles=0-20:rule
+0018 ||
+0019 |│ [!NOTE] Note-style| styles=0-2:quote
+0020 |│  alert is ordinary| styles=0-2:quote
+0021 |│  quoted text.| styles=0-2:quote
+0022 ||
+0023 |│ [!WARNING] Warning| styles=0-2:quote
+0024 |│ -style alert is or| styles=0-2:quote
+0025 |│ dinary quoted text| styles=0-2:quote
+0026 |│ .| styles=0-2:quote
+0027 ||
+0028 |│ visible words afte| styles=0-2:quote
+0029 |│ r an empty quote l| styles=0-2:quote
+0030 |│ ine| styles=0-2:quote
+==== width=80 rows=21 content=16 blank=5 groups=6 math=0 ====
+0000 |│ Simple quote paragraph.| styles=0-2:quote
+0001 |│ Second paragraph in the same quote.| styles=0-2:quote
+0002 ||
+0003 |│ Nested quote stays one prefix deep.| styles=0-2:quote
+0004 ||
+0005 |Quoted heading| styles=0-14:H3
+0006 |• quoted list item| styles=0-2:list-marker
+0007 |[text]| styles=0-6:meta
+0008 |  quoted code| styles=0-13:code
+0009 |┌─────┬───────┐| styles=0-15:table-border
+0010 |│ key │ value │| styles=0-2:table-border,5-8:table-border,13-15:table-border
+0011 |╞═════╪═══════╡| styles=0-15:table-border
+0012 |│ a   │ b     │| styles=0-2:table-border,3-8:table-border,9-15:table-border
+0013 |└─────┴───────┘| styles=0-15:table-border
+0014 |────────────────────────────────────────────────────────────────────────────────| styles=0-80:rule
+0015 ||
+0016 |│ [!NOTE] Note-style alert is ordinary quoted text.| styles=0-2:quote
+0017 ||
+0018 |│ [!WARNING] Warning-style alert is ordinary quoted text.| styles=0-2:quote
+0019 ||
+0020 |│ visible words after an empty quote line| styles=0-2:quote
+==== width=120 rows=21 content=16 blank=5 groups=6 math=0 ====
+0000 |│ Simple quote paragraph.| styles=0-2:quote
+0001 |│ Second paragraph in the same quote.| styles=0-2:quote
+0002 ||
+0003 |│ Nested quote stays one prefix deep.| styles=0-2:quote
+0004 ||
+0005 |Quoted heading| styles=0-14:H3
+0006 |• quoted list item| styles=0-2:list-marker
+0007 |[text]| styles=0-6:meta
+0008 |  quoted code| styles=0-13:code
+0009 |┌─────┬───────┐| styles=0-15:table-border
+0010 |│ key │ value │| styles=0-2:table-border,5-8:table-border,13-15:table-border
+0011 |╞═════╪═══════╡| styles=0-15:table-border
+0012 |│ a   │ b     │| styles=0-2:table-border,3-8:table-border,9-15:table-border
+0013 |└─────┴───────┘| styles=0-15:table-border
+0014 |────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────| styles=0-120:rule
+0015 ||
+0016 |│ [!NOTE] Note-style alert is ordinary quoted text.| styles=0-2:quote
+0017 ||
+0018 |│ [!WARNING] Warning-style alert is ordinary quoted text.| styles=0-2:quote
+0019 ||
+0020 |│ visible words after an empty quote line| styles=0-2:quote

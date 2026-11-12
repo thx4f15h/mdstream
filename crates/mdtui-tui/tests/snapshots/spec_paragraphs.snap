@@ -1,0 +1,559 @@
+---
+source: tests/static_render.rs
+---
+==== width=1 rows=467 content=457 blank=10 groups=11 math=0 ====
+0000 |s|
+0001 |o|
+0002 |f|
+0003 |t|
+0004 ||
+0005 |l|
+0006 |i|
+0007 |n|
+0008 |e|
+0009 ||
+0010 |b|
+0011 |r|
+0012 |e|
+0013 |a|
+0014 |k|
+0015 ||
+0016 |b|
+0017 |e|
+0018 |c|
+0019 |o|
+0020 |m|
+0021 |e|
+0022 |s|
+0023 ||
+0024 |o|
+0025 |n|
+0026 |e|
+0027 ||
+0028 |s|
+0029 |p|
+0030 |a|
+0031 |c|
+0032 |e|
+0033 ||
+0034 |t|
+0035 |w|
+0036 |o|
+0037 |-|
+0038 |s|
+0039 |p|
+0040 |a|
+0041 |c|
+0042 |e|
+0043 ||
+0044 |h|
+0045 |a|
+0046 |r|
+0047 |d|
+0048 ||
+0049 |b|
+0050 |r|
+0051 |e|
+0052 |a|
+0053 |k|
+0054 |j|
+0055 |o|
+0056 |i|
+0057 |n|
+0058 |s|
+0059 ||
+0060 |d|
+0061 |i|
+0062 |r|
+0063 |e|
+0064 |c|
+0065 |t|
+0066 |l|
+0067 |y|
+0068 ||
+0069 |b|
+0070 |a|
+0071 |c|
+0072 |k|
+0073 |s|
+0074 |l|
+0075 |a|
+0076 |s|
+0077 |h|
+0078 ||
+0079 |h|
+0080 |a|
+0081 |r|
+0082 |d|
+0083 ||
+0084 |b|
+0085 |r|
+0086 |e|
+0087 |a|
+0088 |k|
+0089 |j|
+0090 |o|
+0091 |i|
+0092 |n|
+0093 |s|
+0094 ||
+0095 |d|
+0096 |i|
+0097 |r|
+0098 |e|
+0099 |c|
+0100 |t|
+0101 |l|
+0102 |y|
+0103 ||
+0104 |m|
+0105 |u|
+0106 |l|
+0107 |t|
+0108 |i|
+0109 |p|
+0110 |l|
+0111 |e|
+0112 ||
+0113 ||
+0114 ||
+0115 |s|
+0116 |p|
+0117 |a|
+0118 |c|
+0119 |e|
+0120 |s|
+0121 ||
+0122 |s|
+0123 |t|
+0124 |a|
+0125 |y|
+0126 ||
+0127 |t|
+0128 |a|
+0129 |b|
+0130 |\t|
+0131 |s|
+0132 |e|
+0133 |p|
+0134 |a|
+0135 |r|
+0136 |a|
+0137 |t|
+0138 |e|
+0139 |d|
+0140 ||
+0141 |N|
+0142 |B|
+0143 |S|
+0144 |P|
+0145 | |
+0146 |s|
+0147 |t|
+0148 |a|
+0149 |y|
+0150 |s|
+0151 ||
+0152 |o|
+0153 |n|
+0154 |e|
+0155 ||
+0156 |c|
+0157 |o|
+0158 |l|
+0159 |u|
+0160 |m|
+0161 |n|
+0162 ||
+0163 |e|
+0164 |m|
+0165 |o|
+0166 |j|
+0167 |i|
+0168 ||
+0169 ||
+0170 |a|
+0171 |n|
+0172 |d|
+0173 ||
+0174 ||
+0175 |s|
+0176 |t|
+0177 |a|
+0178 |y|
+0179 ||
+0180 |w|
+0181 |i|
+0182 |d|
+0183 |e|
+0184 ||
+0185 |C|
+0186 |J|
+0187 |K|
+0188 ||
+0189 ||
+0190 |l|
+0191 |e|
+0192 |a|
+0193 |d|
+0194 |i|
+0195 |n|
+0196 |g|
+0197 ||
+0198 |w|
+0199 |h|
+0200 |i|
+0201 |t|
+0202 |e|
+0203 |s|
+0204 |p|
+0205 |a|
+0206 |c|
+0207 |e|
+0208 ||
+0209 |i|
+0210 |s|
+0211 ||
+0212 |t|
+0213 |r|
+0214 |i|
+0215 |m|
+0216 |m|
+0217 |e|
+0218 |d|
+0219 ||
+0220 |t|
+0221 |r|
+0222 |a|
+0223 |i|
+0224 |l|
+0225 |i|
+0226 |n|
+0227 |g|
+0228 ||
+0229 |w|
+0230 |h|
+0231 |i|
+0232 |t|
+0233 |e|
+0234 |s|
+0235 |p|
+0236 |a|
+0237 |c|
+0238 |e|
+0239 ||
+0240 |i|
+0241 |s|
+0242 ||
+0243 |t|
+0244 |r|
+0245 |i|
+0246 |m|
+0247 |m|
+0248 |e|
+0249 |d|
+0250 ||
+0251 |T|
+0252 |h|
+0253 |i|
+0254 |s|
+0255 ||
+0256 |d|
+0257 |e|
+0258 |l|
+0259 |i|
+0260 |b|
+0261 |e|
+0262 |r|
+0263 |a|
+0264 |t|
+0265 |e|
+0266 |l|
+0267 |y|
+0268 ||
+0269 |l|
+0270 |o|
+0271 |n|
+0272 |g|
+0273 ||
+0274 |p|
+0275 |a|
+0276 |r|
+0277 |a|
+0278 |g|
+0279 |r|
+0280 |a|
+0281 |p|
+0282 |h|
+0283 ||
+0284 |h|
+0285 |a|
+0286 |s|
+0287 ||
+0288 |e|
+0289 |n|
+0290 |o|
+0291 |u|
+0292 |g|
+0293 |h|
+0294 ||
+0295 |w|
+0296 |o|
+0297 |r|
+0298 |d|
+0299 |s|
+0300 ||
+0301 |a|
+0302 |n|
+0303 |d|
+0304 ||
+0305 |p|
+0306 |u|
+0307 |n|
+0308 |c|
+0309 |t|
+0310 |u|
+0311 |a|
+0312 |t|
+0313 |i|
+0314 |o|
+0315 |n|
+0316 ||
+0317 |t|
+0318 |o|
+0319 ||
+0320 |f|
+0321 |o|
+0322 |r|
+0323 |c|
+0324 |e|
+0325 ||
+0326 |w|
+0327 |r|
+0328 |a|
+0329 |p|
+0330 |p|
+0331 |i|
+0332 |n|
+0333 |g|
+0334 ||
+0335 |a|
+0336 |t|
+0337 ||
+0338 |s|
+0339 |e|
+0340 |v|
+0341 |e|
+0342 |r|
+0343 |a|
+0344 |l|
+0345 ||
+0346 |n|
+0347 |a|
+0348 |r|
+0349 |r|
+0350 |o|
+0351 |w|
+0352 ||
+0353 |w|
+0354 |i|
+0355 |d|
+0356 |t|
+0357 |h|
+0358 |s|
+0359 ||
+0360 |w|
+0361 |h|
+0362 |i|
+0363 |l|
+0364 |e|
+0365 ||
+0366 |r|
+0367 |e|
+0368 |m|
+0369 |a|
+0370 |i|
+0371 |n|
+0372 |i|
+0373 |n|
+0374 |g|
+0375 ||
+0376 |d|
+0377 |e|
+0378 |t|
+0379 |e|
+0380 |r|
+0381 |m|
+0382 |i|
+0383 |n|
+0384 |i|
+0385 |s|
+0386 |t|
+0387 |i|
+0388 |c|
+0389 ||
+0390 |a|
+0391 |n|
+0392 |d|
+0393 ||
+0394 |f|
+0395 |r|
+0396 |e|
+0397 |e|
+0398 ||
+0399 |o|
+0400 |f|
+0401 ||
+0402 |l|
+0403 |i|
+0404 |n|
+0405 |k|
+0406 |s|
+0407 ||
+0408 |s|
+0409 |o|
+0410 ||
+0411 |t|
+0412 |h|
+0413 |e|
+0414 ||
+0415 |p|
+0416 |a|
+0417 |r|
+0418 |a|
+0419 |g|
+0420 |r|
+0421 |a|
+0422 |p|
+0423 |h|
+0424 ||
+0425 |r|
+0426 |u|
+0427 |l|
+0428 |e|
+0429 |s|
+0430 ||
+0431 |c|
+0432 |a|
+0433 |n|
+0434 ||
+0435 |b|
+0436 |e|
+0437 ||
+0438 |i|
+0439 |s|
+0440 |o|
+0441 |l|
+0442 |a|
+0443 |t|
+0444 |e|
+0445 |d|
+0446 ||
+0447 |f|
+0448 |r|
+0449 |o|
+0450 |m|
+0451 ||
+0452 |o|
+0453 |t|
+0454 |h|
+0455 |e|
+0456 |r|
+0457 ||
+0458 |f|
+0459 |i|
+0460 |x|
+0461 |t|
+0462 |u|
+0463 |r|
+0464 |e|
+0465 |s|
+0466 |.|
+==== width=20 rows=40 content=30 blank=10 groups=11 math=0 ====
+0000 |soft line break beco|
+0001 |mes one space|
+0002 ||
+0003 |two-space hard break|
+0004 |joins directly|
+0005 ||
+0006 |backslash hard break|
+0007 |joins directly|
+0008 ||
+0009 |multiple   spaces st|
+0010 |ay|
+0011 ||
+0012 |tab\tseparated|
+0013 ||
+0014 |NBSP stays one colum|
+0015 |n|
+0016 ||
+0017 |emoji 🙂 and 🚀 stay| wide=base@6:2,cont@7,base@13:2,cont@14
+0018 | wide|
+0019 ||
+0020 |CJK 中文中文与。、あ| wide=base@4:2,cont@5,base@6:2,cont@7,base@8:2,cont@9,base@10:2,cont@11,base@12:2,cont@13,base@14:2,cont@15,base@16:2,cont@17,base@18:2,cont@19
+0021 |한| wide=base@0:2,cont@1
+0022 ||
+0023 |leading whitespace i|
+0024 |s trimmed|
+0025 ||
+0026 |trailing whitespace|
+0027 |is trimmed|
+0028 ||
+0029 |This deliberately lo|
+0030 |ng paragraph has eno|
+0031 |ugh words and punctu|
+0032 |ation to force wrapp|
+0033 |ing at several narro|
+0034 |w widths while remai|
+0035 |ning deterministic a|
+0036 |nd free of links so|
+0037 |the paragraph rules|
+0038 |can be isolated from|
+0039 | other fixtures.|
+==== width=80 rows=23 content=13 blank=10 groups=11 math=0 ====
+0000 |soft line break becomes one space|
+0001 ||
+0002 |two-space hard breakjoins directly|
+0003 ||
+0004 |backslash hard breakjoins directly|
+0005 ||
+0006 |multiple   spaces stay|
+0007 ||
+0008 |tab\tseparated|
+0009 ||
+0010 |NBSP stays one column|
+0011 ||
+0012 |emoji 🙂 and 🚀 stay wide| wide=base@6:2,cont@7,base@13:2,cont@14
+0013 ||
+0014 |CJK 中文中文与。、あ한| wide=base@4:2,cont@5,base@6:2,cont@7,base@8:2,cont@9,base@10:2,cont@11,base@12:2,cont@13,base@14:2,cont@15,base@16:2,cont@17,base@18:2,cont@19,base@20:2,cont@21
+0015 ||
+0016 |leading whitespace is trimmed|
+0017 ||
+0018 |trailing whitespace is trimmed|
+0019 ||
+0020 |This deliberately long paragraph has enough words and punctuation to force wrapp|
+0021 |ing at several narrow widths while remaining deterministic and free of links so|
+0022 |the paragraph rules can be isolated from other fixtures.|
+==== width=120 rows=22 content=12 blank=10 groups=11 math=0 ====
+0000 |soft line break becomes one space|
+0001 ||
+0002 |two-space hard breakjoins directly|
+0003 ||
+0004 |backslash hard breakjoins directly|
+0005 ||
+0006 |multiple   spaces stay|
+0007 ||
+0008 |tab\tseparated|
+0009 ||
+0010 |NBSP stays one column|
+0011 ||
+0012 |emoji 🙂 and 🚀 stay wide| wide=base@6:2,cont@7,base@13:2,cont@14
+0013 ||
+0014 |CJK 中文中文与。、あ한| wide=base@4:2,cont@5,base@6:2,cont@7,base@8:2,cont@9,base@10:2,cont@11,base@12:2,cont@13,base@14:2,cont@15,base@16:2,cont@17,base@18:2,cont@19,base@20:2,cont@21
+0015 ||
+0016 |leading whitespace is trimmed|
+0017 ||
+0018 |trailing whitespace is trimmed|
+0019 ||
+0020 |This deliberately long paragraph has enough words and punctuation to force wrapping at several narrow widths while remai|
+0021 |ning deterministic and free of links so the paragraph rules can be isolated from other fixtures.|

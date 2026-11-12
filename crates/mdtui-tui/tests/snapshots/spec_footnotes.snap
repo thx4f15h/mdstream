@@ -1,0 +1,134 @@
+---
+source: tests/static_render.rs
+---
+==== width=1 rows=113 content=112 blank=1 groups=2 math=0 ====
+0000 |D|
+0001 |e|
+0002 |f|
+0003 |i|
+0004 |n|
+0005 |e|
+0006 |d|
+0007 ||
+0008 |f|
+0009 |o|
+0010 |o|
+0011 |t|
+0012 |n|
+0013 |o|
+0014 |t|
+0015 |e|
+0016 |,|
+0017 ||
+0018 |t|
+0019 |h|
+0020 |e|
+0021 ||
+0022 |s|
+0023 |a|
+0024 |m|
+0025 |e|
+0026 ||
+0027 |f|
+0028 |o|
+0029 |o|
+0030 |t|
+0031 |n|
+0032 |o|
+0033 |t|
+0034 |e|
+0035 ||
+0036 |a|
+0037 |g|
+0038 |a|
+0039 |i|
+0040 |n|
+0041 |,|
+0042 ||
+0043 |a|
+0044 |n|
+0045 |d|
+0046 ||
+0047 |a|
+0048 ||
+0049 |n|
+0050 |a|
+0051 |m|
+0052 |e|
+0053 |d|
+0054 ||
+0055 |f|
+0056 |o|
+0057 |o|
+0058 |t|
+0059 |n|
+0060 |o|
+0061 |t|
+0062 |e|
+0063 |.|
+0064 ||
+0065 |A|
+0066 |n|
+0067 ||
+0068 |u|
+0069 |n|
+0070 |d|
+0071 |e|
+0072 |f|
+0073 |i|
+0074 |n|
+0075 |e|
+0076 |d|
+0077 ||
+0078 |f|
+0079 |o|
+0080 |o|
+0081 |t|
+0082 |n|
+0083 |o|
+0084 |t|
+0085 |e|
+0086 |[|
+0087 |^|
+0088 |m|
+0089 |i|
+0090 |s|
+0091 |s|
+0092 |i|
+0093 |n|
+0094 |g|
+0095 |]|
+0096 ||
+0097 |r|
+0098 |e|
+0099 |m|
+0100 |a|
+0101 |i|
+0102 |n|
+0103 |s|
+0104 ||
+0105 |v|
+0106 |i|
+0107 |s|
+0108 |i|
+0109 |b|
+0110 |l|
+0111 |e|
+0112 |.|
+==== width=20 rows=8 content=7 blank=1 groups=2 math=0 ====
+0000 |Defined footnote, th|
+0001 |e same footnote agai|
+0002 |n, and a named footn|
+0003 |ote.|
+0004 ||
+0005 |An undefined footnot|
+0006 |e[^missing] remains|
+0007 |visible.|
+==== width=80 rows=3 content=2 blank=1 groups=2 math=0 ====
+0000 |Defined footnote, the same footnote again, and a named footnote.|
+0001 ||
+0002 |An undefined footnote[^missing] remains visible.|
+==== width=120 rows=3 content=2 blank=1 groups=2 math=0 ====
+0000 |Defined footnote, the same footnote again, and a named footnote.|
+0001 ||
+0002 |An undefined footnote[^missing] remains visible.|

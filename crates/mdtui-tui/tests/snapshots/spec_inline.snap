@@ -1,0 +1,276 @@
+---
+source: tests/static_render.rs
+---
+==== width=1 rows=201 content=191 blank=10 groups=11 math=0 ====
+0000 |a| styles=0-1:strong
+0001 || styles=0-1:strong
+0002 |b| styles=0-1:strong+strike
+0003 ||
+0004 |a| styles=0-1:strike
+0005 || styles=0-1:strike
+0006 |b| styles=0-1:strong+strike
+0007 ||
+0008 |p| styles=0-1:strong
+0009 |r| styles=0-1:strong
+0010 |e| styles=0-1:strong
+0011 || styles=0-1:strong
+0012 |c| styles=0-1:strong+code
+0013 |o| styles=0-1:strong+code
+0014 |d| styles=0-1:strong+code
+0015 |e| styles=0-1:strong+code
+0016 || styles=0-1:strong
+0017 |p| styles=0-1:strong
+0018 |o| styles=0-1:strong
+0019 |s| styles=0-1:strong
+0020 |t| styles=0-1:strong
+0021 ||
+0022 |p| styles=0-1:emphasis
+0023 |r| styles=0-1:emphasis
+0024 |e| styles=0-1:emphasis
+0025 || styles=0-1:emphasis
+0026 |c| styles=0-1:emphasis+code
+0027 |o| styles=0-1:emphasis+code
+0028 |d| styles=0-1:emphasis+code
+0029 |e| styles=0-1:emphasis+code
+0030 || styles=0-1:emphasis
+0031 |p| styles=0-1:emphasis
+0032 |o| styles=0-1:emphasis
+0033 |s| styles=0-1:emphasis
+0034 |t| styles=0-1:emphasis
+0035 ||
+0036 |p| styles=0-1:strike
+0037 |r| styles=0-1:strike
+0038 |e| styles=0-1:strike
+0039 || styles=0-1:strike
+0040 |c| styles=0-1:strike+code
+0041 |o| styles=0-1:strike+code
+0042 |d| styles=0-1:strike+code
+0043 |e| styles=0-1:strike+code
+0044 || styles=0-1:strike
+0045 |p| styles=0-1:strike
+0046 |o| styles=0-1:strike
+0047 |s| styles=0-1:strike
+0048 |t| styles=0-1:strike
+0049 ||
+0050 |c| styles=0-1:code
+0051 |o| styles=0-1:code
+0052 |d| styles=0-1:code
+0053 |e| styles=0-1:code
+0054 || styles=0-1:code
+0055 |`| styles=0-1:code
+0056 || styles=0-1:code
+0057 |w| styles=0-1:code
+0058 |i| styles=0-1:code
+0059 |t| styles=0-1:code
+0060 |h| styles=0-1:code
+0061 || styles=0-1:code
+0062 |`| styles=0-1:code
+0063 || styles=0-1:code
+0064 |b| styles=0-1:code
+0065 |a| styles=0-1:code
+0066 |c| styles=0-1:code
+0067 |k| styles=0-1:code
+0068 |t| styles=0-1:code
+0069 |i| styles=0-1:code
+0070 |c| styles=0-1:code
+0071 |k| styles=0-1:code
+0072 |s| styles=0-1:code
+0073 ||
+0074 |c| styles=0-1:code
+0075 |o| styles=0-1:code
+0076 |d| styles=0-1:code
+0077 |e| styles=0-1:code
+0078 || styles=0-1:code
+0079 || styles=0-1:code
+0080 |w| styles=0-1:code
+0081 |i| styles=0-1:code
+0082 |t| styles=0-1:code
+0083 |h| styles=0-1:code
+0084 || styles=0-1:code
+0085 || styles=0-1:code
+0086 |s| styles=0-1:code
+0087 |p| styles=0-1:code
+0088 |a| styles=0-1:code
+0089 |c| styles=0-1:code
+0090 |e| styles=0-1:code
+0091 |s| styles=0-1:code
+0092 |\t| styles=0-1:code
+0093 |a| styles=0-1:code
+0094 |n| styles=0-1:code
+0095 |d| styles=0-1:code
+0096 |\t| styles=0-1:code
+0097 |t| styles=0-1:code
+0098 |a| styles=0-1:code
+0099 |b| styles=0-1:code
+0100 ||
+0101 |a|
+0102 |B| styles=0-1:strong
+0103 |c|
+0104 ||
+0105 |a|
+0106 |n|
+0107 |d|
+0108 ||
+0109 |a|
+0110 |_|
+0111 |b|
+0112 |_|
+0113 |c|
+0114 ||
+0115 |a|
+0116 ||
+0117 |&|
+0118 ||
+0119 |b|
+0120 ||
+0121 |b| styles=0-1:strong
+0122 |o| styles=0-1:strong
+0123 |l| styles=0-1:strong
+0124 |d| styles=0-1:strong
+0125 || styles=0-1:strong
+0126 |i| styles=0-1:strong+emphasis
+0127 |t| styles=0-1:strong+emphasis
+0128 |a| styles=0-1:strong+emphasis
+0129 |l| styles=0-1:strong+emphasis
+0130 |i| styles=0-1:strong+emphasis
+0131 |c| styles=0-1:strong+emphasis
+0132 || styles=0-1:strong
+0133 |s| styles=0-1:strong+strike
+0134 |t| styles=0-1:strong+strike
+0135 |r| styles=0-1:strong+strike
+0136 |i| styles=0-1:strong+strike
+0137 |k| styles=0-1:strong+strike
+0138 |e| styles=0-1:strong+strike
+0139 ||
+0140 |a|
+0141 |n|
+0142 |d|
+0143 ||
+0144 |s| styles=0-1:strike
+0145 |t| styles=0-1:strike
+0146 |r| styles=0-1:strike
+0147 |i| styles=0-1:strike
+0148 |k| styles=0-1:strike
+0149 |e| styles=0-1:strike
+0150 || styles=0-1:strike
+0151 |b| styles=0-1:strong+strike
+0152 |o| styles=0-1:strong+strike
+0153 |l| styles=0-1:strong+strike
+0154 |d| styles=0-1:strong+strike
+0155 || styles=0-1:strong+strike
+0156 |i| styles=0-1:strong+emphasis+strike
+0157 |t| styles=0-1:strong+emphasis+strike
+0158 |a| styles=0-1:strong+emphasis+strike
+0159 |l| styles=0-1:strong+emphasis+strike
+0160 |i| styles=0-1:strong+emphasis+strike
+0161 |c| styles=0-1:strong+emphasis+strike
+0162 ||
+0163 |E|
+0164 |s|
+0165 |c|
+0166 |a|
+0167 |p|
+0168 |e|
+0169 |d|
+0170 ||
+0171 |*|
+0172 |n|
+0173 |o|
+0174 |t|
+0175 ||
+0176 |e|
+0177 |m|
+0178 |p|
+0179 |h|
+0180 |a|
+0181 |s|
+0182 |i|
+0183 |s|
+0184 |*|
+0185 ||
+0186 |a|
+0187 |n|
+0188 |d|
+0189 ||
+0190 |`|
+0191 |n|
+0192 |o|
+0193 |t|
+0194 ||
+0195 |c|
+0196 |o|
+0197 |d|
+0198 |e|
+0199 |`|
+0200 |.|
+==== width=20 rows=26 content=16 blank=10 groups=11 math=0 ====
+0000 |a b| styles=0-2:strong,2-3:strong+strike
+0001 ||
+0002 |a b| styles=0-2:strike,2-3:strong+strike
+0003 ||
+0004 |pre code post| styles=0-4:strong,4-8:strong+code,8-13:strong
+0005 ||
+0006 |pre code post| styles=0-4:emphasis,4-8:emphasis+code,8-13:emphasis
+0007 ||
+0008 |pre code post| styles=0-4:strike,4-8:strike+code,8-13:strike
+0009 ||
+0010 |code ` with ` backti| styles=0-20:code
+0011 |cks| styles=0-3:code
+0012 ||
+0013 |code  with  spaces\ta| styles=0-20:code
+0014 |nd\ttab| styles=0-6:code
+0015 ||
+0016 |aBc and a_b_c| styles=1-2:strong
+0017 ||
+0018 |a & b|
+0019 ||
+0020 |bold italic strike a| styles=0-5:strong,5-11:strong+emphasis,11-12:strong,12-18:strong+strike
+0021 |nd strike bold itali| styles=3-10:strike,10-15:strong+strike,15-20:strong+emphasis+strike
+0022 |c| styles=0-1:strong+emphasis+strike
+0023 ||
+0024 |Escaped *not emphasi|
+0025 |s* and `not code`.|
+==== width=80 rows=21 content=11 blank=10 groups=11 math=0 ====
+0000 |a b| styles=0-2:strong,2-3:strong+strike
+0001 ||
+0002 |a b| styles=0-2:strike,2-3:strong+strike
+0003 ||
+0004 |pre code post| styles=0-4:strong,4-8:strong+code,8-13:strong
+0005 ||
+0006 |pre code post| styles=0-4:emphasis,4-8:emphasis+code,8-13:emphasis
+0007 ||
+0008 |pre code post| styles=0-4:strike,4-8:strike+code,8-13:strike
+0009 ||
+0010 |code ` with ` backticks| styles=0-23:code
+0011 ||
+0012 |code  with  spaces\tand\ttab| styles=0-26:code
+0013 ||
+0014 |aBc and a_b_c| styles=1-2:strong
+0015 ||
+0016 |a & b|
+0017 ||
+0018 |bold italic strike and strike bold italic| styles=0-5:strong,5-11:strong+emphasis,11-12:strong,12-18:strong+strike,23-30:strike,30-35:strong+strike,35-41:strong+emphasis+strike
+0019 ||
+0020 |Escaped *not emphasis* and `not code`.|
+==== width=120 rows=21 content=11 blank=10 groups=11 math=0 ====
+0000 |a b| styles=0-2:strong,2-3:strong+strike
+0001 ||
+0002 |a b| styles=0-2:strike,2-3:strong+strike
+0003 ||
+0004 |pre code post| styles=0-4:strong,4-8:strong+code,8-13:strong
+0005 ||
+0006 |pre code post| styles=0-4:emphasis,4-8:emphasis+code,8-13:emphasis
+0007 ||
+0008 |pre code post| styles=0-4:strike,4-8:strike+code,8-13:strike
+0009 ||
+0010 |code ` with ` backticks| styles=0-23:code
+0011 ||
+0012 |code  with  spaces\tand\ttab| styles=0-26:code
+0013 ||
+0014 |aBc and a_b_c| styles=1-2:strong
+0015 ||
+0016 |a & b|
+0017 ||
+0018 |bold italic strike and strike bold italic| styles=0-5:strong,5-11:strong+emphasis,11-12:strong,12-18:strong+strike,23-30:strike,30-35:strong+strike,35-41:strong+emphasis+strike
+0019 ||
+0020 |Escaped *not emphasis* and `not code`.|
