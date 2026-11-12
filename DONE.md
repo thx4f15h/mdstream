@@ -2827,7 +2827,7 @@ URL 在封口时前向验证完整主机名，再处理路径尾标点、括号�
 
 最终代码验证：项目 `nix develop` 下 `cargo check --all-targets`、专项 **63/63**、完整 debug/release `cargo nextest run --no-fail-fast` 各 **1843/1843**、`cargo test --doc` **76/76**，fmt 与 diff 检查通过。15 个 Rust 文件与冻结哈希一致。日志及验收证据见 `/tmp/mdtui3-codex-todo/001-gate-debug.log`、`001-root-gate-release.log`、`001-root-gate-doc.log`、`001-root-gate-accepted.json` 和 `001-gate-source.sha256`；中间版本通过数不充作最终验收。
 
-保留的失败方言：失败 URL 候选只由普通行内机消费一次，不重新发现其内部另一个裸地址；例如 `http://foo_bar@bar.com` 的 email 恢复归入现有完整失败回退待办，相关红测已单独保留供后续任务。完整链接/图片嵌套、其它字面失败回退、分类窗口扩展及原始 HTML不由本项交付。TODO 仅完成裸自动链接核心，未完成要求保持。
+该轮保留的失败方言：失败 URL 候选只由普通行内机消费一次，不重新发现其内部另一个裸地址；`http://foo_bar@bar.com` 等内部地址恢复现由后续「失败裸 URL 内部地址恢复」窄项交付。完整链接/图片嵌套、其它字面失败回退、分类窗口扩展及原始 HTML不由本项交付。TODO 仅完成裸自动链接核心，未完成要求保持。
 
 ## 2026-11-12 手工嵌套交叉流式范围与显式重载映射交付
 
@@ -2850,3 +2850,21 @@ README、TODO 精准同步：核心范围扩展单独勾选，实际选区控件
 最终 frozen 门禁全部 exit 0（`nix develop`，Cargo metadata 定位本 worktree target）：`cargo check --workspace --all-targets`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo nextest run --workspace --all-targets --no-fail-fast` 与 `--release` 各 **1843/1843**；`cargo test --workspace --doc` **76/76**；`cargo doc --workspace --no-deps`；13 个相关 release 示例（source_overlays/source_folding/source_tail_folding/paragraph_folding/container_paragraph_folding/paragraph_auto_folding/folding/fold_batch/container_folding/container_sections/table_row_folding/budget/display）。最终 `validation.json` 的 failed、changed_rs 均为空，391 个 Rust 文件冻结哈希保持一致。`git diff --check` 通过。既有 tests/fixtures、数据、脚本、依赖、hooks 与 rustfmt 配置保留。
 
 与裸自动链接合入后的组合门禁同样通过：check、fmt、完整 debug/release 各 1864/1864 项及 doc；Rust 源码冻结记录无变化，命令/退出码见 `/tmp/mdtui3-codex-todo/integration-001-002/result.json`。
+
+## 2026-11-12 失败裸 URL 内部地址恢复交付
+
+完成「跨行链接后缀与完整失败回退」中的失败 HTTP(S)/`www.` 内部地址恢复。`http://foo_bar@bar.com` 现在识别其中的 `mailto:foo_bar@bar.com`；同一路径恢复内部 `www.`、HTTP(S)、原生 `mailto:`/`xmpp:`，保留既有域名、协议资源及多 `@` 规则。有效外层 URL 仍整条发布，内部 email 不重复成为对象。普通实体/强调、代码/数学、尖括号、显式链接/图片与容器/单元格的原优先级保持，源码不拼接或重写。
+
+算法位于 `bare_autolink::Recovery` 和 `Inline::flush_bare` 的局部失败入口。仅在完整 Web 候选失败后建立一次临时后缀准入表：反向扫描主机 run，累计点号、空段及末两段下划线；独立尾部扫描检查尾点能否随标点、右括号、实体形后缀一起排除。主机没有左括号，任何路径左括号都会阻止裁剪回主机，故该准入无需按候选重新数括号。索引为原始区间每个字节保留一个布尔标志，不复制正文；初始化/反向扫描/尾部检查总工作不超过 `4 * bytes + 1`。Unicode 标量起点具有精确字节映射，其余位置不获准入。
+
+恢复只按原行内机遍历失败区间一次。索引在 HTTP(S) 冒号或 `www.` 点号的模式切换处否决无效 Web：无效 HTTP(S) 的冒号交回普通语法，无效 `www.` 继续保留 Local/email 可能。只有最终能封口的内部 Web 才收集长尾；内部候选互不重叠，普通释放禁用重识别，调试断言核对每个内部 Web 必须成功。因此所有外层失败区间互不重叠，每个原始字节只经过固定次数的收集、索引、恢复、校验或普通释放；用户前缀嵌套不增加回放次数或调用深度。索引在同步恢复返回时释放，不保留逐修订历史。配对下划线、opener owner 及晚表头暂存继续复用原 email 结算；迟发布对象保持追加 LinkId，源码有序索引不重排已有 ID。新增线性时间/空间的局部工作仍使累计解析保持 O(n log n)、空间 O(n)，无运行时依赖、无 unsafe、不回访旧引用使用点。
+
+新增七项集成回归及一项内部穷举。原保存的 12 个红测期望经本地官方 `.13` 可执行程序逐项复核，全部恢复；固定 GFM 0.29-gfm 6.9/622–635 和已有 `.0`/`.13` 差异继续优先，不复制 `.13` 对超过十段无效主机放行以规避二次扫描的策略。矩阵包含三种失败外层/三种有效外层、内部地址连续恢复和再次失败、域名/协议/资源/多 `@` 正反例、未完成/EOF、全部字节切点与逐 UTF-8 标量前缀、代码/数学/普通链接/图片、显式/lazy 容器及真正作用域中断。失败域名自身的下划线可以先闭合继承强调、进而使后方 email 失败，该负例与需要等待表头确认的正例分别固定。
+
+复杂度先以仓库外独立分段/裁剪模型验证 137,320 组字符串，再以内部 137,257 组短字符串加 35 组 Unicode/尾部组合核对每个后缀与既有前向 seal，并断言索引实际计数。对抗回归覆盖 1/16/256/4096/65,536 层 `http://a_/(`、百万字有效尾部与逐字追加、同一主机十万重复 `www._` 起点、十万多 `@`、十万标点/实体尾部、970 层容器和 4096 行历史对象/晚定义。65,536 层组共 1,721,994 字节，封口新增 `bare_autolink_bytes` 为 12,915,779，候选累计为 14,636,747；每次尾部逐字增长只增加一次收集工作。所有组同时约束发布与 eligibility 的实际计数，晚定义不增加 bare 工作或改写旧对象。
+
+跨 tile 长 email 的恢复验证原始 source/label/目标映射、迟确认源序、dirty 范围和 tile key、过期测量 ticket/display continuation/LayoutPass；0/1/6 字节共享预算覆盖目标/显示互相耗尽，真实 LayoutPass 以共享预算按源码顺序只交付一次对象。源码/显示/对象、Frame、缓存和 Budget 的公共接口没有变化。固定 GFM 14 例与 CommonMark 真实分类保持，官方输入/HTML、评分投影、依赖、flake、hooks 和 rustfmt 配置不改。
+
+本项仅完成失败裸 Web 内部地址恢复；完整代码失败重放、普通显式链接所有失败后缀、全部嵌套标签、其它完整字面失败回退和宽泛标准兼容性仍保留 TODO 父项，不新增语法长度上限、原始 HTML 或 UI。
+
+最终冻结验证全部通过（本工作树 `nix develop`，target 由 Cargo metadata 定位）：`cargo check --all-targets`、fmt check、`cargo clippy --lib -- -D warnings`、完整 debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1872/1872**、`cargo test --workspace --doc` **76/76**、`cargo doc --workspace --no-deps`；广域专项 **222/222**、最后新增对抗后的恢复专项 **8/8**。393 个 Rust 文件与冻结记录逐一一致，`git diff --check` 通过。命令、退出码与最终证据见 `/tmp/mdtui3-codex-todo/004-result.json`、`004-freeze.json`、`004-gate-*.log`、`004-recovery-final.log`；独立模型及证明见 `004-prototypes/model.py`、`proof.txt`，官方实际输出见 `004-prototypes/reference-red.txt`。严格全目标 clippy 的额外尝试被既有 `tests/bare_autolinks.rs:594` 的 `bool_assert_comparison` 阻断（`004-check-clippy.log`），该旧断言未改；生产库严格 clippy 通过。

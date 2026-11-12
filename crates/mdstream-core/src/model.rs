@@ -267,7 +267,7 @@ pub struct Work {
     /// A failed probe's source is subsequently consumed once as ordinary text.
     pub table_candidate_bytes: u64,
     pub autolink_bytes: u64,
-    /// Bare-address collection, sealing input and one-time plain release.
+    /// Bare-address collection, sealing, failed-Web indexing/recovery and plain release.
     /// Sealing performs a fixed number of linear scans; no growing-body scan.
     pub bare_autolink_bytes: u64,
     /// The same bare-address work in the non-publishing eligibility cores.

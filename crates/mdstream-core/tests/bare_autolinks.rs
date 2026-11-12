@@ -1153,3 +1153,593 @@ fn review_basic_family_boundaries_and_failed_email_recovery() {
     assert!(doc.work().bare_autolink_bytes <= 16 * doc.source().len() as u64);
     assert!(doc.work().bare_eligibility_bytes <= 16 * doc.source().len() as u64);
 }
+
+#[test]
+fn failed_web_candidates_release_internal_addresses_without_recursive_rescans() {
+    for (source, label, url) in [
+        (
+            "http://foo_bar@bar.com",
+            "foo_bar@bar.com",
+            "mailto:foo_bar@bar.com",
+        ),
+        ("https://foo_bar/path/a@b.c", "a@b.c", "mailto:a@b.c"),
+        ("www._a@b.c", "www._a@b.c", "mailto:www._a@b.c"),
+        ("http://a._www.c", "www.c", "http://www.c"),
+        ("http://a._www.c/a@b.c", "www.c/a@b.c", "http://www.c/a@b.c"),
+        ("https://a_/(www.foo)", "www.foo", "http://www.foo"),
+        ("https://a_/?mailto:a@b.c", "mailto:a@b.c", "mailto:a@b.c"),
+        (
+            "http://_foo@bar.com rest_",
+            "foo@bar.com",
+            "mailto:foo@bar.com",
+        ),
+        ("http://a._www.c_ rest_", "", ""),
+        (
+            "https://a.b/a@b.c",
+            "https://a.b/a@b.c",
+            "https://a.b/a@b.c",
+        ),
+        (
+            "http://a_/(https://x.y/a))",
+            "https://x.y/a",
+            "https://x.y/a",
+        ),
+        ("http://a._www.b_._www.c", "www.c", "http://www.c"),
+    ] {
+        let whole = parse(source);
+        assert_eq!(
+            labels(&whole).first().map_or("", |p| p.0),
+            label,
+            "{source:?}"
+        );
+        assert_eq!(
+            whole.link_url(LinkId(0)).as_deref().unwrap_or(""),
+            url,
+            "{source:?}"
+        );
+        assert_eq!(whole.links().len(), usize::from(!label.is_empty()));
+        for split in 0..=source.len() {
+            let mut bytes = Utf8Document::new();
+            bytes.append(&source.as_bytes()[..split]).unwrap();
+            bytes.append(&source.as_bytes()[split..]).unwrap();
+            bytes.finish();
+            assert_eq!(snapshot(bytes.document()), snapshot(&whole));
+        }
+        let lead = format!("{} ", "p".repeat(BLOCK_LOOKAHEAD));
+        let mut live = Document::new();
+        live.append(&lead).unwrap();
+        for end in 1..=source.len() {
+            live.append(&source[end - 1..end]).unwrap();
+            let mut bulk = Document::new();
+            bulk.append(&format!("{lead}{}", &source[..end])).unwrap();
+            assert_eq!(snapshot(&live), snapshot(&bulk));
+            bulk.finish();
+            let mut bytes = Utf8Document::new();
+            for byte in bulk.source().bytes() {
+                bytes.append(&[byte]).unwrap();
+            }
+            bytes.finish();
+            assert_eq!(snapshot(bytes.document()), snapshot(&bulk));
+        }
+        live.finish();
+        assert_eq!(labels(&live), labels(&whole));
+        assert!(live.work().bare_autolink_bytes <= 40 * live.source().len() as u64);
+    }
+    let mut doc = Document::new();
+    doc.append(&format!("{} ", "p".repeat(BLOCK_LOOKAHEAD)))
+        .unwrap();
+    doc.append(&"http://a_/(".repeat(4096)).unwrap();
+    doc.append("www.foo/").unwrap();
+    for _ in 0..1000 {
+        let before = doc.work();
+        doc.append("x").unwrap();
+        assert_eq!(
+            doc.work().bare_autolink_bytes - before.bare_autolink_bytes,
+            1
+        );
+        assert!(doc.links().is_empty());
+    }
+    doc.append(" ").unwrap();
+    assert_eq!(
+        labels(&doc),
+        [(
+            doc.text(doc.link_info(LinkId(0)).unwrap().label).unwrap(),
+            format!("http://www.foo/{}", "x".repeat(1000))
+        )]
+    );
+    assert_eq!(doc.links().len(), 1);
+    assert_eq!(
+        doc.text(doc.link_info(LinkId(0)).unwrap().label).unwrap(),
+        format!("www.foo/{}", "x".repeat(1000))
+    );
+    doc.finish();
+    assert!(doc.work().bare_autolink_bytes <= 40 * doc.source().len() as u64);
+    assert!(doc.work().bare_eligibility_bytes <= 40 * doc.source().len() as u64);
+}
+
+#[test]
+fn failed_web_recovery_family_matrix_and_valid_outer_suppression() {
+    // Independent GFM 6.9 expectations; the same inner syntax must work in
+    // every failed Web family, and be suppressed by every valid outer family.
+    for (inner, label, target) in [
+        ("a@b.c", "a@b.c", "mailto:a@b.c"),
+        ("a@b@c.d", "b@c.d", "mailto:b@c.d"),
+        ("a@@c.d", "", ""),
+        ("www.a.b", "www.a.b", "http://www.a.b"),
+        ("www.a_b.c", "", ""),
+        ("www.a_b.c.d", "www.a_b.c.d", "http://www.a_b.c.d"),
+        (
+            "https://a.b/a@b.c",
+            "https://a.b/a@b.c",
+            "https://a.b/a@b.c",
+        ),
+        ("https://a_b.c/a@b.c", "a@b.c", "mailto:a@b.c"),
+        ("mailto:a@b.c", "mailto:a@b.c", "mailto:a@b.c"),
+        ("xmpp:a@b.c/r@d.e", "xmpp:a@b.c/r@d.e", "xmpp:a@b.c/r@d.e"),
+        ("xmpp:a@b.c/", "", ""),
+        ("xmpp:a@b@c.d/r", "b@c.d", "mailto:b@c.d"),
+        ("prefixmailto:a@b.c", "a@b.c", "mailto:a@b.c"),
+        ("http:/a@b.c", "a@b.c", "mailto:a@b.c"),
+        ("http://a._www.b_._www.c", "www.c", "http://www.c"),
+    ] {
+        for outer in ["http://bad_/(", "https://bad_/?(", "www.bad_/("] {
+            let source = format!("{outer}{inner}");
+            let doc = parse(&source);
+            let expected = if label.is_empty() {
+                vec![]
+            } else {
+                vec![(label, target.to_owned())]
+            };
+            assert_eq!(labels(&doc), expected, "{source:?}");
+        }
+        // A final slash is plain and keeps all of the inner text in the URL.
+        for outer in ["http://a.b/", "https://例.子/", "www.a.b/"] {
+            let source = format!("{outer}{inner}/");
+            let doc = parse(&source);
+            let target = if outer.starts_with("www.") {
+                format!("http://{source}")
+            } else {
+                source.clone()
+            };
+            assert_eq!(labels(&doc), [(source.as_str(), target)], "{source:?}");
+        }
+    }
+    let source = "http://bad_/(a@b.c)/?mailto:d@e.f/(http://bad_/x@y.z)/www.a_b.c http://bad_/q@r.s https://a._www.t/u@v.w";
+    assert_eq!(
+        labels(&parse(source)),
+        [
+            ("a@b.c", "mailto:a@b.c".into()),
+            ("mailto:d@e.f", "mailto:d@e.f".into()),
+            ("x@y.z", "mailto:x@y.z".into()),
+            ("q@r.s", "mailto:q@r.s".into()),
+            ("www.t/u@v.w", "http://www.t/u@v.w".into()),
+        ]
+    );
+}
+
+#[test]
+fn failed_web_recovery_preserves_opaque_and_ordinary_inline_priority() {
+    for (source, expected, images) in [
+        ("`http://bad_/a@b.c`", vec![], 0),
+        ("$http://bad_/a@b.c$", vec![], 0),
+        (
+            "[http://bad_/a@b.c](/x)",
+            vec![("http://bad_/a@b.c", "/x")],
+            0,
+        ),
+        (
+            "![http://bad_/a@b.c](/img)",
+            vec![("http://bad_/a@b.c", "/img")],
+            1,
+        ),
+        ("http://bad_/[a@b.c](/x)", vec![("a@b.c", "/x")], 0),
+        (
+            "http://bad_/`a@b.c`/d@e.f",
+            vec![("d@e.f", "mailto:d@e.f")],
+            0,
+        ),
+        (
+            "http://bad_/$a@b.c$/d@e.f",
+            vec![("d@e.f", "mailto:d@e.f")],
+            0,
+        ),
+        ("www.bad_/&amp;a@b.c", vec![("a@b.c", "mailto:a@b.c")], 0),
+        (
+            "<http://bad_/a@b.c>",
+            vec![("http://bad_/a@b.c", "http://bad_/a@b.c")],
+            0,
+        ),
+        (
+            "http://bad_/a@b.c *word* &amp;",
+            vec![("a@b.c", "mailto:a@b.c")],
+            0,
+        ),
+        (
+            "[r](http://bad_/a@b.c)",
+            vec![("r", "http://bad_/a@b.c")],
+            0,
+        ),
+        (
+            "![r](http://bad_/a@b.c)",
+            vec![("r", "http://bad_/a@b.c")],
+            1,
+        ),
+    ] {
+        let whole = parse(source);
+        assert_eq!(
+            labels(&whole),
+            expected
+                .into_iter()
+                .map(|(a, b)| (a, b.into()))
+                .collect::<Vec<_>>(),
+            "{source:?}"
+        );
+        assert_eq!(
+            whole
+                .links_in(Span::new(0, source.len()))
+                .filter(|(_, info)| info.kind == LinkKind::Image)
+                .count(),
+            images,
+            "{source:?}"
+        );
+        for split in 0..=source.len() {
+            let mut bytes = Utf8Document::new();
+            bytes.append(&source.as_bytes()[..split]).unwrap();
+            bytes.append(&source.as_bytes()[split..]).unwrap();
+            bytes.finish();
+            assert_eq!(
+                snapshot(bytes.document()),
+                snapshot(&whole),
+                "{source:?} {split}"
+            );
+        }
+    }
+}
+
+#[test]
+fn failed_web_recovery_utf8_prefixes_eof_and_real_container_boundaries() {
+    for (source, expected) in [
+        ("http://_foo@bar.com rest_", vec!["foo@bar.com"]),
+        ("http://_foo@bar.com\nend_", vec!["foo@bar.com"]),
+        ("http://_foo@bar.com\n\nend_", vec!["_foo@bar.com"]),
+        ("> http://_foo@bar.com\n> end_", vec!["foo@bar.com"]),
+        ("> http://_foo@bar.com\nend_", vec!["foo@bar.com"]),
+        ("- http://__foo@bar.com\n  end__", vec!["foo@bar.com"]),
+        (
+            "> - http://a_/(https://例.子/中😀)\n  lazy",
+            vec!["https://例.子/中😀"],
+        ),
+        ("http://bad_/a@\nb.c", vec![]),
+        ("> http://bad_/a@\n> b.c", vec![]),
+        ("http://bad_/www.\nfoo", vec![]),
+        ("http://bad_/mailto:a@", vec![]),
+        ("http://bad_/(www.foo_)", vec![]),
+    ] {
+        let whole = parse(source);
+        let ordered: Vec<_> = whole
+            .links_in(Span::new(0, source.len()))
+            .map(|(_, info)| whole.text(info.label).unwrap())
+            .collect();
+        assert_eq!(ordered, expected, "{source:?}");
+        for split in 0..=source.len() {
+            let mut bytes = Utf8Document::new();
+            bytes.append(&source.as_bytes()[..split]).unwrap();
+            bytes.append(&source.as_bytes()[split..]).unwrap();
+            bytes.finish();
+            assert_eq!(
+                snapshot(bytes.document()),
+                snapshot(&whole),
+                "{source:?} {split}"
+            );
+        }
+        // Force genuine live parsing beyond block lookahead, including every
+        // Unicode scalar prefix and every prefix's byte-at-a-time EOF result.
+        let lead = format!("{} ", "p".repeat(BLOCK_LOOKAHEAD));
+        let mut live = Document::new();
+        live.append(&lead).unwrap();
+        for (at, ch) in source.char_indices() {
+            live.append(ch.encode_utf8(&mut [0; 4])).unwrap();
+            let prefix = format!("{lead}{}", &source[..at + ch.len_utf8()]);
+            let mut bulk = Document::new();
+            bulk.append(&prefix).unwrap();
+            assert_eq!(snapshot(&live), snapshot(&bulk), "{prefix:?}");
+            let mut bytes = Utf8Document::new();
+            for byte in prefix.bytes() {
+                bytes.append(&[byte]).unwrap();
+            }
+            bytes.finish();
+            bulk.finish();
+            assert_eq!(snapshot(bytes.document()), snapshot(&bulk), "{prefix:?}");
+        }
+    }
+}
+
+#[test]
+fn failed_web_recovery_late_header_decisions_settle_email_in_the_right_scope() {
+    // An invalid host's own closing underscore can settle the inherited pair
+    // before the email. Its final underscore then stays literal and rejects it.
+    for prefix in ["http://bad_/", "www.bad_/", "https://a._/?"] {
+        let source = format!("_prior\n{prefix}foo@bar.com_ tail\n");
+        assert!(parse(&source).links().is_empty(), "{source:?}");
+    }
+    // Letters surround the invalid host underscore so it cannot consume
+    // the inherited opener before the actual address's closing underscore.
+    for prefix in ["http://a_b/", "www.a_b/", "https://a_b/?"] {
+        for scheme in ["", "mailto:", "xmpp:"] {
+            for ending in ["\n", " | b\nnot delimiter\n", " | b\n- | -\n"] {
+                let address = format!("{scheme}foo@bar.com");
+                let target = if scheme.is_empty() {
+                    format!("mailto:{address}")
+                } else {
+                    address.clone()
+                };
+                let source = format!("_prior\n{prefix}{address}_ {}{ending}", "x".repeat(1100));
+                let whole = parse(&source);
+                if whole.tables().is_empty() {
+                    assert_eq!(labels(&whole), [(address.as_str(), target)], "{source:?}");
+                } else {
+                    assert_eq!(whole.tables().len(), 1);
+                    assert!(whole.links().is_empty(), "{source:?}");
+                }
+                for split in [
+                    0,
+                    3,
+                    7,
+                    source.find("foo@").unwrap(),
+                    source.find(" | ").unwrap_or(source.len()),
+                    source.len(),
+                ] {
+                    let mut bytes = Utf8Document::new();
+                    bytes.append(&source.as_bytes()[..split]).unwrap();
+                    bytes.append(&source.as_bytes()[split..]).unwrap();
+                    bytes.finish();
+                    assert_eq!(
+                        snapshot(bytes.document()),
+                        snapshot(&whole),
+                        "{prefix} {scheme} {ending:?} {split}"
+                    );
+                }
+                let mut live = Utf8Document::new();
+                for byte in source.bytes() {
+                    live.append(&[byte]).unwrap();
+                }
+                live.finish();
+                assert_eq!(snapshot(live.document()), snapshot(&whole));
+            }
+        }
+    }
+}
+
+#[test]
+fn failed_web_recovery_late_objects_mapping_shared_budget_and_real_layout() {
+    let local = "f".repeat(2 * TILE_BYTES + 3);
+    let mut doc = Document::new();
+    doc.append(&format!(
+        "{} http://a_b/_{local}@bar.com [x](/x) rest",
+        "p".repeat(BLOCK_LOOKAHEAD)
+    ))
+    .unwrap();
+    assert_eq!(labels(&doc), [("x", "/x".into())]);
+    let explicit = *doc.link_info(LinkId(0)).unwrap();
+    let email_at = doc.source().find(&local).unwrap();
+    let tile = doc.tile_at(email_at).unwrap();
+    let key = doc.tile_key(tile).unwrap();
+    let mut heights = HeightIndex::default();
+    heights.rebuild(&doc).unwrap();
+    let ticket = heights.ticket(tile).unwrap();
+    heights.measure(ticket, 3).unwrap();
+    let ticket = heights.ticket(tile).unwrap();
+    let mut stale = doc
+        .display_cursor(Span::new(email_at, email_at + local.len()))
+        .unwrap();
+    let mut stale_pass = LayoutPass::new(&doc, &heights, TileId(0), 1, true).unwrap();
+    let update = doc.append("_ http://a_b/(www.例子/中😀) ").unwrap();
+    heights.apply(&doc, &update).unwrap();
+    assert_eq!(doc.link_info(LinkId(0)), Some(&explicit));
+    assert_eq!(
+        doc.link_url(LinkId(1)).unwrap(),
+        format!("mailto:{local}@bar.com")
+    );
+    assert_eq!(doc.link_url(LinkId(2)).unwrap(), "http://www.例子/中😀");
+    assert!(
+        update
+            .dirty
+            .iter()
+            .any(|s| s.start <= email_at && s.end >= email_at + local.len() + 8)
+    );
+    assert_ne!(doc.tile_key(tile).unwrap(), key);
+    assert_eq!(
+        heights.measure(ticket, 4),
+        Err(LayoutError::StaleMeasurement)
+    );
+    let mut zero = Budget::new(WorkLimit::default());
+    assert_eq!(
+        stale.next(&doc, &mut zero),
+        Err(LayoutError::StaleContinuation)
+    );
+    assert_eq!(zero.used(), WorkLimit::default());
+
+    #[derive(Default)]
+    struct Sink {
+        ids: Vec<LinkId>,
+        bytes: usize,
+    }
+    impl LayoutSink for Sink {
+        fn begin_tile(&mut self, _: TileId) {}
+        fn text(&mut self, run: RenderRun<'_>) {
+            self.bytes += run.text.len();
+        }
+        fn object(&mut self, id: LinkId, _: &LinkInfo) {
+            self.ids.push(id);
+        }
+        fn end_tile(&mut self, _: TileId) -> u64 {
+            0
+        }
+    }
+    let mut sink = Sink::default();
+    assert_eq!(
+        stale_pass.advance(&doc, &mut heights, &mut zero, &mut sink),
+        Err(LayoutError::StaleContinuation)
+    );
+    assert!(sink.ids.is_empty());
+    assert_eq!(sink.bytes, 0);
+    for (id, limit) in [(LinkId(1), 1), (LinkId(1), 6), (LinkId(2), 6)] {
+        let info = doc.link_info(id).unwrap();
+        assert_eq!(info.source, info.label);
+        let mut target = doc.decoded_link_destination(id).unwrap();
+        let mut raw = String::new();
+        assert_eq!(target.advance(&mut zero), Err(Completion::BudgetExhausted));
+        assert_eq!(target.source_position(), info.label.start);
+        while target.source_position() < info.label.end {
+            let mut budget = Budget::new(WorkLimit {
+                bytes: limit,
+                ..SIX
+            });
+            let old = target.source_position();
+            let chunk = target.advance(&mut budget).unwrap().unwrap();
+            assert_eq!(chunk.source.start, old);
+            assert_eq!(doc.text(chunk.source), Some(chunk.text));
+            raw.push_str(chunk.text);
+            let mut peer = doc.display_cursor(info.label).unwrap();
+            assert_eq!(
+                peer.next(&doc, &mut budget).unwrap(),
+                DisplayStep::BudgetExhausted
+            );
+            assert_eq!(peer.source_position(), info.label.start);
+            assert!(budget.used().bytes <= limit);
+        }
+        assert_eq!(raw, doc.link_destination(id).unwrap());
+    }
+    let update = doc.finish();
+    heights.apply(&doc, &update).unwrap();
+    let ordered = doc
+        .links_in(Span::new(0, doc.source().len()))
+        .map(|(id, _)| id)
+        .collect::<Vec<_>>();
+    assert_eq!(ordered, [LinkId(1), LinkId(0), LinkId(2)]);
+    for n in 0..doc.tile_count() {
+        for run in doc.runs(TileId(n)).unwrap() {
+            assert_eq!(doc.text(run.source), Some(run.text));
+        }
+    }
+    let mut pass = LayoutPass::new(&doc, &heights, TileId(0), 1, true).unwrap();
+    assert_eq!(
+        pass.advance(&doc, &mut heights, &mut zero, &mut sink),
+        Ok(Completion::BudgetExhausted)
+    );
+    assert_eq!(pass.source_position(), 0);
+    // Text and object consumers use the same actual frame budget. A one-query
+    // budget may stop before an object; two queries let the paid successor
+    // lookup and delivery proceed. No history enumeration is hidden here.
+    for step in 0..10000 {
+        let mut budget = Budget::new(WorkLimit {
+            bytes: if step % 2 == 0 { 1 } else { 6 },
+            queries: 2,
+            objects: 1,
+            tiles: 1,
+            recovery: 1,
+            dependencies: 0,
+        });
+        let result = pass
+            .advance(&doc, &mut heights, &mut budget, &mut sink)
+            .unwrap();
+        assert!(budget.used().bytes <= if step % 2 == 0 { 1 } else { 6 });
+        assert!(budget.used().objects <= 1);
+        if result == Completion::EndOfDocument {
+            break;
+        }
+    }
+    assert_eq!(pass.source_position(), doc.source().len());
+    assert_eq!(sink.ids, ordered);
+    assert!(sink.bytes > local.len());
+}
+
+#[test]
+fn failed_web_recovery_million_byte_nested_prefixes_and_history_are_bounded() {
+    for depth in [1, 16, 256, 4096, 65536] {
+        let mut doc = Document::new();
+        doc.append(&format!("{} ", "p".repeat(BLOCK_LOOKAHEAD)))
+            .unwrap();
+        let first = doc.work();
+        doc.append(&"http://a_/(".repeat(depth)).unwrap();
+        doc.append("www.foo/").unwrap();
+        doc.append(&"x".repeat(1_000_000)).unwrap();
+        for _ in 0..64 {
+            let before = doc.work();
+            doc.append("x").unwrap();
+            assert_eq!(
+                doc.work().bare_autolink_bytes - before.bare_autolink_bytes,
+                1
+            );
+            assert!(doc.links().is_empty());
+        }
+        let before = doc.work();
+        doc.append(" ").unwrap();
+        let work = doc.work().bare_autolink_bytes - before.bare_autolink_bytes;
+        let input = doc.source().len() as u64;
+        eprintln!(
+            "failed-Web operations: depth={depth} input={input} seal={work} total={}",
+            doc.work().bare_autolink_bytes - first.bare_autolink_bytes
+        );
+        assert_eq!(doc.links().len(), 1);
+        let label = doc.link_destination(LinkId(0)).unwrap();
+        assert_eq!(label.len(), "www.foo/".len() + 1_000_000 + 64);
+        assert!(label.starts_with("www.foo/"));
+        assert!(work <= 20 * input, "depth={depth}: {work} / {input}");
+        doc.finish();
+        assert!(doc.work().bare_autolink_bytes - first.bare_autolink_bytes <= 24 * input);
+        assert!(doc.work().bare_eligibility_bytes <= 24 * input);
+    }
+    // Many starts in one host must share suffix validation too. In particular,
+    // do not copy .13's >10-segment shortcut that accepts invalid underscores.
+    for (body, expected) in [
+        (
+            format!("http://a._{}www.c", "www._".repeat(100_000)),
+            "www.c",
+        ),
+        (format!("http://a_b/{}b.c", "a@".repeat(100_000)), "a@b.c"),
+        (
+            format!("http://a._www.c{}", "?&a;".repeat(100_000)),
+            "www.c",
+        ),
+    ] {
+        let doc = parse(&body);
+        assert_eq!(doc.links().len(), 1);
+        assert_eq!(doc.link_destination(LinkId(0)), Some(expected));
+        assert!(doc.work().bare_autolink_bytes <= 24 * body.len() as u64);
+        assert!(doc.work().bare_eligibility_bytes <= 24 * body.len() as u64);
+    }
+    let mut doc = Document::new();
+    doc.append(&format!("{} ", "> ".repeat(970))).unwrap();
+    doc.append(&"x".repeat(1_000_000)).unwrap();
+    doc.append(" http://a_b/a@b.c ").unwrap();
+    let first = *doc.link_info(LinkId(0)).unwrap();
+    for _ in 0..4096 {
+        doc.append("[r] http://a_b/d@e.f \n").unwrap();
+    }
+    let links = doc.links().to_vec();
+    let infos = (0..links.len())
+        .map(|n| *doc.link_info(LinkId(n)).unwrap())
+        .collect::<Vec<_>>();
+    // Leave the deep container before defining the old reference in root scope.
+    doc.append("\n\n").unwrap();
+    let before = doc.work();
+    doc.append("[r]: /winner\n").unwrap();
+    assert_eq!(doc.work().bare_autolink_bytes, before.bare_autolink_bytes);
+    assert_eq!(
+        doc.work().bare_eligibility_bytes,
+        before.bare_eligibility_bytes
+    );
+    assert_eq!(doc.links(), links);
+    assert_eq!(doc.link_info(LinkId(0)), Some(&first));
+    assert_eq!(doc.link_url(LinkId(1)).unwrap(), "/winner");
+    for (n, info) in infos.iter().enumerate() {
+        assert_eq!(doc.link_info(LinkId(n)), Some(info));
+    }
+    let before = doc.work();
+    doc.append("http://a_b/z@q.r ").unwrap();
+    assert!(doc.work().bare_autolink_bytes - before.bare_autolink_bytes <= 20 * 32);
+    assert_eq!(doc.work().label_bytes, before.label_bytes);
+    doc.finish();
+    assert!(doc.work().bare_autolink_bytes <= 24 * doc.source().len() as u64);
+}

@@ -1,7 +1,7 @@
 //! Deferred, disjoint raw text candidates. Growth only extends a source span;
-//! sealing validates that span in a fixed number of linear passes, then releases
-//! each rejected/plain byte to
-//! the ordinary inline machine at most once, with candidate creation disabled.
+//! sealing validates that span in a fixed number of linear passes. Failed Web
+//! spans get one indexed recovery pass; their disjoint inner candidates release
+//! plain bytes with candidate creation disabled.
 //! No candidate length limit, copied body, growing-prefix scan or rollback IDs.
 use crate::Span;
 
@@ -71,7 +71,13 @@ impl Candidate {
         valid.then_some(start)
     }
 
-    pub fn byte(&mut self, byte: u8, pos: usize, source: &str) -> bool {
+    pub fn byte(
+        &mut self,
+        byte: u8,
+        pos: usize,
+        source: &str,
+        recovery: Option<&Recovery>,
+    ) -> bool {
         let accept = match self.kind {
             Kind::Local => {
                 if byte == b'@' {
@@ -101,6 +107,14 @@ impl Candidate {
                         ),
                     ] {
                         if let Some(start) = self.prefix(source, pos, prefix) {
+                            if matches!(kind, Kind::Web { .. })
+                                && recovery.is_some_and(|r| {
+                                    source.as_bytes().get(pos + 1..pos + 3) != Some(b"//")
+                                        || !r.allows(pos + 3)
+                                })
+                            {
+                                return false;
+                            }
                             self.address = start;
                             self.kind = kind;
                             self.slashes = if matches!(kind, Kind::Web { .. }) {
@@ -178,6 +192,7 @@ impl Candidate {
             if matches!(self.kind, Kind::Local)
                 && byte == b'.'
                 && let Some(start) = self.prefix(source, pos + 1, "www.")
+                && recovery.is_none_or(|r| r.allows(start))
             {
                 self.address = start;
                 self.kind = Kind::Web { www: true };
@@ -231,6 +246,96 @@ impl Candidate {
                 Some((Span::new(self.address, self.address + end), www))
             }
         }
+    }
+}
+
+/// Transient index for one failed Web span. Each entry says whether the host
+/// suffix beginning there can seal as a Web address. Recovery consults this
+/// before entering Web mode, so rejected nested prefixes never collect or
+/// validate overlapping long tails. Accepted inner candidates are disjoint.
+#[derive(Debug)]
+pub(super) struct Recovery {
+    start: usize,
+    hosts: Vec<bool>,
+}
+
+impl Recovery {
+    pub fn new(span: Span, source: &str, bytes: &mut u64) -> Self {
+        let raw = &source[span.range()];
+        // The tail can reach a host only if everything after it consists of
+        // punctuation, excess ')' or entity-shaped tokens. Any '(' is plain
+        // and stops trimming, so ignoring ')' balance here is exact for hosts.
+        let mut tail = raw.len();
+        while tail != 0 {
+            *bytes += 1;
+            match raw.as_bytes()[tail - 1] {
+                b'?' | b'!' | b'.' | b',' | b':' | b'*' | b'_' | b'~' | b')' => {
+                    tail -= 1;
+                }
+                b';' => {
+                    let mut amp = tail - 1;
+                    while amp != 0 && raw.as_bytes()[amp - 1].is_ascii_alphanumeric() {
+                        *bytes += 1;
+                        amp -= 1;
+                    }
+                    if amp == tail - 1 || amp == 0 || raw.as_bytes()[amp - 1] != b'&' {
+                        break;
+                    }
+                    tail = amp - 1;
+                }
+                _ => break,
+            }
+        }
+        let mut hosts = vec![false; raw.len()];
+        *bytes += raw.len() as u64;
+        let mut end = raw.len();
+        let mut content = false;
+        let mut trailing_dot = false;
+        let mut periods = 0usize;
+        let mut empty = false;
+        let mut underscore = false;
+        let mut right_dot = false;
+        for (at, ch) in raw.char_indices().rev() {
+            *bytes += ch.len_utf8() as u64;
+            if !ch.is_alphanumeric() && !matches!(ch, '.' | '_' | '-') {
+                end = at;
+                content = false;
+                trailing_dot = false;
+                periods = 0;
+                empty = false;
+                underscore = false;
+                right_dot = false;
+                continue;
+            }
+            if !content && ch == '.' {
+                trailing_dot = true;
+                continue;
+            }
+            content = true;
+            if ch == '.' {
+                periods += 1;
+                empty |= right_dot;
+            } else if ch == '_' && periods < 2 {
+                underscore = true;
+            }
+            right_dot = ch == '.';
+            hosts[at] = !right_dot
+                && periods != 0
+                && !empty
+                && !underscore
+                && (!trailing_dot || tail <= end);
+        }
+        Self {
+            start: span.start,
+            hosts,
+        }
+    }
+
+    fn allows(&self, body: usize) -> bool {
+        body.checked_sub(self.start)
+            .and_then(|at| self.hosts.get(at))
+            .copied()
+            .unwrap_or(false)
     }
 }
 
@@ -382,4 +487,48 @@ pub(super) fn email(raw: &str) -> Option<usize> {
         }
     }
     (at_sign && local_bytes != 0 && period && !b"-_".contains(&last)).then_some(end?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recovery_index_agrees_with_web_sealing_for_every_suffix() {
+        // Every suffix exercises a possible host start, including starts in
+        // the last two segments, adjacent dots, entity tails and parentheses.
+        // Compare the new reverse index against the existing forward seal.
+        let alphabet = b"a._/);&";
+        for len in 0..=6u32 {
+            for mut value in 0..alphabet.len().pow(len) {
+                let mut raw = String::new();
+                for _ in 0..len {
+                    raw.push(char::from(alphabet[value % alphabet.len()]));
+                    value /= alphabet.len();
+                }
+                check(&raw);
+            }
+        }
+        for host in ["a.b", "a_b.c.d", "a.b...", "例.子", "é._www.c"] {
+            for suffix in ["", "??", "((a))", ")&abc;", ")&abc;;", "/?&a;", "_&a;"] {
+                check(&format!("{host}{suffix}"));
+            }
+        }
+
+        fn check(raw: &str) {
+            let source = format!("offset {raw}");
+            let mut work = 0;
+            let recovery = Recovery::new(Span::new(7, source.len()), &source, &mut work);
+            assert!(work <= 4 * raw.len() as u64 + 1, "{raw:?}: {work}");
+            for (at, _) in raw.char_indices() {
+                assert_eq!(
+                    recovery.allows(at + 7),
+                    web(&raw[at..], 0, &mut 0).is_some(),
+                    "{raw:?} at {at}"
+                );
+            }
+            assert!(!recovery.allows(6));
+            assert!(!recovery.allows(source.len()));
+        }
+    }
 }

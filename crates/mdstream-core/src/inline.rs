@@ -726,6 +726,7 @@ pub(crate) struct Inline {
     autolink: Option<usize>,
     bare: Option<bare_autolink::Candidate>,
     bare_replay: bool,
+    bare_recovery: Option<bare_autolink::Recovery>,
     bare_collect: Option<Span>,
     bare_markers: std::collections::BTreeMap<usize, usize>,
     email_pending: Vec<PendingEmail>,
@@ -1227,8 +1228,24 @@ impl Inline {
             return;
         }
         let linked = candidate.seal(effects.source, &mut effects.work.bare_autolink_bytes);
+        let web = matches!(candidate.kind, bare_autolink::Kind::Web { .. });
+        debug_assert!(self.bare_recovery.is_none() || !web || linked.is_some());
         self.previous = candidate.before;
         self.previous_scalar = candidate.before_scalar;
+        if linked.is_none() && web && self.bare_recovery.is_none() {
+            // Synchronous, one-level recovery. The index admits only valid
+            // inner Web candidates; ordinary releases still disable discovery.
+            // Source nesting therefore cannot add replay passes or stack depth.
+            self.bare_recovery = Some(bare_autolink::Recovery::new(
+                candidate.span,
+                effects.source,
+                &mut effects.work.bare_autolink_bytes,
+            ));
+            self.bare_plain(candidate.span, effects);
+            self.flush_bare(next, effects);
+            self.bare_recovery = None;
+            return;
+        }
         self.bare_replay = true;
         let prefix_end = linked.map_or(candidate.span.end, |(span, _)| span.start);
         self.bare_plain(Span::new(candidate.span.start, prefix_end), effects);
@@ -1415,7 +1432,7 @@ impl Inline {
     fn byte(&mut self, byte: u8, pos: usize, origin: Origin, effects: &mut Effects<'_>) {
         if let Some(candidate) = &mut self.bare {
             effects.work.bare_autolink_bytes += 1;
-            if candidate.byte(byte, pos, effects.source) {
+            if candidate.byte(byte, pos, effects.source, self.bare_recovery.as_ref()) {
                 return;
             }
             let next = if matches!(origin, Origin::Virtual) {
@@ -1590,7 +1607,7 @@ impl Inline {
             let mut candidate =
                 bare_autolink::Candidate::new(pos, self.previous, self.previous_scalar);
             effects.work.bare_autolink_bytes += 1;
-            assert!(candidate.byte(byte, pos, effects.source));
+            assert!(candidate.byte(byte, pos, effects.source, self.bare_recovery.as_ref()));
             self.bare = Some(candidate);
             return;
         }
