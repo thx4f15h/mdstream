@@ -68,8 +68,10 @@ fn project(doc: &Document) -> String {
         assert_eq!(info.kind, LinkKind::Link);
         assert!(matches!(target, LinkTarget::Direct(s) | LinkTarget::Email(s) if *s == info.label));
         assert_eq!(info.title, None);
-        assert_eq!(info.source.start + 1, info.label.start);
-        assert_eq!(info.source.end - 1, info.label.end);
+        if info.source != info.label {
+            assert_eq!(info.source.start + 1, info.label.start);
+            assert_eq!(info.source.end - 1, info.label.end);
+        }
     }
     let mut html = String::new();
     let mut seen = vec![false; doc.links().len()];
@@ -134,8 +136,22 @@ fn project(doc: &Document) -> String {
     html
 }
 
-// Independent observation: failure stays opaque; never passed to project().
+// Independent observations of the selected dialect; never passed to project().
 const FAILED_EMAIL: &str = "<p>&lt;foo\\+@bar.example.com&gt;</p>\n";
+const GFM_OBSERVED: &[(usize, &str)] = &[
+    (
+        608,
+        "<p>&lt; <a href=\"https://foo.bar\">https://foo.bar</a> &gt;</p>\n",
+    ),
+    (
+        611,
+        "<p><a href=\"https://example.com\">https://example.com</a></p>\n",
+    ),
+    (
+        612,
+        "<p><a href=\"mailto:foo@bar.example.com\">foo@bar.example.com</a></p>\n",
+    ),
+];
 
 fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
     let actual = project(doc);
@@ -144,7 +160,14 @@ fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
             assert_ne!(actual, expected, "review newly supported example 606");
             assert_eq!(actual, FAILED_EMAIL);
         }
-        594..=605 | 607..=612 => assert_eq!(actual, expected, "example {number}"),
+        608 | 611 | 612 => {
+            assert_ne!(actual, expected, "review GFM dialect example {number}");
+            assert_eq!(
+                actual,
+                GFM_OBSERVED.iter().find(|c| c.0 == number).unwrap().1
+            );
+        }
+        594..=605 | 607 | 609 | 610 => assert_eq!(actual, expected, "example {number}"),
         _ => panic!("unclassified example {number}"),
     }
     assert_eq!(doc.source(), markdown);
@@ -167,19 +190,19 @@ fn pinned_commonmark_autolinks_report() {
     for (index, &(number, markdown, expected)) in AUTOLINK_CASES.iter().enumerate() {
         assert_eq!(number, 594 + index);
         check_case(number, markdown, expected, &parse(markdown));
-        let category = usize::from(number == 606);
+        let category = usize::from(matches!(number, 606 | 608 | 611 | 612));
         counts[category] += 1;
         eprintln!(
             "example {number}: {}",
             if category == 0 {
                 "supported"
             } else {
-                "deliberate difference: failed candidate does not replay escapes"
+                "deliberate difference: opaque failure or GFM bare address"
             }
         );
     }
-    assert_eq!(counts, [18, 1, 0]);
-    eprintln!("CommonMark 0.31.2 Autolinks: 18 supported, 1 deliberate difference, 0 unsupported");
+    assert_eq!(counts, [15, 4, 0]);
+    eprintln!("CommonMark 0.31.2 Autolinks: 15 supported, 4 deliberate differences, 0 unsupported");
 }
 
 #[test]

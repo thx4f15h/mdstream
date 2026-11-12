@@ -341,7 +341,7 @@ fn invariants(s: &Snapshot, finished: bool) -> Result<(), Failure> {
         }
         match target {
             LinkTarget::Reference(id) => require(id.0 < s.references.len(), "link.symbol", target)?,
-            LinkTarget::Direct(r) | LinkTarget::Email(r) => span(source, *r)?,
+            LinkTarget::Direct(r) | LinkTarget::Email(r) | LinkTarget::Www(r) => span(source, *r)?,
         }
     }
     for r in &s.references {

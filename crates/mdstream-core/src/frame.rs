@@ -377,7 +377,9 @@ impl LayoutPass {
                     return Ok(Completion::BudgetExhausted);
                 }
                 sink.object(LinkId(self.object), info);
-                self.object += 1;
+                self.object = document
+                    .next_link(LinkId(self.object))
+                    .map_or(document.links().len(), |id| id.0);
                 continue;
             }
             let remaining = budget.remaining();

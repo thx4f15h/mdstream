@@ -1,6 +1,8 @@
 //! Offline scoring of complete GFM 0.29-gfm Autolinks (extension) section (622–635).
 //! The adapter reads public paragraph/display semantics, never Markdown syntax.
-use mdstream::{BlockKind, Budget, DisplayStep, Document, Span, Style, WorkLimit};
+use mdstream::{
+    BlockKind, Budget, DisplayStep, Document, LinkId, LinkKind, LinkTarget, Span, Style, WorkLimit,
+};
 
 #[path = "support/snapshot.rs"]
 mod support;
@@ -15,12 +17,53 @@ fn parse(source: &str) -> Document {
     doc
 }
 
+fn escape(ch: char, out: &mut String) {
+    match ch {
+        '&' => out.push_str("&amp;"),
+        '<' => out.push_str("&lt;"),
+        '>' => out.push_str("&gt;"),
+        '"' => out.push_str("&quot;"),
+        _ => out.push(ch),
+    }
+}
+
+// HTML output encoding only. Never decode Markdown or normalize the oracle.
+fn opening_tag(doc: &Document, id: LinkId) -> String {
+    let mut out = String::from("<a href=\"");
+    for ch in doc.link_url(id).unwrap().chars() {
+        assert!(!ch.is_ascii_whitespace() && !ch.is_ascii_control());
+        assert!(
+            !matches!(ch, '`' | '<' | '>' | '"'),
+            "unscored URI encoding"
+        );
+        if !ch.is_ascii() || matches!(ch, '\\' | '[' | ']') {
+            use std::fmt::Write;
+            for b in ch.encode_utf8(&mut [0; 4]).bytes() {
+                write!(&mut out, "%{b:02X}").unwrap();
+            }
+        } else {
+            escape(ch, &mut out);
+        }
+    }
+    out.push_str("\">");
+    out
+}
+
 fn project(doc: &Document) -> String {
     assert_eq!(doc.container_count(), 0);
-    assert!(doc.headings().entries().is_empty());
-    assert!(doc.links().is_empty() && doc.references().is_empty());
+    assert!(doc.headings().entries().is_empty() && doc.references().is_empty());
     assert!(doc.tables().is_empty() && doc.maths().is_empty() && doc.footnotes().is_empty());
+    for (i, target) in doc.links().iter().enumerate() {
+        let info = doc.link_info(LinkId(i)).unwrap();
+        assert_eq!(info.kind, LinkKind::Link);
+        assert!(
+            matches!(target, LinkTarget::Direct(s) | LinkTarget::Email(s) | LinkTarget::Www(s) if *s == info.label)
+        );
+        assert_eq!(info.title, None);
+        assert_eq!(info.source, info.label);
+    }
     let mut html = String::new();
+    let mut seen = vec![false; doc.links().len()];
     for block in doc.blocks() {
         match block.kind {
             BlockKind::Blank => continue,
@@ -28,27 +71,38 @@ fn project(doc: &Document) -> String {
             ref other => panic!("unscored block {other:?}"),
         }
         html.push_str("<p>");
+        let mut active = None;
         for run in doc.display_runs_in(block.source).unwrap() {
             if run.style.contains(Style::HIDDEN) {
                 continue;
             }
             for unsupported in [
-                Style::CODE,
-                Style::STRONG,
                 Style::EMPHASIS,
-                Style::MATH,
+                Style::STRONG,
                 Style::STRIKE,
+                Style::MATH,
+                Style::CODE,
             ] {
                 assert!(!run.style.contains(unsupported), "unscored inline style");
             }
-            assert!(run.link.is_none());
-            // Omit only the borrowed physical paragraph terminator. Decoded
-            // entities ending in LF remain content; never trim visible text.
+            if active != run.link {
+                if active.is_some() {
+                    html.push_str("</a>");
+                }
+                if let Some(id) = run.link {
+                    assert!(!seen[id.0], "split link label");
+                    seen[id.0] = true;
+                    html.push_str(&opening_tag(doc, id));
+                }
+                active = run.link;
+            }
+            // Strip only a borrowed physical paragraph terminator.
             let payload = if run.source.end == block.source.end
                 && run.replacement.is_none()
                 && run.text.ends_with('\n')
                 && doc.text(run.source).unwrap().ends_with('\n')
             {
+                assert!(run.link.is_none());
                 assert!(!run.style.contains(Style::HARD_BREAK));
                 assert!(!run.style.contains(Style::SOFT_BREAK));
                 run.text.strip_suffix('\n').unwrap()
@@ -59,71 +113,21 @@ fn project(doc: &Document) -> String {
                 if ch == '\n' && run.style.contains(Style::HARD_BREAK) {
                     html.push_str("<br />");
                 }
-                match ch {
-                    '&' => html.push_str("&amp;"),
-                    '<' => html.push_str("&lt;"),
-                    '>' => html.push_str("&gt;"),
-                    '"' => html.push_str("&quot;"),
-                    _ => html.push(ch),
-                }
+                escape(ch, &mut html);
             }
+        }
+        if active.is_some() {
+            html.push_str("</a>");
         }
         html.push_str("</p>\n");
     }
+    assert!(seen.into_iter().all(|v| v), "unscored link");
     html
 }
 
-// Independent frozen observations of the documented no-bare-autolink dialect.
-// Never passed to project(), which only reads the public semantic model.
-const OBSERVED: &[(usize, &str)] = &[
-    (622, "<p>www.commonmark.org</p>\n"),
-    (
-        623,
-        "<p>Visit www.commonmark.org/help for more information.</p>\n",
-    ),
-    (
-        624,
-        "<p>Visit www.commonmark.org.</p>\n<p>Visit www.commonmark.org/a.b.</p>\n",
-    ),
-    (
-        625,
-        "<p>www.google.com/search?q=Markup+(business)</p>\n<p>www.google.com/search?q=Markup+(business)))</p>\n<p>(www.google.com/search?q=Markup+(business))</p>\n<p>(www.google.com/search?q=Markup+(business)</p>\n",
-    ),
-    (626, "<p>www.google.com/search?q=(business))+ok</p>\n"),
-    (
-        627,
-        "<p>www.google.com/search?q=commonmark&amp;hl=en</p>\n<p>www.google.com/search?q=commonmark&amp;hl;</p>\n",
-    ),
-    (628, "<p>www.commonmark.org/he&lt;lp</p>\n"),
-    (
-        629,
-        "<p>http://commonmark.org</p>\n<p>(Visit https://encrypted.google.com/search?q=Markup+(business))</p>\n",
-    ),
-    (630, "<p>foo@bar.baz</p>\n"),
-    (
-        631,
-        "<p>hello@mail+xyz.example isn't valid, but hello+xyz@mail.example is.</p>\n",
-    ),
-    (
-        632,
-        "<p>a.b-c_d@a.b</p>\n<p>a.b-c_d@a.b.</p>\n<p>a.b-c_d@a.b-</p>\n<p>a.b-c_d@a.b_</p>\n",
-    ),
-    (
-        633,
-        "<p>mailto:foo@bar.baz</p>\n<p>mailto:a.b-c_d@a.b</p>\n<p>mailto:a.b-c_d@a.b.</p>\n<p>mailto:a.b-c_d@a.b/</p>\n<p>mailto:a.b-c_d@a.b-</p>\n<p>mailto:a.b-c_d@a.b_</p>\n<p>xmpp:foo@bar.baz</p>\n<p>xmpp:foo@bar.baz.</p>\n",
-    ),
-    (
-        634,
-        "<p>xmpp:foo@bar.baz/txt</p>\n<p>xmpp:foo@bar.baz/txt@bin</p>\n<p>xmpp:foo@bar.baz/txt@bin.com</p>\n",
-    ),
-    (635, "<p>xmpp:foo@bar.baz/txt/bin</p>\n"),
-];
-
 fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
     let actual = project(doc);
-    assert_ne!(actual, expected, "review newly matching example {number}");
-    assert_eq!(actual, OBSERVED.iter().find(|c| c.0 == number).unwrap().1);
-    assert!(doc.links().is_empty());
+    assert_eq!(actual, expected, "example {number}");
     assert_eq!(doc.source(), markdown);
     let mut end = 0;
     for run in doc.display_runs_in(Span::new(0, markdown.len())).unwrap() {
@@ -131,7 +135,6 @@ fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
         assert!(run.source.start < run.source.end);
         assert_eq!(run.replacement, None);
         assert_eq!(run.text, &markdown[run.source.range()]);
-        assert!(run.link.is_none());
         end = run.source.end;
     }
     assert_eq!(end, markdown.len());
@@ -140,18 +143,16 @@ fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
 #[test]
 fn pinned_gfm_autolinks_extension_report() {
     assert_eq!(BARE_CASES.len(), 14);
-    assert_eq!(OBSERVED.len(), 14);
     let mut counts = [0; 3];
     for (index, &(number, markdown, expected)) in BARE_CASES.iter().enumerate() {
         assert_eq!(number, 622 + index);
-        assert_eq!(OBSERVED[index].0, number);
         check_case(number, markdown, expected, &parse(markdown));
-        counts[1] += 1;
-        eprintln!("example {number}: deliberate difference (bare addresses are not linked)");
+        counts[0] += 1;
+        eprintln!("example {number}: supported");
     }
-    assert_eq!(counts, [0, 14, 0]);
+    assert_eq!(counts, [14, 0, 0]);
     eprintln!(
-        "GFM Autolinks extension 622–635: 0 supported, 14 deliberate differences, 0 unsupported"
+        "GFM Autolinks extension 622–635: 14 supported, 0 deliberate differences, 0 unsupported"
     );
 }
 
@@ -306,14 +307,23 @@ fn autolinks_extension_mapping_slices_and_six_byte_budget() {
 fn bare_projection_preserves_visible_payload_and_rejects_unscored_semantics() {
     for (source, expected) in [
         ("", ""),
-        ("www.example.com/中😀\n", "<p>www.example.com/中😀</p>\n"),
+        (
+            "www.example.com/中😀\n",
+            "<p><a href=\"http://www.example.com/%E4%B8%AD%F0%9F%98%80\">www.example.com/中😀</a></p>\n",
+        ),
         ("a  b\tc\n", "<p>a  b\tc</p>\n"),
         ("a\nb\n", "<p>a\nb</p>\n"),
         ("a  \nb\n", "<p>a<br />\nb</p>\n"),
         ("a\n\nb\n", "<p>a</p>\n<p>b</p>\n"),
-        ("www.x.test/?a&amp;b\n", "<p>www.x.test/?a&amp;b</p>\n"),
+        (
+            "www.x.test/?a&amp;b\n",
+            "<p><a href=\"http://www.x.test/?a&amp;amp;b\">www.x.test/?a&amp;amp;b</a></p>\n",
+        ),
         ("&#10;\n", "<p>\n</p>\n"),
-        ("www.x.test/a\\*b\n", "<p>www.x.test/a*b</p>\n"),
+        (
+            "www.x.test/a\\*b\n",
+            "<p><a href=\"http://www.x.test/a\">www.x.test/a</a>*b</p>\n",
+        ),
     ] {
         assert_eq!(project(&parse(source)), expected, "{source:?}");
     }
@@ -364,10 +374,14 @@ fn angle_links_stay_distinct_from_bare_addresses_and_keep_source_mapping() {
         ("xmpp:foo@bar.baz/txt", "xmpp:foo@bar.baz/txt"),
     ] {
         let bare = parse(address);
-        assert!(bare.links().is_empty());
+        assert_eq!(bare.links().len(), 1);
         assert_eq!(
             project(&bare),
-            format!("<p>{}</p>\n", address.replace('&', "&amp;"))
+            format!(
+                "<p><a href=\"{}\">{}</a></p>\n",
+                url.replace('&', "&amp;"),
+                address.replace('&', "&amp;")
+            )
         );
         let source = format!("<{address}>\n");
         let linked = parse(&source);
@@ -391,7 +405,7 @@ fn angle_links_stay_distinct_from_bare_addresses_and_keep_source_mapping() {
 }
 
 #[test]
-fn long_bare_address_append_keeps_block_identity_and_no_link_object() {
+fn long_bare_address_append_keeps_block_identity_and_defers_link_object() {
     let mut doc = Document::new();
     doc.append("www.example.com/").unwrap();
     doc.append(&"中😀x".repeat(300)).unwrap();
@@ -399,10 +413,10 @@ fn long_bare_address_append_keeps_block_identity_and_no_link_object() {
     for ch in "/tail?q=(value)&key=1).\n".chars() {
         doc.append(ch.encode_utf8(&mut [0; 4])).unwrap();
         assert_eq!(doc.block_at(0).unwrap().0, block);
-        assert!(doc.links().is_empty());
+        assert_eq!(doc.links().len(), usize::from(ch == '\n'));
     }
     doc.finish();
     assert_eq!(doc.block_at(0).unwrap().0, block);
     assert_eq!(snapshot(&doc), snapshot(&parse(doc.source())));
-    assert!(project(&doc).ends_with("/tail?q=(value)&amp;key=1).</p>\n"));
+    assert!(project(&doc).ends_with("/tail?q=(value)&amp;key=1</a>).</p>\n"));
 }

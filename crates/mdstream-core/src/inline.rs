@@ -3,6 +3,8 @@ use crate::destination::{Destination, Progress};
 use crate::references::{MAX_LABEL_BYTES, References, normalize_label};
 #[path = "atom_fallback.rs"]
 mod atom_fallback;
+#[path = "bare_autolink.rs"]
+mod bare_autolink;
 #[path = "flanking.rs"]
 mod flanking;
 use crate::{
@@ -16,6 +18,7 @@ pub(crate) struct Publishing<'a> {
     pub references: &'a mut References,
     pub links: &'a mut Vec<LinkTarget>,
     pub link_info: &'a mut Vec<LinkInfo>,
+    pub link_order: &'a mut std::collections::BTreeMap<usize, LinkId>,
     pub direct_title_gaps: &'a mut Vec<Vec<Span>>,
     pub maths: &'a mut Vec<crate::Math>,
     pub math_gaps: &'a mut Vec<Span>,
@@ -121,6 +124,7 @@ impl Publishing<'_> {
             None => {
                 let id = LinkId(self.links.len());
                 self.links.push(target);
+                self.link_order.insert(info.source.start, id);
                 self.link_info.push(info);
                 self.direct_title_gaps.push(title_gaps);
                 id
@@ -276,6 +280,7 @@ impl<'a> Effects<'a> {
         if let Some(p) = &mut self.publishing {
             let label = Span::new(start + 1, end);
             let id = LinkId(p.links.len());
+            p.link_order.insert(start, id);
             p.links.push(match target {
                 crate::autolink::Target::Uri => LinkTarget::Direct(label),
                 crate::autolink::Target::Email => LinkTarget::Email(label),
@@ -291,6 +296,29 @@ impl<'a> Effects<'a> {
             p.mark(label, Style::default(), Some(id));
             p.hide(Span::new(start, start + 1));
             p.hide(Span::new(end, end + 1));
+        }
+    }
+
+    fn bare_autolink(&mut self, label: Span, www: bool, email: bool) {
+        if let Some(p) = &mut self.publishing {
+            let id = LinkId(p.links.len());
+            p.link_order.insert(label.start, id);
+            p.links.push(if www {
+                LinkTarget::Www(label)
+            } else if email {
+                LinkTarget::Email(label)
+            } else {
+                LinkTarget::Direct(label)
+            });
+            p.link_info.push(LinkInfo {
+                kind: LinkKind::Link,
+                label,
+                source: label,
+                title: None,
+                state: SyntaxState::Sealed,
+            });
+            p.direct_title_gaps.push(Vec::new());
+            p.mark(label, Style::default(), Some(id));
         }
     }
 
@@ -338,6 +366,7 @@ impl<'a> Effects<'a> {
 #[derive(Clone, Copy)]
 #[cfg_attr(test, derive(Debug))]
 struct Delimiter {
+    email: Option<usize>,
     // Stars/underscores: marker * 6 + original can-close * 3 + original len % 3.
     // Original run properties survive partial consumption (rule of three).
     // Tildes use the final two, exact-length categories.
@@ -359,6 +388,12 @@ impl EmphasisPair {
         effects.hide(self.open);
         effects.hide(self.close);
     }
+}
+
+#[cfg_attr(test, derive(Debug))]
+struct PendingEmail {
+    candidate: Option<bare_autolink::Candidate>,
+    openers: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -689,6 +724,14 @@ pub(crate) struct Inline {
     carriage: bool,
     line_break: Option<LineBreak>,
     autolink: Option<usize>,
+    bare: Option<bare_autolink::Candidate>,
+    bare_replay: bool,
+    bare_collect: Option<Span>,
+    bare_markers: std::collections::BTreeMap<usize, usize>,
+    email_pending: Vec<PendingEmail>,
+    email_waiting: std::collections::VecDeque<usize>,
+    email_ready: Vec<usize>,
+    header_email_pending: usize,
     entity: Option<usize>,
     // Inherited openers can close without affecting the independent cell's
     // delimiter machine when the closer cannot open and pops no local opener.
@@ -763,6 +806,7 @@ impl Eligibility {
         debug_assert_eq!(w.link_title_gap_steps, 0);
         debug_assert_eq!(w.link_fallback_bytes, 0);
         debug_assert_eq!(w.link_fallback_steps, 0);
+        total.bare_eligibility_bytes += w.bare_autolink_bytes;
         let steps = w.inline_bytes
             + w.delimiter_steps
             + w.delimiter_search_steps
@@ -923,6 +967,7 @@ impl Inline {
         debug_assert!(self.header_math.is_none());
         debug_assert!(self.header_link.is_none());
         debug_assert!(self.header_link_suffix.is_none());
+        self.header_email_pending = self.email_pending.len();
         self.header_floor = self.stack.len();
         self.header_label_delimiters = self.label_delimiters.len();
         self.header_crossed = false;
@@ -991,10 +1036,17 @@ impl Inline {
             pair.commit(effects);
         }
         effects.work.delimiter_steps += self.header_pairs.len() as u64;
+        let collect = self.bare_collect.is_some() || !self.email_waiting.is_empty();
         for pair in self.header_pairs.drain(..) {
+            if collect {
+                for marker in [pair.open, pair.close] {
+                    self.bare_markers.insert(marker.start, marker.end);
+                }
+            }
             pair.commit(effects);
         }
         self.clear_header();
+        self.publish_ready_emails(effects);
     }
 
     fn clear_header(&mut self) {
@@ -1013,6 +1065,8 @@ impl Inline {
     /// is instead parsed once as a cell during the existing row scan. Never
     /// finish its pending run: that could publish a cross-line mapping/object.
     pub fn confirm_header(&mut self, effects: &mut Effects<'_>) -> bool {
+        self.finish_emails(self.header_email_pending, effects);
+        self.header_email_pending = 0;
         self.root_paragraph = false;
         self.container_paragraph = false;
         self.paragraph_key = None;
@@ -1092,6 +1146,7 @@ impl Inline {
         if inherited_label {
             self.resolve_label_delimiters(None, effects);
         }
+        self.publish_ready_emails(effects);
         true
     }
 
@@ -1160,7 +1215,216 @@ impl Inline {
         (start < end).then_some(Span::new(start, end))
     }
 
+    fn flush_bare(&mut self, next: Option<char>, effects: &mut Effects<'_>) {
+        let Some(candidate) = self.bare.take() else {
+            return;
+        };
+        if matches!(
+            candidate.kind,
+            bare_autolink::Kind::Email | bare_autolink::Kind::Protocol { domain: true, .. }
+        ) {
+            self.flush_email(candidate, next, effects);
+            return;
+        }
+        let linked = candidate.seal(effects.source, &mut effects.work.bare_autolink_bytes);
+        self.previous = candidate.before;
+        self.previous_scalar = candidate.before_scalar;
+        self.bare_replay = true;
+        let prefix_end = linked.map_or(candidate.span.end, |(span, _)| span.start);
+        self.bare_plain(Span::new(candidate.span.start, prefix_end), effects);
+        if let Some((label, www)) = linked {
+            // New objects cannot overtake an isolated inherited object.
+            if self.header_code.is_some()
+                || self.header_math.is_some()
+                || self.header_link.is_some()
+            {
+                self.cancel_header(effects);
+                self.header_crossed = true;
+            }
+            self.finish_run(effects.source[label.start..].chars().next(), effects);
+            effects.bare_autolink(
+                label,
+                www,
+                matches!(candidate.kind, bare_autolink::Kind::Email),
+            );
+            self.previous = effects.source.as_bytes().get(label.end - 1).copied();
+            self.previous_scalar = effects.source[label.range()].chars().next_back();
+            self.spaces = None;
+            self.whitespace = None;
+            self.bang = None;
+            self.bare_plain(Span::new(label.end, candidate.span.end), effects);
+        }
+        self.bare_replay = false;
+    }
+
+    fn flush_email(
+        &mut self,
+        candidate: bare_autolink::Candidate,
+        next: Option<char>,
+        effects: &mut Effects<'_>,
+    ) {
+        self.previous = candidate.before;
+        self.previous_scalar = candidate.before_scalar;
+        self.bare_replay = true;
+        if self.email_waiting.is_empty() {
+            self.bare_markers.clear();
+        }
+        self.bare_collect = Some(candidate.span);
+        let isolated = self.header_pairs.len();
+        self.bare_plain(candidate.span, effects);
+        self.finish_run(next, effects);
+        self.bare_collect = None;
+        // The stack is source ordered. Register each local opener once, so a
+        // later match/discard can settle this token without visiting old uses.
+        let first = self
+            .stack
+            .partition_point(|d| d.source.start < candidate.span.start);
+        let header_wait = self.header_pairs.len() != isolated;
+        if first < self.stack.len() || header_wait {
+            let id = self.email_pending.len();
+            self.email_pending.push(PendingEmail {
+                candidate: Some(candidate),
+                openers: self.stack.len() - first,
+            });
+            self.email_waiting.push_back(id);
+            if first == self.stack.len() {
+                self.email_ready.push(id);
+            }
+            for delimiter in &mut self.stack[first..] {
+                effects.work.bare_autolink_bytes += 1;
+                delimiter.email = Some(id);
+            }
+        } else {
+            self.publish_email(candidate, true, effects);
+        }
+        self.bare_replay = false;
+    }
+
+    fn email_pair(&mut self, pair: &EmphasisPair) {
+        if self.bare_collect.is_some() || !self.email_waiting.is_empty() {
+            for marker in [pair.open, pair.close] {
+                self.bare_markers.insert(marker.start, marker.end);
+            }
+        }
+    }
+
+    fn publish_email(
+        &mut self,
+        mut candidate: bare_autolink::Candidate,
+        cancel_header: bool,
+        effects: &mut Effects<'_>,
+    ) {
+        let span = candidate.span;
+        let raw = &effects.source[span.range()];
+        effects.work.bare_autolink_bytes += raw.len() as u64;
+        let at = candidate.at.unwrap();
+        let mut label = span;
+        if matches!(candidate.kind, bare_autolink::Kind::Email) {
+            label.start = candidate.address;
+        }
+        for (&start, &end) in self.bare_markers.range(span.range()) {
+            effects.work.bare_autolink_bytes += 1;
+            if end <= at {
+                label.start = label.start.max(end);
+            } else if start > at {
+                label.end = label.end.min(start);
+            }
+        }
+        effects.work.bare_autolink_bytes += label.len() as u64;
+        let native_protocol = matches!(candidate.kind, bare_autolink::Kind::Protocol { .. })
+            && label.start <= candidate.address;
+        let accepted = if native_protocol {
+            candidate.span.end = label.end;
+            candidate
+                .seal(effects.source, &mut effects.work.bare_autolink_bytes)
+                .map(|(label, _)| label)
+        } else {
+            // A marker may put the protocol prefix in another text node. Then
+            // the address in this node follows the ordinary email rules.
+            if let Some(slash) = effects.source[at..label.end].find('/') {
+                label.end = at + slash;
+            }
+            bare_autolink::email(&effects.source[label.range()])
+                .map(|len| Span::new(label.start, label.start + len))
+        };
+        if let Some(label) = accepted {
+            if cancel_header
+                && (self.header_code.is_some()
+                    || self.header_math.is_some()
+                    || self.header_link.is_some())
+            {
+                self.cancel_header(effects);
+                self.header_crossed = true;
+            }
+            effects.bare_autolink(label, false, !native_protocol);
+        }
+    }
+
+    fn finish_emails(&mut self, before: usize, effects: &mut Effects<'_>) {
+        while self.email_waiting.front().is_some_and(|&id| id < before) {
+            let id = self.email_waiting.pop_front().unwrap();
+            if let Some(candidate) = self.email_pending[id].candidate.take() {
+                self.publish_email(candidate, false, effects);
+            }
+        }
+    }
+
+    fn email_popped(&mut self, delimiter: Delimiter) {
+        if let Some(id) = delimiter.email {
+            let pending = &mut self.email_pending[id];
+            pending.openers -= 1;
+            if pending.openers == 0 && pending.candidate.is_some() {
+                self.email_ready.push(id);
+            }
+        }
+    }
+
+    fn publish_ready_emails(&mut self, effects: &mut Effects<'_>) {
+        if !self.header_pairs.is_empty() {
+            return;
+        }
+        let ready = std::mem::take(&mut self.email_ready);
+        for id in ready {
+            if let Some(candidate) = self.email_pending[id].candidate.take() {
+                self.publish_email(candidate, true, effects);
+            }
+        }
+        while self
+            .email_waiting
+            .front()
+            .is_some_and(|&id| self.email_pending[id].candidate.is_none())
+        {
+            self.email_waiting.pop_front();
+        }
+    }
+
+    fn bare_plain(&mut self, span: Span, effects: &mut Effects<'_>) {
+        for pos in span.range() {
+            effects.work.bare_autolink_bytes += 1;
+            let byte = effects.source.as_bytes()[pos];
+            self.byte(byte, pos, Origin::Raw, effects);
+            self.previous = Some(byte);
+            if byte.is_ascii() {
+                self.previous_scalar = Some(char::from(byte));
+            } else if byte >= 0xc0 {
+                self.previous_scalar = effects.source[pos..].chars().next();
+            }
+        }
+    }
+
     fn byte(&mut self, byte: u8, pos: usize, origin: Origin, effects: &mut Effects<'_>) {
+        if let Some(candidate) = &mut self.bare {
+            effects.work.bare_autolink_bytes += 1;
+            if candidate.byte(byte, pos, effects.source) {
+                return;
+            }
+            let next = if matches!(origin, Origin::Virtual) {
+                Some(' ')
+            } else {
+                effects.source[pos..].chars().next()
+            };
+            self.flush_bare(next, effects);
+        }
         if self.bracket.is_some() && !self.label_overflow {
             if self.label.len() <= MAX_LABEL_BYTES {
                 self.label.push(byte);
@@ -1318,6 +1582,18 @@ impl Inline {
             effects.hide(Span::new(escape, escape + 1));
             return;
         }
+        if !self.bare_replay
+            && matches!(origin, Origin::Raw)
+            && self.bracket.is_none()
+            && bare_autolink::local(byte)
+        {
+            let mut candidate =
+                bare_autolink::Candidate::new(pos, self.previous, self.previous_scalar);
+            effects.work.bare_autolink_bytes += 1;
+            assert!(candidate.byte(byte, pos, effects.source));
+            self.bare = Some(candidate);
+            return;
+        }
         let bang = self.bang.take();
         match byte {
             b'^' if self
@@ -1427,10 +1703,12 @@ impl Inline {
         self.resolve_label_delimiters(Some(open), effects);
         while self.stack.last().is_some_and(|d| d.source.start > open) {
             let delimiter = self.stack.pop().unwrap();
+            self.email_popped(delimiter);
             self.last[delimiter.kind] = delimiter.previous;
             effects.work.delimiter_steps += 1;
         }
         self.header_floor = self.header_floor.min(self.stack.len());
+        self.publish_ready_emails(effects);
     }
 
     fn start_run(&mut self, byte: u8, pos: usize) {
@@ -1590,6 +1868,7 @@ impl Inline {
             };
             while self.stack.len() > index + 1 {
                 let delimiter = self.stack.pop().unwrap();
+                self.email_popped(delimiter);
                 self.last[delimiter.kind] = delimiter.previous;
                 effects.work.delimiter_steps += 1;
             }
@@ -1597,6 +1876,7 @@ impl Inline {
             effects.work.delimiter_steps += 1;
             if self.stack[index].source.is_empty() {
                 let delimiter = self.stack.pop().unwrap();
+                self.email_popped(delimiter);
                 self.last[delimiter.kind] = delimiter.previous;
             }
             self.header_floor = self.header_floor.min(self.stack.len());
@@ -1614,6 +1894,7 @@ impl Inline {
             if isolate {
                 self.header_pairs.push(pair);
             } else {
+                self.email_pair(&pair);
                 pair.commit(effects);
             }
             close.start += used;
@@ -1621,6 +1902,7 @@ impl Inline {
         if can_open && !close.is_empty() {
             let index = self.stack.len();
             self.stack.push(Delimiter {
+                email: None,
                 kind,
                 source: close,
                 previous: self.last[kind],
@@ -1628,6 +1910,7 @@ impl Inline {
             self.last[kind] = Some(index);
             effects.work.delimiter_steps += 1;
         }
+        self.publish_ready_emails(effects);
     }
 
     /// Returns false when the current byte must be processed by the normal lexer.
@@ -1781,6 +2064,7 @@ impl Inline {
     }
 
     pub fn finish(&mut self, effects: &mut Effects<'_>) {
+        self.flush_bare(None, effects);
         self.cancel_header(effects);
         self.raw_content = None;
         self.raw_cr = None;
@@ -1801,6 +2085,11 @@ impl Inline {
         if self.code.is_some() {
             self.code_fallback.commit(effects);
         }
+        self.finish_emails(usize::MAX, effects);
+        self.email_pending.clear();
+        self.email_ready.clear();
+        self.bare_markers.clear();
+        self.header_email_pending = 0;
         effects.work.delimiter_steps += self.stack.len() as u64;
         self.stack.clear();
         self.last = [None; 14];

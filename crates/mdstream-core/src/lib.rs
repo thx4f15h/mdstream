@@ -226,6 +226,7 @@ pub struct Document {
     containers: containers::Containers,
     links: Vec<LinkTarget>,
     link_info: Vec<LinkInfo>,
+    link_order: std::collections::BTreeMap<usize, LinkId>,
     // Parallel stable LinkId slots; candidates move their structural gaps here.
     direct_title_gaps: Vec<Vec<Span>>,
     maths: Vec<Math>,
@@ -302,6 +303,8 @@ impl Document {
     pub fn references(&self) -> &[Reference] {
         &self.references.entries
     }
+    /// Stable allocation order. Use `links_in` for source order: an email
+    /// waiting on an emphasis opener may be confirmed after a later object.
     pub fn links(&self) -> &[LinkTarget] {
         &self.links
     }
@@ -312,19 +315,29 @@ impl Document {
     /// Includes empty-alt images, which have no visible label run to hit-test.
     pub fn links_in(&self, span: Span) -> impl Iterator<Item = (LinkId, &LinkInfo)> {
         let start = self
-            .link_info
-            .partition_point(|info| info.source.end <= span.start);
+            .link_order
+            .range(..=span.start)
+            .next_back()
+            .filter(|(_, id)| self.link_info[id.0].source.end > span.start)
+            .map_or(span.start, |(&at, _)| at);
         let end = if span.is_empty() {
             start
         } else {
-            self.link_info
-                .partition_point(|info| info.source.start < span.end)
+            span.end.max(start)
         };
-        self.link_info[start..end.max(start)]
-            .iter()
-            .enumerate()
-            .map(move |(i, info)| (LinkId(start + i), info))
+        self.link_order
+            .range(start..end)
+            .map(|(_, &id)| (id, &self.link_info[id.0]))
     }
+
+    pub(crate) fn next_link(&self, id: LinkId) -> Option<LinkId> {
+        let start = self.link_info(id)?.source.start;
+        self.link_order
+            .range((std::ops::Bound::Excluded(start), std::ops::Bound::Unbounded))
+            .next()
+            .map(|(_, &id)| id)
+    }
+
     pub fn headings(&self) -> &HeadingIndex {
         &self.headings
     }
@@ -420,13 +433,10 @@ impl Document {
             return None;
         }
         let text = self.next_visible(offset);
-        let i = self
-            .link_info
-            .partition_point(|info| info.source.end <= offset);
         let object = self
-            .link_info
-            .get(i)
-            .map(|info| info.source.start.max(offset));
+            .links_in(Span::new(offset, self.source.len()))
+            .next()
+            .map(|(_, info)| info.source.start.max(offset));
         match (text, object) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
@@ -450,7 +460,7 @@ impl Document {
 
     fn link_destination_span(&self, id: LinkId) -> Option<Span> {
         Some(match self.links.get(id.0)? {
-            LinkTarget::Direct(span) | LinkTarget::Email(span) => *span,
+            LinkTarget::Direct(span) | LinkTarget::Email(span) | LinkTarget::Www(span) => *span,
             LinkTarget::Reference(symbol) => self.references.entries.get(symbol.0)?.destination?,
         })
     }
@@ -464,16 +474,21 @@ impl Document {
 
     fn link_title_span(&self, id: LinkId) -> Option<Span> {
         match self.links.get(id.0)? {
-            LinkTarget::Direct(_) | LinkTarget::Email(_) => self.link_info.get(id.0)?.title,
+            LinkTarget::Direct(_) | LinkTarget::Email(_) | LinkTarget::Www(_) => {
+                self.link_info.get(id.0)?.title
+            }
             LinkTarget::Reference(symbol) => self.references.entries.get(symbol.0)?.title,
         }
     }
 
-    /// URI targets borrow source; email autolinks allocate only the mailto: URL.
+    /// Explicit/URI targets borrow source. Email/www autolinks allocate a URL
+    /// with the implied mailto:/http:// prefix; raw destinations remain borrowed.
     pub fn link_url(&self, id: LinkId) -> Option<std::borrow::Cow<'_, str>> {
         let destination = self.link_destination(id)?;
         Some(if matches!(self.links.get(id.0)?, LinkTarget::Email(_)) {
             std::borrow::Cow::Owned(format!("mailto:{destination}"))
+        } else if matches!(self.links.get(id.0)?, LinkTarget::Www(_)) {
+            std::borrow::Cow::Owned(format!("http://{destination}"))
         } else {
             std::borrow::Cow::Borrowed(destination)
         })
@@ -819,6 +834,7 @@ impl Document {
                 references: &mut self.references,
                 links: &mut self.links,
                 link_info: &mut self.link_info,
+                link_order: &mut self.link_order,
                 direct_title_gaps: &mut self.direct_title_gaps,
                 maths: &mut self.maths,
                 math_gaps: &mut self.math_gaps,

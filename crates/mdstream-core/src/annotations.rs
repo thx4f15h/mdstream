@@ -407,7 +407,7 @@ fn target_available(
 ) -> bool {
     work.link();
     match links[id.0] {
-        LinkTarget::Direct(_) | LinkTarget::Email(_) => true,
+        LinkTarget::Direct(_) | LinkTarget::Email(_) | LinkTarget::Www(_) => true,
         LinkTarget::Reference(symbol) => {
             work.symbol();
             references[symbol.0].destination.is_some()

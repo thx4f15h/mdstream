@@ -156,6 +156,8 @@ pub enum LinkTarget {
     /// Source address without the implied mailto: prefix. Use Document::link_url
     /// when a ready-to-open URL is needed.
     Email(Span),
+    /// Bare www address, without the implied http:// prefix.
+    Www(Span),
     Reference(SymbolId),
 }
 
@@ -265,6 +267,12 @@ pub struct Work {
     /// A failed probe's source is subsequently consumed once as ordinary text.
     pub table_candidate_bytes: u64,
     pub autolink_bytes: u64,
+    /// Bare-address collection, sealing input and one-time plain release.
+    /// Sealing performs a fixed number of linear scans; no growing-body scan.
+    pub bare_autolink_bytes: u64,
+    /// The same bare-address work in the non-publishing eligibility cores.
+    /// Kept separate from the original root/container eligibility counters.
+    pub bare_eligibility_bytes: u64,
     /// Bounded entity candidate bytes examined at semicolon; feed bytes are
     /// already included in inline_bytes.
     pub entity_bytes: u64,

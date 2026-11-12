@@ -2814,3 +2814,17 @@ README当前说明、对应TODO及示例同步；完整普通lexer回退、未�
 此前完整门禁沿用父已接受的 task031 `parent-acceptance.json`：debug/release 各1822、doc76、13个示例；这些是前驱结果，本项未重复 full/doc/check/clippy/fmt/docbuild。项目 `nix develop` 与 `cargo metadata` 定位真实 target；完整 argv/cwd/退出码/唯一 O_EXCL 日志及 SHA、合同映射、最终源文件冻结与受保护文件校验位于 `/home/ajen/.local/state/mdtui3-todo/jwnujuz2/task-032/implementation/` 的 `audit.md`、`validation.json`。实际生产字节未改，零依赖、forbid unsafe、O(n log n)/O(n)、共享 Budget 及无历史/子树初始化扫描保持。
 
 本条覆盖全部已实现折叠候选；媒体/图片详情、显示行数/字素及对象截断、未支持容器语法、一般手工嵌套/交叉/reload 和 UI 仍由原后续条目约束，没有以新空实现或移走需求清空待办。未提交、推送、派生代理或执行下一项。
+
+## 2026-11-12 GFM 裸自动链接核心交付
+
+交付 `www.`、HTTP(S)、email、`mailto:`/`xmpp:` 的单遍候选、域名及尾部边界，并接入显示、目标读取、视口对象和共享预算。`LinkTarget::Www` 保存原始地址，`link_url` 补 `http://`；原始目标与有预算读取保持真实源码映射。裸候选无长度上限，尖括号自动链接的原 4096 字节上限保留。代码、数学、显式标签及既有容器方言继续规定各自优先级。
+
+URL 在封口时前向验证完整主机名，再处理路径尾标点、括号和实体形后缀；`www.foo` 已满足一个点号要求，末两段域名的下划线不能先裁掉再判有效。email、mailto 与 xmpp 共用强调后的文本节点边界；未配对的 local 下划线保持字面。候选依赖的 opener 只登记一次 owner，配对/丢弃后一次结算；候选外、跨行及显式/lazy 容器的晚闭合不改写已发布目标。受晚表头暂存配对影响的地址等待确认/失败决定，恢复正文与独立单元格分别处理。协议前缀、资源、失败多 @ 恢复均有独立期望和增长计数。
+
+迟确认地址可晚于后方对象分配 ID。`links()` 保留稳定分配顺序，源码顺序由独立 BTreeMap 提供给 `links_in`、`next_drawable` 和 LayoutPass；对象交付的后继查询计入原预算。新 `Work.bare_autolink_bytes` / `bare_eligibility_bytes` 独立记录额外工作，保留旧工作计数与缓存、dirty 范围、continuation 和身份契约。每个字节/摘要/opener/候选常数次处理，有序索引操作 O(log n)，累计解析 O(n log n)、空间 O(n)，零运行时依赖、无 unsafe，不遍历旧引用使用点。
+
+固定 GFM 0.29-gfm 622–635 全部匹配原 HTML，评分 **14/0/0**，保留 945 切点、931 前缀及 EOF。启用 GFM 扩展后 CommonMark 608/611/612 如实记为方言差异，594–612 为 **15/4/0**；官方 Markdown、HTML、生成器及固定来源保持。仓库外编译官方 cmark-gfm `.0` 和 `.13`，规范与实现差异及采用依据见 README；协议以固定 GFM 6.9/633–635 和支持该分支的 `.13` 为依据。63 组基本边界对照、270 组域名模型、混合样式、UTF-8 任意字节分块/逐前缀/EOF、长表头、跨 tile 映射、0/1/6 预算、4096 逆序晚闭合、百万字增长及大量历史对象均纳入回归。
+
+最终代码验证：项目 `nix develop` 下 `cargo check --all-targets`、专项 **63/63**、完整 debug/release `cargo nextest run --no-fail-fast` 各 **1843/1843**、`cargo test --doc` **76/76**，fmt 与 diff 检查通过。15 个 Rust 文件与冻结哈希一致。日志及验收证据见 `/tmp/mdtui3-codex-todo/001-gate-debug.log`、`001-root-gate-release.log`、`001-root-gate-doc.log`、`001-root-gate-accepted.json` 和 `001-gate-source.sha256`；中间版本通过数不充作最终验收。
+
+保留的失败方言：失败 URL 候选只由普通行内机消费一次，不重新发现其内部另一个裸地址；例如 `http://foo_bar@bar.com` 的 email 恢复归入现有完整失败回退待办，相关红测已单独保留供后续任务。完整链接/图片嵌套、其它字面失败回退、分类窗口扩展及原始 HTML不由本项交付。TODO 仅完成裸自动链接核心，未完成要求保持。

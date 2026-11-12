@@ -94,7 +94,7 @@ for tile in heights.viewport(100..124, 4, 32) {
 6. 容器独立 arena 只保存父 ID、深度和属性；活动栈每保留一层必须消费本行的显式标记或正长度缩进，空格串只扫描一次。开放范围共用一个已解析末端，长行追加不更新祖先；容器各开闭一次，不复制祖先链。标题作用域保存独立六级索引和进入时的外层章节摘要；上下文只在容器切换时追加边界，范围由下一同作用域标题及容器末端派生。
 7. 检查点子树记录有效计数。失效只把覆盖子树的计数置零，查找前驱直接剪枝。失效时不逐个运行调用者状态的析构函数；旧状态在该位置被覆盖或整个索引销毁时释放。
 
-`Document::work()` 暴露输入扫描量、块分类输入量、行内扫描量、分隔符操作数、标签规范化字节数、区间树实际写入访问次数、表格行扫描字节数与自动链接候选检查字节数；Setext 首尾原文端点在既有行内字节扫描中维护，计入 `inline_bytes`，确认不另扫正文；`atx_bytes` 计 ATX 正文与待确认尾缀的单遍摘要扫描；`table_header_bytes` 计候选表头摘要扫描，`table_candidate_bytes` 计长分隔行探测；`container_bytes` 计容器前缀检查，`container_steps` 计活动帧匹配及单个容器开闭，`list_steps` 计条目直接内容/兄弟检查及一次性 Tight → Loose 转换；`heading_steps` 计作用域开闭、已分类行的上下文检查和标题插入，每步至多六个固定索引操作，不含查询和标题区间的 O(1) 延长。分类字节量是分类器接收的字节数，分类器内部对这些字节只做固定次数的线性扫描。它不是 CPU 指令计数。测试使用这些指标约束增长，不依赖机器跑分来“证明”复杂度。
+`Document::work()` 暴露输入扫描量、块分类输入量、行内扫描量、分隔符操作数、标签规范化字节数、区间树实际写入访问次数、表格行扫描字节数与自动链接候选检查字节数；`bare_autolink_bytes` / `bare_eligibility_bytes` 单独计裸地址收集、封口校验输入及一次普通释放，不并入原尖括号或准入步骤计数；Setext 首尾原文端点在既有行内字节扫描中维护，计入 `inline_bytes`，确认不另扫正文；`atx_bytes` 计 ATX 正文与待确认尾缀的单遍摘要扫描；`table_header_bytes` 计候选表头摘要扫描，`table_candidate_bytes` 计长分隔行探测；`container_bytes` 计容器前缀检查，`container_steps` 计活动帧匹配及单个容器开闭，`list_steps` 计条目直接内容/兄弟检查及一次性 Tight → Loose 转换；`heading_steps` 计作用域开闭、已分类行的上下文检查和标题插入，每步至多六个固定索引操作，不含查询和标题区间的 O(1) 延长。分类字节量是分类器接收的字节数，分类器内部对这些字节只做固定次数的线性扫描。它不是 CPU 指令计数。测试使用这些指标约束增长，不依赖机器跑分来“证明”复杂度。
 
 `Runs::annotation_visits()` 单独统计本次查询访问的区间节点，不修改文档统计。查询只在开始时二分定位块，之后顺序跨越块边界并遍历样式区间，不对每个字符从根重查；均匀长区间可以直接跳过。片段划分直接跳到最多 256 字节处，再回退至 UTF-8 边界，无需逐字符解码整段新增输入。
 
@@ -2277,7 +2277,7 @@ assert_eq!(body.advance(&mut budget).unwrap().unwrap().text, "原始 **正文**"
 - 管道表格、列对齐、单元格行内语法；任务列表复选框状态。
 - `*em*`、`_em_`、`**strong**`、`__strong__`、`~~strike~~`，以及精确长度匹配的反引号代码 span。支持跨同一段落的多行输入。
 - ASCII 标点反斜线转义；内联链接 `[text](destination)`；shortcut/full/collapsed 引用链接；顶层及容器内单行引用定义；裸目标和尖括号目标，可选 title。
-- 尖括号 URI/email 自动链接；`link_destination` 借用原始地址，`link_url` 为 email 添加 `mailto:`。
+- 尖括号 URI/email 和 GFM 裸地址自动链接（`www.`、HTTP(S)、email、`mailto:`/`xmpp:`）；`link_destination` 借用原始地址，`link_url` 为 email/www 添加 `mailto:`/`http://`。
 - 图片 `![alt](destination)` 及引用式图片，保留独立类型和 alt 信息，可由渲染器降级为链接。
 - CRLF 的 CR 隐藏，LF 保留。裸 CR 按原文处理。
 - 同块行内软换行、双空格/反斜线硬换行的结构化标记。
@@ -2292,8 +2292,8 @@ assert_eq!(body.advance(&mut budget).unwrap().unwrap().text, "原始 **正文**"
 - 已识别的引用立即显示 label，并隐藏引用语法；尚未定义时没有可跳转目标。定义到来后只增加目标。第一个有效定义生效，后续重复定义不覆盖。引用匹配的原始正文标签最多 999 字节（不含容器前缀），折叠 Unicode 空白并转小写，不做完整 Unicode case folding。
 - URL 和 title 各最多 4096 字节，左括号后的链接后缀候选最多 8256 字节（包括空白和闭合右括号）。支持平衡括号和转义定界，但返回的 destination/title 是原文；不提供多行目标/title、URL 解码或安全过滤。后缀失败时保留原文及已有 shortcut 引用，不回扫后缀中的其它语法。
 - 引用定义、Setext、分隔线、闭合 fence 必须在块分类前缀内完成。超长候选行按普通内容/代码处理；超长 opening fence 的 info 只保留已分类前缀，其余该行隐藏。ATX 标题的前后 space/tab 和关闭井号采用流式端点摘要，超过分类窗口仍可确认，见[ATX 空白与关闭尾缀](#atx-空白与关闭尾缀)。
-- 自动链接候选最多 4096 字节，URI scheme 为 2..32 个 ASCII 字符；email 按 CommonMark 0.31.2 的 ASCII 地址规则。失败或 EOF 未完成的候选不重放内部行内语法；新自动链接中止未完成的外层方括号候选，保持链接源码有序且不重叠。返回原始 URI，不做 percent encoding。
-- 不处理 HTML、GFM 裸 URL 自动链接等额外语义。它们可能包含上述方言仍能识别的普通行内标记。数学仅提供上述定界核心，不解析 TeX。HTML 不在当前需求范围。
+- 尖括号自动链接候选最多 4096 字节，URI scheme 为 2..32 个 ASCII 字符；email 按 CommonMark 0.31.2 的 ASCII 地址规则。失败或 EOF 未完成的候选不重放内部行内语法；新自动链接中止未完成的外层方括号候选，保持链接源码有序且不重叠。返回原始 URI，不做 percent encoding。
+- GFM 裸自动链接的候选、尾部确认及行内优先级见[裸地址核心](#gfm-裸自动链接核心)。不处理 HTML；数学仅提供上述定界核心，不解析 TeX。HTML 不在当前需求范围。
 - 支持只追加，不支持任意位置编辑、撤回已有源码或移除定义。文档销毁会释放 O(n) 状态，这是一次性清理成本。
 
 ## 有界显示摘要
@@ -2467,7 +2467,7 @@ nix develop .#index32 -c bash scripts/check-index32.sh
 
 2026-10-30 在 ark 上的 release 样本：524,286 字节密集标记产生 854,391 个语义节点；子索引改用 `Option<NonZeroUsize>` 后，节点大小由 88 降至 72 字节，对应 arena 容量由 92,274,688 降至 75,497,472 字节（约 18.2%）。写入访问数 8,010,100、固定视口查询访问数 13,022 均未改变，分配次数同为 20。缩小了节点常数，没有增加全树压缩过程。峰值 arena 容量等于当前容量，因为该 arena 不缩容；这不是整个进程峰值内存。语义/修订存储拆分尚未实施；查询 scratch 复用已交付，见上方接口。后续 [存储与回收实验](docs/storage.md) 提供三规模可复跑容量/分配测量、查询栈 `Runs::scratch_stats()`、检查点 clear/drain/refill 对照及优化决策；已将检查点子索引同样压缩，Vec 状态节点在本机由 88 降至 72 字节。回收只释放移出后由调用方丢弃的外部 payload，保留树 arena；不声称总堆统计或硬内存上限。
 
-标准样例固定为 [CommonMark 0.31.2 autolinks](https://spec.commonmark.org/0.31.2/#autolinks)，离线夹具保存在 `crates/mdstream-core/tests/fixtures/commonmark_autolinks.rs`，保留上游 CC BY-SA 4.0 归属信息。19 个样例中，18 个在源码文本/目标语义上符合；606 为刻意差异：失败候选内部的反斜线不重新解析。URI percent encoding 属输出层，因此对照时归一化目标编码。其它已评分子集见下文，其余 CommonMark/GFM 范围未评分；现有容器展平、强调/代码回退和语法长度限制仍按上文方言约定，不以自比较分块测试充当完整规范合规率。
+标准样例固定为 [CommonMark 0.31.2 autolinks](https://spec.commonmark.org/0.31.2/#autolinks)，离线夹具保存在 `crates/mdstream-core/tests/fixtures/commonmark_autolinks.rs`，保留上游 CC BY-SA 4.0 归属信息。19 个样例中，15 个在源码文本/目标语义上符合；606 为刻意差异：失败候选内部的反斜线不重新解析；启用 GFM 裸地址后，608、611、612 也成为明确的方言差异，保持原始期望并另存当前观察。URI percent encoding 属输出层，因此对照时归一化目标编码。其它已评分子集见下文，其余 CommonMark/GFM 范围未评分；现有容器展平、强调/代码回退和语法长度限制仍按上文方言约定，不以自比较分块测试充当完整规范合规率。
 
 显示语义另固定了 24 个 CommonMark 0.31.2 文本样例（25–30、35–37、39–40、328–340），离线夹具 `crates/mdstream-core/tests/fixtures/commonmark_display.rs` 同样保留归属信息，只对照移除 HTML 标签后的文字。HTML、属性解码、列表结构及完整代码回退未计入这组评分；不将局部样例通过表述为整个章节合规。`crates/mdstream-core/tests/display.rs` 另外验证源码映射、跨 tile/逐标量查询、逐前缀/逐切点一致性、百万字代码晚闭合、错误候选线性计数、预算推进和旧游标拒绝。
 
@@ -3034,11 +3034,11 @@ nix develop -c cargo nextest run --workspace --test link_title --test code_info 
 
 ### 链接及图片目标解码读取
 
-`Document::decoded_link_destination(LinkId)` 返回 `LinkDestination`，按共享 `Budget` 读取已提交的直接/引用链接和图片目标；`LinkDestinationChunk` 将每个字符或完整实体映射到原始源码区间。ASCII 标点转义和分号终止的命名/数字实体沿用 `code_info` 的规则，反斜线优先、不递归、不 trim；未知、超长、未完成实体保留字面。URI/email 自动链接保持字面反斜线和实体文本，email 输出不添加隐含的 `mailto:`。原始 `link_destination`、`link_url`、title 和标签接口保持现有行为。
+`Document::decoded_link_destination(LinkId)` 返回 `LinkDestination`，按共享 `Budget` 读取已提交的直接/引用链接和图片目标；`LinkDestinationChunk` 将每个字符或完整实体映射到原始源码区间。ASCII 标点转义和分号终止的命名/数字实体沿用 `code_info` 的规则，反斜线优先、不递归、不 trim；未知、超长、未完成实体保留字面。URI/email/www 自动链接保持字面反斜线和实体文本，目标游标不添加隐含的 `mailto:`/`http://`。原始 `link_destination`、`link_url`、title 和标签接口保持现有行为。
 
 引用映射到全局首个获胜定义，未解析引用和无效 ID 返回 `None`，显式空目标返回已完成游标。游标借用文档，读取期间不能追加；释放后可重新取得晚定义的目标。保留单物理行、4096 字节目标、引用定义分类窗口及失败候选规则。此接口不执行 URL 百分号编码、解码或协议过滤；解码产生的空白、括号、反斜线、冒号等仅为输出，不重新进入语法，也不承诺是可直接打开的 URL。
 
-构造 O(1)，固定大小零分配状态复用 info 解码器，自动链接通过已有直接目标/标签区间相等关系识别；不增加解析持久状态。普通字符/转义按一次 query/object 和源码字节计费，实体探测按一次 query 和逐字节扫描计费，成功输出再按一次 query/object 及输出字节计费；自动链接每个字面字符按一次 query/object 及源码字节计费。探测可消耗预算而不改变 `source_position()`，输出原子；每个新帧六字节、一次 query/object 可恢复，到结尾免费返回 `Ok(None)`。总读取 O(目标字节数)，不访问历史使用点、标签正文或容器祖先，累计追加 O(n log n)、空间 O(n) 保持。
+构造 O(1)，固定大小零分配状态复用 info 解码器，自动链接通过直接目标/标签区间相等关系及 Email/Www 类型识别；目标读取不增加解析持久状态。普通字符/转义按一次 query/object 和源码字节计费，实体探测按一次 query 和逐字节扫描计费，成功输出再按一次 query/object 及输出字节计费；自动链接每个字面字符按一次 query/object 及源码字节计费。探测可消耗预算而不改变 `source_position()`，输出原子；每个新帧六字节、一次 query/object 可恢复，到结尾免费返回 `Ok(None)`。总读取 O(目标字节数)，不访问历史使用点、标签正文或容器祖先，累计追加 O(n log n)、空间 O(n) 保持。
 
 `tests/link_destination.rs` 七项回归覆盖 1440 组实体/转义/容器/图片/引用/行尾模型、750 组 ASCII 模型、自动链接字面语义和借用指针、裸目标和尖括号目标、非递归和原始 URL、空/缺失目标、首定义优先与晚定义、UTF-8 全切点/逐前缀/EOF、跨 tile 映射、零/不足/共享六字节预算、长度与分类窗口边界。980 层百万字后千次追加和两万旧引用的晚定义计数证明读取及追加成本保持。宽泛标准覆盖和多行目标/title、完整失败回退仍待办；官方夹具与生成器保持原样，章节评分已接入目标/title 解码游标，详见上方评分小节。
 
@@ -3364,11 +3364,11 @@ nix develop -c cargo nextest run --test commonmark_lists
 
 ## CommonMark Autolinks 官方 HTML 评分
 
-新增 `tests/commonmark_autolinks_official.rs` 固定 [CommonMark 0.31.2 Autolinks](https://spec.commonmark.org/0.31.2/#autolinks) 完整章节 594–612 共 19 例，独立报告 **18 支持、1 刻意差异、0 未支持**。旧 `commonmark_autolinks.rs` 夹具的源码/归一化目标回归保留；本次新增的 `fixtures/commonmark_autolinks_official.rs` 逐字保存官方 Markdown 和 HTML，不归一化期望。离线生成器 `scripts/generate_commonmark_autolinks_official.py` 校验来源 SHA-256 与章节成员，支持 `--check`。
+新增 `tests/commonmark_autolinks_official.rs` 固定 [CommonMark 0.31.2 Autolinks](https://spec.commonmark.org/0.31.2/#autolinks) 完整章节 594–612 共 19 例，独立报告 **15 支持、4 刻意差异、0 未支持**（GFM 裸地址交付后）。旧 `commonmark_autolinks.rs` 夹具的源码/归一化目标回归保留；本次新增的 `fixtures/commonmark_autolinks_official.rs` 逐字保存官方 Markdown 和 HTML，不归一化期望。离线生成器 `scripts/generate_commonmark_autolinks_official.py` 校验来源 SHA-256 与章节成员，支持 `--check`。
 
-投影只读取公开段落、显示片段、`LinkInfo` 和 `LinkTarget`，要求 URI/email 自动链接的目标与标签共享源码区间；email 的 `mailto:` 由 `link_url` 提供。输出层仅做 HTML 转义及本章所需的反斜线/方括号百分号编码，并验证 UTF-8 编码与已有百分号序列不重复编码；不重解析候选、解码地址里的实体或反斜线，不补尖括号。606 仍保留失败候选不重放内部转义的方言，独立观察与官方期望分开；通用 URI 输出、完整失败回退及宽泛标准覆盖继续待办。
+投影只读取公开段落、显示片段、`LinkInfo` 和 `LinkTarget`，要求 URI/email 自动链接的目标与标签共享源码区间；email 的 `mailto:` 由 `link_url` 提供。输出层仅做 HTML 转义及本章所需的反斜线/方括号百分号编码，并验证 UTF-8 编码与已有百分号序列不重复编码；不重解析候选、解码地址里的实体或反斜线，不补尖括号。606 仍保留失败候选不重放内部转义的方言；608、611、612 因启用 GFM 裸地址而与 CommonMark 不自动链接的期望不同。四项独立观察与官方期望分开保存；尖括号候选识别保持，通用 URI 输出、完整失败回退及宽泛标准覆盖继续待办。
 
-六项回归覆盖官方输入的 **421 个切点、402 个逐字符前缀及逐前缀 EOF**、公开结构/显示/链接快照与 pending、连续源码和切片映射、零预算停步、六字节显示消费及显示/目标游标共享预算。URI/email 原始目标与标签逐字符同源，目标读取保持字面，补充 UTF-8、实体字面、空 URI 目标、失败/未完成候选、相邻自动链接、投影变化敏感性和未评分结构拒绝。只新增评分设施，不改变核心解析、依赖或追加复杂度契约。
+六项回归覆盖官方输入的 **421 个切点、402 个逐字符前缀及逐前缀 EOF**、公开结构/显示/链接快照与 pending、连续源码和切片映射、零预算停步、六字节显示消费及显示/目标游标共享预算。URI/email 原始目标与标签逐字符同源，目标读取保持字面，补充 UTF-8、实体字面、空 URI 目标、失败/未完成候选、相邻自动链接、投影变化敏感性和未评分结构拒绝。初次交付只新增评分设施；后续 GFM 裸地址修复更新当前观察和分类，依赖及追加复杂度契约保持。
 
 
 ## CommonMark 行内链接目标与 title 子集评分（2026-11-04）
@@ -3447,13 +3447,27 @@ nix develop -c cargo nextest run --test commonmark_lists
 
 六项回归覆盖 **91 个切点、88 个逐字符前缀及逐前缀 EOF**、源码/切片/样式映射、六字节共享预算、转义波浪号、段落边界及超过分类窗口的 Unicode 正文晚闭合块身份。运行 `nix develop -c cargo nextest run --test gfm_strikethrough`；来源核验用 `python3 scripts/generate_gfm_strikethrough.py /path/to/gfm.html --check`。核心及累计追加 O(n log n)、空间 O(n)、零运行时依赖与预算契约保持；详见[交付记录](DONE.md#2026-11-04-gfm-删除线章节评分交付)。
 
+## GFM 裸自动链接核心
+
+识别 `www.`、`http://`、`https://`、email、`mailto:` 和 `xmpp:` 裸地址。URL 起点限序列开头、ASCII 空白或 `* _ ~ (` 后；email 和协议地址可出现在普通文本节点中。域名按非空字母数字/下划线/连字符段及点号校验，URL 最后两段不能含下划线；`www.` 属于完整主机名，其点号也计入至少一个点号的要求，`www.foo` 可链接。email 使用 ASCII local/domain 字符规则，至少一个域名点号，尾部点号排除，尾部 `-`/`_` 拒绝整条地址。协议前紧邻 ASCII 字母数字时不识别该前缀，后方地址仍按裸 email 处理。`xmpp:` 可附一个非空 `/resource`，资源允许 ASCII 字母数字、`@` 和点号，第二个斜线结束地址；仅有斜线或资源全为尾部点号时拒绝，`mailto:` 不消费资源。
+
+URL 排除尾部 `? ! . , : * _ ~`；只在尾部移除超过全地址左括号数量的右括号，内部多余右括号保留。尾部 `&` + 非空 ASCII 字母数字 + `;` 排除，实体是否实际存在不影响边界；排除的尾部再交给原实体/强调/转义逻辑。地址内部保持源码字面，不解码实体。`<`、物理空白/行尾和既有行内语法边界终止候选：代码/数学、方括号链接/图片、反斜线转义仍优先；现有代码/数学、尖括号候选、链接标签/目标/title、引用后缀及脚注内部不识别裸地址。块、容器作用域和单元格沿用原行内序列边界，不把跨行正文或结构前缀拼成地址；未完成方括号仍沿用已有方言。这些优先级不是完整 GFM 链接嵌套/失败回退或原始 HTML 支持。
+
+裸 URL 候选没有 4096 字节上限，收集时只保存原始区间、有限模式及进入候选前的相邻字符。增长时仅消费新增字节，前缀探测最多比较四种长度不超过六字节的固定协议；封口后 URL 用一次前向校验建立合并普通区间、标点/右括号/实体形后缀摘要，每个摘要最多入栈、移除一次，不反向扫描正文。email、`mailto:` 和 `xmpp:` 共用强调后文本节点处理：原强调机消费 token 并记录实际配对标记，再按包含 `@` 的文本节点边界校验，协议资源只有固定次数线性检查。协议前缀仍在同一节点时保留原生 scheme；若前缀被强调边界隔在另一节点，节点内的裸 email 适用自身的 `mailto:` 规则。未到 `@` 的不完整协议保持普通候选。遇到新的 email `@` 时，用上一个 `@` 后的区间作为新 local 起点；协议 domain 中的第二个 `@` 同样恢复为裸 email，XMPP resource 内的 `@` 仍属于资源。该状态转换只更新两个位置，不扫描或递归重放失败前缀。URL 域名在路径裁剪前拒绝最后两个非空段中的下划线，`www.example.com_` / `https://example.com_` 拒绝，而 `https://example.com/a_` 保留链接并裁去路径尾 `_`；不能先删 `_` 再把无效域名变有效。候选失败、地址前缀和排除的尾部至多送回原行内机一次，期间禁用新候选，不递归重放；新到达的拒绝字节按原语法处理。普通可能 local token 中的下划线语义也可延迟到封口。仍受开放下划线影响的 email 暂不发布：每个相关 opener 登记唯一候选 owner，配对或丢弃只归还一次计数；全部确定后发布，真正序列结束或表头作用域确认也会结算。受晚表头暂存配对影响的 email 同样等待决定：失败回正文后使用已提交的配对边界，成功表格按独立单元格判定，避免普通长段落与表格互相污染。配对标记保存于有序索引，每个候选只查询自身原始区间，不回扫历史使用点。`_foo@bar.com rest_` / 显式或 lazy 续行得到 `mailto:foo@bar.com`；真正块中断后的未匹配 `_foo@bar.com` 保留合法 local 下划线。每字节只参与常数次收集、校验或释放，每个 opener/标记最多登记/归还一次；裸 URL 持久状态 O(1)，email 待定记录与封口摘要合计 O(n)，索引操作 O(log n)；与原标注树合计累计 O(n log n)、空间 O(n)，不访问增长中的旧正文或历史引用使用点。
+
+边界/EOF 前不发布 LinkId，原始字节始终可见。例如 `a@b.c` 后再追加 `-` 会整条拒绝，`www.a.test/a))` 后追加 `+ok` 会把右括号保留在地址内部，`&hl` 后追加 `;` 会排除实体形尾部；都不需要撤销已经公开的对象。确认后一次发布 sealed 对象及范围失效，已发布 ID、源码范围与目标不再变化。为允许较早 email 在较晚链接后确认，LinkId 保持分配顺序且永不重排，`links()` 返回分配顺序；`links_in()` / `next_drawable()` 及 LayoutPass 使用独立源码有序索引，以 O(log L + 结果数) 查询。LayoutPass 每个已计费对象至多做一次 O(log L) 索引后继查找，不扫描对象历史。裸地址的 `LinkInfo.source == label`，`LinkTarget::Www(Span)` 表示隐含 `http://`，Email 表示隐含 `mailto:`，其它协议使用 Direct；原目标/显示文本借用源码。`link_url` 只为 Www/Email 分配带前缀 URL；`decoded_link_destination` 仍按字面和原始字节映射读取，不补前缀，六字节共享预算契约保持。
+
+`Work.bare_autolink_bytes` 单独计收集、校验输入与一次普通释放；`bare_eligibility_bytes` 计两个非发布准入机的同类工作，不改原有计数含义。21 项独立核心回归含 270 组 URL 域名/侧界模型、162 组 email/协议模型、尾部反例、未完成/EOF、任意 UTF-8 字节分块/逐前缀、源码/tile/共享六字节预算、长表头确认/失败、970 层容器与百万字候选逐字增长、十万组实体/标点尾部和 4096 行/旧引用身份。已完成范围及完整回归记录见[交付记录](DONE.md#2026-11-12-gfm-裸自动链接核心交付)。
+
+固定规范与实现核对：[固定官方实现 `cmark-gfm` tag `0.29.0.gfm.0`](https://github.com/github/cmark-gfm/blob/0.29.0.gfm.0/extensions/autolink.c) 的 email 后处理发生在强调之后，本地编译复现了单/双强调、删除线、晚闭合与跨行结果。该 tag 的 `check_domain` 循环跳过最后一个字节，裸 `www.example.com_` 可能仍产生链接；规范明确排除域名最后两段的下划线，本实现遵循规范，且保留所有官方 622–635 输入/HTML，不复刻该漏检。当前 GitHub `/markdown` 的主代理核对结果与本项域名拒绝一致；本子进程直接访问该接口为 HTTP 403，未把不可用的接口结果冒充本地证据。`.0` 尚无协议前缀后处理，不能用于 `mailto:`/`xmpp:` 完整 oracle；协议/强调交互另以固定规范 6.9、633–635 和[官方同系列 `.13` 实现](https://github.com/github/cmark-gfm/blob/0.29.0.gfm.13/extensions/autolink.c)为依据，仓库外实际编译运行确认了原生 scheme、resource、晚闭合及前缀跨文本节点的结果。 集中对照基本域名/协议边界后，保留固定规范的至少一个主机点号要求（`.13` 额外接受 `http://foo`），不复制其把协议前方 local 字符倒退收入 scheme、或在资源第二个 `@` 后丢失 XMPP 前缀的行为；资源中的 `@` 与第二个斜线按 634/635 的规则组合处理。独立期望另覆盖协议单词边界、空资源及多 `@` 失败恢复与累计工作。
+
 ## GFM 裸自动链接扩展章节评分
 
-固定 [GFM 0.29-gfm Autolinks (extension)](https://github.github.com/gfm/#autolinks-extension-) 完整章节 **622–635 共 14 例**，评分为 **0 支持、14 刻意差异、0 未支持**。这里的「刻意差异」对应上文明确的裸 URL 不识别方言：`www.`、裸 HTTP(S)、email、`mailto:` 和 `xmpp:` 保留普通行内文本，不产生链接对象；该分类不表示支持 GFM 裸链接。本章与已评分的尖括号自动链接章节分别报告。
+固定 [GFM 0.29-gfm Autolinks (extension)](https://github.github.com/gfm/#autolinks-extension-) 完整章节 **622–635 共 14 例**，当前 **14 支持、0 刻意差异、0 未支持**，取代初次评分的 0/14/0。`www.`、HTTP(S)、email、`mailto:`/`xmpp:` 及标点/括号/实体边界均来自公开核心对象；本章与 CommonMark Autolinks 的 15/4/0 分别报告。
 
-官方 Markdown/HTML 逐字固定，离线生成器验证完整来源 SHA-256 和章节编号。独立观察另存于测试中；投影只消费公开段落与显示文本，执行 HTML 输出转义，只省略借用源码的段落末尾 LF，不扫描地址、合成链接、trim 或改写官方预期。实际链接、容器及其它未评分样式主动拒绝；实体和转义仍由核心显示接口处理。
+官方 Markdown/HTML、固定 SHA-256 和生成器逐字保留。投影只消费公开段落、显示文本、LinkInfo/LinkTarget 和 `link_url`，检查裸地址 `source == label`，执行 HTML 转义及测试输出层的 UTF-8 URL 编码；不扫描地址、合成链接、trim 或按编号改写期望。尖括号/普通链接、图片、容器和其它未评分样式继续主动拒绝。支持项直接与官方原 HTML 比较，无剩余差异观察；CommonMark 608/611/612 的新差异另存独立观察。
 
-六项测试覆盖 **945 个切点、931 个逐字符前缀及逐前缀 EOF**、快照/pending、源码/切片/样式映射、六字节共享预算、长 Unicode 裸地址追加的稳定块身份、尖括号链接对照及投影敏感性/拒绝边界。运行 `nix develop -c cargo nextest run --test gfm_autolinks_extension`；离线来源核验用 `python3 scripts/generate_gfm_autolinks_extension.py /path/to/gfm.html --check`。本项交付评分设施，解析核心和复杂度/预算契约保持；完整裸链接规则与宽泛标准兼容性未交付，见[交付记录](DONE.md#2026-11-04-gfm-裸自动链接扩展章节评分交付)。
+六项评分回归覆盖 **945 个切点、931 个逐字符前缀及逐前缀 EOF**、快照/pending、源码/切片/样式映射、六字节共享预算、长 Unicode 裸地址追加的稳定块身份、尖括号对照及投影敏感性/拒绝边界。运行 `nix develop -c cargo nextest run --test bare_autolinks --test gfm_autolinks_extension --test commonmark_autolinks_official`；来源核验用 `python3 scripts/generate_gfm_autolinks_extension.py /path/to/gfm.html --check`。官方全章通过不表示完整 CommonMark/GFM、原始 HTML 或其余兼容性待办已完成。
 
 ## 部分 tab 路径的异类标记兄弟列表
 

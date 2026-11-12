@@ -3,12 +3,12 @@ use crate::{Budget, CodeInfo, Completion, Document, LinkId, LinkTarget, Span};
 impl Document {
     /// O(1) reader of a resolved link or image destination. Explicit destinations
     /// decode ASCII punctuation escapes and semicolon-terminated named/numeric
-    /// entities; URI and email autolinks retain their literal source text.
+    /// entities; URI, email and www autolinks retain their literal source text.
     /// Returns None for invalid IDs or unresolved references. Empty destinations
     /// return a completed cursor. Reference chunks map to the winning definition.
     ///
     /// Reads only the committed destination, without delimiters. No trimming,
-    /// recursive decoding, URL encoding/filtering or implied mailto: is applied.
+    /// recursive decoding, URL encoding/filtering or implied mailto:/http:// is applied.
     /// Raw `link_destination` and `link_url` retain their existing behavior. The
     /// borrow prevents document changes while the cursor is alive.
     ///
@@ -31,7 +31,7 @@ impl Document {
         // References may coincidentally share spans with other objects, so their
         // resolved destination must always use explicit-destination decoding.
         let literal = match self.links.get(id.0)? {
-            LinkTarget::Email(_) => true,
+            LinkTarget::Email(_) | LinkTarget::Www(_) => true,
             LinkTarget::Direct(_) => self.link_info(id)?.label == span,
             LinkTarget::Reference(_) => false,
         };

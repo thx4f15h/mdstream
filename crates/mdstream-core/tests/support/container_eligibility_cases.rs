@@ -101,6 +101,7 @@ pub fn old_work(work: mdstream::Work) -> String {
             !field.starts_with("container_eligibility_")
                 && !field.starts_with("link_title_gap_steps:")
                 && !field.starts_with("link_fallback_")
+                && !field.starts_with("bare_")
         })
         .collect::<Vec<_>>()
         .join(", ")
