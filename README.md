@@ -2488,11 +2488,27 @@ nix develop .#index32 -c bash scripts/check-index32.sh
 
 ## 存储实测与标准样例范围
 
+当前需求范围内的官方样例均已进入可执行评分：CommonMark 0.31.2 **588 例**（全部 652 例中明确排除 HTML blocks 148–191、Raw HTML 613–632），以及固定 GFM 0.29-gfm 的 Tables 198–205、Task list items 279–280、Strikethrough 491–493、Autolinks 622–635 **27 例**。GFM Disallowed Raw HTML/tagfilter 657 在需求外；不重复审计 GFM 的基础 CommonMark 章节。非 HTML 章节里夹带 HTML 的样例仍保留评分与未支持观察，不能按 HTML 排除而漏掉。
+
+[覆盖与排除清单](docs/syntax-coverage.md) 逐组列出官方章节成员、原样夹具生成器、真正执行的测试，以及支持/刻意差异/未支持 ID。清单为当前分类快照，章节测试是分类权威；兼容性改善后重新生成，不把分类总和写死为门槛。历史子项中的“宽泛标准覆盖仍待办”现指剩余兼容性与实现范围；不能把评分覆盖完成表述为完整 CommonMark/GFM 兼容，现有核心 TODO 保留。
+
+复核时提供已固定 SHA 的本地官方源（CommonMark `spec.json` 与 GFM 完整 HTML），命令会逐一核对现有生成器，再由 nextest 构建/列出真实测试并执行每个精确评分报告，检查每例实际分类输出，无遗漏或重复。`--sources-only` 只验来源与成员，不能作为执行评分的证明；`--output /tmp/syntax-coverage.md` 可输出新快照：
+
+```sh
+nix develop -c python3 scripts/check_syntax_coverage.py /path/to/commonmark-0.31.2.json /path/to/gfm.html
+nix develop -c python3 scripts/generate_commonmark_precedence.py /path/to/commonmark-0.31.2.json --check
+nix develop -c cargo nextest run --test commonmark_precedence
+```
+
+新增 Precedence 42 保留官方两条列表项中失配反引号的输入/HTML；独立公开 API 投影核对真实 List/Item、正文叶块与 code 样式，证明块边界先于行内匹配。另验 UTF-8 逐字节切分/前缀、逐标量 EOF、原始源码切片与六字节共享预算；只省略借用源码的物理叶块终止 LF，实体生成的 LF 与尾空格保留。生成器保留 John MacFarlane / CC BY-SA 4.0 归属、规范行号，校验完整源 SHA 和 Precedence 章节成员，不修改官方期望或解析核心。
+
+本次快照的 40 个 Unsupported 均有明确归属：10 个含需求外 HTML 的例子（21、31、344、475–477、491、494、642–643）仍保留在所属章节评分；17 个同类强调深度例子仍受旧样式位投影限制，不能据此重开已交付的深度核心需求；5 个样式同时开始的顺序/身份例子（413、416、430、467–468）及 419 的链接标签强调作用域，归现有“完整强调作用域、确认/撤销及嵌套顺序”；512、517、520、528、531 归“链接标签嵌套及强调作用域剩余范围”，574–575 归“Images 样例暴露的嵌套与回退缺口”。具体条目见 [TODO](TODO.md)，本次不增加总括未完成项，也不将刻意方言转为新增需求。分类未来以各章实际报告为准。
+
 `annotation_arena_stats`、高度树/检查点的 `arena_stats`、高度依赖树的 `dependency_arena_stats` 返回 Vec 容量字节数、节点数与实际容量增长分配次数。统计不包含 allocator 元数据、碎片、其它 String/Vec 或用户状态的间接堆分配。`scaling` 示例同时记录操作计数、查询分位数与容量；`one_byte_reused` 对照复用通知缓冲的逐字符输入。
 
 2026-10-30 在 ark 上的 release 样本：524,286 字节密集标记产生 854,391 个语义节点；子索引改用 `Option<NonZeroUsize>` 后，节点大小由 88 降至 72 字节，对应 arena 容量由 92,274,688 降至 75,497,472 字节（约 18.2%）。写入访问数 8,010,100、固定视口查询访问数 13,022 均未改变，分配次数同为 20。缩小了节点常数，没有增加全树压缩过程。峰值 arena 容量等于当前容量，因为该 arena 不缩容；这不是整个进程峰值内存。语义/修订存储拆分尚未实施；查询 scratch 复用已交付，见上方接口。后续 [存储与回收实验](docs/storage.md) 提供三规模可复跑容量/分配测量、查询栈 `Runs::scratch_stats()`、检查点 clear/drain/refill 对照及优化决策；已将检查点子索引同样压缩，Vec 状态节点在本机由 88 降至 72 字节。回收只释放移出后由调用方丢弃的外部 payload，保留树 arena；不声称总堆统计或硬内存上限。
 
-标准样例固定为 [CommonMark 0.31.2 autolinks](https://spec.commonmark.org/0.31.2/#autolinks)，离线夹具保存在 `crates/mdstream-core/tests/fixtures/commonmark_autolinks.rs`，保留上游 CC BY-SA 4.0 归属信息。19 个样例中，15 个在源码文本/目标语义上符合；606 为刻意差异：失败候选内部的反斜线不重新解析；启用 GFM 裸地址后，608、611、612 也成为明确的方言差异，保持原始期望并另存当前观察。URI percent encoding 属输出层，因此对照时归一化目标编码。其它已评分子集见下文，其余 CommonMark/GFM 范围未评分；现有容器展平、强调/代码回退和语法长度限制仍按上文方言约定，不以自比较分块测试充当完整规范合规率。
+标准样例固定为 [CommonMark 0.31.2 autolinks](https://spec.commonmark.org/0.31.2/#autolinks)，离线夹具保存在 `crates/mdstream-core/tests/fixtures/commonmark_autolinks.rs`，保留上游 CC BY-SA 4.0 归属信息。19 个样例中，15 个在源码文本/目标语义上符合；606 为刻意差异：失败候选内部的反斜线不重新解析；启用 GFM 裸地址后，608、611、612 也成为明确的方言差异，保持原始期望并另存当前观察。URI percent encoding 属输出层，因此对照时归一化目标编码。需求范围内各章已评分，成员与当前分类见上方覆盖清单；现有容器展平、强调/代码回退和语法长度限制仍按上文方言约定，不以自比较分块测试充当完整规范合规率。
 
 显示语义另固定了 24 个 CommonMark 0.31.2 文本样例（25–30、35–37、39–40、328–340），离线夹具 `crates/mdstream-core/tests/fixtures/commonmark_display.rs` 同样保留归属信息，只对照移除 HTML 标签后的文字。HTML、属性解码、列表结构及完整代码回退未计入这组评分；不将局部样例通过表述为整个章节合规。`crates/mdstream-core/tests/display.rs` 另外验证源码映射、跨 tile/逐标量查询、逐前缀/逐切点一致性、百万字代码晚闭合、错误候选线性计数、预算推进和旧游标拒绝。
 

@@ -2868,3 +2868,14 @@ README、TODO 精准同步：核心范围扩展单独勾选，实际选区控件
 本项仅完成失败裸 Web 内部地址恢复；完整代码失败重放、普通显式链接所有失败后缀、全部嵌套标签、其它完整字面失败回退和宽泛标准兼容性仍保留 TODO 父项，不新增语法长度上限、原始 HTML 或 UI。
 
 最终冻结验证全部通过（本工作树 `nix develop`，target 由 Cargo metadata 定位）：`cargo check --all-targets`、fmt check、`cargo clippy --lib -- -D warnings`、完整 debug/release `cargo nextest run --workspace --all-targets --no-fail-fast` 各 **1872/1872**、`cargo test --workspace --doc` **76/76**、`cargo doc --workspace --no-deps`；广域专项 **222/222**、最后新增对抗后的恢复专项 **8/8**。393 个 Rust 文件与冻结记录逐一一致，`git diff --check` 通过。命令、退出码与最终证据见 `/tmp/mdtui3-codex-todo/004-result.json`、`004-freeze.json`、`004-gate-*.log`、`004-recovery-final.log`；独立模型及证明见 `004-prototypes/model.py`、`proof.txt`，官方实际输出见 `004-prototypes/reference-red.txt`。严格全目标 clippy 的额外尝试被既有 `tests/bare_autolinks.rs:594` 的 `bool_assert_comparison` 阻断（`004-check-clippy.log`），该旧断言未改；生产库严格 clippy 通过。
+
+
+## 2026-11-12 标准样例评分覆盖收口
+
+补齐 CommonMark 0.31.2 完整 Precedence 章节（42）：固定官方两条列表项中失配反引号的原始 Markdown/HTML、John MacFarlane / CC BY-SA 4.0 归属、规范行号和完整源 SHA-256。离线生成器同时校验 SHA 与章节成员。独立公开 API 投影读取真实 List/Item、正文叶块及 code 样式，证明块边界先于行内匹配；四项回归另验 UTF-8 逐字节切点/前缀、逐标量 EOF、原始源码切片与六字节共享预算，以及物理终止 LF 和实体生成 LF/尾空格的观察敏感性；仅去掉借用源码的物理叶块终止 LF。未改解析核心、现有投影语义、运行时依赖、格式配置或提交钩子。
+
+新增简短覆盖审计工具，复用各章现有生成器，独立核对固定官方源章节成员；从 nextest 构建/列出的真实测试取得二进制，执行每个精确评分报告并核对逐例分类输出。Blank lines 单例报告补充逐例审计输出。38 份报告覆盖全部需求内 CommonMark 588 例及 GFM 四扩展 27 例，无遗漏或重复；[逐组覆盖/排除清单](docs/syntax-coverage.md) 保存每组生成器、可执行测试和三类 ID。CommonMark HTML blocks 148–191、Raw HTML 613–632，以及 GFM Disallowed Raw HTML/tagfilter 657 明确排除；其它章节里夹带 HTML 的例子仍保留评分。
+
+当前快照为 CommonMark 516 支持、32 刻意差异、40 未支持，GFM 四扩展 27 支持；分类由各章测试负责，工具每次重新计算，不要求未来维持这些总数。README 说明复核命令、排除范围及未支持项的既有具体待办归属；TODO 仅完成需求内样例评分覆盖，不添加总括兼容性需求、不把刻意方言转为待实现要求，也不宣称完整 CommonMark/GFM 兼容。已有真实未完范围保留。
+
+验证均通过：`nix develop -c cargo check --all-targets`；Precedence 专项 nextest 4/4；新增生成器 `--check`、全部 38 份生成器/章节成员核验及真实报告覆盖审计；38 个生成器各自拒绝篡改 SHA 和章节成员（76 项），覆盖审计另拒绝夹具篡改、CommonMark/GFM 缺测试、重复成员、忽略报告、零执行及缺分类输出（7 项）。完整 debug/release nextest 各 1876/1876，文档测试 72+4，`cargo doc --workspace --no-deps`、`cargo fmt --all -- --check`、`git diff --check` 通过。

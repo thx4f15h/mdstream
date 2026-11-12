@@ -102,6 +102,7 @@ fn pinned_commonmark_blank_lines_report() {
     let (number, markdown, expected) = BLANK_LINE_CASES[0];
     assert_eq!(number, 227);
     check_case(markdown, expected, &parse(markdown));
+    eprintln!("example {number}: supported — matches upstream");
     eprintln!(
         "CommonMark 0.31.2 Blank lines (227): 1 supported, 0 deliberate difference, 0 unsupported; other sections not scored by this test"
     );
