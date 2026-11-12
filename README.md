@@ -19,7 +19,7 @@ nix develop -c cargo r -r -p mdtui-tui -- README.md
 nix develop -c cargo r -r -p mdtui-tui -- --once crates/mdtui-tui/tests/fixtures/spec/images.md
 ```
 
-输入支持普通文件和 Unix FIFO；首屏不等待 EOF，写端暂停时仍可 `q` 退出。交互模式支持方向键、翻页、Home/End、`s` 目录侧栏、Tab 焦点、Enter 跳转；正文 End 持续跟随当前输入流的末尾，Ctrl+End 只跳到当前末尾；上滚或显式导航退出跟随。图片显示可点击 alt，空 alt 显示 `[image]`。详细键位、尺寸和限制见 [阅读器使用说明](crates/mdtui-tui/README.md)，来源、预算及验收见 [终端集成说明](docs/tui-integration.md)。
+输入支持普通文件和 Unix FIFO；首屏不等待 EOF，写端暂停时仍可 `q` 退出。交互模式支持方向键、翻页、Home/End、`s` 目录侧栏、Tab 焦点、Enter 跳转；正文 End 持续跟随当前输入流的末尾，Ctrl+End 只跳到当前末尾；上滚或显式导航退出跟随。图片显示可点击 alt，空 alt 显示 `[image]`。表格可用 `--table-min-width` / `--table-max-width` 限定内容列宽，Left/Right 横移一列、Ctrl-Left/Right 横移八列；最上方可见表格为目标，状态显示列范围和左右省略数，百万字 cell 按帧精测。详细键位、尺寸和限制见 [阅读器使用说明](crates/mdtui-tui/README.md)，来源、预算及验收见 [终端集成说明](docs/tui-integration.md)。
 
 ## 接入
 
@@ -1090,7 +1090,7 @@ assert!(doc.table(TableId(0)).unwrap().delimiter.len() > 4096);
 
 `TableRow::complete` 区分完整行与正在增长的行。当前行的最后一个空单元格可能在确认尾部竖线后被移除；先前完整行保持稳定。`source_width_hint` 是已完成单元格的最大原文字节数，单调增长，**不是终端字符宽度**。渲染器需要结合窗口预算、字体/Unicode 宽度、padding 和内容换行决定最终列宽；列宽提示不要求读取旧单元格。提示变大时，`Update.tables_changed` 通知具体表格，同时 `dirty` 覆盖该表范围，旧高度/检查点按现有接口惰性失效。
 
-进入表格视口时先定位行，再读取可见列的单元格；超长单元格仍按片段和检查点恢复。表格一行的显示高度由各单元格排版高度的最大值决定，渲染器应约定显示行归属于哪个源码片段，把总行高回填一次，不能把每列高度相加。标题行、边框、横向滚动、列宽冻结/修正策略属于后续渲染器工作，见 [TODO](TODO.md)。
+进入表格视口时先定位行，再读取可见列的单元格；超长单元格仍按片段和检查点恢复。表格一行的显示高度由各单元格排版高度的最大值决定，渲染器应约定显示行归属于哪个源码片段，把总行高回填一次，不能把每列高度相加。工作区 TUI 已接入表头、边框、Alignment、单行裁剪、宽度上下限及按列横移；精测只保存当前显示 run、有限字素窗口和数字摘要，原行源码归属保持。完整巨型字素绘制等后续项见 [TODO](TODO.md)。
 
 任务列表通过 `BlockKind::ListItem { task: Some(TaskMarker { checked, source }), .. }` 提供状态；识别列表项开头的 `[ ]`、`[x]`、`[X]`，标记后需要空白或行结束。任务标记不会成为引用链接，不会污染符号表。渲染器据此绘制复选框；当前解析器不修改原文中的勾选状态。
 

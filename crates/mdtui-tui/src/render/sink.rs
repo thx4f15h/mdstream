@@ -126,6 +126,7 @@ enum WorkKind {
     FinishStream(BlockId),
     FinishPending,
     Row(BlockId, usize),
+    SkippedRows(u64),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -142,6 +143,8 @@ struct PrepareContext<'a> {
     fallback_tile: TileId,
     plan_source: Span,
     table_widths: &'a HashMap<TableId, TableWidthSnapshot>,
+    table_rows: Option<std::ops::Range<usize>>,
+    table_windows: &'a std::cell::RefCell<Vec<super::table::TableWindowStatus>>,
     containers: &'a HashMap<mdtui3::ContainerId, ContainerContext>,
     display_bytes: &'a std::cell::Cell<usize>,
     scratch_cells: &'a std::cell::Cell<usize>,
@@ -171,6 +174,9 @@ pub struct TileLayoutSink {
     tile_rows: Vec<u64>,
     boundary_checkpoints: Vec<RenderCheckpoint>,
     lines: Vec<SinkLine>,
+    line_offsets: Vec<u64>,
+    logical_rows: u64,
+    table_windows: Vec<super::table::TableWindowStatus>,
     rendered_tiles: Vec<bool>,
     current: Option<TileId>,
     tile_start: TileId,
@@ -288,6 +294,7 @@ impl TileLayoutSink {
         }
 
         let mut blocks = HashMap::new();
+        let table_windows = std::cell::RefCell::new(Vec::new());
         let mut table_rows_prepared = 0_usize;
         let mut edge_placeholders = 0usize;
         let display_bytes = std::cell::Cell::new(0);
@@ -310,6 +317,12 @@ impl TileLayoutSink {
                 fallback_tile: plan.tile_start,
                 plan_source,
                 table_widths,
+                table_windows: &table_windows,
+                table_rows: if let BlockKind::Table { id } = block.kind {
+                    scanner.selected_rows(id)
+                } else {
+                    None
+                },
                 containers,
                 display_bytes: &display_bytes,
                 scratch_cells: &scratch_cells,
@@ -320,6 +333,20 @@ impl TileLayoutSink {
                 segments_by_block.remove(&planned.id).unwrap_or_default(),
                 planned.id,
             );
+            if matches!(block.kind, BlockKind::Table { .. }) {
+                for glyph in &mut glyphs {
+                    if glyph.text.len() > super::edges::MAX_EDGE_OVERSCAN
+                        || scanner.cell_cut(glyph.source.end)
+                    {
+                        edge_placeholders += 1;
+                        glyph.text = "…".into();
+                        glyph.width = 1;
+                        glyph.kind = GraphemeKind::Narrow;
+                        glyph.link = None;
+                        glyph.style = StyleRole::META;
+                    }
+                }
+            }
             let (omit_start, omit_end) = scanner.omitted_edges();
             let context_source = scanner.layout_source();
             for glyph in &mut glyphs {
@@ -333,7 +360,7 @@ impl TileLayoutSink {
                 let cut_end = overlaps_end
                     && context_source.end < document.source().len()
                     && (omit_end || glyph.source.end == context_source.end);
-                if cut_start || cut_end {
+                if (cut_start || cut_end) && !matches!(block.kind, BlockKind::Table { .. }) {
                     edge_placeholders += 1;
                     glyph.text = "…".to_owned();
                     glyph.width = 1;
@@ -346,16 +373,19 @@ impl TileLayoutSink {
                     glyph.style = StyleRole::META;
                 }
             }
-            glyphs.retain(|glyph| {
-                glyph.source.end > plan_source.start && glyph.source.start < plan_source.end
-            });
+            if !matches!(block.kind, BlockKind::Table { .. }) {
+                glyphs.retain(|glyph| {
+                    glyph.source.end > plan_source.start && glyph.source.start < plan_source.end
+                });
+            }
             let (limited_start, limited_end) = scanner.limited_context();
-            let uncertain = (limited_start
-                && block.source.start <= context_source.start
-                && block.source.end > context_source.start)
-                || (limited_end
-                    && block.source.start < context_source.end
-                    && block.source.end >= context_source.end);
+            let uncertain = !matches!(block.kind, BlockKind::Table { .. })
+                && ((limited_start
+                    && block.source.start <= context_source.start
+                    && block.source.end > context_source.start)
+                    || (limited_end
+                        && block.source.start < context_source.end
+                        && block.source.end >= context_source.end));
             if uncertain && !glyphs.is_empty() {
                 edge_placeholders += 1;
                 glyphs.clear();
@@ -430,6 +460,18 @@ impl TileLayoutSink {
             );
         }
 
+        for &(tile, source_start, count) in scanner.skipped_rows() {
+            if let Some(index) = tile_index(plan, tile) {
+                work[index].push(WorkItem {
+                    source_start,
+                    rank: 2,
+                    order,
+                    kind: WorkKind::SkippedRows(count),
+                });
+                order += 1;
+            }
+        }
+
         let pending_glyphs = segments_glyphs(pending_segments, None);
         let pending = if pending_glyphs.is_empty() {
             None
@@ -492,6 +534,9 @@ impl TileLayoutSink {
             tile_rows,
             boundary_checkpoints,
             lines: Vec::new(),
+            line_offsets: Vec::new(),
+            logical_rows: 0,
+            table_windows: table_windows.into_inner(),
             rendered_tiles: vec![false; plan.segments.len()],
             current: None,
             tile_start: plan.tile_start,
@@ -513,6 +558,69 @@ impl TileLayoutSink {
     #[must_use]
     pub fn lines(&self) -> &[SinkLine] {
         &self.lines
+    }
+
+    /// Translate an anchor's tile-local row offset using already prepared
+    /// prefix geometry. A preceding paragraph may share this tile with a table.
+    pub(crate) fn corrected_table_source(
+        &self,
+        document: &Document,
+        view: super::table_window::TableView,
+    ) -> Option<(TableId, usize, usize)> {
+        let span = document.tile(view.anchor.tile)?;
+        for status in &self.table_windows {
+            let table = document.table(status.table_id)?;
+            if table.source.start >= span.end || table.source.end <= span.start {
+                continue;
+            }
+            let first = table
+                .rows()
+                .partition_point(|row| super::table_window::row_owner(row) < span.start);
+            let row = table.rows().get(first)?;
+            let index = view.anchor.tile.0.checked_sub(self.tile_start.0)?;
+            let prefix: Vec<_> = self
+                .work
+                .get(index)?
+                .iter()
+                .filter(|item| {
+                    item.source_start < row.source.start
+                        || (item.source_start == row.source.start && item.rank < 2)
+                })
+                .copied()
+                .collect();
+            let counts = calculate_tile_rows(
+                &self.events,
+                &[prefix],
+                &self.blocks,
+                self.pending.as_deref(),
+                self.width,
+                view.anchor.tile,
+                TileId(view.anchor.tile.0 + 1),
+            )
+            .ok()?;
+            let offset = view.anchor.offset.saturating_sub(counts[0]);
+            let at = super::table_window::row_from_offset(table, span.start, offset);
+            return Some((status.table_id, at, table.rows()[at].source.start));
+        }
+        None
+    }
+
+    pub(crate) fn line_offset(&self, line: usize) -> Option<u64> {
+        self.line_offsets.get(line).copied()
+    }
+
+    pub(crate) fn table_windows(&self) -> &[super::table::TableWindowStatus] {
+        &self.table_windows
+    }
+
+    pub(crate) fn visible_lines(&self, skip: u64, rows: usize) -> Vec<SinkLine> {
+        let start = self.line_offsets.partition_point(|&at| at < skip);
+        self.lines[start..]
+            .iter()
+            .zip(&self.line_offsets[start..])
+            .take_while(|(_, at)| **at < skip.saturating_add(rows as u64))
+            .map(|(line, _)| line.clone())
+            .collect()
     }
 
     #[must_use]
@@ -581,23 +689,29 @@ impl TileLayoutSink {
             return 0;
         }
         self.rendered_tiles[index] = true;
-        let before = self.lines.len();
+        let before = self.logical_rows;
         let items = self.work[index].clone();
         for item in items {
+            let line_start = self.lines.len();
             match item.kind {
                 WorkKind::Event(event) => self.render_event(event),
                 WorkKind::FinishStream(block) => self.render_stream_finish(block),
                 WorkKind::FinishPending => self.render_finish_pending(),
                 WorkKind::Row(block, row) => self.render_row(block, row),
+                WorkKind::SkippedRows(count) => self.logical_rows += count,
+            }
+            for _ in line_start..self.lines.len() {
+                self.line_offsets.push(self.logical_rows);
+                self.logical_rows += 1;
             }
         }
-        let rows = self.lines.len().saturating_sub(before);
-        self.stats.rows = self.stats.rows.saturating_add(rows as u64);
+        let rows = self.logical_rows.saturating_sub(before);
+        self.stats.rows = self.stats.rows.saturating_add(rows);
         self.stats.tiles_rendered += 1;
         if let Some(checkpoint) = self.boundary_checkpoints.get(index) {
             self.checkpoint = *checkpoint;
         }
-        rows as u64
+        rows
     }
 
     fn render_event(&mut self, event: usize) {
@@ -720,6 +834,7 @@ fn calculate_tile_rows(
                     PlanEventKind::CodeLabel { .. } | PlanEventKind::ThematicBreak => 1,
                 },
                 WorkKind::Row(_, _) => 1,
+                WorkKind::SkippedRows(count) => count,
                 WorkKind::FinishStream(block) => {
                     let prepared = blocks.get(&block).ok_or_else(|| {
                         SinkError::Render("tile references a missing block".to_owned())
@@ -973,37 +1088,61 @@ fn prepare_block(
             let table = document
                 .table(id)
                 .ok_or_else(|| SinkError::Render("missing table".to_owned()))?;
-            let row_window = table_row_window(table, context.plan_source);
-            let full_table = block.source.start >= context.plan_source.start
-                && block.source.end <= context.plan_source.end;
-            let input = prepared_input(context, glyphs)?;
-            let widths = if full_table {
-                let limit =
-                    table
-                        .columns
-                        .len()
-                        .min(crate::render::table_widths::column_window_limit(
-                            usize::from(context.width),
-                        ));
-                let mut widths = vec![0usize; limit];
-                for row in table.rows() {
-                    for (column, cell) in row.cells.iter().take(widths.len()).enumerate() {
-                        widths[column] = widths[column].max(crate::render::text::display_width(
-                            &input.clipped(cell.source).visible_text(),
-                        ));
-                    }
-                }
-                TableWidthSnapshot {
-                    table_id: id,
-                    exact: vec![true; widths.len()],
-                    widths,
-                    provisional: limit < table.columns.len(),
-                }
-            } else {
-                context.table_widths.get(&id).cloned().unwrap_or_else(|| {
-                    TableWidthCache::hint_snapshot_prefix(id, table, usize::from(context.width))
+            let row_window = context
+                .table_rows
+                .clone()
+                .unwrap_or_else(|| table_row_window(table, context.plan_source));
+            // Table tokens have already passed the paid per-cell visibility
+            // preparation. This callback cannot consult remote source/guards.
+            let input = DisplayInput::from_tokens(
+                glyphs
+                    .into_iter()
+                    .map(|g| InputToken {
+                        kind: TokenKind::Text,
+                        text: g.text,
+                        source: g.source,
+                        replacement: Some(g.source),
+                        block: g.block,
+                        link: g.link,
+                        style: g.style,
+                    })
+                    .collect(),
+            );
+            context.display(input.tokens().iter().map(|t| t.text.len()).sum());
+            let mut widths = context.table_widths.get(&id).cloned().unwrap_or_else(|| {
+                TableWidthCache::hint_snapshot_prefix(id, table, usize::from(context.width))
+            });
+            if row_window.start == 0
+                && row_window.end == table.rows().len()
+                && table.rows().iter().all(|row| {
+                    row.cells
+                        .iter()
+                        .skip(widths.first_column)
+                        .take(widths.widths.len())
+                        .all(|cell| {
+                            cell.source.len()
+                                <= usize::from(context.width) * 4 + super::edges::MAX_EDGE_OVERSCAN
+                        })
                 })
-            };
+            {
+                for (column, width) in widths.widths.iter_mut().enumerate() {
+                    *width = widths.policy.apply(
+                        table
+                            .rows()
+                            .iter()
+                            .filter_map(|row| row.cells.get(widths.first_column + column))
+                            .map(|cell| {
+                                crate::render::text::display_width(
+                                    &input.clipped(cell.source).visible_text(),
+                                )
+                            })
+                            .max()
+                            .unwrap_or(0),
+                    );
+                }
+                widths.provisional =
+                    widths.first_column > 0 || widths.widths.len() < table.columns.len();
+            }
             let geometry = table_geometry_window(
                 document,
                 block_id,
@@ -1012,10 +1151,21 @@ fn prepare_block(
                 &widths.widths,
                 row_window,
                 widths.provisional,
-                Some(context.plan_source),
+                None,
                 Some(&input),
+                widths.first_column,
             )
             .map_err(|error| SinkError::Render(error.to_string()))?;
+            context
+                .table_windows
+                .borrow_mut()
+                .push(super::table::TableWindowStatus {
+                    table_id: id,
+                    first: geometry.first_column,
+                    visible: geometry.visible_columns,
+                    total: geometry.total_columns,
+                    provisional: geometry.widths_provisional,
+                });
             let mut screen = scratch_screen_rows(
                 u16::try_from(geometry.rows.len().saturating_add(3))
                     .map_err(|_| SinkError::RowOverflow)?,

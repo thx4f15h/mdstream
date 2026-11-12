@@ -158,6 +158,7 @@ pub struct LiteralSyntax {
 }
 
 pub struct ObjectWindow {
+    pub(crate) outer_images: Vec<(LinkId, Span, Span)>,
     source: Span,
     literal_image_ranges: Vec<Span>,
     composite_images: Vec<(Span, ImagePlaceholder)>,
@@ -173,6 +174,7 @@ pub struct ObjectWindow {
 impl ObjectWindow {
     pub fn new(document: &Document, source: Span, links: SharedLinks) -> Option<Self> {
         Some(Self {
+            outer_images: Vec::new(),
             source,
             literal_image_ranges: Vec::new(),
             composite_images: Vec::new(),
@@ -278,6 +280,9 @@ impl ObjectWindow {
             let id = pending.id;
             let presentation = self.links.presentation(id);
             let info = document.link_info(id).ok_or(LayoutError::InvalidRange)?;
+            if presentation.image == Some(id) {
+                self.outer_images.push((id, info.source, info.label));
+            }
             if presentation.disposition == Some(LinkDisposition::Unresolved) {
                 if info.kind == LinkKind::Image {
                     if let Some(last) = self
@@ -350,6 +355,7 @@ impl ObjectWindow {
     pub(crate) fn scratch_capacity_bytes(&self) -> usize {
         use std::mem::size_of;
         self.literal_image_ranges.capacity() * size_of::<Span>()
+            + self.outer_images.capacity() * size_of::<(LinkId, Span, Span)>()
             + self.composite_images.capacity() * size_of::<(Span, ImagePlaceholder)>()
             + (self.placeholders.capacity() + self.empty_fallbacks.capacity())
                 * size_of::<ImagePlaceholder>()

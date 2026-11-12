@@ -261,6 +261,7 @@ pub struct ViewportState {
     heights: HeightIndex,
     checkpoints: RenderCheckpointStore,
     table_widths: TableWidthCache,
+    pub(crate) shown_tables: Vec<super::table::TableWindowStatus>,
     top: Option<Anchor>,
     top_position: TopPosition,
     frame_source: Option<(Anchor, usize)>,
@@ -292,6 +293,10 @@ struct EndPosition {
     stats: ViewportFrameStats,
     first: Option<FirstFrame>,
     selection: Option<EndSelection>,
+    table_ids: Vec<TableId>,
+    table_snapshots: HashMap<TableId, TableWidthSnapshot>,
+    tables_ready: bool,
+    table_windows: Vec<super::table::TableWindowStatus>,
     lines: Vec<(Anchor, SinkLine)>,
     frame: Option<ViewportFrame>,
 }
@@ -306,6 +311,10 @@ impl EndPosition {
             stats: ViewportFrameStats::default(),
             first: None,
             selection: None,
+            table_ids: Vec::new(),
+            table_snapshots: HashMap::new(),
+            tables_ready: false,
+            table_windows: Vec::new(),
             lines: Vec::new(),
             frame: None,
         }
@@ -359,6 +368,7 @@ impl ViewportState {
             heights,
             checkpoints,
             table_widths,
+            shown_tables: Vec::new(),
             top,
             top_position,
             frame_source: None,
@@ -404,6 +414,7 @@ impl ViewportState {
             heights,
             checkpoints,
             table_widths,
+            shown_tables: Vec::new(),
             top,
             top_position,
             frame_source: None,
@@ -540,6 +551,28 @@ impl ViewportState {
                     tile_limit = self.config.max_tiles.min(8);
                     end.next_before = block.source.start;
                 }
+                if let mdtui3::BlockKind::Table { id } = block.kind
+                    && let Some(table) = document.table(id)
+                    && let Some(row) = table.rows().get(
+                        table
+                            .rows()
+                            .partition_point(|row| row.source.start < stop)
+                            .saturating_sub(1),
+                    )
+                {
+                    let owner = document
+                        .tile_at(super::table_window::row_owner(row))
+                        .ok_or(ViewportError::InvalidTop)?;
+                    if owner.0 < start {
+                        start = owner.0;
+                        tile_limit = self
+                            .config
+                            .max_tiles
+                            .min(8)
+                            .min(document.tile_count() - start);
+                    }
+                    end.next_before = row.source.start.min(end.next_before);
+                }
                 if !budget.charge(WorkLimit {
                     recovery: 1,
                     ..WorkLimit::default()
@@ -555,8 +588,70 @@ impl ViewportState {
                         row_limit: (8 * (TILE_BYTES + 4) + self.config.row_slack as usize) as u64,
                     },
                 )?;
+                end.table_ids = first
+                    .plan()
+                    .blocks
+                    .iter()
+                    .filter_map(|b| {
+                        if let mdtui3::BlockKind::Table { id } = b.kind {
+                            Some(id)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if let mdtui3::BlockKind::Table { id } = block.kind
+                    && !end.table_ids.contains(&id)
+                {
+                    end.table_ids.push(id);
+                }
+                let mut keep = end
+                    .table_windows
+                    .iter()
+                    .map(|w| w.table_id)
+                    .collect::<Vec<_>>();
+                keep.extend_from_slice(&end.table_ids);
+                self.table_widths.retain_tables(&keep);
+                first.set_table_options(
+                    document,
+                    self.table_widths.policy(),
+                    &self.table_widths.column_positions(),
+                )?;
+                first.set_table_view(super::table_window::TableView {
+                    anchor: Anchor {
+                        tile: TileId(start),
+                        offset: 0,
+                    },
+                    source: None,
+                    rows: usize::from(self.config.rows)
+                        .saturating_add(self.config.overscan_rows as usize * 2)
+                        .saturating_add(4),
+                    tail: Some(end.before),
+                });
                 first.set_links(self.links.clone());
                 end.first = Some(first);
+            }
+            if !end.tables_ready {
+                for &id in &end.table_ids {
+                    if end.table_snapshots.contains_key(&id) {
+                        continue;
+                    }
+                    let Some(snapshot) = self.table_widths.snapshot_budgeted(
+                        document,
+                        id,
+                        usize::from(self.config.width),
+                        budget,
+                    )?
+                    else {
+                        return Ok(self.end_pending(budget));
+                    };
+                    end.table_snapshots.insert(id, snapshot);
+                }
+                end.first
+                    .as_mut()
+                    .ok_or(ViewportError::InvalidTop)?
+                    .set_table_widths(std::mem::take(&mut end.table_snapshots))?;
+                end.tables_ready = true;
             }
             if end.selection.is_none() {
                 let first = end.first.as_mut().ok_or(ViewportError::InvalidTop)?;
@@ -586,7 +681,7 @@ impl ViewportState {
                     selected: Vec::new(),
                 });
             }
-            if !self.select_end_window(end, budget)? {
+            if !self.select_end_window(document, end, budget)? {
                 return Ok(self.end_pending(budget));
             }
             if end.lines.len() >= usize::from(self.config.rows) || end.before == 0 {
@@ -604,6 +699,7 @@ impl ViewportState {
 
     fn select_end_window(
         &mut self,
+        document: &Document,
         end: &mut EndPosition,
         budget: &mut Budget,
     ) -> Result<bool, ViewportError> {
@@ -666,9 +762,13 @@ impl ViewportState {
             if !selection.found_tail {
                 continue;
             }
+            let logical_line = first
+                .sink()
+                .and_then(|sink| sink.line_offset(selection.line))
+                .ok_or(ViewportError::MissingLineSource)? as usize;
             let owner = selection
                 .owners
-                .partition_point(|(_, start, _)| *start <= selection.line);
+                .partition_point(|(_, start, _)| *start <= logical_line);
             let &(tile, start, _) = selection
                 .owners
                 .get(owner.saturating_sub(1))
@@ -676,7 +776,7 @@ impl ViewportState {
             selection.selected.push((
                 Anchor {
                     tile,
-                    offset: (selection.line - start) as u64,
+                    offset: (logical_line - start) as u64,
                 },
                 line.clone(),
             ));
@@ -693,6 +793,26 @@ impl ViewportState {
         selection.selected.reverse();
         selection.selected.append(&mut end.lines);
         end.lines = selection.selected;
+        if let Some(sink) = first.sink() {
+            for status in sink.table_windows() {
+                if let Some(range) = first.scanner().selected_rows(status.table_id)
+                    && let Some(table) = document.table(status.table_id)
+                    && first.plan().visible.start >= table.source.start
+                    && let Some(row) = table.rows().get(range.start)
+                {
+                    end.next_before = end.next_before.min(row.source.start);
+                }
+                if let Some(existing) = end
+                    .table_windows
+                    .iter_mut()
+                    .find(|w| w.table_id == status.table_id)
+                {
+                    *existing = *status;
+                } else {
+                    end.table_windows.push(*status);
+                }
+            }
+        }
         end.before = end.next_before;
         end.work.windows += 1;
         end.work.planned_tiles += first.plan().segments.len();
@@ -720,6 +840,8 @@ impl ViewportState {
         // Ownership of this bounded FirstFrame is released only after its
         // measured rows have been published. The shared memo retires separately.
         end.first = None;
+        end.tables_ready = false;
+        end.table_ids.clear();
         self.links.request_retirement();
         Ok(true)
     }
@@ -732,6 +854,36 @@ impl ViewportState {
     }
 
     fn finish_end(&mut self, document: &Document, end: &EndPosition) -> ViewportFrame {
+        self.shown_tables = end
+            .table_windows
+            .iter()
+            .copied()
+            .filter(|status| {
+                end.lines.iter().any(|(_, line)| {
+                    line.source
+                        .and_then(|s| s.block)
+                        .and_then(|b| document.block(b))
+                        .is_some_and(|b| {
+                            b.kind
+                                == mdtui3::BlockKind::Table {
+                                    id: status.table_id,
+                                }
+                        })
+                })
+            })
+            .collect();
+        self.shown_tables.sort_unstable_by_key(|status| {
+            document
+                .table(status.table_id)
+                .map_or(usize::MAX, |table| table.source.start)
+        });
+        self.table_widths.retain_tables(
+            &self
+                .shown_tables
+                .iter()
+                .map(|w| w.table_id)
+                .collect::<Vec<_>>(),
+        );
         let top = end.lines.first().map(|(anchor, _)| *anchor);
         let source = end
             .lines
@@ -843,6 +995,55 @@ impl ViewportState {
         &mut self.table_widths
     }
 
+    pub fn set_table_policy(
+        &mut self,
+        document: &Document,
+        policy: super::table_widths::TableWidthPolicy,
+    ) -> Result<bool, ViewportError> {
+        self.check_document(document)?;
+        if !self.table_widths.set_policy(policy) {
+            return Ok(false);
+        }
+        let mut ids = self.table_widths.table_ids();
+        for status in &self.shown_tables {
+            if !ids.contains(&status.table_id) {
+                ids.push(status.table_id);
+            }
+        }
+        self.restart_end(document);
+        for id in ids {
+            self.invalidate_table(document, id)?;
+        }
+        Ok(true)
+    }
+
+    pub fn set_table_first_column(
+        &mut self,
+        document: &Document,
+        id: TableId,
+        first: usize,
+    ) -> Result<bool, ViewportError> {
+        if !self.table_widths.set_first_column(document, id, first)? {
+            return Ok(false);
+        }
+        self.invalidate_table(document, id)?;
+        Ok(true)
+    }
+
+    fn invalidate_table(&mut self, document: &Document, id: TableId) -> Result<(), ViewportError> {
+        if let Some(table) = document.table(id) {
+            let tiles = document.tiles_overlapping(table.source);
+            self.heights.expire(tiles.clone())?;
+            self.checkpoints.invalidate(tiles)?;
+        }
+        self.restart_end(document);
+        self.render = None;
+        self.pending_table_snapshots.clear();
+        self.preparing_tables = false;
+        self.calibration = None;
+        Ok(())
+    }
+
     pub fn advance_table_widths(
         &mut self,
         document: &Document,
@@ -851,10 +1052,18 @@ impl ViewportState {
         budget: &mut Budget,
     ) -> Result<TableWidthAdvance, ViewportError> {
         self.check_document(document)?;
+        let was_provisional = self
+            .table_widths
+            .stats(document, table_id, content_width)?
+            .provisional;
         let result = self
             .table_widths
             .advance(document, table_id, content_width, budget)?;
-        if result.width_changed || result.visible_columns_before != result.visible_columns_after {
+        if result.width_changed
+            || result.visible_columns_before != result.visible_columns_after
+            || was_provisional != result.provisional
+        {
+            self.invalidate_table(document, table_id)?;
             self.render = None;
             self.pending_table_snapshots.clear();
             self.preparing_tables = false;
@@ -1118,6 +1327,37 @@ impl ViewportState {
                 frame.status,
                 ViewportFrameStatus::Ready | ViewportFrameStatus::EndOfDocument
             );
+            if ready {
+                let ids = self
+                    .shown_tables
+                    .iter()
+                    .map(|w| w.table_id)
+                    .collect::<Vec<_>>();
+                for id in ids {
+                    let was_provisional = self
+                        .table_widths
+                        .stats(document, id, usize::from(self.config.width))?
+                        .provisional;
+                    let advance = self.advance_table_widths(
+                        document,
+                        id,
+                        usize::from(self.config.width),
+                        budget,
+                    )?;
+                    if !advance.stable_for_width
+                        || advance.width_changed
+                        || advance.visible_columns_before != advance.visible_columns_after
+                        || was_provisional != advance.provisional
+                    {
+                        return Ok(self.calibration_progress(
+                            EofCalibrationStatus::BudgetExhausted,
+                            None,
+                            false,
+                            document,
+                        ));
+                    }
+                }
+            }
             return Ok(self.calibration_progress(
                 if ready {
                     EofCalibrationStatus::Calibrated
@@ -1167,6 +1407,11 @@ impl ViewportState {
             if advance.width_changed
                 || advance.visible_columns_before != advance.visible_columns_after
             {
+                if let Some(table) = document.table(table_id) {
+                    let range = document.tiles_overlapping(table.source);
+                    self.heights.expire(range.clone())?;
+                    self.checkpoints.invalidate(range)?;
+                }
                 self.render = None;
                 self.pending_table_snapshots.clear();
                 self.preparing_tables = false;
@@ -1294,7 +1539,7 @@ impl ViewportState {
 
         self.restart_end(document);
         let old_top = self.top;
-        self.table_widths.retain_tables(&[]);
+        self.table_widths.resize_window(usize::from(width));
         self.heights.reset(CONTENT_WIDTH_RESET_ESTIMATE)?;
         if self.checkpoints.maintenance_in_progress() {
             // Width changes supersede any in-flight retention pass. Replacing
@@ -1496,6 +1741,7 @@ impl ViewportState {
                 preserve_refined_source,
                 self.config,
                 table_widths,
+                self.table_widths.policy(),
                 self.links.clone(),
             )?);
         }
@@ -1521,6 +1767,25 @@ impl ViewportState {
 
         frame.stats.layout_budget = budget.used();
         let render = self.render.take().ok_or(ViewportError::InvalidTop)?;
+        self.shown_tables = render.first.sink().map_or_else(Vec::new, |sink| {
+            sink.table_windows()
+                .iter()
+                .copied()
+                .filter(|status| {
+                    frame.lines.iter().any(|line| {
+                        line.source
+                            .and_then(|s| s.block)
+                            .and_then(|b| document.block(b))
+                            .is_some_and(|b| {
+                                b.kind
+                                    == mdtui3::BlockKind::Table {
+                                        id: status.table_id,
+                                    }
+                            })
+                    })
+                })
+                .collect()
+        });
         let preserve_source = render.preserve_refined_source;
         render.sync_layout_parts(&mut self.heights, &mut self.checkpoints)?;
         self.top = Some(frame.top.anchor().unwrap_or(anchor));
@@ -1772,6 +2037,7 @@ impl ViewportRender {
         preserve_refined_source: bool,
         config: ViewportConfig,
         table_widths: HashMap<TableId, TableWidthSnapshot>,
+        policy: super::table_widths::TableWidthPolicy,
         links: crate::render::objects::SharedLinks,
     ) -> Result<Self, ViewportError> {
         let start_row = heights.row_of(anchor).ok_or(ViewportError::InvalidTop)?;
@@ -1796,6 +2062,19 @@ impl ViewportRender {
                 row_limit,
             },
         )?;
+        first.set_table_options(document, policy, &[])?;
+        first.set_table_view(super::table_window::TableView {
+            anchor,
+            tail: None,
+            source: if preserve_refined_source {
+                top_line_source(top)
+            } else {
+                None
+            },
+            rows: usize::from(config.rows)
+                .saturating_add(config.overscan_rows as usize * 2)
+                .saturating_add(4),
+        });
         first.set_links(links);
         first.set_table_widths(table_widths)?;
         let replay_enabled = match top {
@@ -1909,15 +2188,7 @@ impl ViewportRender {
         }
         let offset = self.anchor.offset.min(target_rows - 1);
         skip = skip.saturating_add(offset);
-        let skip_usize = usize::try_from(skip).map_err(|_| ViewportError::RowOverflow)?;
-        let want = usize::from(self.config.rows);
-        if skip_usize > self.first.lines().len() {
-            return Err(ViewportError::IncompleteFrame);
-        }
-        let end = skip_usize
-            .saturating_add(want)
-            .min(self.first.lines().len());
-        let mut lines = self.first.lines()[skip_usize..end].to_vec();
+        let mut lines = sink.visible_lines(skip, usize::from(self.config.rows));
         let mut top = with_anchor(
             self.top,
             Anchor {

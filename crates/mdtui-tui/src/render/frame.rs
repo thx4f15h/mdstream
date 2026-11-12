@@ -242,6 +242,7 @@ struct FramePaintLayout<'a> {
     focused_link: Option<LinkId>,
     notice: Option<&'a str>,
     following: bool,
+    table_notice: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -338,6 +339,35 @@ impl FrameRuntime {
     #[must_use]
     pub fn document(&self) -> &Document {
         self.document.document()
+    }
+
+    pub fn set_table_policy(
+        &mut self,
+        policy: super::table_widths::TableWidthPolicy,
+    ) -> Result<bool, FrameError> {
+        Ok(self
+            .viewport
+            .set_table_policy(self.document.document(), policy)?)
+    }
+
+    pub fn pan_table(&mut self, delta: isize) -> Result<bool, FrameError> {
+        let Some(status) = self.viewport.shown_tables.first().copied() else {
+            return Ok(false);
+        };
+        let first = self
+            .viewport
+            .table_widths()
+            .first_column(status.table_id)
+            .saturating_add_signed(delta);
+        let changed = self.viewport.set_table_first_column(
+            self.document.document(),
+            status.table_id,
+            first,
+        )?;
+        if changed {
+            self.reconcile_scrolled_source = true;
+        }
+        Ok(changed)
     }
 
     pub fn document_and_viewport_mut(&mut self) -> (&Document, &mut ViewportState) {
@@ -817,6 +847,23 @@ impl FrameRuntime {
         started: Instant,
     ) -> Result<FrameCommit, FrameError> {
         self.ensure_sidebar_model()?;
+        let table_notice = self
+            .viewport
+            .shown_tables
+            .first()
+            .filter(|status| {
+                status.first > 0
+                    || status.visible < status.total
+                    || self.viewport.table_widths().policy()
+                        != super::table_widths::TableWidthPolicy::default()
+            })
+            .map(|status| {
+                format!(
+                    "{:<width$}",
+                    status.message(),
+                    width = usize::from(self.geometry.content_width)
+                )
+            });
         let commit = self.presenter.commit(
             writer,
             self.document.document(),
@@ -827,8 +874,9 @@ impl FrameRuntime {
                 sidebar_width: self.sidebar_width,
                 sidebar: self.sidebar.as_ref(),
                 focused_link: self.link_focus,
-                notice: self.notice,
+                notice: self.notice.or(table_notice.as_deref()),
                 following: self.viewport.following(),
+                table_notice: self.notice.is_none() && table_notice.is_some(),
             },
             started,
         )?;
@@ -1607,7 +1655,11 @@ impl FramePresenter {
 
     fn paint_notice(&mut self, layout: FramePaintLayout<'_>) -> Result<(), FrameError> {
         let follow_notice = layout.following.then(|| {
-            let mut message = String::from("FOLLOW | Up/PgUp/Home: pause | Ctrl+End: once");
+            let mut message = String::from(if layout.table_notice {
+                "FOLLOW"
+            } else {
+                "FOLLOW | Up/PgUp/Home: pause | Ctrl+End: once"
+            });
             if let Some(notice) = layout.notice {
                 message.push_str(" | ");
                 message.push_str(notice);

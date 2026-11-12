@@ -635,11 +635,9 @@ fn giant_cell_keeps_provisional_screen_and_key_redraw_available_during_width_cal
     }
     assert!(engine.first_frame_done());
     engine.finish_input(Duration::from_secs(1)).unwrap();
-    for _ in 0..8 {
-        let mut budget = Budget::new(FRAME_WORK);
-        engine.advance_calibration(&mut budget).unwrap();
-        assert!(budget.used().bytes <= FRAME_WORK.bytes);
-    }
+    let mut budget = Budget::new(FRAME_WORK);
+    engine.advance_calibration(&mut budget).unwrap();
+    assert!(budget.used().bytes <= FRAME_WORK.bytes);
     assert!(engine.calibration_pending());
     engine.request_render();
     assert!(engine.due(Duration::from_secs(2)));
@@ -659,7 +657,40 @@ fn giant_cell_keeps_provisional_screen_and_key_redraw_available_during_width_cal
         }
     }
     assert!(committed);
-    assert!(engine.calibration_pending()); // Precision is explicitly still provisional.
+    for _ in 0..100 {
+        if engine
+            .advance_calibration(&mut Budget::new(FRAME_WORK))
+            .unwrap()
+            .is_some()
+        {
+            break;
+        }
+    }
+    assert!(
+        engine
+            .render_due(
+                &mut Vec::new(),
+                &mut Budget::new(FRAME_WORK),
+                Duration::from_secs(3)
+            )
+            .unwrap()
+            .is_some_and(|c| c.committed)
+    );
+    assert!(
+        !engine.calibration_pending(),
+        "giant cell precision must finish"
+    );
+    let id = mdtui3::TableId(0);
+    let runtime = engine.runtime_mut();
+    let (document, viewport) = runtime.document_and_viewport_mut();
+    assert_eq!(
+        viewport
+            .table_widths_mut()
+            .snapshot(document, id)
+            .unwrap()
+            .widths[0],
+        1_000_000
+    );
     let first_row: String = (0..80)
         .map(|x| engine.screen().front_cell(0, x).unwrap().text())
         .collect();
@@ -1163,7 +1194,12 @@ fn failed_long_fence_info_is_rendered_as_a_table_header_without_implicit_finish(
             .flat_map(|line| &line.cells)
             .any(|cell| cell.text == "`")
     );
-    assert!(first.scanner().stats().scanned_bytes <= 8 * TILE_BYTES + 4);
+    // The cell prefix has 4 KiB grapheme context after the 4-byte/scalar
+    // terminal prefix; the indexed second cell is read directly, 1 MiB away.
+    assert_eq!(
+        first.scanner().stats().scanned_bytes,
+        80 * 4 + 4096 + "second".len()
+    );
     assert!(first.sink_stats().unwrap().preparation_source_bytes <= 4096);
     assert!(!doc.is_finished());
 }

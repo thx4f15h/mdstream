@@ -50,6 +50,7 @@ fn run(options: Options) -> Result<(), AppError> {
         width,
         height,
         link_mode,
+        table_policy,
         file,
     } = options;
 
@@ -69,7 +70,8 @@ fn run(options: Options) -> Result<(), AppError> {
     debug_assert!(width.is_none() && height.is_none());
     let file = open_input_file(&file)?;
     reject_non_tty()?;
-    terminal::run(link_mode, file).map_err(|error| AppError::io(format!("terminal error: {error}")))
+    terminal::run_with_table_policy(link_mode, file, table_policy)
+        .map_err(|error| AppError::io(format!("terminal error: {error}")))
 }
 
 fn load_document(path: &Path) -> Result<Document, AppError> {

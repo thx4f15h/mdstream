@@ -123,6 +123,14 @@ pub(crate) fn visible_prepared_input(
         }
     }
 
+    Some(visible_tokens(source, tokens, hidden))
+}
+
+pub(crate) fn visible_tokens(
+    source: Span,
+    tokens: Vec<InputToken>,
+    mut hidden: Vec<Span>,
+) -> DisplayInput {
     for token in &tokens {
         if token.kind == TokenKind::Text
             && !token.style.contains(StyleRole::CODE)
@@ -142,7 +150,7 @@ pub(crate) fn visible_prepared_input(
     for token in tokens {
         visible.extend(visibly_split_token(token, &hidden));
     }
-    Some(DisplayInput::from_tokens(visible))
+    DisplayInput::from_tokens(visible)
 }
 
 fn clip(span: Span, limit: Span) -> Option<Span> {

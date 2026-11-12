@@ -2995,3 +2995,20 @@ README、TODO 精准同步：核心范围扩展单独勾选，实际选区控件
 冻结 496 个 Rust 文件及相关编译输入后，完整 debug 2,482/release 2,478/doc 78 通过，原有各 4 个手动大规模测试继续保持默认跳过；文档构建、fmt check、生产 lib/bin 严格 clippy、TUI 全目标及新增核心测试严格 clippy 均通过。验证日志、逐命令退出码和前后 SHA 见外部 `013-prototypes/validation.json`，交付结果见 `013-result.json`。既有 `bare_autolinks.rs` 无关 bool assert lint 未修改。
 
 本项仅勾选 End 跟随需求；目录筛选/树 UI、折叠、搜索、数学/脚注实际排版、表格后续策略和其它未完项仍保留。
+
+
+## 2026-11-13 表格列宽完整策略
+
+在已交付的边框、padding、Alignment、单行裁剪、源码行高归属和缓存失效基础上，补齐列宽设置、真实横移和超帧额度 cell 精测。`--table-min-width` 接受 0..=1000（默认 0），`--table-max-width` 接受 1..=1000（默认无上限），要求 min ≤ max；仅用于 TUI。hint 只作暂定估计，真实 Unicode、实体/转义、代码、隐藏标记及图片 alt 显示宽度按语义测量后裁到用户范围。
+
+Left/Right 移一列，Ctrl-Left/Right 移八列，作用于最上方实际可见表格；Sidebar no-op，Alt 历史保持。首尾夹紧，resize/同表追加保持绝对列起点，离开当前视口计划后重置。状态显示列范围、左右省略数和暂定标记，并清除状态行剩余的正文源码/图片命中。只按索引选出的 cell span 读取当前列窗口与有限邻近内容，省略行通过已准备的逻辑行数保留原物理行归属；不读取百万字 row envelope 或前方十万列，也不整表预排版。
+
+`WidthMeasure` 保留一个付费显示 run、4 KiB 当前字素窗口和数字摘要，复用全帧共享的显示/对象/guard resolver；不同 cell 独立分字素，同 cell 跨实体、隐藏标记及预算切口继续拼接。普通追加和仍在窗口内的 resize 可恢复部分精测，晚定义或较早语义变化则保守重建。取消不销毁历史 memo 大树，唯一共享 memo 按预算逐节点退役。保留每列至多 32 项出序观测、扫描前沿和最大值；完整超长字素仍采用既有 Local `…` 策略，未扩展其独立 TODO。
+
+End/Ctrl+End 传入同一列窗口及 min/max，稀疏输出按逻辑行偏移回填，长表格行/分隔行通过索引跳过；横移、改宽或精测修正使旧 prepared tail 失效，保留跟随意愿或原固定切口。End 的 EOF 校准同样按预算完成巨大 cell 精测；原 ContentBlockIndex、侧栏暂停切口及退出读者契约保持。
+
+`table_policy` / `table_policy_end` 采用独立朴素全表宽度模型和手写 cell/source 期望，覆盖配置边界、超窄窗口、Unicode/combining/ZWJ/RI、实体/隐藏标记、代码/裸目标、普通/嵌套/未解析及空 alt 图片、Alignment、append/EOF/晚定义/resize/pan、陈旧 reader/ticket、正常和 End 实际行归属。成本证据：百万字 cell 精测 4 帧、实际借记 1,007,823 byte 单位，峰值已跟踪容量 6,320 字节；30 次 resize 中断累计测量源码工作 1,007,849。十万列的 End 末端两列仅准备 2 项列元数据、2 个局部窗口，实际 Budget 借记 22 byte 单位和 92 query/object，已跟踪容量 816 字节。EndWork 的源码覆盖口径为 2 字节，区别于完整 Budget 借记，不混用为实际总工作量。组合微预算 End 在 807 帧收敛，全部六项逐帧限制 1q/1o/6b/1tile/1recovery/1dependency，零预算未读取列元数据，cell/source 与正常预算完全一致。既有两万行稀疏观测/32 项上限和清理计数继续通过；远端 guard 中途取消留下的 81 个 memo 节点逐个付费退役。
+
+最终冻结 500 个 Rust 文件及全部编译/测试输入，验证前后 SHA 一致：workspace debug 2507、release 2503、doc 78，专项 87、额外 64 MiB 手动 3 项全部通过。check、doc build、fmt、生产与 TUI 全目标严格 clippy 通过；workspace 全目标 clippy 仍仅为既有 `mdstream-core/tests/bare_autolinks.rs:594` 的 bool assert lint，未改该文件。私有终端实际执行 70 项操作和一次清理，覆盖两组 CLI 配置、横移/大步/边界、resize、FIFO 追加/EOF、FOLLOW 中横移、Ctrl+End 固定切口/重新跟随、图片 OSC8、q 和终端恢复。所有既有输入 fixtures 及 11 份 ANSI golden 逐文件保持；核心及依赖相对整合基线未修改。
+
+完整命令、退出码、实际计数、SHA、审查文件摘要与原始终端记录见 `/tmp/mdtui3-codex-todo/014-result.json` 及 `/tmp/mdtui3-codex-todo/014-prototypes/`。目录、折叠、选区、搜索、完整巨型字素及数学/脚注排版等原未完成需求保持未勾选。

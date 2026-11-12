@@ -8,6 +8,29 @@ use crate::render::text::{GraphemeKind, display_width, graphemes};
 use crate::render::visibility::visible_input;
 use crate::screen::{Cell, LineSource, Screen, ScreenError, StyleRole};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TableWindowStatus {
+    pub table_id: TableId,
+    pub first: usize,
+    pub visible: usize,
+    pub total: usize,
+    pub provisional: bool,
+}
+impl TableWindowStatus {
+    pub fn message(self) -> String {
+        format!(
+            "table {} cols {}-{} / {} [<{} >{}]{}",
+            self.table_id.0 + 1,
+            self.first + 1,
+            self.first + self.visible,
+            self.total,
+            self.first,
+            self.total.saturating_sub(self.first + self.visible),
+            if self.provisional { " ~" } else { "" }
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableGeometry {
     pub table_id: TableId,
@@ -15,6 +38,7 @@ pub struct TableGeometry {
     pub columns: Vec<TableColumnGeometry>,
     pub rows: Vec<TableRowGeometry>,
     pub total_columns: usize,
+    pub first_column: usize,
     pub visible_columns: usize,
     /// Lower bound when the prepared column prefix is incomplete.
     pub full_width: usize,
@@ -133,6 +157,7 @@ pub fn table_geometry_with_widths(
         widths_provisional,
         None,
         None,
+        0,
     )
 }
 
@@ -147,6 +172,7 @@ pub(crate) fn table_geometry_window(
     widths_provisional: bool,
     source_window: Option<Span>,
     input_window: Option<&DisplayInput>,
+    first_column: usize,
 ) -> Result<TableGeometry, TableError> {
     let BlockKind::Table { id } = block.kind else {
         return Err(TableError::NotTable);
@@ -157,8 +183,10 @@ pub(crate) fn table_geometry_window(
     if widths.is_empty() && total_columns > 0 && content_width > 0 {
         return Err(TableError::InvalidWidths);
     }
-    let widths = &widths[..widths.len().min(total_columns)];
-    let full_width_exact = widths.len() == total_columns && !widths_provisional;
+    let first_column = first_column.min(total_columns.saturating_sub(1));
+    let widths = &widths[..widths.len().min(total_columns.saturating_sub(first_column))];
+    let full_width_exact =
+        first_column == 0 && widths.len() == total_columns && !widths_provisional;
     let widths_provisional = widths_provisional || widths.len() < total_columns;
     let full_width = table_width(widths);
     if content_width == 0 || total_columns == 0 {
@@ -168,6 +196,7 @@ pub(crate) fn table_geometry_window(
             columns: Vec::new(),
             rows: Vec::new(),
             total_columns,
+            first_column,
             visible_columns: 0,
             full_width,
             full_width_exact,
@@ -185,14 +214,13 @@ pub(crate) fn table_geometry_window(
     let row_end = row_range.end.clamp(row_start, total_rows);
     let (visible_columns, visible_width) = visible_prefix(widths, content_width);
     let clipped_first_column = visible_width > content_width;
-    let columns = table
-        .columns
+    let columns = table.columns[first_column..]
         .iter()
         .zip(widths.iter())
         .take(visible_columns)
         .map(|(column, width)| TableColumnGeometry {
             alignment: column.alignment,
-            content_width: if widths_provisional {
+            content_width: if input_window.is_some() || widths_provisional {
                 (*width).min(content_width.max(1))
             } else {
                 *width
@@ -209,7 +237,7 @@ pub(crate) fn table_geometry_window(
             let row_index = row_start + offset;
             let cells = (0..visible_columns)
                 .map(|column| {
-                    if let Some(cell) = row.cells.get(column) {
+                    if let Some(cell) = row.cells.get(first_column + column) {
                         let source = source_window.map_or(cell.source, |window| {
                             let start = cell.source.start.max(window.start).min(cell.source.end);
                             let end = cell.source.end.min(window.end).max(start);
@@ -250,6 +278,7 @@ pub(crate) fn table_geometry_window(
         columns,
         rows,
         total_columns,
+        first_column,
         visible_columns,
         full_width,
         full_width_exact,
@@ -296,7 +325,11 @@ fn visible_prefix(widths: &[usize], content_width: usize) -> (usize, usize) {
 }
 
 pub(crate) fn visible_prefix_count(widths: &[usize], content_width: usize) -> usize {
-    visible_prefix(widths, content_width).0
+    if widths.is_empty() || content_width == 0 {
+        0
+    } else {
+        visible_prefix(widths, content_width).0
+    }
 }
 
 pub fn render_table(
@@ -445,7 +478,7 @@ fn data_row(
             cells.push(border_cell(' ')?);
         }
         let mut used = leading;
-        for token in cell.input.tokens() {
+        'tokens: for token in cell.input.tokens() {
             match token.kind {
                 TokenKind::HardBreak => {}
                 TokenKind::SoftBreak => {
@@ -464,7 +497,7 @@ fn data_row(
                         }
                         let width = usize::from(grapheme.width);
                         if used + width > column.content_width {
-                            break;
+                            break 'tokens;
                         }
                         cells.push(Cell::new(
                             grapheme.text,

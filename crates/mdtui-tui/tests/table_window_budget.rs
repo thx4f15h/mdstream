@@ -210,7 +210,10 @@ fn out_of_order_history_has_bounded_eviction_and_revision_offscreen_resize_clean
     *viewport.table_widths_mut() = cache;
     let before = viewport.table_widths().work();
     viewport.set_content_width(&document, 20).unwrap();
-    assert_eq!(viewport.table_widths().memory_stats().tables, 0);
+    // Resize retains scalar pan identity while dropping all width/row observations.
+    assert_eq!(viewport.table_widths().memory_stats().tables, 1);
+    assert_eq!(viewport.table_widths().memory_stats().columns, 0);
+    assert_eq!(viewport.table_widths().first_column(id), 0);
     assert_eq!(
         viewport.table_widths().work().dropped_observations - before.dropped_observations,
         256

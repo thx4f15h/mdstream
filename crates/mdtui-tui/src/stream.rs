@@ -548,6 +548,29 @@ impl StreamEngine {
         Ok(restored)
     }
 
+    pub fn set_table_policy(
+        &mut self,
+        policy: crate::render::table_widths::TableWidthPolicy,
+    ) -> Result<bool, StreamError> {
+        let changed = self.runtime.set_table_policy(policy)?;
+        if changed {
+            self.calibrated_frame = None;
+            self.force_render |= self.first_frame_done;
+            self.calibration_pending = self.input_finished;
+        }
+        Ok(changed)
+    }
+
+    pub fn pan_table(&mut self, delta: isize) -> Result<bool, StreamError> {
+        let changed = self.runtime.pan_table(delta)?;
+        if changed {
+            self.calibrated_frame = None;
+            self.force_render = true;
+            self.calibration_pending = self.input_finished;
+        }
+        Ok(changed)
+    }
+
     pub fn resize(&mut self, rows: u16, cols: u16) -> Result<FrameResize, StreamError> {
         let resize = self.runtime.resize(rows, cols)?;
         if resize.height_changed || resize.width_changed {

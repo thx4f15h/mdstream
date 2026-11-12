@@ -1,3 +1,4 @@
+use crate::render::table_widths::TableWidthPolicy;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::PathBuf;
@@ -19,6 +20,9 @@ Usage:
   mdtui-tui --help
 
 Options:
+      --table-min-width <N>  TUI minimum content width, 0..=1000 (default 0)
+      --table-max-width <N>  TUI maximum content width, 1..=1000 (default unlimited)
+                             Minimum must not exceed maximum.
       --once             Print the complete reference ANSI rendering for FILE
       --width <N>        Fixed width for --once, 1..=1000, default 120
       --height <N>       Fixed height for --once, 1..=1000, default 40
@@ -29,9 +33,12 @@ Options:
 TUI keys:
   q                      Quit
   Ctrl-C                 Quit
+  Left/Right             Pan the first visible table one column (body/link focus)
+  Ctrl-Left/Right        Pan eight columns; sidebar focus does not pan
   Up/Down                Move the body viewport one row
   PageUp/PageDown        Move the body viewport one page
-  Home/End               Jump to the top/bottom
+  Home/End               Jump to top / follow the current input tail
+  Ctrl+End               Jump once to the current tail without following
   Tab/Shift-Tab          Cycle body/sidebar/link focus
   s                      Toggle the sidebar
   Enter                  Activate the focused target
@@ -67,6 +74,7 @@ pub struct Options {
     pub width: Option<u16>,
     pub height: Option<u16>,
     pub link_mode: LinkMode,
+    pub table_policy: TableWidthPolicy,
     pub file: PathBuf,
 }
 
@@ -106,6 +114,8 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Outcome, ParseE
     let mut once = false;
     let mut width = None;
     let mut height = None;
+    let mut table_min = None;
+    let mut table_max = None;
     let mut open_links = false;
     let mut no_links = false;
     let mut files = Vec::new();
@@ -142,6 +152,25 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Outcome, ParseE
                     height = Some(parse_dimension("--height", &value)?);
                     continue;
                 }
+                Some(option @ ("--table-min-width" | "--table-max-width")) => {
+                    let slot = if option == "--table-min-width" {
+                        &mut table_min
+                    } else {
+                        &mut table_max
+                    };
+                    if slot.is_some() {
+                        return Err(ParseError::new(format!(
+                            "option '{option}' may only be specified once"
+                        )));
+                    }
+                    let value = take_value(&args, &mut index, option)?;
+                    let number = value
+                        .to_str()
+                        .and_then(|text| text.parse::<usize>().ok())
+                        .ok_or_else(|| ParseError::new("table width must be an integer"))?;
+                    *slot = Some(number);
+                    continue;
+                }
                 Some("--open-links") => open_links = true,
                 Some("--no-links") => no_links = true,
                 Some(value) if value.starts_with('-') && value != "-" => {
@@ -165,6 +194,13 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Outcome, ParseE
             "options '--width' and '--height' are only valid with '--once'",
         ));
     }
+    if once && (table_min.is_some() || table_max.is_some()) {
+        return Err(ParseError::new(
+            "table width options are only valid in TUI mode",
+        ));
+    }
+    let table_policy =
+        TableWidthPolicy::new(table_min.unwrap_or(0), table_max).map_err(ParseError::new)?;
     let file = match files.as_slice() {
         [file] => PathBuf::from(file),
         _ => {
@@ -186,6 +222,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Outcome, ParseE
         width,
         height,
         link_mode,
+        table_policy,
         file,
     }))
 }

@@ -129,6 +129,10 @@ pub struct FirstFrame {
     skipped_code_prefix: Option<std::ops::Range<usize>>,
     contexts: WindowContexts,
     scanner: DisplayScanner,
+    table_window: Option<super::table_window::TableWindow>,
+    table_view: Option<super::table_window::TableView>,
+    selection_ready: bool,
+    table_view_checked: bool,
     scan_complete: bool,
     sink: Option<TileLayoutSink>,
     pass: Option<LayoutPass>,
@@ -239,6 +243,10 @@ impl FirstFrame {
             skipped_code_prefix,
             contexts,
             scanner,
+            table_window: None,
+            table_view: None,
+            selection_ready: false,
+            table_view_checked: false,
             scan_complete: false,
             sink: None,
             pass: None,
@@ -400,6 +408,23 @@ impl FirstFrame {
             sink.restore_checkpoint(checkpoint);
         }
         Ok(())
+    }
+
+    pub(crate) fn set_table_options(
+        &mut self,
+        document: &Document,
+        policy: super::table_widths::TableWidthPolicy,
+        positions: &[(mdtui3::TableId, usize)],
+    ) -> Result<(), FirstFrameError> {
+        self.width_cache.set_policy(policy);
+        for &(id, first) in positions {
+            self.width_cache.set_first_column(document, id, first)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn set_table_view(&mut self, view: super::table_window::TableView) {
+        self.table_view = Some(view);
     }
 
     pub fn set_table_widths(
@@ -564,6 +589,47 @@ impl FirstFrame {
         if !self.plan.advance_info(document, budget) {
             return Ok(Some(FirstFrameStatus::BudgetExhausted));
         }
+        for block in &self.plan.blocks {
+            if let mdtui3::BlockKind::Table { id } = block.kind
+                && !self.table_widths.contains_key(&id)
+            {
+                let Some(snapshot) = self.width_cache.snapshot_budgeted(
+                    document,
+                    id,
+                    usize::from(self.config.width),
+                    budget,
+                )?
+                else {
+                    return Ok(Some(FirstFrameStatus::BudgetExhausted));
+                };
+                self.table_widths.insert(id, snapshot);
+            }
+        }
+        if !self.selection_ready {
+            if self
+                .plan
+                .blocks
+                .iter()
+                .any(|b| matches!(b.kind, mdtui3::BlockKind::Table { .. }))
+            {
+                let window = self.table_window.get_or_insert_with(|| {
+                    super::table_window::TableWindow::new(self.scanner.requested())
+                });
+                if !window.advance(
+                    document,
+                    &self.plan,
+                    &self.table_widths,
+                    usize::from(self.config.width),
+                    usize::try_from(self.config.row_limit).unwrap_or(usize::MAX),
+                    self.table_view,
+                    budget,
+                ) {
+                    return Ok(Some(FirstFrameStatus::BudgetExhausted));
+                }
+                self.scanner.select(self.table_window.take().unwrap());
+            }
+            self.selection_ready = true;
+        }
         if !self.scan_complete {
             match self.scanner.advance(document, budget)? {
                 ScanStatus::BudgetExhausted => return Ok(Some(FirstFrameStatus::PendingScan)),
@@ -571,22 +637,6 @@ impl FirstFrame {
             }
         }
         if self.sink.is_none() {
-            for block in &self.plan.blocks {
-                if let mdtui3::BlockKind::Table { id } = block.kind
-                    && !self.table_widths.contains_key(&id)
-                {
-                    let Some(snapshot) = self.width_cache.snapshot_budgeted(
-                        document,
-                        id,
-                        usize::from(self.config.width),
-                        budget,
-                    )?
-                    else {
-                        return Ok(Some(FirstFrameStatus::BudgetExhausted));
-                    };
-                    self.table_widths.insert(id, snapshot);
-                }
-            }
             // Dynamic selection is now prepared. Classify from that window,
             // rather than evaluating unbudgeted next_drawable predicates.
             let mut drawable = vec![None; self.plan.segments.len()];
@@ -613,7 +663,13 @@ impl FirstFrame {
             }
             for (index, segment) in self.plan.segments.iter_mut().enumerate() {
                 segment.drawable_at = drawable[index];
-                segment.kind = if drawable[index].is_some() {
+                segment.kind = if self.plan.blocks.iter().any(|b| {
+                    matches!(b.kind, mdtui3::BlockKind::Table { .. })
+                        && b.source.start < segment.source.end
+                        && segment.source.start < b.source.end
+                }) {
+                    TileSegmentKind::TuiOwned
+                } else if drawable[index].is_some() {
                     TileSegmentKind::Drawable
                 } else if events[index] {
                     TileSegmentKind::TuiOwned
@@ -643,6 +699,39 @@ impl FirstFrame {
                     .as_mut()
                     .ok_or(FirstFrameError::MissingSink)?
                     .restore_checkpoint(replay.checkpoint);
+            }
+        }
+        if !self.table_view_checked
+            && let Some(view) = self.table_view
+            && view.tail.is_none()
+        {
+            if !budget.charge(WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            }) {
+                return Ok(Some(FirstFrameStatus::BudgetExhausted));
+            }
+            self.table_view_checked = true;
+            if let Some((id, row, source)) = self
+                .sink
+                .as_ref()
+                .and_then(|sink| sink.corrected_table_source(document, view))
+                && self
+                    .scanner
+                    .selected_rows(id)
+                    .is_some_and(|range| !range.contains(&row))
+            {
+                self.table_view.as_mut().unwrap().source = Some(source);
+                let requested = self.scanner.requested();
+                let links = self.scanner.shared_links();
+                self.scanner =
+                    DisplayScanner::new(document, requested).ok_or(FirstFrameError::InvalidTop)?;
+                self.scanner.set_links(links);
+                self.sink = None;
+                self.scan_complete = false;
+                self.selection_ready = false;
+                return Ok(Some(FirstFrameStatus::PendingScan));
             }
         }
         Ok(None)
@@ -753,8 +842,16 @@ fn suppress_nonwrapping(
             mdtui3::BlockKind::Heading { .. } => sources.push(block.source),
             mdtui3::BlockKind::Table { id } => {
                 if let Some(table) = document.table(id) {
-                    let window = crate::render::table::table_row_window(table, plan.visible);
-                    sources.extend(table.rows()[window].iter().map(|row| row.source));
+                    for segment in &plan.segments {
+                        if let Some(row) = table
+                            .row_at(segment.source.start)
+                            .and_then(|at| table.row(at))
+                            && row.source.len() > 4096
+                            && sources.last() != Some(&row.source)
+                        {
+                            sources.push(row.source);
+                        }
+                    }
                 }
             }
             _ => {}

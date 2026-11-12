@@ -41,7 +41,22 @@ pub struct DisplayScanStats {
     pub context_limited_edges: usize,
 }
 
+struct Selection {
+    ranges: Vec<(Span, bool)>,
+    cuts: Vec<usize>,
+    rows: std::collections::HashMap<mdtui3::TableId, std::ops::Range<usize>>,
+    next: usize,
+    child: Option<Box<DisplayScanner>>,
+    source_work: usize,
+    skipped: Vec<(TileId, usize, u64)>,
+    index_work: mdtui3::LinkWindowWork,
+}
+
 pub struct DisplayScanner {
+    selection: Option<Selection>,
+    table_mode: bool,
+    footnote_index: Option<usize>,
+    hidden_footnotes: Vec<Span>,
     links: crate::render::objects::SharedLinks,
     lease: Option<crate::render::objects::LinkLease>,
     objects: Option<crate::render::objects::ObjectWindow>,
@@ -95,6 +110,10 @@ impl DisplayScanner {
             context_end = requested.end;
         }
         Some(Self {
+            selection: None,
+            table_mode: false,
+            footnote_index: None,
+            hidden_footnotes: Vec::new(),
             links: crate::render::objects::SharedLinks::new(document),
             lease: None,
             objects: None,
@@ -145,28 +164,93 @@ impl DisplayScanner {
         Some(scanner)
     }
 
-    /// Diagnostic capacity for owned display buffers and exposed cursor scratch.
-    /// Native LinkWindow/LinkActivity private scratch and shared memo nodes are
-    /// excluded; their actual visits/entry/retirement counts are separate.
-    pub(crate) fn capacity_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-            + (self.segments.capacity() + self.layout_segments.capacity())
-                * std::mem::size_of::<DisplaySegment>()
-            + self
-                .segments
-                .iter()
-                .chain(&self.layout_segments)
-                .map(|segment| segment.text.capacity())
-                .sum::<usize>()
-            + self.complete_tiles.capacity() * std::mem::size_of::<TileId>()
-            + self.cursor.scratch_stats().capacity_bytes
-            + self
-                .objects
-                .as_ref()
-                .map_or(0, |objects| objects.scratch_capacity_bytes())
+    pub(crate) fn select(&mut self, window: super::table_window::TableWindow) {
+        assert!(!self.complete && self.segments.is_empty());
+        self.selection = Some(Selection {
+            ranges: window.ranges,
+            cuts: window.cuts,
+            rows: window.rows,
+            next: 0,
+            child: None,
+            source_work: 0,
+            skipped: window.skipped,
+            index_work: mdtui3::LinkWindowWork::default(),
+        });
+    }
+
+    pub(crate) fn selected_rows(&self, id: mdtui3::TableId) -> Option<std::ops::Range<usize>> {
+        self.selection.as_ref()?.rows.get(&id).cloned()
+    }
+
+    pub(crate) fn cell_cut(&self, at: usize) -> bool {
+        self.selection
+            .as_ref()
+            .is_some_and(|s| s.cuts.binary_search(&at).is_ok())
+    }
+
+    pub(crate) fn skipped_rows(&self) -> &[(TileId, usize, u64)] {
+        self.selection.as_ref().map_or(&[], |s| &s.skipped)
+    }
+
+    fn advance_selected(
+        &mut self,
+        document: &Document,
+        budget: &mut Budget,
+    ) -> Result<ScanStatus, LayoutError> {
+        let selection = self.selection.as_mut().unwrap();
+        loop {
+            if selection.child.is_none() {
+                let Some(&(source, table)) = selection.ranges.get(selection.next) else {
+                    break;
+                };
+                let mut child = if table {
+                    Self::exact(document, source, self.links.clone())
+                } else {
+                    Self::new(document, source)
+                }
+                .ok_or(LayoutError::InvalidRange)?;
+                child.links = self.links.clone();
+                child.table_mode = table;
+                selection.child = Some(Box::new(child));
+            }
+            let child = selection.child.as_mut().unwrap();
+            let result = child.advance(document, budget)?;
+            if result != ScanStatus::Complete {
+                return Ok(result);
+            }
+            let mut child = selection.child.take().unwrap();
+            selection.source_work += child.stats().scanned_bytes;
+            let work = child.object_index_work();
+            selection.index_work.index_visits += work.index_visits;
+            selection.index_work.sort_steps += work.sort_steps;
+            selection.index_work.objects += work.objects;
+            self.display_source_work += child.display_source_work;
+            self.edge_source_bytes += child.stats().edge_source_bytes;
+            self.edge_queries += child.stats().edge_queries;
+            self.cursor_steps += child.cursor_steps;
+            self.budget_exhausted += child.budget_exhausted;
+            self.display_bytes += child.display_bytes;
+            self.layout_segments.extend(child.segments.iter().cloned());
+            self.segments.append(&mut child.segments);
+            selection.next += 1;
+        }
+        self.scanned_through = self.requested.end;
+        self.refresh_complete_tiles(document)?;
+        self.complete = true;
+        Ok(ScanStatus::Complete)
     }
 
     pub fn object_index_work(&self) -> mdtui3::LinkWindowWork {
+        if let Some(selection) = &self.selection {
+            let mut work = selection.index_work;
+            if let Some(child) = &selection.child {
+                let pending = child.object_index_work();
+                work.index_visits += pending.index_visits;
+                work.sort_steps += pending.sort_steps;
+                work.objects += pending.objects;
+            }
+            return work;
+        }
         self.objects
             .as_ref()
             .map_or(mdtui3::LinkWindowWork::default(), |objects| {
@@ -233,10 +317,14 @@ impl DisplayScanner {
             segments: self.segments.len(),
             display_bytes: self.display_bytes,
             complete_tiles: self.complete_tiles.len(),
-            scanned_bytes: self
-                .scanned_through
-                .min(self.requested.end)
-                .saturating_sub(self.requested.start),
+            scanned_bytes: self.selection.as_ref().map_or_else(
+                || {
+                    self.scanned_through
+                        .min(self.requested.end)
+                        .saturating_sub(self.requested.start)
+                },
+                |s| s.source_work + s.child.as_ref().map_or(0, |c| c.stats().scanned_bytes),
+            ),
             cursor_steps: self.cursor_steps,
             budget_exhausted: self.budget_exhausted,
             cursor_scratch: self.cursor.scratch_stats(),
@@ -284,6 +372,9 @@ impl DisplayScanner {
         }
         if self.complete {
             return Ok(ScanStatus::Complete);
+        }
+        if self.selection.is_some() {
+            return self.advance_selected(document, budget);
         }
 
         if !self.links.prepare(document, budget)? {
@@ -417,6 +508,7 @@ impl DisplayScanner {
                 kind: TokenKind::Text,
             })
             .collect();
+        objects.empty_fallbacks.clear();
         let logical: Vec<_> = fallback
             .iter()
             .filter(|segment| {
@@ -439,6 +531,71 @@ impl DisplayScanner {
             fallback,
             |segment| segment.source.start,
         );
+        if self.table_mode {
+            if self.footnote_index.is_none() {
+                if !budget.charge(mdtui3::WorkLimit {
+                    queries: 1,
+                    objects: 1,
+                    ..Default::default()
+                }) {
+                    return Ok(ScanStatus::BudgetExhausted);
+                }
+                self.footnote_index = Some(
+                    document
+                        .footnote_references()
+                        .partition_point(|r| r.source.end <= self.requested.start),
+                );
+            }
+            while let Some(reference) = document
+                .footnote_references()
+                .get(self.footnote_index.unwrap())
+                .filter(|r| r.source.start < self.requested.end)
+            {
+                let Ok(Some(resolution)) = document.resolve_footnote(
+                    mdtui3::FootnoteReferenceId(self.footnote_index.unwrap()),
+                    budget,
+                ) else {
+                    return Ok(ScanStatus::BudgetExhausted);
+                };
+                if matches!(resolution.target, mdtui3::FootnoteTarget::Defined(_)) {
+                    self.hidden_footnotes.push(reference.source);
+                }
+                *self.footnote_index.as_mut().unwrap() += 1;
+            }
+            let tokens = self
+                .layout_segments
+                .iter()
+                .map(|s| super::input::InputToken {
+                    source: s.source,
+                    replacement: s.replacement,
+                    text: s.text.clone(),
+                    block: s.block,
+                    link: s.link,
+                    style: s.style,
+                    kind: s.kind,
+                })
+                .collect();
+            let input = super::visibility::visible_tokens(
+                self.requested,
+                tokens,
+                std::mem::take(&mut self.hidden_footnotes),
+            );
+            self.layout_segments = input
+                .into_tokens()
+                .into_iter()
+                .map(|s| DisplaySegment {
+                    tile: document.tile_at(s.source.start).expect("prepared cell"),
+                    source: s.source,
+                    replacement: s.replacement,
+                    text: s.text,
+                    block: s.block,
+                    link: s.link,
+                    style: s.style,
+                    kind: s.kind,
+                })
+                .collect();
+            self.segments = self.layout_segments.clone();
+        }
         self.complete = true;
         self.lease = None;
         Ok(ScanStatus::Complete)

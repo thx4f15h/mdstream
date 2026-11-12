@@ -36,6 +36,18 @@ pub const MIN_TERMINAL_ROWS: u16 = 3;
 pub const SMALL_TERMINAL_MESSAGE: &str = "terminal too small\r\nminimum 20x3";
 
 pub fn run(link_mode: LinkMode, input: File) -> io::Result<()> {
+    run_with_table_policy(
+        link_mode,
+        input,
+        crate::render::table_widths::TableWidthPolicy::default(),
+    )
+}
+
+pub fn run_with_table_policy(
+    link_mode: LinkMode,
+    input: File,
+    policy: crate::render::table_widths::TableWidthPolicy,
+) -> io::Result<()> {
     let restore = RestoreState::new();
     install_panic_hook(restore.clone());
     enable_raw_mode()?;
@@ -66,6 +78,7 @@ pub fn run(link_mode: LinkMode, input: File) -> io::Result<()> {
     )
     .map_err(frame_error)?;
     let mut engine = StreamEngine::new(runtime);
+    engine.set_table_policy(policy).map_err(stream_error)?;
     let mut app = AppState::default();
     let start = Instant::now();
     let mut first_frame_checked = false;

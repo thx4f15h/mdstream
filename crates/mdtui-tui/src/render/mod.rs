@@ -18,9 +18,11 @@ pub mod refine;
 pub mod sink;
 pub mod table;
 pub mod table_widths;
+mod table_window;
 pub mod text;
 pub mod thematic;
 pub mod viewport;
 pub mod visibility;
+mod width_measure;
 
 pub mod objects;

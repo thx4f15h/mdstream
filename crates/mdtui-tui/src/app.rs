@@ -47,6 +47,7 @@ pub enum KeyAction {
     Activate,
     HistoryBack,
     HistoryForward,
+    PanTable(isize),
     None,
 }
 
@@ -62,6 +63,20 @@ pub fn action_for_key(code: KeyCode, modifiers: KeyModifiers) -> KeyAction {
         }
         (KeyCode::Right, modifiers) if modifiers.contains(KeyModifiers::ALT) => {
             KeyAction::HistoryForward
+        }
+        (KeyCode::Left, modifiers) => {
+            KeyAction::PanTable(if modifiers.contains(KeyModifiers::CONTROL) {
+                -8
+            } else {
+                -1
+            })
+        }
+        (KeyCode::Right, modifiers) => {
+            KeyAction::PanTable(if modifiers.contains(KeyModifiers::CONTROL) {
+                8
+            } else {
+                1
+            })
         }
         (KeyCode::Up, _) => KeyAction::LineUp,
         (KeyCode::Down, _) => KeyAction::LineDown,
@@ -177,6 +192,11 @@ impl AppState {
         }
         match action {
             KeyAction::Quit => outcome.quit = true,
+            KeyAction::PanTable(delta) => {
+                if self.focus != FocusTarget::Sidebar {
+                    outcome.redraw = engine.pan_table(delta)?;
+                }
+            }
             KeyAction::LineUp => {
                 outcome.redraw = if self.focus == FocusTarget::Sidebar {
                     self.move_sidebar_selection(engine, -1)?

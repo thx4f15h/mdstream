@@ -38,12 +38,16 @@ TUI 内部 `mdtui3` 名称是 `mdstream-core` 的依赖别名。版本统一在�
 | 标题和目录基础 | `refine`、`sidebar*`、`history`、`workspace_integration`：同 tile 标题分别到达、普通滚动真实源码、运行时小预算跳转续跑、可见标题窗口与超长 Setext 摘要 |
 | 流式退出 | `pty_q_exits_and_restores_while_fifo_writer_stays_open_without_eof`：写端保持打开，首屏后 q 正常退出并恢复终端，EOF 不参与退出 |
 | 表格布局与失效 | `table_widths`、`layout_sink`、`viewport_updates`：Alignment、边框/padding、单行裁剪、行高归属、宽度变化丢弃旧布局/检查点、旧 ticket 拒绝及窗口重排 |
-| 表格容量 | 按预算准备终端宽度/3+2 的列前缀；全宽未知时暂定。每列最多 32 项出序观测，淘汰保留最大宽度与扫描前沿。`table_window_budget` 覆盖 80 列视口/10 万列表、零预算读取/分配、2 万行离散观测及 append/离屏/resize 清理计数；`workspace_integration` 覆盖 128 列/3 万缺列行及 1000 次新表追加 |
+| 表格容量 | 按预算准备当前列窗口的终端宽度/3+2 列；全宽未知时暂定。每列最多 32 项出序观测，淘汰保留最大宽度与扫描前沿。`table_window_budget` 覆盖 80 列视口/10 万列表、零预算读取/分配、2 万行离散观测及 append/离屏/resize 清理计数；`workspace_integration` 覆盖 128 列/3 万缺列行及 1000 次新表追加 |
 | 链接与图片 | 当前屏幕 row-major LinkId；迟确认邮箱与较晚对象的源序；所有块中的已解析图片 alt/`[image]`、OSC8/`--no-links`，未解析引用/失败后缀保持字面且不可点击，晚定义失效与有效空目标分别回归；独立 `once_images.ansi` |
 | 链接预算 | 单目标先 O(1) 检查 4096 字节上限；同帧同 LinkId 只检查一次；目标读取和 OSC8 目标负载各限 64 KiB。百万字目标保留标签与对象而不读取/复制目标、不截断 OSC8。外部打开先限长，再用核心预算游标解码；`www` 补 `http://`，外部邮件补 `mailto:` |
 | 任务框 | 已有 `[ ]`/`[x]`/`[X]` 状态绘制、宽 cell、完成样式和续行；只读，不编辑追加源码 |
 
-表格当前采用单行单元格裁剪，每行高度为 1；宽度以 hint 开始，按预算测量和失效，不把源码字节 hint 当最终显示列宽。大于单帧字节额度的 cell 仍不能渐进精测，保留暂定宽度，EOF 校准可能待定；用户仍可请求重绘和退出。该项与横向滚动、宽度配置明确保留未完成。
+表格采用单行单元格裁剪，每物理行总高度只回填一次。`--table-min-width` / `--table-max-width` 校验内容宽度范围，hint 仅作暂定值，实际 Unicode、实体、隐藏标记及图片 alt 由显示语义测量；大于一帧额度的 cell 由 `WidthMeasure` 恢复，保留一个付费 run、4 KiB 当前字素及数字摘要，不复制整份 cell。普通追加重绑未改变的部分精测，较早语义/晚定义变化会丢弃并重建，取消只释放有限本地状态，唯一共享 memo 逐节点付费退役。
+
+Left/Right 按绝对列一列移动，Ctrl-Left/Right 八列；目标为最上方实际可见表格，Sidebar 焦点 no-op，Alt 历史保持。resize/流式追加保留列起点，离开视口计划后重置。状态行报告当前列范围和左右省略数。`TableWindow` 按已解析 cell span 直读当前窗口，省略行的逻辑高度按索引和原源码归属保留；布局回调消费准备好的 token，不回读 row envelope 或远端 guard。混合段落/表格 tile 的深行偏移按已准备前缀几何校正，最多补一个局部窗口。已整合提交 `29eb9443` 的 End/Ctrl+End：末端准备传入同一 min/max 和绝对列起点，稀疏行按逻辑偏移回填，长 cell/分隔行包络按物理行索引跳过；横移/改宽只使旧 prepared tail 失效，保留跟随意愿或固定源码切口。End 的 EOF 校准同样恢复巨大 cell 精测。
+
+`table_policy` 的独立全表模型和手写显示期望覆盖宽度边界、窄屏、Unicode/实体/图片、cell 间字素隔离、百万字 cell/alt、6-byte 微预算、append/晚定义/取消/票据、十万列末端直读及实际 App 键位；既有 `table_window_budget` 继续验证两万行、32 项观测上限及清理。真实私有终端另外验证两个 CLI 策略、左右/大步/边界、resize、FIFO 追加和 EOF、图片 OSC8、q 与恢复。完整超长字素绘制仍沿用 Local 占位，未扩展独立 TODO。
 
 目录面包屑、级别/名称筛选、目录树展开、折叠/搜索/选区/勾选编辑没有据此勾选。End 持续跟随后续已交付：正文 End 开启跟随，Ctrl+End 只跳当前末尾，上滚或显式导航退出；见 [交付记录](../DONE.md#2026-11-13-end-持续跟随与一次末尾跳转)。当前基础列表/引用视觉沿用旧样式，不代表完整容器方言或所有 CommonMark 渲染；数学、脚注排版和原始 HTML 不在本次完成范围。
 

@@ -156,4 +156,4 @@ nix develop -c cargo nextest run -p mdtui-tui --test compliance_matrix
 
 `crates/mdtui-tui/tests/compliance_matrix.rs` 无网络地校验：上述 §0–§6/§9 标题及 §3.1–§3.13 标题存在、列出的 fixture/golden 文件存在、关键矩阵测试名可在 `tests/once_ansi.rs` 和 `tests/static_render.rs` 中检索，以及差异关键词存在。它只做文档/文件/名称审计，不重复渲染实现。
 
-当前 Unicode 窗口边缘的实体/隐藏标记、超限 Local 占位、稀疏表格分配、裸 URL 长目标及逐帧 OSC8 配额，另由 `tests/workspace_integration.rs` 验收。表格巨大 cell 可恢复精测、横向滚动、目录筛选、折叠和搜索仍未完成，不能由本静态矩阵推导完成。
+当前 Unicode 窗口边缘的实体/隐藏标记、超限 Local 占位、稀疏表格分配、裸 URL 长目标及逐帧 OSC8 配额，另由 `tests/workspace_integration.rs` 验收。表格巨大 cell 可恢复精测、宽度上下限和横向滚动另由 `tests/table_policy.rs` / `tests/table_policy_end.rs` 的模型、预算及实际交互验收；目录筛选、折叠和搜索仍未完成，不能由本静态矩阵推导完成。

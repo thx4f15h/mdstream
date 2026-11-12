@@ -9,6 +9,31 @@ use crate::render::table::{TableError, table_width, visible_prefix_count};
 
 pub const MAX_OUT_OF_ORDER_ROWS: usize = 32;
 
+/// Content columns, excluding the unchanged padding and borders. Defaults keep
+/// the established unbounded natural width. CLI limits are deliberately small.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TableWidthPolicy {
+    min: usize,
+    max: Option<usize>,
+}
+impl TableWidthPolicy {
+    pub fn new(min: usize, max: Option<usize>) -> Result<Self, &'static str> {
+        if min > 1000 || max.is_some_and(|max| max == 0 || max > 1000 || min > max) {
+            return Err("table widths require min 0..=1000, max 1..=1000, and min <= max");
+        }
+        Ok(Self { min, max })
+    }
+    pub fn apply(self, width: usize) -> usize {
+        width.max(self.min).min(self.max.unwrap_or(usize::MAX))
+    }
+    pub const fn min(self) -> usize {
+        self.min
+    }
+    pub const fn max(self) -> Option<usize> {
+        self.max
+    }
+}
+
 /// Even zero-width cells occupy three padding/border columns. Keep the largest
 /// possible visible prefix plus two neighbors; this bound depends on the terminal.
 pub fn column_window_limit(content_width: usize) -> usize {
@@ -22,6 +47,7 @@ pub struct TableWidthWork {
     pub evicted_observations: usize,
     pub dropped_observations: usize,
     pub dropped_columns: usize,
+    pub measurement_source_bytes: usize,
 }
 impl TableWidthWork {
     fn add(&mut self, other: Self) {
@@ -30,12 +56,15 @@ impl TableWidthWork {
         self.evicted_observations += other.evicted_observations;
         self.dropped_observations += other.dropped_observations;
         self.dropped_columns += other.dropped_columns;
+        self.measurement_source_bytes += other.measurement_source_bytes;
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableWidthSnapshot {
     pub table_id: TableId,
+    pub first_column: usize,
+    pub policy: TableWidthPolicy,
     pub widths: Vec<usize>,
     pub exact: Vec<bool>,
     pub provisional: bool,
@@ -120,6 +149,7 @@ pub struct TableWidthCache {
     document: DocumentId,
     revision: u64,
     tables: HashMap<TableId, TableWidthEntry>,
+    policy: TableWidthPolicy,
     retired_work: TableWidthWork,
 }
 
@@ -128,14 +158,24 @@ struct TableWidthEntry {
     work: TableWidthWork,
     total_columns: usize,
     observed_nodes: usize,
-    pending: Option<(usize, usize, Box<crate::render::display::DisplayScanner>)>,
+    first_column: usize,
+    policy: TableWidthPolicy,
+    next_column: usize,
+    resumed: Vec<(
+        usize,
+        usize,
+        usize,
+        usize,
+        Box<crate::render::width_measure::WidthMeasure>,
+    )>,
     columns: Vec<ColumnMeasurement>,
     rows_read: usize,
     cells_read: usize,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Default)]
 struct ColumnMeasurement {
+    pending: Option<(usize, Box<crate::render::width_measure::WidthMeasure>)>,
     hint_bound: usize,
     measured_max: usize,
     scan_row: usize,
@@ -150,8 +190,90 @@ impl TableWidthCache {
             document: document.id(),
             revision: document.revision(),
             tables: HashMap::new(),
+            policy: TableWidthPolicy::default(),
             retired_work: TableWidthWork::default(),
         }
+    }
+
+    pub const fn policy(&self) -> TableWidthPolicy {
+        self.policy
+    }
+    pub fn set_policy(&mut self, policy: TableWidthPolicy) -> bool {
+        if self.policy == policy {
+            return false;
+        }
+        self.policy = policy;
+        for entry in self.tables.values_mut() {
+            entry.policy = policy;
+        }
+        true
+    }
+
+    pub(crate) fn column_positions(&self) -> Vec<(TableId, usize)> {
+        self.tables
+            .iter()
+            .map(|(id, entry)| (*id, entry.first_column))
+            .collect()
+    }
+
+    pub fn table_ids(&self) -> Vec<TableId> {
+        self.tables.keys().copied().collect()
+    }
+
+    /// Width is independent of terminal size. Retain only suspended measures
+    /// still inside the new metadata window; discard observations and snapshots.
+    pub fn resize_window(&mut self, content_width: usize) {
+        let limit = column_window_limit(content_width);
+        for entry in self.tables.values_mut() {
+            entry.resumed.retain(|(absolute, ..)| {
+                *absolute >= entry.first_column && *absolute - entry.first_column < limit
+            });
+            for (column, measurement) in entry.columns.iter_mut().take(limit).enumerate() {
+                if let Some((row, pending)) = measurement.pending.take() {
+                    entry.resumed.push((
+                        entry.first_column + column,
+                        row,
+                        measurement.scan_row,
+                        measurement.measured_max,
+                        pending,
+                    ));
+                }
+            }
+            trim_columns(entry, 0);
+            entry.next_column = 0;
+            entry.rows_read = 0;
+            entry.cells_read = 0;
+        }
+        self.links.request_retirement();
+    }
+
+    pub fn first_column(&self, table: TableId) -> usize {
+        self.tables.get(&table).map_or(0, |e| e.first_column)
+    }
+
+    /// Absolute indexed positioning. No prefix column or cell is inspected.
+    pub fn set_first_column(
+        &mut self,
+        document: &Document,
+        table_id: TableId,
+        first: usize,
+    ) -> Result<bool, TableWidthError> {
+        self.check_document(document)?;
+        let table = document
+            .table(table_id)
+            .ok_or(TableWidthError::MissingTable(table_id))?;
+        let first = first.min(table.columns.len().saturating_sub(1));
+        if self.first_column(table_id) == first {
+            return Ok(false);
+        }
+        let entry = self.tables.entry(table_id).or_default();
+        self.links.request_retirement();
+        entry.resumed.clear();
+        trim_columns(entry, 0);
+        entry.first_column = first;
+        entry.next_column = 0;
+        entry.policy = self.policy;
+        Ok(true)
     }
 
     pub fn set_links(&mut self, links: crate::render::objects::SharedLinks) {
@@ -169,7 +291,8 @@ impl TableWidthCache {
     }
 
     /// Cache contents are revision-bound. Repeated/empty updates at the current
-    /// revision are no-ops; any real update clears all measured widths.
+    /// revision are no-ops. Real updates clear observations and exact snapshots;
+    /// an unchanged partial cell keeps its paid cursor and numeric summary.
     pub fn apply_update(
         &mut self,
         document: &Document,
@@ -189,7 +312,45 @@ impl TableWidthCache {
         }
         self.document = document.id();
         self.revision = update.revision;
-        self.retain_tables(&[]);
+        // Preserve visible scalar identity and unchanged partial measurements.
+        for (id, entry) in &mut self.tables {
+            entry.resumed.retain_mut(|(_, _, _, _, pending)| {
+                update.references_changed.is_empty()
+                    && update.footnotes_changed.is_empty()
+                    && !update.changes.iter().any(|c| {
+                        c.kind != mdtui3::ChangeKind::TableWidth
+                            && c.source.start < pending.source.end
+                    })
+                    && pending.rebind(document).is_some()
+            });
+            for (column, measurement) in entry.columns.iter_mut().enumerate() {
+                if let Some((row, mut pending)) = measurement.pending.take() {
+                    let stable = update.references_changed.is_empty()
+                        && update.footnotes_changed.is_empty()
+                        && !update.changes.iter().any(|change| {
+                            change.kind != mdtui3::ChangeKind::TableWidth
+                                && change.source.start < pending.source.end
+                        })
+                        && document
+                            .table(*id)
+                            .and_then(|t| t.cell(row, entry.first_column + column))
+                            .is_some_and(|cell| cell.source == pending.source);
+                    if stable && pending.rebind(document).is_some() {
+                        entry.resumed.push((
+                            entry.first_column + column,
+                            row,
+                            measurement.scan_row,
+                            measurement.measured_max,
+                            pending,
+                        ));
+                    }
+                }
+            }
+            trim_columns(entry, 0);
+            entry.next_column = 0;
+            entry.rows_read = 0;
+            entry.cells_read = 0;
+        }
         Ok(true)
     }
 
@@ -220,7 +381,14 @@ impl TableWidthCache {
         let table = document
             .table(table_id)
             .ok_or(TableWidthError::MissingTable(table_id))?;
-        let limit = table.columns.len().min(column_window_limit(content_width));
+        let first = self
+            .first_column(table_id)
+            .min(table.columns.len().saturating_sub(1));
+        let limit = table
+            .columns
+            .len()
+            .saturating_sub(first)
+            .min(column_window_limit(content_width));
         if !self.tables.contains_key(&table_id)
             && (budget.remaining().queries == 0 || budget.remaining().objects == 0)
         {
@@ -228,17 +396,28 @@ impl TableWidthCache {
         }
         let entry = self.tables.entry(table_id).or_default();
         trim_columns(entry, limit);
+        entry.first_column = first;
+        entry.policy = self.policy;
         entry.total_columns = table.columns.len();
         while entry.columns.len() < limit {
             if !charge(budget, None) {
                 return Ok(false);
             }
-            let column = &table.columns[entry.columns.len()];
+            let column = &table.columns[entry.first_column + entry.columns.len()];
             entry.columns.push(ColumnMeasurement {
                 hint_bound: column.source_width_hint,
                 complete: table.rows().is_empty(),
                 ..ColumnMeasurement::default()
             });
+            if let Some(at) = entry.resumed.iter().position(|(absolute, ..)| {
+                *absolute == entry.first_column + entry.columns.len() - 1
+            }) {
+                let (_, row, frontier, max, measure) = entry.resumed.swap_remove(at);
+                let column = entry.columns.last_mut().unwrap();
+                column.pending = Some((row, measure));
+                column.scan_row = frontier;
+                column.measured_max = max;
+            }
             entry.work.column_metadata_reads += 1;
         }
         Ok(true)
@@ -294,6 +473,8 @@ impl TableWidthCache {
             .collect::<Vec<_>>();
         TableWidthSnapshot {
             table_id,
+            first_column: 0,
+            policy: TableWidthPolicy::default(),
             exact: vec![table.rows().is_empty(); limit],
             provisional: !table.rows().is_empty() || limit < table.columns.len(),
             widths,
@@ -312,6 +493,8 @@ impl TableWidthCache {
         let exact = vec![table.rows().is_empty(); widths.len()];
         TableWidthSnapshot {
             table_id,
+            first_column: 0,
+            policy: TableWidthPolicy::default(),
             provisional: !table.rows().is_empty(),
             widths,
             exact,
@@ -347,10 +530,12 @@ impl TableWidthCache {
         let mut rows_read = 0;
         let mut cells_read = 0;
         for row_index in start..end {
-            let cells = table
-                .rows()
-                .get(row_index)
-                .map_or(0, |row| row.cells.len().min(visible_columns));
+            let cells = table.rows().get(row_index).map_or(0, |row| {
+                row.cells
+                    .len()
+                    .saturating_sub(entry.first_column)
+                    .min(visible_columns)
+            });
             if cells == 0 {
                 if !charge(budget, None) {
                     return Ok(VisibleRowMeasure {
@@ -445,6 +630,36 @@ impl TableWidthCache {
             }
             while entry.columns[column].scan_row < rows_len {
                 let row = entry.columns[column].scan_row;
+                if let Some(pending_row) = entry.columns[column]
+                    .pending
+                    .as_ref()
+                    .map(|(r, _)| *r)
+                    .filter(|r| *r != row)
+                    && !measure_cell(
+                        document,
+                        table,
+                        pending_row,
+                        column,
+                        entry,
+                        true,
+                        &links,
+                        budget,
+                    )?
+                {
+                    entry.next_column = (column + 1) % entry.columns.len();
+                    let widths_after = safe_widths(entry);
+                    return Ok(TableWidthAdvance {
+                        completion: Completion::BudgetExhausted,
+                        rows_read,
+                        cells_read,
+                        completed_column,
+                        width_changed: widths_before != widths_after,
+                        visible_columns_before: visible_before,
+                        visible_columns_after: visible_columns(entry, content_width),
+                        stable_for_width: false,
+                        provisional: safe_provisional(entry),
+                    });
+                }
                 if entry.columns[column].observed_rows.contains(&row) {
                     if !budget.charge(WorkLimit {
                         queries: 1,
@@ -469,8 +684,11 @@ impl TableWidthCache {
                     entry.columns[column].scan_row += 1;
                     continue;
                 }
-                let source = table.cell(row, column).map(|cell| cell.source);
+                let source = table
+                    .cell(row, entry.first_column + column)
+                    .map(|cell| cell.source);
                 if !measure_cell(document, table, row, column, entry, false, &links, budget)? {
+                    entry.next_column = (column + 1) % entry.columns.len();
                     let widths_after = safe_widths(entry);
                     return Ok(TableWidthAdvance {
                         completion: Completion::BudgetExhausted,
@@ -516,7 +734,11 @@ impl TableWidthCache {
             });
         };
         let stable_for_width = entry.columns.len()
-            == table.columns.len().min(column_window_limit(content_width))
+            == table
+                .columns
+                .len()
+                .saturating_sub(entry.first_column)
+                .min(column_window_limit(content_width))
             && target_column(entry, content_width).is_none();
         Ok(TableWidthStats {
             rows_read: entry.rows_read,
@@ -539,14 +761,24 @@ impl TableWidthCache {
         let mut tracked_capacity_bytes =
             self.tables.capacity() * size_of::<Option<(TableId, TableWidthEntry)>>();
         for entry in self.tables.values() {
-            if let Some((_, _, scanner)) = &entry.pending {
-                tracked_capacity_bytes =
-                    tracked_capacity_bytes.saturating_add(scanner.capacity_bytes());
+            columns = columns.saturating_add(entry.columns.len() + entry.resumed.len());
+            tracked_capacity_bytes += entry.resumed.capacity()
+                * size_of::<(
+                    usize,
+                    usize,
+                    usize,
+                    usize,
+                    Box<crate::render::width_measure::WidthMeasure>,
+                )>();
+            for (_, _, _, _, pending) in &entry.resumed {
+                tracked_capacity_bytes += pending.capacity_bytes();
             }
-            columns = columns.saturating_add(entry.columns.len());
             tracked_capacity_bytes = tracked_capacity_bytes
                 .saturating_add(entry.columns.capacity() * size_of::<ColumnMeasurement>());
             for column in &entry.columns {
+                if let Some((_, scanner)) = &column.pending {
+                    tracked_capacity_bytes += scanner.capacity_bytes();
+                }
                 observed_rows = observed_rows.saturating_add(column.observed_rows.len());
                 tracked_capacity_bytes = tracked_capacity_bytes
                     .saturating_add(column.observed_rows.len() * (size_of::<usize>() * 32));
@@ -575,6 +807,7 @@ impl TableWidthCache {
             false
         });
         self.retired_work.add(retired);
+        self.links.request_retirement();
     }
 
     fn check_document(&self, document: &Document) -> Result<(), TableWidthError> {
@@ -597,13 +830,6 @@ fn trim_columns(entry: &mut TableWidthEntry, limit: usize) {
         entry.work.dropped_observations += column.observed_rows.len();
         entry.observed_nodes -= column.observed_rows.len();
     }
-    if entry
-        .pending
-        .as_ref()
-        .is_some_and(|(_, column, _)| *column >= limit)
-    {
-        entry.pending = None;
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -617,60 +843,46 @@ fn measure_cell(
     links: &crate::render::objects::SharedLinks,
     budget: &mut Budget,
 ) -> Result<bool, TableWidthError> {
-    let Some(cell) = table.cell(row, column) else {
+    let Some(cell) = table.cell(row, entry.first_column + column) else {
         return Ok(charge(budget, None));
     };
-    // Keep the existing giant-cell provisional policy. No owned full-cell
-    // buffer or synchronous conditional query is created above the frame cap.
-    if cell.source.len() > crate::stream::FRAME_WORK.bytes {
-        return Ok(false);
-    }
     if entry.columns[column].scan_row > row || entry.columns[column].observed_rows.contains(&row) {
         return Ok(true);
     }
-    if entry
-        .pending
-        .as_ref()
-        .is_none_or(|(r, c, _)| (*r, *c) != (row, column))
-    {
-        entry.pending = Some((
+    let measurement = &mut entry.columns[column];
+    // Visible observations cannot discard a suspended sequential measurement.
+    if measurement.pending.as_ref().is_some_and(|(r, _)| *r != row) {
+        return Ok(false);
+    }
+    if measurement.pending.is_none() {
+        if budget.remaining().queries == 0
+            || budget.remaining().objects == 0
+            || budget.remaining().bytes < 3
+        {
+            return Ok(false);
+        }
+        measurement.pending = Some((
             row,
-            column,
             Box::new(
-                crate::render::display::DisplayScanner::exact(document, cell.source, links.clone())
-                    .ok_or(TableWidthError::Table(TableError::MissingContent))?,
+                crate::render::width_measure::WidthMeasure::new(
+                    document,
+                    cell.source,
+                    links.clone(),
+                )
+                .ok_or(TableWidthError::Table(TableError::MissingContent))?,
             ),
         ));
     }
-    let scanner = &mut entry.pending.as_mut().unwrap().2;
-    if scanner
+    let scanner = &mut measurement.pending.as_mut().unwrap().1;
+    let before_work = scanner.source_work;
+    let result = scanner
         .advance(document, budget)
-        .map_err(|_| TableWidthError::Table(TableError::MissingContent))?
-        != crate::render::display::ScanStatus::Complete
-    {
+        .map_err(|_| TableWidthError::Table(TableError::MissingContent))?;
+    entry.work.measurement_source_bytes += scanner.source_work - before_work;
+    let Some(width) = result else {
         return Ok(false);
-    }
-    let tokens = scanner
-        .segments()
-        .iter()
-        .map(|s| crate::render::input::InputToken {
-            kind: s.kind,
-            text: s.text.clone(),
-            source: s.source,
-            replacement: s.replacement,
-            block: s.block,
-            link: s.link,
-            style: s.style,
-        })
-        .collect();
-    let input = crate::render::visibility::visible_prepared_input(
-        document,
-        cell.source,
-        crate::render::input::DisplayInput::from_tokens(tokens),
-    )
-    .ok_or(TableWidthError::Table(TableError::MissingContent))?;
-    let width = crate::render::text::display_width(&input.visible_text());
-    entry.pending = None;
+    };
+    measurement.pending = None;
     let measurement = &mut entry.columns[column];
     measurement.measured_max = measurement.measured_max.max(width);
     measurement.hint_bound = measurement.hint_bound.max(width);
@@ -700,6 +912,8 @@ fn charge(budget: &mut Budget, source: Option<Span>) -> bool {
 fn snapshot(table_id: TableId, entry: &TableWidthEntry) -> TableWidthSnapshot {
     TableWidthSnapshot {
         table_id,
+        first_column: entry.first_column,
+        policy: entry.policy,
         widths: safe_widths(entry),
         exact: entry.columns.iter().map(|column| column.complete).collect(),
         provisional: safe_provisional(entry),
@@ -712,16 +926,20 @@ fn safe_widths(entry: &TableWidthEntry) -> Vec<usize> {
         .iter()
         .map(|column| {
             if column.complete {
-                column.measured_max
+                entry.policy.apply(column.measured_max)
             } else {
-                column.hint_bound.max(column.measured_max)
+                entry
+                    .policy
+                    .apply(column.hint_bound.max(column.measured_max))
             }
         })
         .collect()
 }
 
 fn safe_provisional(entry: &TableWidthEntry) -> bool {
-    entry.columns.len() < entry.total_columns || entry.columns.iter().any(|column| !column.complete)
+    entry.first_column > 0
+        || entry.columns.len() < entry.total_columns
+        || entry.columns.iter().any(|column| !column.complete)
 }
 
 fn visible_columns(entry: &TableWidthEntry, content_width: usize) -> usize {
@@ -735,14 +953,17 @@ fn target_column(entry: &TableWidthEntry, content_width: usize) -> Option<usize>
     }
     let widths = safe_widths(entry);
     let visible = visible_prefix_count(&widths, content_width);
-    if let Some(column) = (0..visible).find(|column| !entry.columns[*column].complete) {
+    if let Some(column) = (0..visible)
+        .map(|offset| (entry.next_column + offset) % visible)
+        .find(|column| !entry.columns[*column].complete)
+    {
         return Some(column);
     }
     if visible >= entry.columns.len() {
         return None;
     }
     let mut candidate = widths[..visible].to_vec();
-    candidate.push(entry.columns[visible].measured_max);
+    candidate.push(entry.policy.apply(entry.columns[visible].measured_max));
     (table_width(&candidate) <= content_width).then_some(visible)
 }
 
@@ -813,8 +1034,9 @@ mod tests {
         let id = first_table(&document);
         let mut cache = TableWidthCache::new(&document);
         let mut budget = Budget::new(WorkLimit {
-            queries: 16,
-            objects: 16,
+            // Includes per-run object and footnote visibility preparation.
+            queries: 32,
+            objects: 32,
             bytes: 4096,
             ..WorkLimit::default()
         });
