@@ -382,9 +382,9 @@ fn blank_boundaries_priority_and_failed_prefixes_keep_their_dialect() {
     for (tail, expected) in [
         ("\t+\n", "parent\nfirst\n  +\n"),
         ("\t+ \n", "parent\nfirst\n  +\n"),
-        ("\t* * *\n", "parent\nfirst\n\t* * *\n"),
+        ("\t* * *\n", "parent\nfirst\n* * *\n"),
         ("\t+closed\n", "parent\nfirst\n  +closed\n"),
-        ("\t> quote\n", "parent\nfirst\n\t> quote\n"),
+        ("\t> quote\n", "parent\nfirst\nquote\n"),
     ] {
         assert_eq!(
             visible(&parse(&format!("- parent\n\t- first\n{tail}"))),

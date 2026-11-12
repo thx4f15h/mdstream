@@ -66,10 +66,10 @@ fn failed_paths_priorities_and_quote_payload_keep_existing_dialect() {
         Some(ContainerId(0))
     );
     for (source, expected) in [
-        ("- parent\n\t\t> excess\n", "parent\n\t\t> excess\n"),
+        ("- parent\n\t\t> excess\n", "parent\n  > excess\n"),
         (
             "- parent\n   - first\n\t> incomplete\n",
-            "parent\nfirst\n\t> incomplete\n",
+            "parent\nfirst\nincomplete\n",
         ),
         ("> - parent\n\t> missing\n", "parent\n\t> missing\n"),
         ("- ```\n\t> literal\n  ```\n", "  > literal\n"),

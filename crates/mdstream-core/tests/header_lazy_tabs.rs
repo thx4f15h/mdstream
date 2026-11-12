@@ -191,7 +191,11 @@ fn header_fallback_preserves_identity_and_interruption_boundaries() {
         assert!(
             doc.display_runs_in(Span::new(tab, tab + 1))
                 .unwrap()
-                .all(|r| r.replacement.is_none()),
+                .all(|r| if tail.trim().is_empty() {
+                    r.replacement == Some(Span::new(tab, tab + 1)) && r.text == "  "
+                } else {
+                    r.replacement.is_none()
+                }),
             "{tail:?}"
         );
     }

@@ -105,7 +105,7 @@ fn failures_empty_titles_fences_and_window_boundaries() {
         ("\t# title\n", None),
         ("> seed\n>\t # title\n", Some("title")),
         ("> seed\n>\t  # title\n", None),
-        ("- > seed\n\t# title\n", None),
+        ("- > seed\n\t# title\n", Some("title")),
         ("> ```\n> \t# title\n> ```\n", None),
         ("> $$\n> \t# title\n> $$\n", None),
     ] {

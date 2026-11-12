@@ -52,6 +52,7 @@ pub(crate) enum Line {
     Code,
     Indented {
         prefix: usize,
+        virtual_spaces: u8,
     },
     Heading {
         level: u8,
@@ -93,20 +94,7 @@ pub(crate) fn classify(
     fence: Option<Fence>,
     paragraph: bool,
 ) -> Line {
-    let line = classify_indented(source, span, complete, fence, paragraph, 0, 0);
-    if matches!(line, Line::Text) {
-        // At the root, the first tab after 0–3 spaces ends exactly at column
-        // four. Consume its whole byte; subsequent tabs remain literal code.
-        // Scoped leaves use classify_indented and keep their existing dialect.
-        let body = &source.as_bytes()[span.range()];
-        let spaces = body.iter().take(3).take_while(|&&b| b == b' ').count();
-        if body.get(spaces) == Some(&b'\t') {
-            return Line::Indented {
-                prefix: span.start + spaces + 1,
-            };
-        }
-    }
-    line
+    classify_indented(source, span, complete, fence, paragraph, 0, 0)
 }
 
 /// Unconsumed columns of a container-prefix tab precede this source slice.
@@ -135,13 +123,15 @@ pub(crate) fn classify_indented(
     if spaces + usize::from(virtual_spaces) >= 4 {
         return Line::Indented {
             prefix: span.start + 4 - usize::from(virtual_spaces),
+            virtual_spaces: 0,
         };
     }
     if text.is_empty() {
         return Line::Text;
     }
-    // Code/math openers, headings, rules and definitions accept raw tabs here.
-    // Other leaves keep their rules. Inspect at most four indentation bytes.
+    // Every structural leaf uses the same physical columns. Consume exactly
+    // four columns for code, including a partial terminal tab; subsequent tabs
+    // are literal payload. At most four raw indentation bytes are inspected.
     let mut fence_start = 0;
     let mut fence_indent = virtual_spaces;
     let mut fence_column = column;
@@ -153,7 +143,10 @@ pub(crate) fn classify_indented(
         };
         fence_indent += width;
         if fence_indent > 3 {
-            break;
+            return Line::Indented {
+                prefix: span.start + fence_start + 1,
+                virtual_spaces: fence_indent - 4,
+            };
         }
         fence_column = (fence_column + width) % 4;
         fence_start += 1;

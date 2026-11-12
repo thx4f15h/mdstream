@@ -206,7 +206,7 @@ fn failures_priorities_and_siblings_keep_existing_dialect() {
         ("- a|b\n\t-|-\n", "ab\n"),
         (" - foo\n   - bar\n\t- short\n", "foo\nbar\nshort\n"),
         ("- foo\n\t-closed\n", "foo\n  -closed\n"),
-        ("- foo\n\t\t- excess\n", "foo\n\t\t- excess\n"),
+        ("- foo\n\t\t- excess\n", "foo\n  - excess\n"),
         ("> - foo\n\t- missing quote\n", "foo\n\t- missing quote\n"),
         ("- ```\n\t- literal\n  ```\n", "  - literal\n"),
         ("- $$\n\t- literal\n  $$\n", "  - literal\n"),

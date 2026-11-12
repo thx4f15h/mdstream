@@ -257,25 +257,23 @@ fn failed_paths_new_containers_blank_and_unhandled_leaf_tabs_are_atomic() {
         visible(&heading, Span::new(0, heading.source().len())),
         "three columns after the quote separator\n"
     );
-    for source in [
-        "- > first\n\t# missing quote\n",
-        "- > first\n\t```\n",
-        "- first\n\t\t# literal\n",
+    for (source, expected, heading) in [
+        (
+            "- > first\n\t# missing quote\n",
+            "first\nmissing quote\n",
+            true,
+        ),
+        ("- > first\n\t```\n", "first\n", false),
+        ("- first\n\t\t# literal\n", "first\n  # literal\n", false),
     ] {
         let doc = parse(source);
-        assert!(doc.headings().entries().is_empty(), "{source:?}");
-        assert!(
-            doc.blocks()
-                .iter()
-                .all(|b| !matches!(b.kind, BlockKind::Code { .. } | BlockKind::Math { .. }))
-        );
-        assert!(
-            doc.display_runs_in(Span::new(0, source.len()))
-                .unwrap()
-                .all(|r| r.replacement.is_none()),
+        assert_eq!(
+            doc.headings().entries().len(),
+            usize::from(heading),
             "{source:?}"
         );
-        assert!(visible(&doc, Span::new(0, source.len())).contains('\t'));
+        assert_eq!(visible(&doc, Span::new(0, source.len())), expected);
+        assert_eq!(doc.blocks()[1].container, Some(ContainerId(1)));
     }
     let doc = parse("- first\n\t  raw\n  \n\t  next\n- sibling\n\t# sibling title\n");
     assert_eq!(doc.blocks()[1].kind, BlockKind::Code { info: None });

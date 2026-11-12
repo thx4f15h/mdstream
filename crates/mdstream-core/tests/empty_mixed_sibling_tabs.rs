@@ -360,9 +360,9 @@ fn empty_markers_with_descendants_and_priority_match_spaces() {
     }
     // Non-sibling prose keeps partial-tab columns; block candidates keep fallback.
     for (tail, expected) in [
-        ("\t* * *\n", "parent\nfirst\n\t* * *\n"),
+        ("\t* * *\n", "parent\nfirst\n* * *\n"),
         ("\t+closed\n", "parent\nfirst\n  +closed\n"),
-        ("\t> quote\n", "parent\nfirst\n\t> quote\n"),
+        ("\t> quote\n", "parent\nfirst\nquote\n"),
     ] {
         assert_eq!(
             visible(&parse(&format!("- parent\n\t- first\n{tail}"))),

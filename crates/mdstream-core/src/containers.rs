@@ -140,7 +140,7 @@ pub(crate) struct ContainerOptions {
 
 pub(crate) struct ContainerLine {
     // A read-only partial-prefix probe found a new container, sibling list,
-    // or ended empty item. Route it through line() for structural mutation.
+    // missing suffix or ended empty item. Route it through line() for mutation.
     pub new_container: bool,
     // Prefix already includes four columns of container code indentation.
     pub indented: bool,
@@ -290,6 +290,14 @@ impl Containers {
             && prefix.lazy_text(source, span, false, work);
         if lazy {
             matched = true;
+        }
+        // A successful split ancestor is still structural when the remaining
+        // path cannot continue lazily. Commit that prefix through line(), which
+        // closes the missing suffix before classifying/opening in its parent.
+        // Falling back to the byte-aligned matcher would lose those ancestors.
+        if !matched && prefix.partial {
+            matched = true;
+            new_container = true;
         }
         let mut indented = false;
         if matched
@@ -879,8 +887,9 @@ impl Containers {
                 work.container_steps += 1;
                 matched = match *frame {
                     Active::Quote(_) => {
-                        retained_quotes += 1;
-                        probe.quote()
+                        let matched = probe.quote();
+                        retained_quotes += usize::from(matched);
+                        matched
                     }
                     Active::List { content_indent, .. } => {
                         if probe.partial
@@ -903,9 +912,10 @@ impl Containers {
                 }
                 retained += 1;
             }
-            let mut accept = matched
-                && probe.partial
-                && (ended_empty
+            let mut accept = probe.partial
+                && (!matched
+                    || ended_empty
+                    || sibling
                     || (probe.spaces() <= 3
                         && !probe.is_rule(rule_suffix)
                         && (probe.bytes.get(probe.spaces_end) == Some(&b'>')
@@ -914,6 +924,7 @@ impl Containers {
                 && complete
                 && !sibling
                 && !ended_empty
+                && matched
                 && paragraph.is_some()
                 && paragraph == self.inner()
             {
@@ -1088,7 +1099,7 @@ impl Containers {
                 new_container: false,
                 indented: false,
                 prefix: prefix.pos,
-                virtual_spaces: 0,
+                virtual_spaces: prefix.virtual_spaces as u8,
                 kind,
                 lazy: false,
                 detached_blank: true,
@@ -1159,6 +1170,11 @@ impl Containers {
             } else {
                 None
             };
+            // A new quote always owns one separator column, including when a
+            // definition candidate later fails validation. The specialized
+            // probes above keep their existing priorities and accounting;
+            // the ordinary fallback must use the same cursor representation.
+            prefix.split_tabs = true;
             if code.is_some() || leaf.is_some() || prefix.quote() {
                 if let Some(code) = code {
                     prefix = code;
@@ -1353,8 +1369,8 @@ impl<'a> Prefix<'a> {
         self.spaces_column - self.column
     }
 
-    /// Partial tabs are opt-in for an atomic existing-path probe. Otherwise a
-    /// failed match leaves the entire prefix untouched for the original dialect.
+    /// Partial tabs are enabled for path probes and structural prefix commits.
+    /// A failed indent leaves this frame untouched; matched ancestors stay put.
     /// Cache the run endpoint across nested items; advancing visits each consumed
     /// byte once more, never rescans the remaining run for every ancestor.
     fn consume_indent(&mut self, columns: usize) -> bool {
@@ -1424,7 +1440,20 @@ impl<'a> Prefix<'a> {
             return false;
         }
         work.classified_bytes += payload.len() as u64;
-        match crate::block::classify(source, payload, self.complete, None, false) {
+        let leaf = if self.partial {
+            crate::block::classify_indented(
+                source,
+                payload,
+                self.complete,
+                None,
+                false,
+                self.virtual_spaces as u8,
+                ((self.column + self.virtual_spaces) % 4) as u8,
+            )
+        } else {
+            crate::block::classify(source, payload, self.complete, None, false)
+        };
+        match leaf {
             // Callers have an existing nonempty paragraph in the retained
             // scope. A definition candidate cannot interrupt it just because
             // some ancestor prefixes are omitted; lazy lines become Text.

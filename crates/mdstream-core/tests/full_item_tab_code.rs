@@ -94,7 +94,7 @@ fn full_boundary_item_code_matches_independent_column_model() {
 #[test]
 fn failed_paths_prose_blank_and_fences_keep_dialect() {
     for (source, expected) in [
-        ("-   old\n\t\t*raw*\n", "old\n\traw\n"),
+        ("-   old\n\t\t*raw*\n", "old\n*raw*\n"),
         ("-   old\n\n\tplain\n", "old\n\nplain\n"),
         ("-   old\n\n\t\t\n", "old\n\n\t\n"),
         ("-   > old\n\t\tfoo\n", "old\n\tfoo\n"),

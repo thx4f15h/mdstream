@@ -107,7 +107,7 @@ fn partial_item_code_matches_independent_column_model() {
 #[test]
 fn failed_paths_active_prose_fences_and_blank_lines_keep_dialect() {
     for (source, expected) in [
-        ("- old\n\t\t*raw*\n", "old\n\t\traw\n"),
+        ("- old\n\t\t*raw*\n", "old\n  *raw*\n"),
         ("- old\n\n\tplain\n", "old\n\n  plain\n"),
         ("- old\n\n\t\t\n", "old\n\n  \t\n"),
         ("- > old\n\t\tfoo\n", "old\n  \tfoo\n"),

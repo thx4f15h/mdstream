@@ -70,17 +70,25 @@ fn merging_blank_interruption_and_container_boundaries_keep_explicit_dialects() 
         assert!(
             doc.blocks()
                 .iter()
-                .all(|b| !matches!(b.kind, BlockKind::Code { .. }))
+                .any(|b| matches!(b.kind, BlockKind::Code { .. }))
+                == source.starts_with('-')
         );
-        assert!(visible(&doc).contains('\t'));
+        assert_eq!(
+            visible(&doc),
+            if source.starts_with('-') {
+                "first\n  # literal\n"
+            } else {
+                "\tfoo\n"
+            }
+        );
     }
-    // A missing quote after a blank really does return to the root. Only
-    // the first tab is indentation; the second remains a literal code byte.
+    // A missing quote closes that quote while its matched Item remains.
+    // Four leaf columns consume the first tab's residue and part of the next.
     let doc = parse("- > foo\n  >\n\t\tbar\n");
     let last = doc.blocks().last().unwrap();
-    assert_eq!(last.container, None);
+    assert_eq!(last.container, Some(ContainerId(1)));
     assert_eq!(last.kind, BlockKind::Code { info: None });
-    assert!(visible(&doc).ends_with("\tbar\n"));
+    assert!(visible(&doc).ends_with("  bar\n"));
     for fence in ["```", "~~~", "$$"] {
         let doc = parse(&format!("{fence}\n\t*raw*\n{fence}\n"));
         assert_eq!(visible(&doc), "\t*raw*\n");

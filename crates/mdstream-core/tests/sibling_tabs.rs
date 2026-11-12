@@ -190,11 +190,11 @@ fn blank_spacing_priorities_and_failed_probes_are_atomic() {
     // A shifted same-marker sibling is accepted below the old body indent.
     // Rule priority and fence/math literal payloads keep their prior dialect.
     for (tail, expected) in [
-        ("\t- - -\n", "parent\nfirst\n\t- - -\n"),
+        ("\t- - -\n", "parent\nfirst\n- - -\n"),
         ("\t+ changed\n", "parent\nfirst\nchanged\n"),
         ("\t-closed\n", "parent\nfirst\n  -closed\n"),
         ("\t - shifted\n", "parent\nfirst\nshifted\n"),
-        ("\t> quote\n", "parent\nfirst\n\t> quote\n"),
+        ("\t> quote\n", "parent\nfirst\nquote\n"),
     ] {
         assert_eq!(
             visible(&parse(&format!("- parent\n\t- first\n{tail}"))),

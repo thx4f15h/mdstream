@@ -156,7 +156,7 @@ fn insufficient_blank_ascii_and_partial_path_keep_existing_dialect() {
         ("- \tfoo\n", "foo\n"),
         ("-     foo\n", "foo\n"),
         ("-\t\t\n", "\n"),
-        ("- old\n\t\t*raw*\n", "old\n\t\traw\n"),
+        ("- old\n\t\t*raw*\n", "old\n  *raw*\n"),
         (" - foo\n   - bar\n\t - baz\n", "foo\nbar\nbaz\n"),
         ("- ```\n  -\t\tfoo\n  ```\n", "-\t\tfoo\n"),
         ("- $$\n  -\t\tfoo\n  $$\n", "-\t\tfoo\n"),

@@ -274,11 +274,11 @@ fn deep_blank_and_long_append_do_not_revisit_retained_path() {
     let mut doc = Document::new();
     doc.append(&format!("{outer}- > [old](u)\n")).unwrap();
     let scope = doc.blocks()[0].container;
-    let update = doc.append(&format!("{outer}\t> \n")).unwrap();
+    let update = doc.append(&format!("{outer}  \t> \n")).unwrap();
     assert!(update.closed_containers.is_empty());
     assert_eq!(doc.blocks()[1].kind, BlockKind::Blank);
     assert_eq!(doc.blocks()[1].container, scope);
-    doc.append(&format!("{outer}\t> {}", "a".repeat(2048)))
+    doc.append(&format!("{outer}  \t> {}", "a".repeat(2048)))
         .unwrap();
     let before = doc.work();
     for _ in 0..1000 {
@@ -325,7 +325,7 @@ fn incomplete_missing_and_out_of_window_paths_keep_their_boundaries() {
     let update = doc.append("\t\n").unwrap();
     assert_eq!(update.closed_containers, [ContainerId(2)]);
     assert_eq!(doc.blocks()[1].container, Some(ContainerId(1)));
-    assert_eq!(visible(&doc), "a\n\t\n");
+    assert_eq!(visible(&doc), "a\n  \n");
 
     // Both the initial quote and its complete continuation now consume one
     // separator column and map the residual columns to the original tab.

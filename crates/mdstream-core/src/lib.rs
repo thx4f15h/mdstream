@@ -233,7 +233,6 @@ struct ClassifiedLine {
     container_blank: bool,
     virtual_spaces: u8,
     fence_column: u8,
-    container_code: bool,
     table_text: bool,
 }
 
@@ -1972,7 +1971,11 @@ impl Document {
             } else {
                 None
             };
-            let partial_container = partial_line.as_ref().is_some_and(|line| line.new_container);
+            let partial_container = fence_line
+                .as_ref()
+                .or(partial_line.as_ref())
+                .is_some_and(|line| line.new_container);
+            let fence_line = fence_line.filter(|line| !line.new_container);
             let partial_line = partial_line.filter(|line| !line.new_container);
             let partial = partial_line.is_some();
             let line = fence_line.or(partial_line).or_else(|| {
@@ -2015,6 +2018,7 @@ impl Document {
                 let inner_classification = if line.indented {
                     Line::Indented {
                         prefix: line.prefix,
+                        virtual_spaces: line.virtual_spaces,
                     }
                 } else if lazy {
                     Line::Text
@@ -2128,7 +2132,6 @@ impl Document {
             container_blank,
             virtual_spaces,
             fence_column,
-            container_code,
             table_text,
         };
         if !complete
@@ -2206,7 +2209,6 @@ impl Document {
             container_blank,
             mut virtual_spaces,
             fence_column,
-            container_code,
             mut table_text,
         } = line;
         if let Some(block) = self.current
@@ -2582,13 +2584,16 @@ impl Document {
                 }
                 id
             }
-            Line::Indented { prefix } => {
+            Line::Indented {
+                prefix,
+                virtual_spaces: spaces,
+            } => {
                 inline = false;
                 payload.start = prefix;
-                if container_code && virtual_spaces > 0 {
+                if spaces > 0 {
                     payload.start -= 1;
                     self.display
-                        .spaces(Span::new(payload.start, prefix), virtual_spaces);
+                        .spaces(Span::new(payload.start, prefix), spaces);
                 }
                 virtual_spaces = 0;
                 if let Some(id) = self.current

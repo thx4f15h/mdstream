@@ -89,7 +89,7 @@ fn failed_candidates_scopes_math_and_window_boundaries() {
         ("> \t$$\n", false),
         ("> seed\n>\t ```rs\n", true),
         ("> seed\n>\t  ```rs\n", false),
-        ("- > seed\n\t```rs\n", false),
+        ("- > seed\n\t```rs\n", true),
     ] {
         let doc = parse(source);
         assert_eq!(

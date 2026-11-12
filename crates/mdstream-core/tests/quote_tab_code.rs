@@ -99,7 +99,7 @@ fn retained_quotes_merge_code_and_preserve_failed_paths_and_fences() {
         (">\t# title\n", "title\n"),
         ("> \tfoo\n", "\tfoo\n"),
         (">\t\t\n", "  \t\n"),
-        ("- old\n\t\t# literal\n", "old\n\t\t# literal\n"),
+        ("- old\n\t\t# literal\n", "old\n  # literal\n"),
         ("> ```\n>\t\tfoo\n> ```\n", "  \tfoo\n"),
         ("> $$\n>\t\tfoo\n> $$\n", "  \tfoo\n"),
     ] {

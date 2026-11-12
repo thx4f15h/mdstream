@@ -188,7 +188,7 @@ fn siblings_and_nonparagraph_boundaries_keep_existing_rules() {
         assert!(
             doc.display_runs_in(Span::new(tab, tab + 1))
                 .unwrap()
-                .all(|r| r.replacement.is_none()),
+                .all(|r| r.replacement == Some(Span::new(tab, tab + 1)) && r.text == " "),
             "{first:?}"
         );
     }
@@ -210,7 +210,7 @@ fn siblings_and_nonparagraph_boundaries_keep_existing_rules() {
         assert!(
             doc.display_runs_in(Span::new(tab, tab + 1))
                 .unwrap()
-                .all(|r| r.replacement.is_none())
+                .all(|r| r.replacement == Some(Span::new(tab, tab + 1)) && r.text == " ")
         );
     }
 }

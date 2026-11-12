@@ -69,21 +69,22 @@ fn nested_frames_share_tabs_and_quote_separators_retain_their_remainder() {
 #[test]
 fn failed_complete_path_is_atomic_and_new_atx_leaf_hides_indentation() {
     for (source, expected) in [
-        ("- > ```\n\tpayload\n", "payload\n"),
-        ("- > ```\n \tpayload\n", "payload\n"),
+        ("- > ```\n\tpayload\n", "  payload\n"),
+        ("- > ```\n \tpayload\n", "  payload\n"),
         ("- > ```\n  outside\n", "outside\n"),
         ("- ```\n- sibling\n", "sibling\n"),
-        ("- > $$\n\tpayload\n", "payload\n"),
+        ("- > $$\n\tpayload\n", "  payload\n"),
         ("- first\n\t# title\n", "first\ntitle\n"),
         (">\t# title\n", "title\n"),
     ] {
         let doc = parse(source);
         assert_eq!(visible(&doc), expected, "{source:?}");
-        assert!(
-            doc.display_runs_in(Span::new(0, source.len()))
-                .unwrap()
-                .all(|r| r.replacement.is_none())
-        );
+        for run in doc.display_runs_in(Span::new(0, source.len())).unwrap() {
+            if let Some(raw) = run.replacement {
+                assert_eq!(doc.text(raw), Some("\t"));
+                assert_eq!(run.text, "  ");
+            }
+        }
     }
 }
 

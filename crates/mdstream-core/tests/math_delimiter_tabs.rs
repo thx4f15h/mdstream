@@ -159,11 +159,13 @@ fn failed_candidates_paths_and_window_keep_literal_body() {
         );
     }
     for source in ["\t$$\n", "> ```\n> \t$$\n> ```\n", "- > seed\n\t$$\n"] {
-        assert!(
+        assert_eq!(
             parse(source)
                 .blocks()
                 .iter()
-                .all(|b| !matches!(b.kind, BlockKind::Math { .. })),
+                .filter(|b| matches!(b.kind, BlockKind::Math { .. }))
+                .count(),
+            usize::from(source == "- > seed\n\t$$\n"),
             "{source:?}"
         );
     }

@@ -109,19 +109,16 @@ fn aligned_container_prefixes_leave_leaf_block_dialects_unchanged() {
         .find(|b| matches!(b.kind, BlockKind::Math { .. }))
         .unwrap();
     assert!(matches!(math.kind, BlockKind::Math { closed: true, .. }));
-    // Tabs left in the payload are not a new block-level indentation feature.
+    // Remaining structural tabs now use the same four-column code boundary.
     let doc = parse("-\tfirst\n\t\t# literal\n\t\t[^n]: literal\n\t\t```\n");
     assert!(doc.headings().entries().is_empty());
     assert!(doc.footnotes().iter().all(|f| f.definition.is_none()));
     assert!(
-        !doc.blocks()
+        doc.blocks()
             .iter()
             .any(|b| matches!(b.kind, BlockKind::Code { .. }))
     );
-    assert_eq!(
-        visible(&doc),
-        "first\n\t# literal\n\t[^n]: literal\n\t```\n"
-    );
+    assert_eq!(visible(&doc), "first\n# literal\n[^n]: literal\n```\n");
     let doc = parse("\t- literal\n1234567890.\tliteral\n-\tx\n\t\n-\ty\n");
     assert_eq!(doc.container_count(), 3);
     assert_eq!(

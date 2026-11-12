@@ -144,9 +144,9 @@ fn atomic_scope_failure_and_unexpanded_whitespace_do_not_leak_mappings() {
     ));
     assert_eq!(read(doc.math_block_payload(BlockId(0)).unwrap()), "");
     assert_eq!(doc.blocks()[0].source.end, "- > $$\n".len());
-    assert_eq!(doc.blocks()[1].kind, BlockKind::Code { info: None });
-    assert_eq!(doc.blocks()[1].container, None);
-    assert_eq!(visible(&doc), "outside\n");
+    assert_eq!(doc.blocks()[1].kind, BlockKind::Paragraph);
+    assert_eq!(doc.blocks()[1].container, Some(ContainerId(1)));
+    assert_eq!(visible(&doc), "  outside\n");
     // Existing block contents stay literal, even blank or over-indented;
     // only the path's final partially consumed tab is expanded.
     let doc = parse("- $$\n\t\t x\n\t");

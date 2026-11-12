@@ -138,11 +138,13 @@ fn failures_window_and_four_column_continuations() {
         "> ```\n>\t [^n]: body\n> ```\n",
         "> $$\n>\t [^n]: body\n> $$\n",
     ] {
-        assert!(
+        assert_eq!(
             parse(source)
                 .footnotes()
                 .iter()
-                .all(|n| n.definition.is_none()),
+                .filter(|n| n.definition.is_some())
+                .count(),
+            usize::from(source == "- > seed\n\t[^n]: body\n"),
             "{source:?}"
         );
     }

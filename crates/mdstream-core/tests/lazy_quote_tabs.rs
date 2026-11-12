@@ -159,16 +159,16 @@ fn lazy_tab_mapping_is_chunk_prefix_and_eof_invariant() {
 #[test]
 fn block_interruptions_blanks_and_other_failed_paths_keep_their_dialect() {
     for (tail, scope, expected) in [
-        ("# h\n", 1, "first\n\t# h\n"),
-        ("---\n", 1, "first\n\t---\n"),
-        ("```\n", 1, "first\n\t```\n"),
-        ("$$\n", 1, "first\n\t$$\n"),
+        ("# h\n", 0, "first\nh\n"),
+        ("---\n", 0, "first\n---\n"),
+        ("```\n", 0, "first\n"),
+        ("$$\n", 0, "first\n"),
         ("[r]: /u\n", 1, "first\n  [r]: /u\n"),
-        ("[^f]: note\n", 1, "first\n\t[^f]: note\n"),
+        ("[^f]: note\n", 0, "first\n"),
         ("1. body\n", 3, "first\nbody\n"),
         ("- body\n", 3, "first\nbody\n"),
-        ("\n", 0, "first\n\t\n"),
-        ("", 0, "first\n\t"),
+        ("\n", 0, "first\n  \n"),
+        ("", 0, "first\n  "),
     ] {
         let first = "> > first\n";
         let doc = parse(&format!("{first}>\t{tail}"));
@@ -179,7 +179,7 @@ fn block_interruptions_blanks_and_other_failed_paths_keep_their_dialect() {
         );
         assert_eq!(visible(&doc), expected, "{tail:?}");
     }
-    // Header fallback now retains the tab columns; nonparagraphs still do not.
+    // Header fallback retains the tab columns; nonparagraphs close the missing quote.
     assert_eq!(visible(&parse("> > a|b\n>\ttext\n")), "a|b\n  text\n");
     for first in ["> > ```\n", "> > # h\n", "> > first\n> >\n"] {
         let source = format!("{first}>\ttext\n");
@@ -188,7 +188,7 @@ fn block_interruptions_blanks_and_other_failed_paths_keep_their_dialect() {
         assert!(
             doc.display_runs_in(Span::new(tab, tab + 1))
                 .unwrap()
-                .all(|r| r.replacement.is_none()),
+                .all(|r| r.replacement == Some(Span::new(tab, tab + 1)) && r.text == "  "),
             "{first:?}"
         );
     }
