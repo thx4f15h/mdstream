@@ -77,17 +77,30 @@ pub(crate) fn commit(p: &mut crate::inline::Publishing<'_>, work: &mut Work) {
     }
     let mut line = std::mem::take(p.line);
     line.pending = false;
+    p.display.shape.emit(crate::DisplayShapeEffectKind::Commit(
+        crate::DisplayShapeDomain::Replacements,
+    ));
     work.header_effect_steps += p.annotations.commit_line()
         + p.styles.commit_line()
         + p.link_order.commit_line()
         + p.footnotes.commit_reference_line();
     for (id, state) in std::mem::take(&mut line.states) {
         p.link_info[id.0].state = state;
+        p.link_order
+            .shape
+            .emit(crate::DisplayShapeEffectKind::LinkState { id, state });
         p.update.changed_links.start = p.update.changed_links.start.min(id.0);
         work.header_effect_steps += 1;
     }
     for id in line.maths..p.maths.len() {
         p.math_states[id] = SyntaxState::Sealed;
+        p.update
+            .display_shape
+            .emit(crate::DisplayShapeEffectKind::Math {
+                id: MathId(id),
+                math: p.maths[id],
+                state: Some(SyntaxState::Sealed),
+            });
         work.header_effect_steps += 1;
     }
     line.note_peak();
@@ -98,6 +111,11 @@ pub(crate) fn rollback(p: &mut crate::inline::Publishing<'_>, work: &mut Work) {
     assert!(p.line.pending);
     let mut line = std::mem::take(p.line);
     line.pending = false;
+    p.display
+        .shape
+        .emit(crate::DisplayShapeEffectKind::Rollback(
+            crate::DisplayShapeDomain::Replacements,
+        ));
     work.header_effect_steps += p.annotations.rollback_line() + p.link_order.rollback_line();
     let (changed, steps) = p.styles.rollback_line();
     work.header_effect_steps += steps;
@@ -123,6 +141,13 @@ pub(crate) fn rollback(p: &mut crate::inline::Publishing<'_>, work: &mut Work) {
         );
         line.math_reuse.insert(math_key(p.maths[id]), MathId(id));
         p.math_active[id] = false;
+        p.update
+            .display_shape
+            .emit(crate::DisplayShapeEffectKind::Math {
+                id: MathId(id),
+                math: p.maths[id],
+                state: None,
+            });
         p.math_index.remove(&p.maths[id].source.start);
         work.header_effect_steps += 1;
     }

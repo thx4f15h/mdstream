@@ -289,6 +289,8 @@ impl Snapshot {
 
 #[derive(Default)]
 pub(crate) struct Styles {
+    generations: BTreeMap<usize, u64>,
+    pub(crate) shape: crate::DisplayShapeEffects,
     scopes: BTreeMap<usize, Scope>,
     conditional_scopes: BTreeSet<usize>,
     forest: Forest,
@@ -323,6 +325,9 @@ impl Styles {
     }
 
     pub(crate) fn begin_line(&mut self, key: usize) {
+        self.shape.emit(crate::DisplayShapeEffectKind::Begin(
+            crate::DisplayShapeDomain::Styles { scope: key },
+        ));
         assert!(self.checkpoint.is_none());
         let scope = self.scopes.get_mut(&key).unwrap();
         self.checkpoint = Some((key, scope.source, scope.conditional, scope.runs));
@@ -334,6 +339,9 @@ impl Styles {
         let Some((key, _, _, _)) = self.checkpoint.take() else {
             return 0;
         };
+        self.shape.emit(crate::DisplayShapeEffectKind::Commit(
+            crate::DisplayShapeDomain::Styles { scope: key },
+        ));
         let scope = self.scopes.get_mut(&key).unwrap();
         self.scope_undo_peak = self
             .scope_undo_peak
@@ -342,6 +350,12 @@ impl Styles {
     }
     pub(crate) fn rollback_line(&mut self) -> (Span, u64) {
         let (key, source, conditional, runs) = self.checkpoint.take().unwrap();
+        self.shape.emit(crate::DisplayShapeEffectKind::Rollback(
+            crate::DisplayShapeDomain::Styles { scope: key },
+        ));
+        if self.shape.enabled() {
+            *self.generations.entry(key).or_default() += 1;
+        }
         let scope = self.scopes.get_mut(&key).unwrap();
         let changed = scope.source;
         self.scope_undo_peak = self
@@ -363,6 +377,26 @@ impl Styles {
         (changed, work)
     }
 
+    fn record_shape(&mut self, scope: usize, event: crate::DisplayShapeStyleEvent) {
+        if !self.shape.enabled() {
+            return;
+        }
+        let generation = self.generations.entry(scope).or_default();
+        *generation = generation
+            .checked_add(1)
+            .expect("style generation exhausted");
+        self.shape.emit(crate::DisplayShapeEffectKind::ScopeEvent {
+            scope,
+            generation: *generation,
+            event,
+        });
+    }
+    pub(crate) fn shape_generation_entries(&self) -> usize {
+        self.generations.len()
+    }
+    pub(crate) fn shape_generation(&self, key: usize) -> u64 {
+        self.generations.get(&key).copied().unwrap_or(0)
+    }
     pub(crate) fn scope_end(&self, key: usize) -> usize {
         self.scopes[&key].source.end
     }
@@ -375,7 +409,16 @@ impl Styles {
             source: Span::new(key, span.end),
             ..Scope::default()
         });
+        let old_end = scope.source.end;
         scope.source.end = scope.source.end.max(span.end);
+        if scope.source.end != old_end
+            || scope.source.end == span.end && old_end == span.end && scope.events.is_empty()
+        {
+            self.shape.emit(crate::DisplayShapeEffectKind::ScopeExtent {
+                scope: key,
+                source: scope.source,
+            });
+        }
         work.style_scope_steps += 1;
     }
     pub(crate) fn enter(&mut self, key: usize, open: usize, work: &mut Work) {
@@ -392,6 +435,7 @@ impl Styles {
         self.label_entries += usize::from(scope.labels.insert(open, (event, None)).is_none());
         self.label_peak = self.label_peak.max(self.label_entries);
         work.style_events += 1;
+        self.record_shape(key, crate::DisplayShapeStyleEvent::Enter { at: open });
     }
     pub(crate) fn leave(&mut self, key: usize, open: usize, end: usize, work: &mut Work) {
         let scope = self.scopes.get_mut(&key).unwrap();
@@ -403,6 +447,7 @@ impl Styles {
         );
         self.event_peak = self.event_peak.max(self.event_entries);
         work.style_events += 1;
+        self.record_shape(key, crate::DisplayShapeStyleEvent::Leave { open, end });
     }
     pub(crate) fn run(
         &mut self,
@@ -430,7 +475,24 @@ impl Styles {
             self.first_use = Some(self.first_use.map_or(key, |old| old.min(key)));
         }
         work.style_events += 1;
-        (!was && active).then_some(scope.source)
+        let result = (!was && active).then_some(scope.source);
+        self.record_shape(
+            key,
+            crate::DisplayShapeStyleEvent::Run {
+                source: run.source,
+                kind: if run.kind < 6 {
+                    crate::DisplayDelimiterKind::Asterisk
+                } else if run.kind < 12 {
+                    crate::DisplayDelimiterKind::Underscore
+                } else {
+                    crate::DisplayDelimiterKind::Tilde
+                },
+                can_open: run.can_open,
+                can_close: run.can_close,
+                unless,
+            },
+        );
+        result
     }
     pub(crate) fn bind(
         &mut self,
@@ -465,7 +527,19 @@ impl Styles {
             self.conditional_scopes.remove(&scope_key);
         }
         work.style_scope_steps += 1;
-        (was_conditional || (scope.conditional != 0 && scope.runs != 0)).then_some(scope.source)
+        let result = (was_conditional || (scope.conditional != 0 && scope.runs != 0))
+            .then_some(scope.source);
+        self.record_shape(
+            scope_key,
+            crate::DisplayShapeStyleEvent::Bind {
+                open,
+                boundary: fixed.map_or(
+                    crate::DisplayShapeBoundary::Link(id),
+                    crate::DisplayShapeBoundary::Fixed,
+                ),
+            },
+        );
+        result
     }
     pub(crate) fn conditional_scope_after(&self, span: Span, last: Option<usize>) -> Option<usize> {
         let key = if let Some(last) = last {
@@ -484,6 +558,12 @@ impl Styles {
         (key < span.end).then_some(key)
     }
     pub(crate) fn pair(&mut self, pair: StylePairId, work: &mut Work) {
+        let key = self
+            .scopes
+            .range(..=pair.open.start)
+            .next_back()
+            .map_or(pair.open.start, |(&k, _)| k);
+        self.record_shape(key, crate::DisplayShapeStyleEvent::Pair(pair));
         let mut task = Insert::new(pair);
         loop {
             work.style_index_steps += 1;
@@ -1143,5 +1223,119 @@ impl StylePath {
             self.path.pop();
         }
         Completion::Covered
+    }
+}
+
+/// One source-ordered style gap or marker. This is classified metadata, not
+/// display text. An authoritative conditional scope may reveal delimiter hints.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResolvedStyleSpan {
+    pub source: Span,
+    pub scope: Option<usize>,
+    pub scope_generation: u64,
+    pub marker_hidden: bool,
+    pub authoritative: bool,
+    pub style_pair: Option<StylePairId>,
+    pub style: Style,
+    pub emphasis_depth: usize,
+    pub strong_depth: usize,
+}
+impl ResolvedStyleSpan {
+    /// Apply the same conditional style override as the canonical run reader.
+    /// Link/alternative ownership is still resolved by the shared link resolver.
+    pub fn apply(self, mut mark: crate::DisplayShapeMark) -> crate::DisplayShapeMark {
+        if self.authoritative {
+            mark.style.0 &= !(Style::EMPHASIS.0 | Style::STRONG.0 | Style::STRIKE.0);
+            if mark.delimiter_hidden && !mark.base_hidden {
+                mark.style.0 &= !Style::HIDDEN.0;
+            }
+            mark.style = mark.style.union(self.style);
+            if self.marker_hidden {
+                mark.style = mark.style.union(Style::HIDDEN);
+            }
+            mark.emphasis_depth = self.emphasis_depth;
+            mark.strong_depth = self.strong_depth;
+        }
+        mark
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StyleMarkerStep {
+    Span(ResolvedStyleSpan),
+    BudgetExhausted,
+    Complete,
+}
+
+/// Revision-bound cursor; no source bytes, parser, payload copies or private
+/// memo. All conditional recovery belongs to the caller's canonical resolver.
+pub struct StyleMarkers {
+    document: DocumentId,
+    revision: u64,
+    position: usize,
+    end: usize,
+}
+impl Document {
+    pub fn style_markers(&self, source: Span) -> Option<StyleMarkers> {
+        self.text(source)?;
+        Some(StyleMarkers {
+            document: self.id(),
+            revision: self.revision(),
+            position: source.start,
+            end: source.end,
+        })
+    }
+}
+impl StyleMarkers {
+    pub fn source_position(&self) -> usize {
+        self.position
+    }
+    /// A step pays one query/object for a fixed O(log n) snapshot, in addition
+    /// to actual shared scope-recovery D. One-query frames retain recovery;
+    /// after it finishes a later frame emits the span. Zero budget does no work.
+    pub fn advance(
+        &mut self,
+        doc: &Document,
+        resolver: &mut crate::LinkResolver,
+        budget: &mut Budget,
+    ) -> Result<StyleMarkerStep, LayoutError> {
+        if self.document != doc.id() {
+            return Err(LayoutError::WrongDocument);
+        }
+        if self.revision != doc.revision() {
+            return Err(LayoutError::StaleContinuation);
+        }
+        resolver.check(doc)?;
+        if self.position == self.end {
+            return Ok(StyleMarkerStep::Complete);
+        }
+        if !resolver
+            .resolution
+            .prepare_styles(doc, self.position, budget)?
+        {
+            return Ok(StyleMarkerStep::BudgetExhausted);
+        }
+        if !charge(budget) {
+            return Ok(StyleMarkerStep::BudgetExhausted);
+        }
+        let snapshot = resolver
+            .resolution
+            .style_snapshot(doc, self.position, self.end);
+        let scope = doc.inline_styles.scope(self.position).map(|(key, _)| key);
+        let next = snapshot.next.min(self.end);
+        debug_assert!(next > self.position);
+        let value = ResolvedStyleSpan {
+            source: Span::new(self.position, next),
+            scope,
+            scope_generation: scope.map_or(0, |key| doc.inline_styles.shape_generation(key)),
+            marker_hidden: snapshot.hidden,
+            authoritative: snapshot.authoritative,
+            style_pair: snapshot.inner,
+            style: snapshot.style,
+            emphasis_depth: snapshot.emphasis,
+            strong_depth: snapshot.strong,
+        };
+        self.position = next;
+        Ok(StyleMarkerStep::Span(value))
     }
 }

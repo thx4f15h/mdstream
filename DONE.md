@@ -3082,3 +3082,15 @@ TUI WidthMeasure 保存真实 style_pair/深度，跨 tile 条件测量只恢复
 预算验收包含零预算、0q/0o/0b、1q/1o/6b 多帧显式 Complete、1024 层混合样式和条件 guard、路径取消和 memo 逐节点退休、4097 层缺失引用前缀及百万普通 tail。百万 literal tilde 只启动一个 run、不建立 pair；20,000 旧引用晚定义 inline/style/delimiter/guard 均无历史遍历，仅 17 个 annotation tree visits；百万普通 tail 只新增百万 inline byte，旧样式索引/guard/annotation/parser capacity 保持。实际 Work、memo 数量及公开 arena capacity 完整记录于仓外日志，不声称 BTree 私有分配、allocator 元数据或总堆峰值。解析累计 O(n log n)、空间 O(n)，条件 V 恢复额外 O(V log n)，共享 resolver 不逐 glyph 回扫，退休每个节点单独付费。
 
 验证采用“新增测试/文档”范围：冻结清单证明全部固定 main 生产、Cargo、520 个原 Rust 文件、官方夹具/生成器/黄金数组、hook/rustfmt 与根已验 660 输入逐字关联；原完整门禁 2625 debug / 2621 release / 81 doc 属固定 main 记录，本轮不冒称重跑全量。最终命令/退出与输入 SHA 见 `/tmp/mdtui3-codex-todo/019-prototypes/commands.json`、`frozen-inputs.json` 和 `input-relation.json`；本轮新增测试 debug/release、实际 GFM 删除线报告、独立来源核验、fmt 和生产/新测试 strict clippy 均在冻结后执行。核心零运行时依赖和 unsafe 禁用保持；已知旧 bare_autolinks bool lint 未改，不将其它待办转为完成。
+
+## 2026-11-13 可撤销显示效果与零高范围核心桥接
+
+初始审查基线 `94fbdffd428453269c3196afe812ccc69676c2cc`；最终冻结前按根审查组合固定 `58d3efcb925954c0789d25b3635b362761d84559`，仅增加 019 删除线测试与文档，生产及 Cargo 相同。新增输入前 opt-in 的 typed display-shape effects，直接由注解、replacement、样式 scope、LinkResolver 相关对象/引用和块操作发布。文档内单调 sequence 保留 append/finish/Update merge 顺序；小不可变 replacement descriptor 不随内部 slot 截断复用变义。真实待定表头事务提供分 domain 的 begin/commit/rollback；消费者模型只撤语义 first-save tag，raw/source/property 追加独立保留。核心无 Unicode 数据/宽度策略、运行时依赖或 unsafe。
+
+新增共享 canonical LinkResolver 的预算化当前 style marker/gap cursor，保留 authoritative hidden 恢复、pair/深度、语义 scope generation 与纯 extent 的区别。新增同一 HeightIndex 的零高范围 ticket 与 base-only Local/Measured 回填，经 FoldView 可信布局接口使用，独立保留折叠 mask。零预算不查树；已付 1q/1o 覆盖固定次数 O(log T) 查询/写，stale 查询同样计费。raw ticket capture 另由宿主计费。
+
+`display_shape_effects` 以真实 producer 驱动独立消费者，对一般迟表头确认/失败/无 pipe/EOF、旧 scope/code/entity/对象回滚、immutable descriptor、当前 marker 条件、空 alt 外层一次 fallback、晚定义、partial-tab、UTF-8 每切点与追加规模计数作交叉核验。`zero_height_range` 以独立 base/mask 数组核验父子 fold、preview/reset、相关/无关 append、checkpoint 起点与依赖末端、错误/零/微预算；64 MiB 对应的 262144 tiles 及百万 continuation tiles 以对数节点访问完成同树区间回填。外部 probe 对照现有 TUI DisplayInput 与锁定 Unicode oracle，验证条件 marker 改变 RI 分组。查询/容量计数与 CPU/RSS 口径分开。
+
+全部实际编译输入（包括 README）及官方输入/HTML/生成器/SHA/golden、TUI 输入/ANSI、hook/rustfmt 的基线核对、完整冻结验证命令与结果记录于 `/tmp/mdtui3-codex-todo/018-prototypes/phase3-core/`；旧 phase1/phase2 原型及归档保留。原有 `bare_autolinks.rs` bool assertion 的 all-target strict-clippy 基线问题单独记录，不改旧测试。
+
+交付仅为核心桥接。TUI 生产源码不改，完整 giant UI 未完成；后续消费者仍需迁移 GCB/width 输入索引、payload/source refs、Cell/Screen/diff、逐帧 wire 事务、选择复制搜索、表格/End 与 fold fragment 恢复。完整超长字素 TODO 保持未勾选。

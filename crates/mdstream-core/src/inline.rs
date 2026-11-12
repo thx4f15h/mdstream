@@ -197,8 +197,21 @@ impl Publishing<'_> {
             }
         };
         self.link_info[id.0].state = self.line.state(id, info.state);
+        self.link_order
+            .shape
+            .emit(crate::DisplayShapeEffectKind::LinkState {
+                id,
+                state: self.link_info[id.0].state,
+            });
         self.update.changed_links.start = self.update.changed_links.start.min(id.0);
         self.link_order.insert(info.source, id);
+        self.link_order
+            .shape
+            .emit(crate::DisplayShapeEffectKind::Link {
+                id,
+                info: self.link_info[id.0],
+                target,
+            });
         let selected = candidate.gate.unwrap_or_else(|| {
             if candidate.image.is_some() {
                 Gate::default()
@@ -379,6 +392,12 @@ impl<'a> Effects<'a> {
             && let Some(id) = id
         {
             p.link_info[id.0].state = p.line.state(id, SyntaxState::Sealed);
+            p.link_order
+                .shape
+                .emit(crate::DisplayShapeEffectKind::LinkState {
+                    id,
+                    state: p.link_info[id.0].state,
+                });
         }
     }
 
@@ -433,6 +452,13 @@ impl<'a> Effects<'a> {
                 SyntaxState::Sealed
             };
             p.math_index.insert(source.start, id);
+            p.update
+                .display_shape
+                .emit(crate::DisplayShapeEffectKind::Math {
+                    id,
+                    math,
+                    state: Some(p.math_states[id.0]),
+                });
             p.update.change(source, ChangeKind::Structure);
         }
     }
@@ -505,8 +531,21 @@ impl<'a> Effects<'a> {
             id
         };
         p.link_info[id.0].state = p.line.state(id, info.state);
+        p.link_order
+            .shape
+            .emit(crate::DisplayShapeEffectKind::LinkState {
+                id,
+                state: p.link_info[id.0].state,
+            });
         p.update.changed_links.start = p.update.changed_links.start.min(id.0);
         p.link_order.insert(info.source, id);
+        p.link_order
+            .shape
+            .emit(crate::DisplayShapeEffectKind::Link {
+                id,
+                info: p.link_info[id.0],
+                target,
+            });
         Some(id)
     }
 

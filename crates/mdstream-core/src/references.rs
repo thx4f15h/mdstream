@@ -46,6 +46,7 @@ pub(crate) fn normalize_label(label: &str, work: &mut Work) -> Option<String> {
 /// BTreeMap avoids relying on expected-time hashing for the complexity contract.
 #[derive(Default)]
 pub(crate) struct References {
+    pub(crate) shape: crate::DisplayShapeEffects,
     names: BTreeMap<String, SymbolId>,
     pub entries: Vec<Reference>,
     // Parallel to entries: O(1) lookup, retained only for winning definitions.
@@ -89,6 +90,10 @@ impl References {
         self.title_gaps[id.0] = gaps;
         entry.revision += 1;
         self.revision = revision;
+        self.shape.emit(crate::DisplayShapeEffectKind::Reference {
+            id,
+            generation: entry.revision,
+        });
         true
     }
 
@@ -100,6 +105,10 @@ impl References {
         self.title_gaps[id.0] = gaps;
         entry.revision += 1;
         self.revision = revision;
+        self.shape.emit(crate::DisplayShapeEffectKind::Reference {
+            id,
+            generation: entry.revision,
+        });
     }
 }
 

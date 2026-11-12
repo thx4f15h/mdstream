@@ -368,6 +368,7 @@ pub struct LinkParserStats {
 /// Consume updates in order. Ranges invalidate caches without listing old tiles.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Update {
+    pub display_shape: crate::DisplayShapeEffects,
     pub document: Option<DocumentId>,
     pub base_revision: u64,
     pub revision: u64,
@@ -482,6 +483,10 @@ impl Update {
         Ok(true)
     }
     pub(crate) fn change(&mut self, source: Span, kind: ChangeKind) {
+        if matches!(kind, ChangeKind::Structure | ChangeKind::TableWidth) {
+            self.display_shape
+                .emit(crate::DisplayShapeEffectKind::Structure { source, kind });
+        }
         if let Some(last) = self.changes.last_mut()
             && last.kind == kind
             && source.start <= last.source.end
@@ -528,6 +533,10 @@ impl Update {
         if next.base_revision == next.revision {
             return Ok(());
         }
+        if self.display_shape.enabled() != next.display_shape.enabled() {
+            return Err(crate::LayoutError::OutOfOrderUpdate);
+        }
+        self.display_shape.merge(&mut next.display_shape);
         self.revision = next.revision;
         self.appended.end = next.appended.end;
         self.new_blocks.end = next.new_blocks.end;

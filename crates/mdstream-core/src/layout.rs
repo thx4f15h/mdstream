@@ -72,6 +72,14 @@ pub struct Measurement {
     checkpoint: Option<crate::CheckpointToken>,
 }
 
+/// Base-height measurement for a nonempty, half-open tile range. The renderer
+/// supplies the zero-row fact; fold coverage is independent and stays intact.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ZeroHeightMeasurement {
+    measurement: Measurement,
+    end: usize,
+}
+
 struct Node {
     children: [Option<usize>; 2],
     sum: u128,
@@ -132,6 +140,7 @@ pub struct HeightIndex {
     generations: Annotations,
     revision: Option<u64>,
     visits: u64,
+    zero_height_queries: u64,
     allocations: u64,
 }
 
@@ -178,6 +187,7 @@ impl HeightIndex {
             generations: Annotations::default(),
             revision: None,
             visits: 0,
+            zero_height_queries: 0,
             allocations: 1,
         })
     }
@@ -194,6 +204,12 @@ impl HeightIndex {
     pub fn mutation_visits(&self) -> u64 {
         self.visits
     }
+    /// Actual dependency/checkpoint index queries made by budgeted zero-range
+    /// measurement. Capturing a raw ticket is a separate caller-paid query.
+    pub fn zero_height_queries(&self) -> u64 {
+        self.zero_height_queries
+    }
+
     pub fn dependency_arena_stats(&self) -> crate::ArenaStats {
         self.generations.arena_stats()
     }
@@ -306,6 +322,120 @@ impl HeightIndex {
         self.measure_validated(ticket, rows, HeightState::Measured)
     }
 
+    /// Capture the incoming prefix and the entire output range, including its
+    /// last tile. Ordinary unrelated tail appends do not invalidate this ticket.
+    /// This unbudgeted capture performs O(log T) queries; the caller accounts for
+    /// capture separately from the budgeted measurement.
+    pub fn zero_height_ticket(&self, tiles: Range<usize>) -> Option<ZeroHeightMeasurement> {
+        if tiles.start >= tiles.end || tiles.end > self.len {
+            return None;
+        }
+        let mut measurement = self.ticket(TileId(tiles.start))?;
+        measurement.dependencies.end = tiles.end;
+        measurement.generation = self.generations.newest(measurement.dependencies);
+        Some(ZeroHeightMeasurement {
+            measurement,
+            end: tiles.end,
+        })
+    }
+
+    /// Same range ticket with an exact incoming checkpoint dependency.
+    pub fn zero_height_ticket_from<S>(
+        &self,
+        tiles: Range<usize>,
+        checkpoints: &crate::CheckpointIndex<S>,
+        input: TileId,
+    ) -> Option<ZeroHeightMeasurement> {
+        let mut ticket = self.zero_height_ticket(tiles.clone())?;
+        let incoming = self.ticket_from(TileId(tiles.start), checkpoints, input)?;
+        ticket.measurement.dependencies.start = incoming.dependencies.start;
+        ticket.measurement.checkpoint = incoming.checkpoint;
+        ticket.measurement.generation = self.generations.newest(ticket.measurement.dependencies);
+        Some(ticket)
+    }
+
+    /// One query/object pays for fixed O(log T) validation and a lazy base-only
+    /// zero assignment. No source bytes are read and fold masks are untouched.
+    /// The trusted renderer excludes tiles owning other glyphs or spacing.
+    pub fn measure_zero_height(
+        &mut self,
+        ticket: ZeroHeightMeasurement,
+        local: bool,
+        budget: &mut crate::Budget,
+    ) -> Result<crate::Completion, LayoutError> {
+        if ticket.measurement.checkpoint.is_some() {
+            return Err(LayoutError::StaleMeasurement);
+        }
+        if !self.charge_zero_height(ticket, budget)? {
+            return Ok(crate::Completion::BudgetExhausted);
+        }
+        self.zero_height_validated(ticket, local)
+    }
+
+    /// Use with the authoritative FoldView layout indexes. Checkpoint tokens
+    /// retain the same validation as single-tile `measure_from`.
+    pub fn measure_zero_height_from<S>(
+        &mut self,
+        ticket: ZeroHeightMeasurement,
+        local: bool,
+        checkpoints: &crate::CheckpointIndex<S>,
+        budget: &mut crate::Budget,
+    ) -> Result<crate::Completion, LayoutError> {
+        if !self.charge_zero_height(ticket, budget)? {
+            return Ok(crate::Completion::BudgetExhausted);
+        }
+        if let Some(token) = ticket.measurement.checkpoint {
+            self.zero_height_queries += 1;
+            if !checkpoints.validates(token) {
+                return Err(LayoutError::StaleMeasurement);
+            }
+        }
+        self.zero_height_validated(ticket, local)
+    }
+
+    fn charge_zero_height(
+        &self,
+        ticket: ZeroHeightMeasurement,
+        budget: &mut crate::Budget,
+    ) -> Result<bool, LayoutError> {
+        if ticket.measurement.view != self.identity {
+            return Err(LayoutError::WrongView);
+        }
+        if ticket.measurement.epoch != self.layout_epoch {
+            return Err(LayoutError::StaleMeasurement);
+        }
+        if ticket.end > self.len || ticket.end <= ticket.measurement.tile.0 {
+            return Err(LayoutError::InvalidRange);
+        }
+        Ok(budget.charge(crate::WorkLimit {
+            queries: 1,
+            objects: 1,
+            ..Default::default()
+        }))
+    }
+
+    fn zero_height_validated(
+        &mut self,
+        ticket: ZeroHeightMeasurement,
+        local: bool,
+    ) -> Result<crate::Completion, LayoutError> {
+        self.zero_height_queries += 1;
+        if self.generations.newest(ticket.measurement.dependencies) != ticket.measurement.generation
+        {
+            return Err(LayoutError::StaleMeasurement);
+        }
+        self.set_range(
+            ticket.measurement.tile.0..ticket.end,
+            0,
+            if local {
+                HeightState::Local
+            } else {
+                HeightState::Measured
+            },
+        );
+        Ok(crate::Completion::Covered)
+    }
+
     pub fn ticket_from<S>(
         &self,
         tile: TileId,
@@ -347,6 +477,12 @@ impl HeightIndex {
         rows: u64,
         state: HeightState,
     ) -> Result<(), LayoutError> {
+        self.validate_measurement(ticket)?;
+        self.set_range(ticket.tile.0..ticket.tile.0 + 1, rows, state);
+        Ok(())
+    }
+
+    fn validate_measurement(&self, ticket: Measurement) -> Result<(), LayoutError> {
         if ticket.view != self.identity {
             return Err(LayoutError::WrongView);
         }
@@ -358,7 +494,6 @@ impl HeightIndex {
         if ticket.tile.0 >= self.len {
             return Err(LayoutError::InvalidRange);
         }
-        self.set_range(ticket.tile.0..ticket.tile.0 + 1, rows, state);
         Ok(())
     }
 

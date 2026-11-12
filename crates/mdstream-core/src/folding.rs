@@ -1001,7 +1001,7 @@ impl<S> FoldView<S> {
     }
 
     /// Borrow the single authoritative layout indexes for a trusted renderer.
-    /// Use existing measurement/Local, expire/invalidate, checkpoint insertion
+    /// Use measurement/Local and base-only zero-range measurement, expire/invalidate, checkpoint insertion
     /// and bounded drain operations. Incoming-state changes must expire heights
     /// AND invalidate downstream checkpoints (or use insert_for_layout).
     ///

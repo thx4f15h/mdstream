@@ -212,7 +212,7 @@ P0 和 P1 的基础能力已经交付，见 [完成记录](DONE.md)。P2 按实�
 - [x] 流式首屏：有界预读和背压、未 EOF/未 finish 即提交；更新批处理、EOF 校准和过期 scanner/plan 丢弃均有回归。
 - [x] 接入 Up/Down、PageUp/PageDown、Home/End，每次只处理视口、预算内 overscan 与恢复窗口；j/k、gg/G 并非本次键位。
 - [x] 按固定 Unicode 终端列宽测量字素、宽字符和软换行，并回填 HeightIndex。包含小预算/跨 tile、RI、ZWJ、实体及隐藏标记的显示映射和实际窗口恢复；边缘字素或上下文超过有界扩展时用可定位 `…` 和 Local 高度，完整巨型字素绘制仍见下项。
-- [ ] 完整超长字素绘制：替代当前超限窗口占位，保留共享预算、源码定位和高度恢复，不能为巨型 combining/ZWJ/RI 上下文回扫整段。
+- [ ] 完整超长字素绘制：替代当前超限窗口占位，保留共享预算、源码定位和高度恢复，不能为巨型 combining/ZWJ/RI 上下文回扫整段。 前置核心桥接已交付：输入端可撤销 typed effects、共享 resolver 的当前 marker/gap 游标及同树票据零高范围测量；TUI 的 GCB/width 索引、完整 payload/Cell/Screen/diff/逐帧发送与 Reading/表格/End/折叠恢复仍未接入，见 [DONE](DONE.md#2026-11-13-可撤销显示效果与零高范围核心桥接)。
 - [x] 标题跳转按精确源码目标在窗口内细化显示行，调用 `Navigator::reconcile`；同 tile 标题分别可达，预算耗尽后保存 refiner 并按帧继续。
 - [x] 普通滚动从实际绘制的首行映射调用 `Navigator::reconcile_source`，不再把旧检查点的块起点当作实际视口位置。
 - [x] 目录侧栏基础：层级、当前章节、独立 selection、开关/焦点/Enter 跳转，追加仅更新可见受影响标题；超长标题同时限制源码字节、显示字节及一行输出。

@@ -78,6 +78,7 @@ type ReferenceCheckpoint = (
 );
 #[derive(Default)]
 pub(crate) struct Footnotes {
+    pub(crate) shape: crate::DisplayShapeEffects,
     names: BTreeMap<String, FootnoteId>,
     pub entries: Vec<Footnote>,
     pub references: Vec<FootnoteReference>,
@@ -111,11 +112,19 @@ impl Footnotes {
     }
 
     pub(crate) fn begin_reference_line(&mut self) {
+        self.shape.emit(crate::DisplayShapeEffectKind::Begin(
+            crate::DisplayShapeDomain::FootnoteReferences,
+        ));
         assert!(self.checkpoint.is_none());
         self.reuse.clear();
         self.checkpoint = Some((self.references.len(), self.numbered, BTreeMap::new()));
     }
     pub(crate) fn commit_reference_line(&mut self) -> u64 {
+        if self.checkpoint.is_some() {
+            self.shape.emit(crate::DisplayShapeEffectKind::Commit(
+                crate::DisplayShapeDomain::FootnoteReferences,
+            ));
+        }
         let Some((base, _, saved)) = self.checkpoint.take() else {
             return 0;
         };
@@ -123,11 +132,20 @@ impl Footnotes {
         for id in base..self.references.len() {
             if self.active[id] {
                 self.states[id] = SyntaxState::Sealed;
+                self.shape
+                    .emit(crate::DisplayShapeEffectKind::FootnoteReference {
+                        id: FootnoteReferenceId(id),
+                        reference: self.references[id],
+                        state: Some(SyntaxState::Sealed),
+                    });
             }
         }
         (self.references.len() - base + saved.len()) as u64
     }
     pub(crate) fn rollback_reference_line(&mut self, update: &mut Update) -> u64 {
+        self.shape.emit(crate::DisplayShapeEffectKind::Rollback(
+            crate::DisplayShapeDomain::FootnoteReferences,
+        ));
         let (base, numbered, saved) = self.checkpoint.take().unwrap();
         self.undo_peak = self.undo_peak.max(saved.len());
         let count = self.references.len() - base + saved.len();
@@ -147,6 +165,8 @@ impl Footnotes {
             entry.number = number;
             entry.first_use = first_use;
             entry.revision = revision;
+            self.shape
+                .emit(crate::DisplayShapeEffectKind::Footnote { id });
             update.footnotes_changed.push(id);
         }
         self.reuse_peak = self.reuse_peak.max(self.reuse.len());
@@ -173,6 +193,12 @@ impl Footnotes {
         self.order.insert(start, id);
     }
     fn deactivate(&mut self, id: FootnoteReferenceId) {
+        self.shape
+            .emit(crate::DisplayShapeEffectKind::FootnoteReference {
+                id,
+                reference: self.references[id.0],
+                state: None,
+            });
         let start = self.references[id.0].source.start;
         if let Some((_, &previous)) = self.order.range(..start).next_back() {
             self.next[previous.0] = self.next[id.0];
@@ -230,6 +256,8 @@ impl Footnotes {
             entry.first_use = Some(source.start);
             entry.revision += 1;
             self.revision = update.revision;
+            self.shape
+                .emit(crate::DisplayShapeEffectKind::Footnote { id: symbol });
             update.footnotes_changed.push(symbol);
         }
         let id = if let Some(id) = self.reuse.remove(&(source.start, source.end, symbol)) {
@@ -248,6 +276,12 @@ impl Footnotes {
             SyntaxState::Sealed
         };
         self.activate(id);
+        self.shape
+            .emit(crate::DisplayShapeEffectKind::FootnoteReference {
+                id,
+                reference: self.references[id.0],
+                state: Some(self.states[id.0]),
+            });
     }
 
     pub fn define(
@@ -312,6 +346,8 @@ impl Footnotes {
         let entry = &mut self.entries[symbol.0];
         entry.revision += version_delta;
         self.revision = update.revision;
+        self.shape
+            .emit(crate::DisplayShapeEffectKind::Footnote { id: symbol });
         update.footnotes_changed.push(symbol);
         if let Some(start) = entry.first_use {
             // Conservative propagation for object renderers; no occurrence scan.

@@ -43,6 +43,7 @@ impl std::fmt::Debug for Children {
 type LineSlotUndo = (LinkId, Option<LinkId>, Option<LinkId>);
 #[derive(Default)]
 pub(crate) struct LinkIndex {
+    pub(crate) shape: crate::DisplayShapeEffects,
     nodes: Vec<Node>,
     slots: Vec<Slot>,
     root: Option<usize>,
@@ -61,6 +62,9 @@ impl LinkIndex {
     }
 
     pub(crate) fn begin_line(&mut self) {
+        self.shape.emit(crate::DisplayShapeEffectKind::Begin(
+            crate::DisplayShapeDomain::LinkParents,
+        ));
         assert!(self.line_undo.is_none());
         self.line_undo = Some(crate::rewind::UndoLog::default());
     }
@@ -70,12 +74,20 @@ impl LinkIndex {
         }
     }
     pub(crate) fn commit_line(&mut self) -> u64 {
+        if self.line_undo.is_some() {
+            self.shape.emit(crate::DisplayShapeEffectKind::Commit(
+                crate::DisplayShapeDomain::LinkParents,
+            ));
+        }
         self.line_undo.take().map_or(0, |u| {
             self.undo_peak = self.undo_peak.max(u.stats());
             u.len() as u64
         })
     }
     pub(crate) fn rollback_line(&mut self) -> u64 {
+        self.shape.emit(crate::DisplayShapeEffectKind::Rollback(
+            crate::DisplayShapeDomain::LinkParents,
+        ));
         let mut u = self.line_undo.take().unwrap();
         self.undo_peak = self.undo_peak.max(u.stats());
         let n = u.len() as u64;
@@ -89,6 +101,8 @@ impl LinkIndex {
         self.slots[id.0].active
     }
     pub(crate) fn deactivate(&mut self, id: LinkId) {
+        self.shape
+            .emit(crate::DisplayShapeEffectKind::LinkActive { id, active: false });
         self.slots[id.0].active = false;
         self.slots[id.0].gate =
             crate::link_semantics::Gate::only(crate::link_semantics::Guard::Never);
@@ -101,8 +115,14 @@ impl LinkIndex {
         self.nodes.push(node);
     }
     pub(crate) fn insert(&mut self, source: Span, id: LinkId) {
+        self.shape
+            .emit(crate::DisplayShapeEffectKind::LinkSource { id, source });
+        self.shape
+            .emit(crate::DisplayShapeEffectKind::LinkActive { id, active: true });
         if id.0 < self.slots.len() {
             if !self.slots[id.0].active {
+                self.shape
+                    .emit(crate::DisplayShapeEffectKind::LinkParent { id, parent: None });
                 self.slots[id.0].parent = None;
                 self.slots[id.0].pending = None;
                 self.slots[id.0].gate = crate::link_semantics::Gate::default();
@@ -124,6 +144,11 @@ impl LinkIndex {
     pub(crate) fn set_gate(&mut self, id: LinkId, gate: crate::link_semantics::Gate, nested: bool) {
         self.slots[id.0].gate = gate;
         self.slots[id.0].nested = nested;
+        self.shape.emit(crate::DisplayShapeEffectKind::LinkGate {
+            id,
+            conditional: !gate.unconditional(),
+            nested,
+        });
     }
     pub(crate) fn nested(&self, id: LinkId) -> bool {
         self.slots[id.0].nested
@@ -148,6 +173,10 @@ impl LinkIndex {
             self.save_line_slot(id);
             child = self.slots[id.0].pending.take();
             self.slots[id.0].parent = Some(parent);
+            self.shape.emit(crate::DisplayShapeEffectKind::LinkParent {
+                id,
+                parent: Some(parent),
+            });
             update.changed_links.start = update.changed_links.start.min(id.0);
         }
     }

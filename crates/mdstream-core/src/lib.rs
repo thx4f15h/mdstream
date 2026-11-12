@@ -29,6 +29,7 @@ mod deferred;
 mod destination;
 mod display;
 mod display_search;
+mod display_shape;
 mod entity;
 mod excerpt;
 mod fold_batch;
@@ -91,6 +92,11 @@ pub use containers::{
 pub use destination::{MAX_DESTINATION_BYTES, MAX_LINK_SUFFIX_BYTES, MAX_LINK_TITLE_BYTES};
 pub use display::{DisplayCursor, DisplayRun, DisplayRuns, DisplayRunsWithScratch, DisplayStep};
 pub use display_search::{DisplayMatch, DisplaySearch};
+pub use display_shape::{
+    DisplayDelimiterKind, DisplayShapeBoundary, DisplayShapeDomain, DisplayShapeEffect,
+    DisplayShapeEffectKind, DisplayShapeEffects, DisplayShapeMark, DisplayShapeReplacement,
+    DisplayShapeStats, DisplayShapeStyleEvent,
+};
 pub use excerpt::{DisplayExcerpt, ExcerptEnd, ExcerptLimits, ExcerptStep};
 pub use fold_batch::{FoldBatch, FoldBatchAction, FoldBatchProgress};
 pub use fold_navigation::{
@@ -110,9 +116,10 @@ pub use frame::{FoldLayoutSink, LayoutPass, LayoutSink};
 pub use heading_search::{HeadingMatch, HeadingSearch, HeadingSearchStep};
 pub use headings::{Heading, HeadingIndex};
 pub use history::{Bookmark, HistoryDirection, HistoryNavigation, NavigationHistory};
+pub use inline_styles::{ResolvedStyleSpan, StyleMarkerStep, StyleMarkers};
 pub use layout::{
     Anchor, HeightIndex, HeightState, LayoutError, Measurement, ViewportCursor, ViewportPage,
-    VisibleTile,
+    VisibleTile, ZeroHeightMeasurement,
 };
 pub use link_destination::{LinkDestination, LinkDestinationChunk};
 pub use link_index::{LinkObjects, LinkStep, LinkWindow, LinkWindowWork};
@@ -265,6 +272,7 @@ struct StreamingPrefix {
 
 #[derive(Default)]
 pub struct Document {
+    shape: DisplayShapeEffects,
     id: DocumentId,
     source: String,
     tiles: Vec<Span>,
@@ -783,6 +791,11 @@ impl Document {
         self.revision += 1;
         update.revision = self.revision;
         self.source.push_str(text);
+        self.shape
+            .emit(DisplayShapeEffectKind::SourceAppend(Span::new(
+                old_end,
+                self.source.len(),
+            )));
         self.extend_tiles(old_end);
         update.appended.end = self.source.len();
         update.dirty.push(update.appended);
@@ -998,6 +1011,7 @@ impl Document {
         self.line_start = self.source.len();
         self.fence = None;
         self.finished = true;
+        self.shape.emit(DisplayShapeEffectKind::Finish);
         if let Some(first) = self.footnotes.references.first() {
             self.footnotes.revision = self.revision;
             update.change(
@@ -1009,6 +1023,8 @@ impl Document {
     }
 
     fn begin_update(&self, start: usize, update: &mut Update) {
+        let mut display_shape = std::mem::take(&mut update.display_shape);
+        display_shape.reset_update(&self.shape);
         let mut dirty = std::mem::take(&mut update.dirty);
         let mut footnotes_changed = std::mem::take(&mut update.footnotes_changed);
         let mut references_changed = std::mem::take(&mut update.references_changed);
@@ -1026,6 +1042,7 @@ impl Document {
         closed_containers.clear();
         loosened_lists.clear();
         *update = Update {
+            display_shape,
             document: Some(self.id),
             base_revision: self.revision,
             revision: self.revision,
@@ -1055,7 +1072,8 @@ impl Document {
         };
     }
 
-    fn complete_update(&self, update: &mut Update) {
+    fn complete_update(&mut self, update: &mut Update) {
+        self.drain_display_shape(update);
         update.new_blocks.end = self.blocks.len();
         update.new_tiles.end = self.tiles.len();
         update.new_headings.end = self.headings.entries().len();
@@ -1307,6 +1325,9 @@ impl Document {
             self.inline_styles.begin_line(key);
             self.link_order.begin_line();
             self.footnotes.begin_reference_line();
+            self.display.shape.emit(DisplayShapeEffectKind::Begin(
+                DisplayShapeDomain::Replacements,
+            ));
             self.header_effects.begin(
                 self.links.len(),
                 self.maths.len(),
@@ -1486,6 +1507,10 @@ impl Document {
             kind,
             state: SyntaxState::Growing,
             container: self.containers.inner(),
+        });
+        self.shape.emit(DisplayShapeEffectKind::Block {
+            id,
+            block: self.blocks[id.0].clone(),
         });
         update.change(span, ChangeKind::Structure);
         self.current = Some(id);
@@ -2164,6 +2189,10 @@ impl Document {
         self.content_blocks.remove(&block);
         self.content_block_index_ops += 1;
         self.blocks[block.0].kind = BlockKind::Definition { symbol };
+        self.shape.emit(DisplayShapeEffectKind::Block {
+            id: block,
+            block: self.blocks[block.0].clone(),
+        });
         self.blocks[block.0].source.end = span.end;
         update.changed_blocks.start = update.changed_blocks.start.min(block.0);
         let whole = self.blocks[block.0].source;
@@ -2854,6 +2883,10 @@ impl Document {
                 );
                 self.mark(Span::new(trimmed.end, content.end), Style::HIDDEN, update);
                 self.blocks[id.0].kind = BlockKind::Heading { level };
+                self.shape.emit(DisplayShapeEffectKind::Block {
+                    id,
+                    block: self.blocks[id.0].clone(),
+                });
                 // Keep all source-ordered physical leaves and their IDs. Only
                 // the first leaf becomes the opener; the last owns the underline.
                 self.blocks[self.current.unwrap().0].source.end = span.end;
@@ -3416,6 +3449,10 @@ impl Document {
             self.blocks[block.0].state = SyntaxState::Growing;
         }
         self.blocks[block.0].kind = BlockKind::Table { id };
+        self.shape.emit(DisplayShapeEffectKind::Block {
+            id: block,
+            block: self.blocks[block.0].clone(),
+        });
         self.blocks[block.0].source.end = delimiter.end;
         self.tables
             .push(Table::new(block, header.source, delimiter, columns));

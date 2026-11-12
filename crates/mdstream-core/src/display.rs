@@ -25,6 +25,7 @@ pub struct DisplayRun<'a> {
 
 #[derive(Default)]
 pub(crate) struct DisplayIndex {
+    pub(crate) shape: crate::DisplayShapeEffects,
     entries: Vec<Entry>,
     // Source-ordered single-byte replacements, independent of the later code
     // ranges that may enclose them. No rewriting an open code span's body.
@@ -46,6 +47,8 @@ impl DisplayIndex {
         self.entries.len()
     }
     pub(crate) fn truncate_entries(&mut self, len: usize) -> u64 {
+        self.shape
+            .emit(crate::DisplayShapeEffectKind::TruncateReplacements { entries: len });
         let removed = self.entries.len() - len;
         self.entries.truncate(len);
         removed as u64
@@ -60,6 +63,24 @@ impl DisplayIndex {
                 .last()
                 .is_none_or(|e| e.source.end <= source.start)
         );
+        let replacement = match &kind {
+            Kind::Entity(text) => {
+                let mut utf8 = [0; 8];
+                utf8[..text.len()].copy_from_slice(text.as_bytes());
+                crate::DisplayShapeReplacement::Entity {
+                    utf8,
+                    len: text.len() as u8,
+                }
+            }
+            Kind::Code { leading, trailing } => crate::DisplayShapeReplacement::Code {
+                leading: *leading,
+                trailing: *trailing,
+            },
+        };
+        self.shape.emit(crate::DisplayShapeEffectKind::Replacement {
+            source,
+            replacement,
+        });
         self.entries.push(Entry { source, kind });
     }
 
@@ -71,6 +92,10 @@ impl DisplayIndex {
     pub fn spaces(&mut self, source: Span, columns: u8) {
         debug_assert!((1..=3).contains(&columns));
         debug_assert!(self.spaces.last().is_none_or(|s| s.0.end <= source.start));
+        self.shape.emit(crate::DisplayShapeEffectKind::Replacement {
+            source,
+            replacement: crate::DisplayShapeReplacement::Spaces { columns },
+        });
         self.spaces.push((source, columns));
     }
 

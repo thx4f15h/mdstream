@@ -4132,3 +4132,21 @@ assert_eq!(kinds, [InlineStyleKind::Strike, InlineStyleKind::Strong]);
 `tests/strike_mixed.rs` 的 15 项验收包含 1,216 组独立朴素批处理配对、1,526 组构造式语法树的逐标量来源/完整有序身份，另有固定混合反例、标签活动矩阵、显式/lazy/tab/退出、晚表头撤销与真实 LayoutPass、UTF-8 任意 byte 切点及每 prefix/finish、零预算与 1q/1o/6b 显式 Complete、百万 long run、1024 层样式/条件 guard、4097 层缺失引用前缀、百万普通 tail 和 20,000 旧引用的真实 Work/capacity。分块自比较只验证追加一致性；独立预期来自手写 pair/span、构造树和有界批处理模型。
 
 外部固定 cmark-gfm 0.29.0.gfm.13（`--extension strikethrough`；表格另启用 `table`）保留了 1,520 份输入、HTML/XML 与来源哈希。1,402 份可见标量/有序路径相同；118 份差异中，108 份逐原始位置经独立 formal 配对/隐藏/path 模型核对，另 10 份是相同 Strike 配对而未解析图片 full 后缀显示不同的固定 witness。未把这些统计并入官方评分，也不在评分器重解析或补语义；原 GFM 491–493 输入、HTML、生成器、SHA 和三例 3/0/0 保持。参考工具仅用于仓外独立核验，不进入默认 Cargo 测试或 runtime。此交付补齐当前 formal 混合/容器合同的验证与文档，没有修改生产 Rust；完整标准兼容、其它失败回退、脚注正文和 UI 原待办继续保留。
+
+### 增量显示属性的核心桥接
+
+`Document::enable_display_shape_effects`（字节流入口为 `Utf8Document` 的同名方法）必须在首个非空解码输入前调用。之后每份 `Update.display_shape` 发布真正解析操作产生的 typed effects；默认关闭，不回读已有 Markdown，也不维护 revision 历史。消费者按 `Update.document`、revision 和 effect `sequence` 顺序消费，或先用 `Update::merge` 合并；重复消费不是幂等操作。`append_into` 重用输出前必须消费上一份 Update，保留历史 Update 的内存由调用方承担。
+
+`SourceAppend` 仅追加原始 UTF-8 区间。宿主可在此一次建立 scalar/property 索引；`Mark` 保存原始注解的 base hiding、delimiter hint、强调深度及 link/alternative owner。`Begin/Commit/Rollback` 按 domain 标记真实待定表头事务；撤销语义 tag，不能撤销新追加源码或用旧整节点覆盖新属性。replacement 使用不可变固定小 descriptor：entity 最多两个 scalar 的八字节数组，code 的首尾 trim 区间，以及 partial-tab 的 1–3 列余量。`TruncateReplacements` 只撤回 entity/code 条目；partial-tab 属性独立保留。旧 descriptor 不引用可能被截断复用的内部 slot。
+
+Link facts 包含稳定文档内 ID、source/label、target、gate 变化、parent adoption、active 和 syntax state。gate 事件是失效通知，谓词仍由 canonical `LinkResolver` 解释；不是另一份解析器。Reference/Footnote 通知可按 ID 读取当前固定元数据。Block 事件报告分配和 kind 分类，Structure/TableWidth 事件通知读取当前块/表格元数据；它们不保存中间 revision 的全部块 extent。图片 literal syntax、空 alt 的 `[image]`、数学/脚注 UI 及 fold fragment 边界仍由宿主消费这些事实决定。隐藏 markup、实体/code replacement、对象及合法 fold 切口后的显示序列才是未来 GCB 的输入，不能对任意 raw Markdown 切片直接套 Unicode 规则。
+
+`Document::style_markers(source)` 构造不求值的、绑定文档/revision 的 source-ordered marker/gap cursor。`advance` 使用调用方同一个 `LinkResolver`，共享实际条件 scope 恢复 D；恢复与输出各收取实际 query/object，`1q/1o/6b` 可逐步推进，零预算不查询或求值。`ResolvedStyleSpan::apply` 与 canonical Snapshot 的 authoritative 规则一致，允许恢复曾被 delimiter hint 隐藏的字符；base hiding 不受此恢复影响。局部 Mark/replacement/extent 的范围变化仍须按 effects 更新，binding epoch 不取代这些范围版本。结果含 `StylePairId`、深度、scope 和当前 generation；仅真实 classified event/rollback 改变 scope generation，纯 extent 增长不改变它。该 generation 的跨 append 用法要求从输入开始订阅 effects；cursor 自身仍严格绑定 revision，不能把旧 resolver/cursor 用于新文档状态。缓存只保留当前结果，取消后用 resolver 的预算化 retirement 释放，不缓存每个赋值分支或所有 epoch。
+
+生产端每个语义操作发布固定数量事件；adopt 每个真实 child 关系一次，注解树内部访问不发布事件。各组件共享文档内顺序钟，Update 完成时只合并并排序本批事件；成本 O(A log(A+1))，无 payload 复制。输入维护合同为 O((N+A) log(N+1))、总持久空间 O(N+A)，在现有 parser 线性数量语义操作下为 O(N)。`display_shape_stats` 报告累计事件、非局部 binding epoch（含晚脚注/编号/active/EOF）、当前 scope generation 条目数和 producer buffer 实际 capacity；Update 的 capacity 单列。它们不是总 CPU、allocator overhead 或进程 RSS。每次显示查询按 O((D+W) log(N+1)) 分账，不限制任意用户查询次数之和。
+
+`HeightIndex::zero_height_ticket(range)` / `_from(range, checkpoints, input)` 捕获非空半开 tile 范围与其整个依赖末端。`measure_zero_height` / `_from` 在同一棵树上回填 base height 0，选择 `Local` 或 `Measured`，不改变 fold covers/open_count/mask。可经可信 `FoldView::layout_parts_mut` 使用；原 `suppress/reset/replace` 禁令保留。宿主负责排除仍拥有 glyph、间距或 fragment 边界的 tile，维护 source/shape generation；core 校验自己的 view、layout、范围代际与 incoming checkpoint。无关尾部 append 保留旧票据；相关源码、晚定义、fold、preview、reset 或 checkpoint 变化拒绝旧票据。
+
+预算化零高入口先执行 O(1) 身份/维度/范围检查，再收取 `1q/1o`，之后才作固定次数 O(log T) 代际/checkpoint 查询及惰性区间写。查询发现 stale 仍收取该预算；零预算不访问索引。`zero_height_queries` 记录实际验证查询，`mutation_visits` 另计树访问。raw ticket capture 没有 Budget 参数，调用方须另计其 O(log T) 查询。此合同允许一个已付 query 执行固定 O(log T) 原语，不承诺硬 CPU 抢占。
+
+此桥接没有接入 TUI 的巨型字素索引、Cell/Screen、diff、输出续传、Reading、表格或 End；完整超长字素绘制仍在 TODO。验证见 `display_shape_effects`、`zero_height_range` 和 [交付记录](DONE.md#2026-11-13-可撤销显示效果与零高范围核心桥接)。

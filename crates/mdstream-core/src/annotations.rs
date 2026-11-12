@@ -112,6 +112,7 @@ impl Node {
 /// Dynamic binary segment tree over source bytes. Tags stay on their covering
 /// node; updating a huge interval never visits its interior. No recursive AST.
 pub(crate) struct Annotations {
+    pub(crate) shape: crate::DisplayShapeEffects,
     nodes: Vec<Node>,
     root: usize,
     capacity: usize,
@@ -126,6 +127,7 @@ pub(crate) struct Annotations {
 impl Default for Annotations {
     fn default() -> Self {
         Self {
+            shape: crate::DisplayShapeEffects::default(),
             nodes: vec![Node::default()],
             root: 0,
             capacity: 1,
@@ -149,6 +151,9 @@ impl Annotations {
     }
 
     pub(crate) fn begin_line(&mut self) {
+        self.shape.emit(crate::DisplayShapeEffectKind::Begin(
+            crate::DisplayShapeDomain::Annotations,
+        ));
         assert!(self.checkpoint.is_none());
         self.line_epoch += 1;
         self.checkpoint = Some((
@@ -161,12 +166,18 @@ impl Annotations {
     }
     pub(crate) fn commit_line(&mut self) -> u64 {
         self.checkpoint.take().map_or(0, |(_, _, _, _, undo)| {
+            self.shape.emit(crate::DisplayShapeEffectKind::Commit(
+                crate::DisplayShapeDomain::Annotations,
+            ));
             self.undo_peak = self.undo_peak.max(undo.stats());
             undo.len() as u64
         })
     }
     pub(crate) fn rollback_line(&mut self) -> u64 {
         let (len, root, capacity, serial, mut undo) = self.checkpoint.take().unwrap();
+        self.shape.emit(crate::DisplayShapeEffectKind::Rollback(
+            crate::DisplayShapeDomain::Annotations,
+        ));
         self.undo_peak = self.undo_peak.max(undo.stats());
         let count = undo.len() as u64;
         while let Some((id, node)) = undo.pop() {
@@ -268,6 +279,21 @@ impl Annotations {
         }
         self.serial += 1;
         mark.serial = if mark.link.is_some() { self.serial } else { 0 };
+        self.shape.emit(crate::DisplayShapeEffectKind::Mark {
+            source: span,
+            mark: crate::DisplayShapeMark {
+                style: mark.style,
+                base_hidden: mark.base_hidden,
+                delimiter_hidden: mark.delimiter_hidden,
+                emphasis_depth: mark.emphasis_depth,
+                strong_depth: mark.strong_depth,
+                link: mark.link,
+                hide_owner: mark.hide_owner(),
+                hide_alternative: mark.alternative_owner(),
+                object_syntax: mark.link_syntax,
+                order: mark.serial,
+            },
+        });
         self.update(self.root, 0, self.capacity, span, mark);
     }
 
