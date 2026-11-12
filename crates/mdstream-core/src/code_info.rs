@@ -6,8 +6,8 @@ impl Document {
     /// Returns None for invalid IDs, other blocks, or absent info.
     ///
     /// The original `BlockKind::Code::info` range and `Document::text` remain
-    /// unchanged. Only that range is read, including when an overlong opener's
-    /// info was truncated at the classification window. No language selection,
+    /// unchanged. Long opening lines commit their complete info at LF/EOF;
+    /// provisional raw candidates expose no code-info reader. No language selection,
     /// further trimming, inline parsing or recursive decoding is performed.
     /// The borrow prevents appends while this cursor is being consumed.
     ///

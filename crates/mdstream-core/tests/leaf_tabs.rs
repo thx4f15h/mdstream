@@ -317,7 +317,7 @@ fn classification_limits_and_failed_markers_keep_one_pass_semantics() {
         "####### invalid".to_owned(),
         "#nospace".to_owned(),
         "```bad`".to_owned(),
-        "`".repeat(MAX_FENCE_LENGTH + 1),
+        format!("{}bad`", "`".repeat(4096)),
         format!("$${}", " ".repeat(BLOCK_LOOKAHEAD)),
         format!("{}# late", "x".repeat(BLOCK_LOOKAHEAD)),
     ] {

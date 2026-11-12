@@ -64,6 +64,7 @@ pub use anchors::{
 };
 pub use annotations::QueryScratch;
 pub use autolink::MAX_AUTOLINK_BYTES;
+#[allow(deprecated)]
 pub use block::{BLOCK_LOOKAHEAD, MAX_FENCE_LENGTH};
 pub use budget::{Budget, Completion, WorkLimit};
 pub use cache::{CacheValidity, DependencyKey, SourceSnapshot};
@@ -220,6 +221,27 @@ struct ContainerEligibility {
     prefix_source: Option<usize>,
 }
 
+// The bounded classification result is retained once while a raw physical
+// fence candidate grows. No source copies, ancestor paths or inline snapshots.
+struct ClassifiedLine {
+    span: Span,
+    content: Span,
+    classification: Line,
+    paragraph: bool,
+    previous_title: Option<(BlockId, Span)>,
+    container_line: Option<containers::ContainerLine>,
+    container_blank: bool,
+    virtual_spaces: u8,
+    fence_column: u8,
+    container_code: bool,
+    table_text: bool,
+}
+
+struct StreamingFence {
+    line: ClassifiedLine,
+    probe: block::FenceProbe,
+}
+
 #[derive(Default)]
 pub struct Document {
     id: DocumentId,
@@ -260,6 +282,7 @@ pub struct Document {
     container_inline: Option<ContainerId>,
     current: Option<BlockId>,
     fence: Option<Fence>,
+    streaming_fence: Option<StreamingFence>,
     line_start: usize,
     streaming: Option<StreamingLine>,
     finished: bool,
@@ -378,12 +401,16 @@ impl Document {
 
     /// A bounded provisional line prefix, already included in the tiles as raw
     /// text. It is classified at newline, EOF, or the lookahead limit. A long
-    /// separator probe retains this bounded prefix while its raw tail grows.
+    /// separator/fence probe retains this bounded prefix while its raw tail grows.
+    /// A fence candidate publishes no Code/info until LF/EOF; its raw tail is
+    /// visible from pending().end to source().len().
     /// An eligible long header has already been classified; its deferred payload
     /// (after a late first pipe, or the whole early-pipe header) is kept separately
     /// and does not enlarge this pending prefix.
     pub fn pending(&self) -> Span {
-        if let Some(delimiter) = &self.table_delimiter {
+        if let Some(candidate) = &self.streaming_fence {
+            candidate.line.span
+        } else if let Some(delimiter) = &self.table_delimiter {
             delimiter.prefix
         } else if self.streaming.is_some() || self.streaming_header.is_some() {
             Span::new(self.source.len(), self.source.len())
@@ -584,7 +611,28 @@ impl Document {
         let end = self.source.len();
         let mut cursor = old_end;
         while cursor < end {
-            if let Some(mut delimiter) = self.table_delimiter.take() {
+            if let Some(mut candidate) = self.streaming_fence.take() {
+                let start = cursor;
+                while cursor < end {
+                    let newline = self.source.as_bytes()[cursor] == b'\n';
+                    cursor += 1;
+                    self.work.input_bytes += 1;
+                    if newline {
+                        break;
+                    }
+                }
+                let complete = self.source.as_bytes()[cursor - 1] == b'\n';
+                if !candidate
+                    .probe
+                    .feed(&self.source, Span::new(start, cursor), &mut self.work)
+                {
+                    self.resolve_streaming_fence(candidate, cursor, complete, false, update);
+                } else if complete {
+                    self.resolve_streaming_fence(candidate, cursor, true, true, update);
+                } else {
+                    self.streaming_fence = Some(candidate);
+                }
+            } else if let Some(mut delimiter) = self.table_delimiter.take() {
                 let start = cursor;
                 while cursor < end {
                     let newline = self.source.as_bytes()[cursor] == b'\n';
@@ -697,7 +745,9 @@ impl Document {
         }
         self.revision += 1;
         update.revision = self.revision;
-        if let Some(delimiter) = self.table_delimiter.take() {
+        if let Some(candidate) = self.streaming_fence.take() {
+            self.resolve_streaming_fence(candidate, self.source.len(), true, true, update);
+        } else if let Some(delimiter) = self.table_delimiter.take() {
             self.finish_long_delimiter(delimiter, self.source.len(), update);
         } else if let Some(candidate) = self.streaming_header.take() {
             self.finish_header(candidate, update);
@@ -2068,6 +2118,97 @@ impl Document {
                 self.feed_header(header, update);
             }
         }
+        let line = ClassifiedLine {
+            span,
+            content,
+            classification,
+            paragraph,
+            previous_title,
+            container_line,
+            container_blank,
+            virtual_spaces,
+            fence_column,
+            container_code,
+            table_text,
+        };
+        if !complete
+            && !lazy
+            && !container_code
+            && let Some(probe) = block::FenceProbe::new(
+                &self.source,
+                content,
+                self.fence,
+                virtual_spaces,
+                fence_column,
+                &mut self.work,
+            )
+        {
+            self.work.fence_candidate_steps += 1;
+            self.streaming_fence = Some(StreamingFence { line, probe });
+            return;
+        }
+        self.commit_classified_line(line, complete, allow_long_header, definitions, update);
+    }
+
+    fn resolve_streaming_fence(
+        &mut self,
+        candidate: StreamingFence,
+        end: usize,
+        complete: bool,
+        valid: bool,
+        update: &mut Update,
+    ) {
+        self.work.fence_candidate_steps += 1;
+        let mut line = candidate.line;
+        line.span.end = end;
+        line.content.end = end;
+        self.containers.end = end;
+        self.headings.parsed_end = end;
+        let classification = valid.then(|| candidate.probe.finish()).flatten();
+        let confirmed = classification.is_some();
+        line.classification = classification.unwrap_or_else(|| {
+            if self.fence.is_some() {
+                Line::Code
+            } else {
+                line.container_line
+                    .as_ref()
+                    .map_or(Line::Text, |container| Line::Container {
+                        prefix: container.prefix,
+                        kind: container.kind.clone(),
+                    })
+            }
+        });
+        line.table_text = !confirmed && self.fence.is_none();
+        // Failure enters ordinary header discovery/consumption once, including
+        // an early or future pipe. Its summary scans the deferred raw span once;
+        // no bounded reclassification or prior inline payload is replayed.
+        self.commit_classified_line(line, complete, !confirmed, false, update);
+        if complete {
+            self.line_start = end;
+        }
+    }
+
+    fn commit_classified_line(
+        &mut self,
+        line: ClassifiedLine,
+        complete: bool,
+        allow_long_header: bool,
+        definitions: bool,
+        update: &mut Update,
+    ) {
+        let ClassifiedLine {
+            span,
+            mut content,
+            mut classification,
+            paragraph,
+            previous_title,
+            container_line,
+            container_blank,
+            mut virtual_spaces,
+            fence_column,
+            container_code,
+            mut table_text,
+        } = line;
         if let Some(block) = self.current
             && let BlockKind::Table { id } = self.blocks[block.0].kind
         {

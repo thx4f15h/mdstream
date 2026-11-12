@@ -19,10 +19,10 @@ fn visible(doc: &Document) -> String {
 }
 
 #[test]
-fn bounded_long_fences_match_length_and_indent_model() {
+fn long_fences_match_length_and_indent_model() {
     let mut cases = 0;
     for marker in ['`', '~'] {
-        for length in [3, 32, 33, 63, 255, 1000] {
+        for length in [3, 32, 33, 63, 255, 1000, 1023, 1024, 4096] {
             let fence = marker.to_string().repeat(length);
             for indent in 0..=3 {
                 for (before, prefix, seed) in [
@@ -56,12 +56,11 @@ fn bounded_long_fences_match_length_and_indent_model() {
             }
         }
     }
-    assert_eq!(cases, 504);
+    assert_eq!(cases, 756);
 }
 
 #[test]
 fn window_edges_require_a_complete_run_and_keep_closer_rules() {
-    assert_eq!(MAX_FENCE_LENGTH, BLOCK_LOOKAHEAD - 1);
     for marker in ['`', '~'] {
         for prefix in ["", "> ", ">> "] {
             let length = BLOCK_LOOKAHEAD - prefix.len() - 1;
@@ -70,17 +69,11 @@ fn window_edges_require_a_complete_run_and_keep_closer_rules() {
                 let source = format!("{prefix}{fence}\n{prefix}x\n{prefix}{fence}{ending}");
                 assert_eq!(visible(&parse(&source)), "x\n");
             }
-            // Prefix + delimiter fills the window, so its ending is unknown.
+            // Prefix + delimiter fills the window; the probe confirms at LF.
             let fence = marker.to_string().repeat(length + 1);
             let source = format!("{prefix}{fence}\n{prefix}body\n");
-            assert!(
-                parse(&source)
-                    .blocks()
-                    .iter()
-                    .all(|b| !matches!(b.kind, BlockKind::Code { .. }))
-            );
-            // A non-marker at the last window byte confirms the run. The
-            // already documented long-info behavior hides its later tail.
+            assert_eq!(visible(&parse(&source)), "body\n");
+            // Info and the run are confirmed at the actual physical line end.
             let fence = marker.to_string().repeat(length);
             let source = format!("{prefix}{fence} x\n{prefix}body\n{prefix}{fence}\n");
             assert_eq!(visible(&parse(&source)), "body\n");
@@ -95,7 +88,7 @@ fn window_edges_require_a_complete_run_and_keep_closer_rules() {
             } else {
                 "`".repeat(33)
             },
-            marker.to_string().repeat(BLOCK_LOOKAHEAD),
+            format!("{}x", marker.to_string().repeat(BLOCK_LOOKAHEAD)),
         ] {
             let source = format!("{fence}\n{body}\n{fence}\nafter\n");
             let doc = parse(&source);
@@ -219,10 +212,10 @@ fn long_success_and_failure_do_not_rescan_old_input() {
     for (prefix, marker_count, recognized) in [
         ("".to_owned(), 1023, true),
         (">".repeat(980), 40, true),
-        (">".repeat(980), 44, false),
+        (">".repeat(980), 44, true),
         (">".repeat(1000), 23, true),
-        (">".repeat(1000), 24, false),
-        ("".to_owned(), 1024, false),
+        (">".repeat(1000), 24, true),
+        ("".to_owned(), 1024, true),
     ] {
         let mut doc = Document::new();
         let opener = format!("{prefix}{}", "~".repeat(marker_count));

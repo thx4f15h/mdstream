@@ -249,11 +249,21 @@ fn committed_info_boundary_and_literal_body_are_unchanged() {
         );
         let mut doc = Document::new();
         doc.append(&prefix).unwrap();
-        let before = read(&doc, BlockId(0), 6).0;
+        assert!(doc.code_info(BlockId(0)).is_none());
         doc.append(";\n&amp; &#42; \\*\n~~~\n").unwrap();
         doc.finish();
-        assert_eq!(read(&doc, BlockId(0), 6).0, before);
-        assert!(before.ends_with(suffix));
+        let decoded = match suffix {
+            "&amp" => "&",
+            "&#x1f" => "\u{1f}",
+            _ => "∳",
+        };
+        assert_eq!(
+            read(&doc, BlockId(0), 6).0,
+            format!(
+                "{}{decoded}",
+                "a".repeat(BLOCK_LOOKAHEAD - 4 - suffix.len())
+            )
+        );
         let body: String = doc
             .display_runs_in(Span::new(0, doc.source().len()))
             .unwrap()

@@ -217,7 +217,7 @@ fn failed_and_overlong_candidates_never_reclassify_old_input() {
     for source in [
         "> ``short\n",
         "> ```bad`info\n",
-        &format!("> {}\n", "~".repeat(MAX_FENCE_LENGTH + 1)),
+        &format!("> {}bad`\n", "`".repeat(4096)),
     ] {
         assert!(codes(&parse(source)).is_empty(), "{source:?}");
     }
@@ -227,32 +227,24 @@ fn failed_and_overlong_candidates_never_reclassify_old_input() {
     let doc = parse(&format!("{prefix}```\n{prefix}```\n"));
     assert_eq!(codes(&doc).len(), 1);
     assert_eq!(visible(&doc, doc.blocks()[0].source), "");
-    // A closer whose physical line reaches the bound before LF is ordinary
-    // opaque code even if the eventual suffix is only whitespace.
+    // A closer may confirm beyond the classification window.
     let source = format!("> ```\n> ```{}\n> ```\n", " ".repeat(BLOCK_LOOKAHEAD));
     let doc = parse(&source);
-    assert_eq!(codes(&doc), [BlockId(0)]);
-    assert_eq!(
-        visible(&doc, doc.blocks()[0].source),
-        format!("```{}\n", " ".repeat(BLOCK_LOOKAHEAD))
-    );
+    assert_eq!(codes(&doc), [BlockId(0), BlockId(1)]);
+    assert_eq!(visible(&doc, doc.blocks()[0].source), "");
     let prefix = ">".repeat(BLOCK_LOOKAHEAD);
     assert!(codes(&parse(&format!("{prefix}```\n"))).is_empty());
-    // Long fence info is a bounded source summary; later invalidating bytes do
-    // not retroactively revoke the opener, matching the root fence dialect.
+    // A late backtick rejects the raw info candidate and consumes it once.
     let mut doc = Document::new();
     doc.append(&format!("> ```{}", "x".repeat(BLOCK_LOOKAHEAD)))
         .unwrap();
     let before = doc.work();
-    doc.append("`late\n> literal\n> ```\n").unwrap();
+    doc.append("`late\n> literal\n").unwrap();
     doc.finish();
-    assert_eq!(codes(&doc).len(), 1);
-    let BlockKind::Code { info: Some(info) } = doc.blocks()[0].kind else {
-        panic!()
-    };
-    assert_eq!(info.end, BLOCK_LOOKAHEAD);
+    assert!(codes(&doc).is_empty());
+    assert_eq!(doc.work().inline_bytes, (doc.source().len() - 4) as u64);
     assert!(doc.work().classified_bytes - before.classified_bytes < 100);
-    assert_eq!(visible(&doc, doc.blocks()[0].source), "literal\n");
+    assert!(visible(&doc, Span::new(0, doc.source().len())).ends_with("literal\n"));
 }
 
 #[test]

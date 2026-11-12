@@ -256,14 +256,14 @@ fn absent_info_failed_candidates_entities_and_literal_body_keep_their_dialect() 
 
 #[test]
 fn classification_boundary_and_large_history_do_not_expand_read_or_append_work() {
-    // A trailing backslash in committed info cannot consume the later '+'
-    // outside the existing classification window, even after EOF.
+    // The complete raw info crosses the old window; decoding starts only
+    // after LF/EOF confirms it.
     let prefix = format!("~~~ {}\\", "a".repeat(BLOCK_LOOKAHEAD - 5));
     assert_eq!(prefix.len(), BLOCK_LOOKAHEAD);
     let mut doc = Document::new();
     doc.append(&prefix).unwrap();
     let expected = format!("{}\\", "a".repeat(BLOCK_LOOKAHEAD - 5));
-    assert_eq!(infos(&doc), vec![expected.clone()]);
+    assert!(infos(&doc).is_empty());
     doc.append("+").unwrap();
     doc.append(&"z".repeat(1_000_000)).unwrap();
     let before = doc.work();
@@ -274,10 +274,21 @@ fn classification_boundary_and_large_history_do_not_expand_read_or_append_work()
     assert_eq!(after.classified_bytes, before.classified_bytes);
     assert_eq!(after.inline_bytes, before.inline_bytes);
     assert_eq!(after.container_steps, before.container_steps);
-    // Growing hidden opener ranges still update the existing annotation tree.
+    assert_eq!(
+        after.fence_candidate_bytes - before.fence_candidate_bytes,
+        1000
+    );
+    // The provisional raw opener creates no annotation nodes.
     assert!(after.tree_visits - before.tree_visits <= 64 * 1000);
     doc.finish();
-    assert_eq!(infos(&doc), vec![expected]);
+    assert_eq!(
+        infos(&doc),
+        vec![format!(
+            "{}+{}",
+            expected.trim_end_matches('\\'),
+            "z".repeat(1_001_000)
+        )]
+    );
 
     let mut doc = Document::new();
     for _ in 0..4096 {

@@ -201,6 +201,12 @@ pub struct Work {
     pub paragraph_closures: u64,
     pub input_bytes: u64,
     pub classified_bytes: u64,
+    /// Bytes inspected by physical-line fence probes, including bounded
+    /// qualification and the deferred suffix. Failed raw payload enters its
+    /// ordinary consumer once; those visits retain their normal counters.
+    pub fence_candidate_bytes: u64,
+    /// Candidate starts and their single confirmation/rejection event.
+    pub fence_candidate_steps: u64,
     /// ATX payload bytes inspected once for leading whitespace and a possible
     /// closing suffix. Rejected suffixes enter inline parsing at most once.
     pub atx_bytes: u64,

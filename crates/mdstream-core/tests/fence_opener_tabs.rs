@@ -128,17 +128,13 @@ fn failed_candidates_scopes_math_and_window_boundaries() {
         let marker = "~".repeat(length);
         let source = format!("> \t{marker}\n>   x\n");
         let doc = parse(&source);
-        let opens = length + 3 < BLOCK_LOOKAHEAD;
-        assert_eq!(
+        assert!(
             doc.blocks()
                 .iter()
                 .any(|b| matches!(b.kind, BlockKind::Code { .. })),
-            opens,
             "length {length}"
         );
-        if opens {
-            assert_eq!(visible(&doc), "x\n");
-        }
+        assert_eq!(visible(&doc), "x\n");
     }
 }
 
@@ -288,7 +284,7 @@ fn deep_long_body_appends_do_not_rescan_prefix_or_old_text() {
     assert_eq!(doc.container_count(), 1000);
     assert_eq!(doc.blocks().len(), 2);
     assert!(doc.work().classified_bytes < 30 * BLOCK_LOOKAHEAD as u64);
-    // Once the run crosses the shared window, later suffixes cannot reopen it.
+    // A long run keeps a single raw candidate until LF.
     let mut failed = Document::new();
     failed
         .append(&format!("{prefix}\t{}", "~".repeat(2048)))
@@ -304,7 +300,7 @@ fn deep_long_body_appends_do_not_rescan_prefix_or_old_text() {
     failed.append(" rs\n").unwrap();
     failed.finish();
     assert!(
-        !failed
+        failed
             .blocks()
             .iter()
             .any(|b| matches!(b.kind, BlockKind::Code { .. }))

@@ -756,6 +756,7 @@ fn old_header_eligibility_at_window_and_late_pipe_keeps_real_table_shapes() {
                 .split(", ")
                 .filter(|field| {
                     !field.starts_with("link_title_gap_steps:")
+                        && !field.starts_with("fence_candidate_")
                         && !field.starts_with("link_fallback_")
                         && !field.starts_with("bare_")
                 })

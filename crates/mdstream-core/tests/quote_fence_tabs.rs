@@ -80,11 +80,10 @@ fn failure_other_leaves_and_window_keep_their_dialect() {
     ] {
         let source = format!(">\t {}\n> x\n", "~".repeat(length));
         let doc = parse(&source);
-        assert_eq!(
+        assert!(
             doc.blocks()
                 .iter()
-                .any(|b| matches!(b.kind, BlockKind::Code { .. })),
-            length + 3 < BLOCK_LOOKAHEAD
+                .any(|b| matches!(b.kind, BlockKind::Code { .. }))
         );
     }
     let doc = parse(">\t ~~~\n# outside\n");

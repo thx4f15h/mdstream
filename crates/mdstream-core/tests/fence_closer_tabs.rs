@@ -93,7 +93,7 @@ fn scope_math_failure_and_window_boundaries() {
     ] {
         assert_eq!(visible(&parse(source)), expected, "{source:?}");
     }
-    // The candidate must be complete inside the existing classification window.
+    // The closer may complete beyond the classification window.
     for length in [
         BLOCK_LOOKAHEAD - 5,
         BLOCK_LOOKAHEAD - 4,
@@ -102,12 +102,7 @@ fn scope_math_failure_and_window_boundaries() {
     ] {
         let delimiter = "~".repeat(length);
         let source = format!("> ~~~\n> x\n> \t{delimiter}\n> # after\n");
-        let closes = 3 + length < BLOCK_LOOKAHEAD;
-        let expected = if closes {
-            "x\nafter\n".to_owned()
-        } else {
-            format!("x\n\t{delimiter}\n# after\n")
-        };
+        let expected = "x\nafter\n";
         assert_eq!(visible(&parse(&source)), expected, "length {length}");
     }
 }
@@ -252,13 +247,9 @@ fn deep_long_bodies_and_failed_closers_do_not_rescan() {
     assert_eq!(after.container_steps, before.container_steps);
     assert_eq!(after.inline_bytes, before.inline_bytes);
     assert_eq!(after.tree_visits, before.tree_visits);
-    doc.append(&format!("\n{prefix}\t~~~\n{prefix}# after\n"))
-        .unwrap();
+    doc.append(&format!("\n{prefix}# after\n")).unwrap();
     doc.finish();
-    assert_eq!(
-        visible(&doc),
-        format!("{}\n\t{}\nafter\n", "x".repeat(1_000_000), "~".repeat(3048))
-    );
+    assert_eq!(visible(&doc), format!("{}\nafter\n", "x".repeat(1_000_000)));
     assert_eq!(doc.container_count(), 1000);
     assert_eq!(doc.blocks().len(), 2);
     assert!(doc.work().classified_bytes < 30 * BLOCK_LOOKAHEAD as u64);

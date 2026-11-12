@@ -2879,3 +2879,11 @@ README、TODO 精准同步：核心范围扩展单独勾选，实际选区控件
 当前快照为 CommonMark 516 支持、32 刻意差异、40 未支持，GFM 四扩展 27 支持；分类由各章测试负责，工具每次重新计算，不要求未来维持这些总数。README 说明复核命令、排除范围及未支持项的既有具体待办归属；TODO 仅完成需求内样例评分覆盖，不添加总括兼容性需求、不把刻意方言转为待实现要求，也不宣称完整 CommonMark/GFM 兼容。已有真实未完范围保留。
 
 验证均通过：`nix develop -c cargo check --all-targets`；Precedence 专项 nextest 4/4；新增生成器 `--check`、全部 38 份生成器/章节成员核验及真实报告覆盖审计；38 个生成器各自拒绝篡改 SHA 和章节成员（76 项），覆盖审计另拒绝夹具篡改、CommonMark/GFM 缺测试、重复成员、忽略报告、零执行及缺分类输出（7 项）。完整 debug/release nextest 各 1876/1876，文档测试 72+4，`cargo doc --workspace --no-deps`、`cargo fmt --all -- --check`、`git diff --check` 通过。
+
+## 2026-11-12 跨分类窗口的长围栏交付
+
+- 已识别 root/Quote/Item 前缀后的 backtick/tilde opener、closer 和完整 info 无语法长度上限；保留原有列宽去缩进、部分 tab 映射、作用域退出、EOF 及 info 预算解码。公共 `MAX_FENCE_LENGTH` 从历史 32/1023 上限迁移为 deprecated 的历史值 1023；生产及仓内消费者不再据它限长、分配或枚举。
+- 固定大小探测状态仅保存 run 长度、info 端点及原始分类上下文。原文暂定可见，pending 仅含原有界前缀；LF/CRLF/EOF 确认，非法后缀立即进入普通表头/行内或字面代码路径一次。失败长 info 保留表头资格、表格单元格边界和稳定对象 ID；实际范围变化使旧 tile、测量、DisplayCursor 与 LayoutPass 失效。
+- `Work.fence_candidate_bytes/steps` 记录实际探测字节及建立/唯一决议，恢复继续使用原摘要/行内/表格计数；旧 Work 黄金值投影仅排除新增字段。无正文/祖先复制、增长旧行回扫、重复普通消费或历史代际状态；探测 O(n)、额外候选 O(1)，整体累计 O(n log n)、空间 O(n)，零运行时依赖及 forbid unsafe 保持。
+- 验证：12 项新专项含独立 180 组 opener/info、5,760 组 closer 模型，3/1023/1024/4096/百万 marker、五组百万次逐字增长、单次失败恢复、完整深路径/部分 tab/作用域、全部 UTF-8 字节切点与逐前缀/EOF、原始映射、0/1/6 共享预算、真实布局及测量。101 项组合专项、完整 debug/release 各 1,888 项、76 项 doc、文档构建、fmt 和生产 clippy 全通过。官方 119–147 输入/HTML/评分器未改，保持 29 支持、0 刻意差异、0 未支持。
+- 限制：一般结构前缀仍受分类窗口约束；完整容器/其它叶块 tab、不完整路径、一般晚表头及完整行内代码失败重放继续保留各自待办，围栏父项未勾选。独立 `$$` 方言和既有代码正文规则不变。

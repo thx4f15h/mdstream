@@ -1,10 +1,12 @@
 use crate::Span;
 
 /// General block classification prefix bound (+3 to finish UTF-8). A long
-/// table header/separator can defer a raw suffix without buffering/copying it.
+/// table header/separator or fence can defer a raw suffix without copying it.
 pub const BLOCK_LOOKAHEAD: usize = 1024;
-/// Maximum opening run, leaving one classification byte to confirm its end.
-/// Container prefixes and indentation also consume the classification window.
+/// Historical bounded-classifier threshold, retained for source compatibility.
+/// This is **not** a fence length limit: opening/closing runs have no grammar
+/// maximum. Do not use this value to validate fences or enumerate all lengths.
+#[deprecated(note = "historical classification threshold; fences have no maximum length")]
 pub const MAX_FENCE_LENGTH: usize = BLOCK_LOOKAHEAD - 1;
 
 #[derive(Clone, Copy)]
@@ -236,7 +238,7 @@ pub(crate) fn classify_indented(
             .iter()
             .take_while(|&&b| b == fence_text[0])
             .count();
-        if (3..=MAX_FENCE_LENGTH).contains(&length)
+        if length >= 3
             // A run cut by the window may continue in the next append. In
             // particular, a container prefix can leave fewer than MAX bytes.
             && (complete || length < fence_text.len())
@@ -276,6 +278,109 @@ pub(crate) fn classify_indented(
         }
     }
     Line::Text
+}
+
+/// Single physical-line candidate. The raw source remains provisional until
+/// LF/EOF; only endpoints and the current run length survive an append.
+pub(crate) struct FenceProbe {
+    fence: Fence,
+    minimum: usize,
+    closing: bool,
+    run: bool,
+    info: Option<Span>,
+}
+
+impl FenceProbe {
+    pub fn new(
+        source: &str,
+        span: Span,
+        active: Option<Fence>,
+        mut indent: u8,
+        mut column: u8,
+        work: &mut crate::Work,
+    ) -> Option<Self> {
+        if active.is_some_and(|f| f.byte == b'$') {
+            return None;
+        }
+        let mut start = span.start;
+        for &byte in &source.as_bytes()[span.range()] {
+            work.fence_candidate_bytes += 1;
+            let width = match byte {
+                b' ' => 1,
+                b'\t' => 4 - column,
+                _ => break,
+            };
+            indent += width;
+            if indent > 3 {
+                return None;
+            }
+            column = (column + width) % 4;
+            start += 1;
+        }
+        let byte = *source.as_bytes().get(start).filter(|_| start < span.end)?;
+        if !matches!(byte, b'`' | b'~') || active.is_some_and(|f| f.byte != byte) {
+            return None;
+        }
+        let mut probe = Self {
+            fence: Fence {
+                byte,
+                length: 0,
+                indent,
+                remaining_indent: 0,
+                indent_column: 0,
+            },
+            minimum: active.map_or(3, |f| f.length),
+            closing: active.is_some(),
+            run: true,
+            info: None,
+        };
+        if !probe.feed(source, Span::new(start, span.end), work) {
+            return None;
+        }
+        Some(probe)
+    }
+
+    pub fn feed(&mut self, source: &str, span: Span, work: &mut crate::Work) -> bool {
+        for at in span.range() {
+            work.fence_candidate_bytes += 1;
+            let byte = source.as_bytes()[at];
+            if byte == b'\n' {
+                continue;
+            }
+            if self.run && byte == self.fence.byte {
+                self.fence.length += 1;
+                continue;
+            }
+            self.run = false;
+            if self.fence.length < self.minimum {
+                return false;
+            }
+            if self.closing {
+                if !byte.is_ascii_whitespace() {
+                    return false;
+                }
+            } else {
+                if self.fence.byte == b'`' && byte == b'`' {
+                    return false;
+                }
+                if !byte.is_ascii_whitespace() {
+                    self.info = Some(Span::new(self.info.map_or(at, |s| s.start), at + 1));
+                }
+            }
+        }
+        true
+    }
+
+    pub fn finish(self) -> Option<Line> {
+        (self.fence.length >= self.minimum).then_some(if self.closing {
+            Line::FenceClose
+        } else {
+            Line::FenceOpen {
+                fence: self.fence,
+                info: self.info,
+            }
+        })
+    }
 }
 
 /// Match closers before stripping body indentation. `column` is the physical
