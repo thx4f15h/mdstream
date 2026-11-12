@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    ops::Range,
+    ops::{Bound, Range},
 };
 
 use crate::{
@@ -10,7 +10,8 @@ use crate::{
 };
 
 /// Syntax IDs are document-local; Source IDs identify one view registration.
-/// Crossing ranges are unsupported.
+/// Source overlays can nest/cross syntax and other source overlays; original
+/// strict registration APIs retain their conservative validation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FoldId {
     Heading(HeadingId),
@@ -94,6 +95,10 @@ pub struct FoldCandidate {
     /// Whole section, code/math block, table, registered range or container, including the retained heading.
     pub source: Span,
     /// Body replaced by a placeholder. Empty bodies produce no placeholder.
+    /// Registry queries return the actual interval. Visibility/layout queries
+    /// return a union projection: its start is the component's placeholder and
+    /// its end is the currently discovered right frontier, possibly beyond this
+    /// owner's source envelope. Later extensions are separate budgeted steps.
     pub hidden: Span,
     /// Title, fence info, table header, first selected row, source or container range.
     pub summary: Option<Span>,
@@ -107,7 +112,7 @@ impl FoldCandidate {
     pub(crate) fn contains_candidate(&self, other: &Self) -> bool {
         let order = |candidate: &Self| match candidate.id {
             FoldId::Container(id) => (candidate.source.start, 0, id.0),
-            FoldId::Source(_) => (candidate.source.start, 2, 0),
+            FoldId::Source(id) => (candidate.source.start, 2, id.0),
             _ => (candidate.source.start, 1, 0),
         };
         self.source.start <= other.source.start
@@ -256,25 +261,37 @@ impl FoldCandidates {
 struct Mask {
     candidate: FoldCandidate,
     tiles: Range<usize>,
+    boundary: Option<(u64, bool)>,
+}
+
+struct SourceBoundary {
+    members: usize,
+    covers: usize,
+    tile: Option<usize>,
+    end: usize,
 }
 
 #[derive(Default)]
 pub(crate) struct FoldState {
     collapsed: BTreeMap<FoldId, Mask>,
     starts: BTreeSet<(usize, FoldId)>,
-    // Registered disjoint ranges, including expanded and previewed choices.
-    // Stable physical starts support overlap validation and point predecessor
-    // queries without walking a table's rows or the other registered ranges.
+    // Row registrations remain disjoint. Source envelopes and selected hidden
+    // intervals have independent augmented indexes, including duplicate starts.
+    // The strict-only index keeps legacy row validation independent of overlays.
     row_ranges: BTreeMap<usize, TableRowRange>,
-    source_ranges: BTreeMap<usize, SourceFoldId>,
+    source_ranges: crate::fold_intervals::Intervals,
+    hidden_ranges: crate::fold_intervals::Intervals,
+    strict_source_ranges: crate::fold_intervals::Intervals,
     source_candidates: BTreeMap<SourceFoldId, SourceCandidate>,
     // The sole open logical paragraph, even if expanded or previewed.
     open_paragraph: Option<SourceFoldId>,
-    // One disjoint root tail, independent of paragraph and fixed EOF refresh.
-    open_source_tail: Option<SourceFoldId>,
-    // At most one disjoint source range ends at the old EOF. It can coexist
-    // with a completed syntax/row boundary, so it needs its own refresh slot.
-    source_boundary: Option<SourceFoldId>,
+    // Document-tail IDs share EOF in both registry and selected mask indexes.
+    open_source_tails: BTreeSet<SourceFoldId>,
+    // A generation groups collapsed fixed cuts at the same old EOF. One shared
+    // last-tile cover is corrected on the next apply; surviving complete tiles
+    // retain it until their last member is removed. No history/range scan.
+    source_boundary_generation: u64,
+    source_boundaries: BTreeMap<u64, SourceBoundary>,
     // A completed row range or code/math block can end at EOF inside a growable
     // tile. These cannot share EOF, so one slot suffices for the next refresh.
     fixed_boundary: Option<FoldId>,
@@ -293,6 +310,7 @@ pub(crate) struct FoldState {
 struct SourceCandidate {
     candidate: FoldCandidate,
     paragraph: Option<BlockId>,
+    flexible: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -510,12 +528,128 @@ impl Document {
 }
 
 impl FoldState {
+    fn source_key(entry: SourceCandidate) -> crate::fold_intervals::Key {
+        let c = entry.candidate;
+        crate::fold_intervals::key(
+            c.source.start,
+            if c.open && entry.paragraph.is_none() {
+                usize::MAX
+            } else {
+                c.source.end
+            },
+            c.id,
+        )
+    }
+
+    fn hidden_key(&self, c: FoldCandidate) -> crate::fold_intervals::Key {
+        crate::fold_intervals::key(
+            c.hidden.start,
+            if c.open || matches!(c.id, FoldId::Source(id) if self.open_source_tails.contains(&id))
+            {
+                usize::MAX
+            } else {
+                c.hidden.end
+            },
+            c.id,
+        )
+    }
+
+    fn source_candidate(&self, document: &Document, id: SourceFoldId) -> Option<FoldCandidate> {
+        let entry = *self.source_candidates.get(&id)?;
+        let mut c = entry.candidate;
+        if self.open_source_tails.contains(&id) {
+            c.source.end = document.source().len();
+            c.hidden.end = c.source.end;
+            c.summary = Some(c.source);
+            c.open = !document.is_finished();
+        }
+        let syntax = c.parent.and_then(|id| document.fold_candidate(id));
+        c.parent = syntax
+            .filter(|p| p.source.start <= c.source.start && c.source.end <= p.source.end)
+            .map(|p| p.id);
+        if let Some(parent) = self.source_ranges.parent(Self::source_key(entry)) {
+            let outer = Span::new(parent.0, parent.1.0.min(document.source().len()));
+            if c.parent.is_none()
+                || syntax
+                    .is_some_and(|p| p.source.start <= outer.start && outer.end <= p.source.end)
+            {
+                c.parent = Some(parent.3);
+            }
+        }
+        Some(c)
+    }
+
+    fn mask_interior(&self, document: &Document, c: FoldCandidate) -> Range<usize> {
+        let mut tiles = Self::interior(document, c.hidden);
+        if matches!(c.id, FoldId::Source(_))
+            && !c.open
+            && c.hidden.end == document.source().len()
+            && !document.is_finished()
+            && let Some(last) = document.tile_at(c.hidden.end.saturating_sub(1))
+        {
+            tiles.end = tiles.end.min(last.0).max(tiles.start);
+        }
+        tiles
+    }
+
+    fn add_source_boundary(
+        &mut self,
+        document: &Document,
+        heights: &mut HeightIndex,
+        c: FoldCandidate,
+    ) -> Option<(u64, bool)> {
+        if matches!(c.id, FoldId::Source(_))
+            && !c.open
+            && c.hidden.end == document.source().len()
+            && !document.is_finished()
+        {
+            let group = self
+                .source_boundaries
+                .entry(self.source_boundary_generation)
+                .or_insert(SourceBoundary {
+                    members: 0,
+                    covers: 0,
+                    tile: None,
+                    end: c.hidden.end,
+                });
+            group.members += 1;
+            let full = Self::interior(document, c.hidden);
+            let covered = full.end > full.start;
+            if covered {
+                let tile = full.end - 1;
+                if group.covers == 0 {
+                    group.tile = Some(tile);
+                    heights.cover(tile..tile + 1, true);
+                }
+                group.covers += 1;
+            }
+            return Some((self.source_boundary_generation, covered));
+        }
+        None
+    }
+
     pub(crate) fn paragraph(&self, id: FoldId) -> Option<BlockId> {
         let FoldId::Source(id) = id else { return None };
         self.source_candidates.get(&id)?.paragraph
     }
 
-    pub(crate) fn segment(&self, document: &Document, offset: usize) -> FoldSegment {
+    pub(crate) fn covering(&self, document: &Document, offset: usize) -> Option<FoldCandidate> {
+        if offset >= document.source().len() {
+            return None;
+        }
+        let key = self
+            .hidden_ranges
+            .next(Bound::Unbounded, offset, offset + 1)?;
+        match key.3 {
+            FoldId::Source(id) => self.source_candidate(document, id),
+            id => document.fold_candidate(id),
+        }
+    }
+
+    // The shared EOF sentinel must not demote a real syntax ancestor when
+    // finish makes that ancestor finite. Existing topology indexes resolve the
+    // outer syntax owner without walking a container/scoped-heading chain.
+    fn syntax_hidden(&self, document: &Document, offset: usize) -> Option<FoldCandidate> {
         let mut hidden = None;
         let mut heading = document.headings().root_current(offset);
         while let Some(id) = heading {
@@ -562,18 +696,33 @@ impl FoldState {
         {
             hidden = Some(mask.candidate);
         }
-        if let Some((_, &id)) = self.source_ranges.range(..=offset).next_back()
-            && let Some(mask) = self.collapsed.get(&FoldId::Source(id))
-            && mask.candidate.hidden.range().contains(&offset)
-            && hidden.is_none_or(|inner| {
-                mask.candidate.hidden.start <= inner.hidden.start
-                    && inner.hidden.end <= mask.candidate.hidden.end
-                    && mask.candidate.hidden != inner.hidden
-            })
+        hidden
+    }
+
+    pub(crate) fn segment(&self, document: &Document, offset: usize) -> FoldSegment {
+        if offset < document.source().len()
+            && let Some(component) = self.hidden_ranges.component(offset)
         {
-            hidden = Some(mask.candidate);
-        }
-        if let Some(candidate) = hidden {
+            let id = component.owner.3;
+            let mut candidate = match id {
+                FoldId::Source(id) => self
+                    .source_candidate(document, id)
+                    .expect("registered source"),
+                _ => document.fold_candidate(id).expect("stable syntax identity"),
+            };
+            if component.owner.1.0 == usize::MAX
+                && matches!(candidate.id, FoldId::Source(_))
+                && let Some(parent) = self.syntax_hidden(document, component.owner.0)
+                && parent.hidden.start == component.owner.0
+                && parent.source.start <= candidate.source.start
+                && candidate.source.end <= parent.source.end
+            {
+                candidate = parent;
+            }
+            candidate.hidden = Span::new(
+                component.owner.0,
+                component.end.min(document.source().len()),
+            );
             return FoldSegment::Hidden(candidate);
         }
         let end = self
@@ -594,16 +743,32 @@ impl FoldState {
         heights.cover(mask.tiles.clone(), false);
         self.starts.remove(&(mask.candidate.hidden.start, id));
         self.growing.remove(&id);
-        if let FoldId::Source(source) = id
-            && self.source_boundary == Some(source)
-        {
-            self.source_boundary = None;
+        self.hidden_ranges.remove(self.hidden_key(mask.candidate));
+        if let Some((generation, covered)) = mask.boundary {
+            let group = self
+                .source_boundaries
+                .get_mut(&generation)
+                .expect("paired source boundary");
+            group.members -= 1;
+            if covered {
+                group.covers -= 1;
+                if group.covers == 0
+                    && let Some(tile) = group.tile.take()
+                {
+                    heights.cover(tile..tile + 1, false);
+                }
+            }
+            if group.members == 0 {
+                self.source_boundaries.remove(&generation);
+            }
         }
         if self.fixed_boundary == Some(id) {
             self.fixed_boundary = None;
         }
         if self.shared_range(document, id) {
-            self.range_index(id).set(Self::range_id(id), 0);
+            if !matches!(id, FoldId::Source(_)) {
+                self.range_index(id).set(Self::range_id(id), 0);
+            }
             self.open_ranges.remove(&(mask.candidate.hidden.start, id));
             self.refresh_open_tiles(document, heights);
         }
@@ -617,9 +782,9 @@ impl FoldState {
         let tiles = if open_shared {
             0..0
         } else {
-            Self::interior(document, hidden)
+            self.mask_interior(document, candidate)
         };
-        if shared {
+        if shared && !matches!(candidate.id, FoldId::Source(_)) {
             self.range_index(candidate.id).set(
                 Self::range_id(candidate.id),
                 if candidate.open {
@@ -628,10 +793,10 @@ impl FoldState {
                     hidden.end
                 },
             );
-            if candidate.open {
-                self.open_ranges.insert((hidden.start, candidate.id));
-                self.refresh_open_tiles(document, heights);
-            }
+        }
+        if open_shared {
+            self.open_ranges.insert((hidden.start, candidate.id));
+            self.refresh_open_tiles(document, heights);
         }
         if !hidden.is_empty() {
             self.starts.insert((hidden.start, candidate.id));
@@ -640,22 +805,20 @@ impl FoldState {
         if candidate.open && !open_shared && !matches!(candidate.id, FoldId::Source(_)) {
             self.growing.insert(candidate.id);
         }
-        self.collapsed
-            .insert(candidate.id, Mask { candidate, tiles });
+        self.hidden_ranges.insert(self.hidden_key(candidate));
+        let boundary = self.add_source_boundary(document, heights, candidate);
+        self.collapsed.insert(
+            candidate.id,
+            Mask {
+                candidate,
+                tiles,
+                boundary,
+            },
+        );
         self.track_fixed_boundary(document, candidate);
     }
 
     fn track_fixed_boundary(&mut self, document: &Document, candidate: FoldCandidate) {
-        if let FoldId::Source(id) = candidate.id {
-            if !candidate.open
-                && candidate.hidden.end == document.source().len()
-                && !document.is_finished()
-            {
-                self.source_boundary = Some(id);
-            } else if self.source_boundary == Some(id) {
-                self.source_boundary = None;
-            }
-        }
         if matches!(
             candidate.id,
             FoldId::TableRows(_) | FoldId::Code(_) | FoldId::Math(_)
@@ -675,6 +838,7 @@ impl FoldState {
         match id {
             FoldId::Container(_) => true,
             FoldId::Heading(id) => document.headings().get(id).unwrap().container.is_some(),
+            FoldId::Source(id) => self.open_source_tails.contains(&id),
             _ => false,
         }
     }
@@ -683,6 +847,7 @@ impl FoldState {
         match id {
             FoldId::Container(id) => id.0,
             FoldId::Heading(id) => id.0,
+            FoldId::Source(_) => 0,
             _ => unreachable!(),
         }
     }
@@ -726,53 +891,9 @@ impl FoldState {
         heights: &mut HeightIndex,
         candidate: FoldCandidate,
     ) {
-        let shared = self.shared_range(document, candidate.id);
-        let mask = self.collapsed.get_mut(&candidate.id).unwrap();
-        let old = mask.candidate;
-        let tiles = if shared && candidate.open {
-            0..0
-        } else {
-            Self::interior(document, candidate.hidden)
-        };
-        if mask.tiles != tiles {
-            heights.cover(mask.tiles.clone(), false);
-            heights.cover(tiles.clone(), true);
-            mask.tiles = tiles;
-        }
-        let old_start = (!mask.candidate.hidden.is_empty())
-            .then_some((mask.candidate.hidden.start, candidate.id));
-        let new_start =
-            (!candidate.hidden.is_empty()).then_some((candidate.hidden.start, candidate.id));
-        if old_start != new_start {
-            if let Some(key) = old_start {
-                self.starts.remove(&key);
-            }
-            if let Some(key) = new_start {
-                self.starts.insert(key);
-            }
-        }
-        if !candidate.open {
-            self.growing.remove(&candidate.id);
-        }
-        mask.candidate = candidate;
-        self.track_fixed_boundary(document, candidate);
-        if shared {
-            if old.open != candidate.open || !candidate.open {
-                self.range_index(candidate.id).set(
-                    Self::range_id(candidate.id),
-                    if candidate.open {
-                        usize::MAX
-                    } else {
-                        candidate.hidden.end
-                    },
-                );
-            }
-            self.open_ranges.remove(&(old.hidden.start, candidate.id));
-            if candidate.open {
-                self.open_ranges
-                    .insert((candidate.hidden.start, candidate.id));
-            }
-        }
+        self.remove(document, heights, candidate.id)
+            .expect("existing mask");
+        self.insert(document, heights, candidate);
     }
 }
 
@@ -848,13 +969,16 @@ impl<S> FoldView<S> {
 
     pub(crate) fn candidate(&self, document: &Document, id: FoldId) -> Option<FoldCandidate> {
         match id {
-            FoldId::Source(id) => self.state.source_candidates.get(&id).map(|c| c.candidate),
+            FoldId::Source(id) => self.state.source_candidate(document, id),
             FoldId::TableRows(range) if !self.has_table_rows(document, range) => None,
             _ => document.fold_candidate(id),
         }
     }
 
-    /// Registered source interval containing a byte, even when expanded.
+    /// First registered envelope containing a byte, even when expanded: earliest
+    /// start, longest stored end, then ID. Live tails use an unbounded end rank,
+    /// retained after finish; explicit sealing makes it finite. Use budgeted
+    /// SourceFoldCandidates to discover every intersecting envelope.
     /// O(log R), no ancestor walk or body read. EOF belongs to no interval.
     pub fn source_fold_at(
         &self,
@@ -865,22 +989,68 @@ impl<S> FoldView<S> {
         if offset > document.source().len() {
             return Err(LayoutError::InvalidRange);
         }
-        Ok(self.source_at(offset))
+        Ok(if offset == document.source().len() {
+            None
+        } else {
+            self.source_at(document, offset)
+        })
     }
 
-    fn source_at(&self, offset: usize) -> Option<FoldCandidate> {
-        let (_, id) = self.state.source_ranges.range(..=offset).next_back()?;
-        let candidate = self.state.source_candidates[id].candidate;
-        candidate
-            .source
-            .range()
-            .contains(&offset)
-            .then_some(candidate)
+    fn source_at(&self, document: &Document, offset: usize) -> Option<FoldCandidate> {
+        let key = self
+            .state
+            .source_ranges
+            .next(Bound::Unbounded, offset, offset + 1)?;
+        let FoldId::Source(id) = key.3 else {
+            unreachable!()
+        };
+        self.state.source_candidate(document, id)
     }
 
-    pub(crate) fn next_source_fold(&self, start: usize, end: usize) -> Option<FoldCandidate> {
-        let (_, id) = self.state.source_ranges.range(start..end).next()?;
-        Some(self.state.source_candidates[id].candidate)
+    pub(crate) fn next_source_fold(
+        &self,
+        document: &Document,
+        after: Bound<crate::fold_intervals::Key>,
+        start: usize,
+        end: usize,
+    ) -> Option<FoldCandidate> {
+        let key = self.state.source_ranges.next(after, start, end)?;
+        let FoldId::Source(id) = key.3 else {
+            unreachable!()
+        };
+        self.state.source_candidate(document, id)
+    }
+
+    pub(crate) fn has_open_paragraph(&self) -> bool {
+        self.state.open_paragraph.is_some()
+    }
+
+    pub(crate) fn source_fold_is_tail(&self, id: SourceFoldId) -> bool {
+        self.state.open_source_tails.contains(&id)
+    }
+
+    pub(crate) fn source_fold_is_flexible(&self, id: SourceFoldId) -> bool {
+        self.state.source_candidates[&id].flexible
+    }
+
+    pub(crate) fn contains_candidate(&self, outer: &FoldCandidate, inner: &FoldCandidate) -> bool {
+        if outer.source == inner.source
+            && matches!(outer.id, FoldId::Source(_))
+            && matches!(inner.id, FoldId::Source(_))
+        {
+            // Live/finished tail sentinels retain their envelope order until
+            // explicitly sealed; batches must agree with lazy parent lookup.
+            self.source_cursor(outer.id) <= self.source_cursor(inner.id)
+        } else {
+            outer.contains_candidate(inner)
+        }
+    }
+
+    pub(crate) fn source_cursor(&self, id: FoldId) -> crate::fold_intervals::Key {
+        let FoldId::Source(id) = id else {
+            unreachable!()
+        };
+        FoldState::source_key(self.state.source_candidates[&id])
     }
 
     /// Stable paragraph block bound to a source registration, or None for a
@@ -896,18 +1066,15 @@ impl<S> FoldView<S> {
 
     /// Active registrations only; removing a range releases its registry entries.
     pub fn source_fold_count(&self) -> usize {
-        self.state.source_ranges.len()
+        self.state.source_candidates.len()
     }
 
     pub(crate) fn validate_source_span(&self, source: Span) -> Result<(), LayoutError> {
         if self
             .state
             .source_ranges
-            .range(..source.end)
-            .next_back()
-            .is_some_and(|(_, id)| {
-                self.state.source_candidates[id].candidate.source.end > source.start
-            })
+            .next(Bound::Unbounded, source.start, source.end)
+            .is_some()
         {
             return Err(LayoutError::InvalidRange);
         }
@@ -935,9 +1102,9 @@ impl<S> FoldView<S> {
         parent: Option<FoldId>,
         paragraph: Option<BlockId>,
         open: bool,
+        flexible: bool,
     ) -> FoldId {
         let id = SourceFoldId::new();
-        self.state.source_ranges.insert(source.start, id);
         self.state.source_candidates.insert(
             id,
             SourceCandidate {
@@ -954,24 +1121,36 @@ impl<S> FoldView<S> {
                     open,
                 },
                 paragraph,
+                flexible,
             },
         );
+        self.state
+            .source_ranges
+            .insert(FoldState::source_key(self.state.source_candidates[&id]));
+        if !self.state.source_candidates[&id].flexible {
+            self.state
+                .strict_source_ranges
+                .insert(FoldState::source_key(self.state.source_candidates[&id]));
+        }
         if open {
             if paragraph.is_some() {
                 debug_assert!(self.state.open_paragraph.is_none());
                 self.state.open_paragraph = Some(id);
             } else {
-                debug_assert!(self.state.open_source_tail.is_none());
-                self.state.open_source_tail = Some(id);
+                self.state.open_source_tails.insert(id);
             }
         }
         self.version += 1;
         FoldId::Source(id)
     }
 
-    pub(crate) fn live_source_tail(&self, id: SourceFoldId) -> Option<FoldCandidate> {
-        (self.state.open_source_tail == Some(id))
-            .then(|| self.state.source_candidates[&id].candidate)
+    pub(crate) fn live_source_tail(
+        &self,
+        document: &Document,
+        id: SourceFoldId,
+    ) -> Option<FoldCandidate> {
+        (self.state.open_source_tails.contains(&id) && !document.is_finished())
+            .then(|| self.state.source_candidate(document, id).unwrap())
     }
 
     pub(crate) fn seal_source_tail(
@@ -979,12 +1158,33 @@ impl<S> FoldView<S> {
         document: &Document,
         id: SourceFoldId,
     ) -> Result<FoldId, LayoutError> {
-        let mut candidate = self.live_source_tail(id).ok_or(LayoutError::InvalidRange)?;
+        let mut candidate = self
+            .live_source_tail(document, id)
+            .ok_or(LayoutError::InvalidRange)?;
+        let collapsed = self
+            .state
+            .remove(document, &mut self.heights, candidate.id)
+            .is_some();
+        self.state
+            .source_ranges
+            .remove(FoldState::source_key(self.state.source_candidates[&id]));
+        self.state
+            .strict_source_ranges
+            .remove(FoldState::source_key(self.state.source_candidates[&id]));
         candidate.open = false;
+        candidate.parent = self.state.source_candidates[&id].candidate.parent;
         self.state.source_candidates.get_mut(&id).unwrap().candidate = candidate;
-        self.state.open_source_tail = None;
-        if self.state.collapsed.contains_key(&candidate.id) {
-            self.state.refresh(document, &mut self.heights, candidate);
+        self.state.open_source_tails.remove(&id);
+        self.state
+            .source_ranges
+            .insert(FoldState::source_key(self.state.source_candidates[&id]));
+        if !self.state.source_candidates[&id].flexible {
+            self.state
+                .strict_source_ranges
+                .insert(FoldState::source_key(self.state.source_candidates[&id]));
+        }
+        if collapsed {
+            self.state.insert(document, &mut self.heights, candidate);
         }
         self.version += 1;
         self.expire_from(document, candidate.hidden.start)?;
@@ -1001,22 +1201,25 @@ impl<S> FoldView<S> {
         id: SourceFoldId,
     ) -> Result<Option<FoldChange>, LayoutError> {
         self.check(document)?;
-        let Some(entry) = self.state.source_candidates.remove(&id) else {
+        let Some(candidate) = self.state.source_candidate(document, id) else {
             return Ok(None);
         };
-        let candidate = entry.candidate;
+        let entry = self.state.source_candidates.remove(&id).unwrap();
         if let Some(block) = entry.paragraph {
             self.paragraph_auto_excluded.insert(block);
         }
-        self.state.source_ranges.remove(&candidate.source.start);
-        if self.state.open_source_tail == Some(id) {
-            self.state.open_source_tail = None;
-        }
+        self.state
+            .source_ranges
+            .remove(FoldState::source_key(entry));
+        self.state
+            .strict_source_ranges
+            .remove(FoldState::source_key(entry));
         if self.state.open_paragraph == Some(id) {
             self.state.open_paragraph = None;
         }
         self.state
             .remove(document, &mut self.heights, FoldId::Source(id));
+        self.state.open_source_tails.remove(&id);
         if self.preview() == Some(FoldId::Source(id)) {
             self.preview = None;
         }
@@ -1051,12 +1254,17 @@ impl<S> FoldView<S> {
             .fold_candidate(id)
             .ok_or(LayoutError::InvalidRange)?;
         for offset in [candidate.source.start, candidate.source.end - 1] {
-            if let Some(manual) = self.source_at(offset) {
+            if let Some(key) =
+                self.state
+                    .strict_source_ranges
+                    .next(Bound::Unbounded, offset, offset + 1)
+                && let FoldId::Source(manual_id) = key.3
+                && let Some(manual) = self.state.source_candidate(document, manual_id)
+            {
                 // A live root tail also grows with an incomplete row. Only
                 // this slot can contain future growth past the current EOF;
                 // fixed ranges and paragraph overlays keep their validator.
-                let live_contains = self.state.open_source_tail.map(FoldId::Source)
-                    == Some(manual.id)
+                let live_contains = matches!(manual.id, FoldId::Source(id) if self.state.open_source_tails.contains(&id) || self.state.source_candidates[&id].flexible)
                     && manual.source.start <= candidate.source.start
                     && candidate.source.end <= manual.source.end;
                 if !live_contains {
@@ -1142,7 +1350,8 @@ impl<S> FoldView<S> {
     pub fn range_visits(&self) -> u64 {
         self.range_visits
     }
-    /// Container index nodes visited by mutations and visibility queries.
+    /// Container topology index mutation and equal-start Source/syntax owner
+    /// resolution visits. Union visibility uses the augmented interval index.
     pub fn container_index_visits(&self) -> u64 {
         self.state.containers.visits()
     }
@@ -1150,7 +1359,8 @@ impl<S> FoldView<S> {
     pub fn container_index_nodes(&self) -> usize {
         self.state.containers.node_count()
     }
-    /// Scoped-section index visits; ordinary body growth performs no writes.
+    /// Scoped-section topology mutation/owner-resolution visits; body growth
+    /// writes none.
     pub fn section_index_visits(&self) -> u64 {
         self.state.sections.visits()
     }
@@ -1158,6 +1368,24 @@ impl<S> FoldView<S> {
     pub fn section_index_nodes(&self) -> usize {
         self.state.sections.node_count()
     }
+    /// Actual AVL nodes visited by all selected-interval mutations and queries.
+    /// Rotations add only constant node work per visited path element.
+    pub fn fold_index_visits(&self) -> u64 {
+        self.state.hidden_ranges.visits()
+    }
+    /// One owned AVL node per selected interval; removed nodes are freed.
+    pub fn fold_index_nodes(&self) -> usize {
+        self.state.hidden_ranges.node_count()
+    }
+    /// All source envelope/strict-validation/parent lookup AVL visits.
+    pub fn source_index_visits(&self) -> u64 {
+        self.state.source_ranges.visits() + self.state.strict_source_ranges.visits()
+    }
+    /// Owned envelope nodes, including a second entry for each strict range.
+    pub fn source_index_nodes(&self) -> usize {
+        self.state.source_ranges.node_count() + self.state.strict_source_ranges.node_count()
+    }
+
     /// Local choice, including the choice temporarily overridden by preview.
     /// Use hidden_at to query actual visibility under ancestors and preview.
     pub fn is_collapsed(&self, id: FoldId) -> bool {
@@ -1481,7 +1709,21 @@ impl<S> FoldView<S> {
                 open,
                 ..old
             };
+            self.state
+                .source_ranges
+                .remove(FoldState::source_key(entry));
+            self.state
+                .strict_source_ranges
+                .remove(FoldState::source_key(entry));
             self.state.source_candidates.get_mut(&id).unwrap().candidate = new;
+            self.state
+                .source_ranges
+                .insert(FoldState::source_key(self.state.source_candidates[&id]));
+            if !entry.flexible {
+                self.state
+                    .strict_source_ranges
+                    .insert(FoldState::source_key(self.state.source_candidates[&id]));
+            }
             if !open {
                 self.state.open_paragraph = None;
             }
@@ -1494,7 +1736,12 @@ impl<S> FoldView<S> {
         } else {
             self.state.remove(document, &mut self.heights, old.id);
             self.state.source_candidates.remove(&id);
-            self.state.source_ranges.remove(&old.source.start);
+            self.state
+                .source_ranges
+                .remove(FoldState::source_key(entry));
+            self.state
+                .strict_source_ranges
+                .remove(FoldState::source_key(entry));
             self.state.open_paragraph = None;
             if self.preview() == Some(old.id) {
                 self.preview = None;
@@ -1503,28 +1750,14 @@ impl<S> FoldView<S> {
         }
     }
 
-    fn refresh_source_tail(&mut self, document: &Document, dirty: &mut Option<usize>) {
-        let Some(id) = self.state.open_source_tail else {
-            return;
-        };
-        self.range_visits += 1;
-        let old = self.state.source_candidates[&id].candidate;
-        let source = Span::new(old.source.start, document.source().len());
-        let new = FoldCandidate {
-            source,
-            hidden: source,
-            summary: Some(source),
-            open: !document.is_finished(),
-            ..old
-        };
-        self.state.source_candidates.get_mut(&id).unwrap().candidate = new;
-        if !new.open {
-            self.state.open_source_tail = None;
-        }
-        if self.state.collapsed.contains_key(&old.id) {
-            // Even equal endpoints can change tile membership at EOF.
-            self.state.refresh(document, &mut self.heights, new);
-            *dirty = Some(dirty.unwrap_or(usize::MAX).min(old.hidden.start));
+    fn refresh_source_tail(&mut self, _document: &Document, dirty: &mut Option<usize>) {
+        if !self.state.open_source_tails.is_empty() {
+            // Endpoints are shared sentinels, resolved against this document.
+            // No registration, selected mask or ancestor is copied/refreshed.
+            self.range_visits += 1;
+            if let Some(&(start, _)) = self.state.open_ranges.first() {
+                *dirty = Some(dirty.unwrap_or(usize::MAX).min(start));
+            }
         }
     }
 
@@ -1550,14 +1783,26 @@ impl<S> FoldView<S> {
         }
         if let Some(&(start, _)) = self.state.open_ranges.first() {
             dirty = Some(dirty.unwrap_or(usize::MAX).min(start));
-            self.range_visits += 1; // One shared tail, independent of open depth.
+            if self.state.open_source_tails.is_empty() {
+                self.range_visits += 1; // One shared tail, independent of open depth.
+            }
         }
-        if let Some(id) = self.state.source_boundary.take() {
+        if let Some(group) = self
+            .state
+            .source_boundaries
+            .get_mut(&self.state.source_boundary_generation)
+        {
             self.range_visits += 1;
-            let candidate = self.state.source_candidates[&id].candidate;
-            self.state.refresh(document, &mut self.heights, candidate);
-            dirty = Some(dirty.unwrap_or(usize::MAX).min(candidate.hidden.start));
+            if let Some(tile) = group.tile {
+                let span = document.tile(TileId(tile)).unwrap();
+                if span.end > group.end {
+                    self.heights.cover(tile..tile + 1, false);
+                    group.tile = None;
+                }
+                dirty = Some(dirty.unwrap_or(usize::MAX).min(span.start));
+            }
         }
+        self.state.source_boundary_generation += 1;
         if let Some(id) = self.state.fixed_boundary.take() {
             self.range_visits += 1;
             let candidate = document.fold_candidate(id).unwrap();

@@ -1,4 +1,7 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    ops::Bound,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use crate::{
     BlockId, BlockKind, Budget, Completion, Document, DocumentId, FoldCandidate, FoldId, FoldView,
@@ -10,7 +13,7 @@ use crate::{
 /// after removal. Hosts can associate their own selection/object keys with it
 /// without changing document syntax.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SourceFoldId(usize);
+pub struct SourceFoldId(pub(crate) usize);
 
 impl SourceFoldId {
     pub(crate) fn new() -> Self {
@@ -144,14 +147,19 @@ pub struct SourceFoldProgress {
 enum SourceAction {
     Register,
     RootTail,
+    Stream,
     SealTail(SourceFoldId),
 }
 
 /// Validate and atomically register one nonempty UTF-8 source interval.
-/// Source registrations must be disjoint (including while expanded/previewed).
-/// Syntax/registered-row ranges may contain it or be contained by it; crossings
-/// are rejected. No syntax parents are rewritten. The source candidate's parent
-/// is its innermost enclosing syntax source range at registration.
+/// `new`, `tail` and the original paragraph constructors retain strict disjoint
+/// registrations and reject syntax crossings. `overlapping`, `stream` and
+/// `paragraph_overlay` opt into independent nested/crossing source overlays.
+/// Syntax parents are never rewritten. Source parent lookup resolves containing
+/// manual envelopes lazily, with the captured syntax host taking precedence
+/// when it lies inside that envelope. No descendant metadata is rewritten.
+/// Active registrations per view are capped at the document's source byte count
+/// (InvalidRange at publication), keeping view storage O(n) even for duplicates.
 ///
 /// `new` and `paragraph` only accept Document::source_fold_limit's prefix;
 /// their anchors have left affinity, including at the old EOF. `open_paragraph`
@@ -176,9 +184,15 @@ pub struct SourceFoldRegistration {
     visited: usize,
     result: Option<FoldId>,
     action: SourceAction,
+    flexible: bool,
+    restored_choice: Option<bool>,
 }
 
 impl SourceFoldRegistration {
+    pub(crate) fn restore_choice(&mut self, collapsed: bool) {
+        self.restored_choice = Some(collapsed);
+    }
+
     /// Fixed metadata/index checks, O(log R); ancestor validation is deferred.
     pub fn new<S>(
         document: &Document,
@@ -214,6 +228,8 @@ impl SourceFoldRegistration {
             visited: 0,
             result: None,
             action: SourceAction::Register,
+            flexible: false,
+            restored_choice: None,
         }
     }
 
@@ -243,9 +259,59 @@ impl SourceFoldRegistration {
         Ok(task)
     }
 
+    /// Register a fixed source envelope with independent nested/crossing intent.
+    /// Intersecting collapsed intervals share one placeholder; adjacent intervals
+    /// keep separate placeholders. Syntax crossings are supported too. Fixed
+    /// endpoints may lie in pending input; late syntax classification does not
+    /// move the cuts or transfer identity. No source bytes are changed.
+    pub fn overlapping<S>(
+        document: &Document,
+        view: &FoldView<S>,
+        source: Span,
+    ) -> Result<Self, LayoutError> {
+        view.check(document)?;
+        if source.start >= source.end
+            || source.end > document.source().len()
+            || !document.source().is_char_boundary(source.start)
+            || !document.source().is_char_boundary(source.end)
+        {
+            return Err(LayoutError::InvalidRange);
+        }
+        let mut task = Self::unvalidated(document, view, source);
+        task.flexible = true;
+        Ok(task)
+    }
+
+    /// A source-anchored tail from any existing UTF-8 cut, including pending
+    /// input and syntax hosts. The cut stays fixed across late classification;
+    /// all tails share the real EOF, without visiting registrations on append.
+    /// A syntax host's closure does not close this document-tail range. Finish
+    /// or explicit seal closes it; local paragraph lifetime uses the paragraph
+    /// constructors instead. Nested and crossing overlays keep independent IDs.
+    pub fn stream<S>(
+        document: &Document,
+        view: &FoldView<S>,
+        start: usize,
+    ) -> Result<Self, LayoutError> {
+        view.check(document)?;
+        if document.is_finished()
+            || start >= document.source().len()
+            || !document.source().is_char_boundary(start)
+        {
+            return Err(LayoutError::InvalidRange);
+        }
+        let mut task = Self::unvalidated(document, view, Span::new(start, document.source().len()));
+        task.open = true;
+        task.flexible = true;
+        task.action = SourceAction::Stream;
+        Ok(task)
+    }
+
     /// Close this view's live tail without changing its ID or saved choice.
-    /// EOF must be stable; advance still validates both fixed endpoint paths,
-    /// rejecting open syntax that could later cross the frozen end. Exhaustion
+    /// Strict root tails require stable EOF and reject future syntax crossings.
+    /// Stream overlays accept the current UTF-8 EOF even while pending, retaining
+    /// a fixed cut through subsequent classification. Both endpoint paths share
+    /// the budget. Exhaustion
     /// is resumable and no view state changes before the final paid step.
     pub fn seal_tail<S>(
         document: &Document,
@@ -253,14 +319,18 @@ impl SourceFoldRegistration {
         id: SourceFoldId,
     ) -> Result<Self, LayoutError> {
         view.check(document)?;
-        let candidate = view.live_source_tail(id).ok_or(LayoutError::InvalidRange)?;
-        if candidate.source.end > document.source_fold_limit() {
+        let candidate = view
+            .live_source_tail(document, id)
+            .ok_or(LayoutError::InvalidRange)?;
+        if candidate.source.end > document.source_fold_limit() && !view.source_fold_is_flexible(id)
+        {
             return Err(LayoutError::InvalidRange);
         }
-        // The exact registered envelope is already disjoint from every other
-        // source range. Exempting this ID requires no history enumeration.
+        // Reuse this registration directly. Strict or overlay policy is kept;
+        // exempting its own identity needs no history enumeration.
         let mut task = Self::unvalidated(document, view, candidate.source);
         task.action = SourceAction::SealTail(id);
+        task.flexible = view.source_fold_is_flexible(id);
         Ok(task)
     }
 
@@ -345,7 +415,7 @@ impl SourceFoldRegistration {
         {
             return Err(LayoutError::InvalidRange);
         }
-        Self::paragraph_range(document, view, block, preview_bytes, source, open)
+        Self::paragraph_range(document, view, block, preview_bytes, source, open, false)
     }
 
     /// Register a logical paragraph in one exact container scope, using its
@@ -389,7 +459,39 @@ impl SourceFoldRegistration {
         {
             return Err(LayoutError::InvalidRange);
         }
-        Self::paragraph_range(document, view, first, preview_bytes, source, open)
+        Self::paragraph_range(document, view, first, preview_bytes, source, open, false)
+    }
+
+    /// Paragraph prefix preview using the same nested/crossing overlay policy
+    /// as `overlapping`. Accepts an open/closed root or container paragraph.
+    /// One active logical paragraph preview per view; document-tail overlays
+    /// can be nested around it in either registration order.
+    pub fn paragraph_overlay<S>(
+        document: &Document,
+        view: &FoldView<S>,
+        first: BlockId,
+        preview_bytes: usize,
+    ) -> Result<Self, LayoutError> {
+        view.check(document)?;
+        let (source, open) = document
+            .open_paragraph_source(first)
+            .ok_or(LayoutError::InvalidRange)?;
+        let end = if open && document.block(first).unwrap().container.is_some() {
+            document
+                .block(document.current.ok_or(LayoutError::InvalidRange)?)
+                .unwrap()
+                .source
+                .end
+        } else {
+            document.block(first).unwrap().source.end
+        };
+        if preview_bytes >= end - source.start
+            || (!open && source.end > document.source_fold_limit())
+            || (open && view.has_open_paragraph())
+        {
+            return Err(LayoutError::InvalidRange);
+        }
+        Self::paragraph_range(document, view, first, preview_bytes, source, open, true)
     }
 
     fn paragraph_range<S>(
@@ -399,8 +501,11 @@ impl SourceFoldRegistration {
         preview_bytes: usize,
         source: Span,
         open: bool,
+        flexible: bool,
     ) -> Result<Self, LayoutError> {
-        view.validate_source_span(source)?;
+        if !flexible {
+            view.validate_source_span(source)?;
+        }
         let mut cut = source.start + preview_bytes;
         while !document.source().is_char_boundary(cut) {
             cut -= 1;
@@ -425,6 +530,8 @@ impl SourceFoldRegistration {
             visited: 0,
             result: None,
             action: SourceAction::Register,
+            flexible,
+            restored_choice: None,
         })
     }
 
@@ -447,7 +554,11 @@ impl SourceFoldRegistration {
             self.version,
         )?;
         while self.result.is_none() {
-            if !budget.charge(cost()) {
+            let mut step_cost = cost();
+            if self.endpoint == 2 && self.restored_choice.is_some() {
+                step_cost.recovery = 1;
+            }
+            if !budget.charge(step_cost) {
                 return Ok(self.progress(Completion::BudgetExhausted));
             }
             if matches!(self.action, SourceAction::RootTail) && self.endpoint == 0 {
@@ -458,16 +569,26 @@ impl SourceFoldRegistration {
                 }
                 self.endpoint = 2;
             } else if self.endpoint == 2 {
+                if !matches!(self.action, SourceAction::SealTail(_))
+                    && view.source_fold_count() >= document.source().len()
+                {
+                    return Err(LayoutError::InvalidRange);
+                }
                 self.result = Some(match self.action {
                     SourceAction::SealTail(id) => view.seal_source_tail(document, id)?,
-                    SourceAction::Register | SourceAction::RootTail => view.register_source_fold(
-                        self.source,
-                        self.hidden,
-                        self.parent,
-                        self.paragraph,
-                        self.open,
-                    ),
+                    SourceAction::Register | SourceAction::RootTail | SourceAction::Stream => view
+                        .register_source_fold(
+                            self.source,
+                            self.hidden,
+                            self.parent,
+                            self.paragraph,
+                            self.open,
+                            self.flexible,
+                        ),
                 });
+                if let Some(choice) = self.restored_choice {
+                    view.set_collapsed(document, self.result.unwrap(), choice)?;
+                }
                 self.version = view.version();
             } else if !self.started {
                 let offset = if self.endpoint == 0 {
@@ -477,14 +598,18 @@ impl SourceFoldRegistration {
                 };
                 // Registered row ranges form a disjoint overlay. Their parents
                 // remain syntax-only, so removing a row cannot orphan this ID.
-                if let Some(row) = view.row_candidate_at(document, offset) {
+                if !self.flexible
+                    && let Some(row) = view.row_candidate_at(document, offset)
+                {
                     validate_pair(self.source, row)?;
                 }
                 self.next = document.fold_candidate_at(offset).map(|c| c.id);
                 self.started = true;
             } else if let Some(id) = self.next {
                 let candidate = document.fold_candidate(id).expect("stable syntax identity");
-                validate_pair(self.source, candidate)?;
+                if !self.flexible {
+                    validate_pair(self.source, candidate)?;
+                }
                 self.visited += 1;
                 if self.endpoint == 0
                     && self.parent.is_none()
@@ -511,15 +636,16 @@ impl SourceFoldRegistration {
 }
 
 /// Budgeted enumeration of registered source ranges intersecting a source
-/// window, including an earlier containing range. Does not enumerate syntax or
+/// window, including all earlier containing/crossing ranges. Does not enumerate syntax or
 /// generate possible selections. O(1) cursor storage and O(log R) per result.
 pub struct SourceFoldCandidates {
     document: DocumentId,
     revision: u64,
     view: DocumentId,
     version: u64,
-    next: usize,
-    end: usize,
+    after: Bound<crate::fold_intervals::Key>,
+    range: Span,
+    done: bool,
 }
 
 impl SourceFoldCandidates {
@@ -532,19 +658,14 @@ impl SourceFoldCandidates {
         if range.start > range.end || range.end > document.source().len() {
             return Err(LayoutError::InvalidRange);
         }
-        let next = if range.is_empty() {
-            range.end
-        } else {
-            view.source_fold_at(document, range.start)?
-                .map_or(range.start, |c| c.source.start)
-        };
         Ok(Self {
             document: document.id(),
             revision: document.revision(),
             view: view.heights().version().0,
             version: view.version(),
-            next,
-            end: range.end,
+            after: Bound::Unbounded,
+            range,
+            done: range.is_empty(),
         })
     }
 
@@ -564,16 +685,21 @@ impl SourceFoldCandidates {
             self.version,
         )?;
         out.clear();
-        while self.next < self.end {
+        while !self.done {
             if !budget.charge(cost()) {
                 return Ok(Completion::BudgetExhausted);
             }
-            let Some(candidate) = view.next_source_fold(self.next, self.end) else {
-                self.next = self.end;
+            let Some(candidate) =
+                view.next_source_fold(document, self.after, self.range.start, self.range.end)
+            else {
+                self.done = true;
                 break;
             };
-            self.next = candidate.source.end;
+            self.after = Bound::Excluded(view.source_cursor(candidate.id));
             out.push(candidate);
+            self.done = view
+                .next_source_fold(document, self.after, self.range.start, self.range.end)
+                .is_none();
         }
         Ok(Completion::Covered)
     }

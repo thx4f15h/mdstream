@@ -53,6 +53,7 @@ pub struct LayoutPass {
     folded: bool,
     fold_segment: Option<FoldSegment>,
     paragraph_end: Option<BlockId>,
+    ended_paragraph: Option<BlockId>,
 }
 
 impl LayoutPass {
@@ -86,6 +87,7 @@ impl LayoutPass {
             folded: false,
             fold_segment: None,
             paragraph_end: None,
+            ended_paragraph: None,
         })
     }
 
@@ -217,6 +219,13 @@ impl LayoutPass {
         }
         loop {
             if let Some(block) = self.paragraph_end {
+                // A crossing union can extend the same owner's frontier over
+                // several paid steps. End its paragraph once, also when this
+                // pass starts remotely in a later extension of that union.
+                if self.ended_paragraph == Some(block) {
+                    self.paragraph_end = None;
+                    continue;
+                }
                 if !budget.charge(WorkLimit {
                     objects: 1,
                     recovery: usize::from(self.tile < self.recovery_until),
@@ -226,6 +235,7 @@ impl LayoutPass {
                 }
                 fold_event(sink, FoldEvent::ParagraphEnd(block));
                 self.paragraph_end = None;
+                self.ended_paragraph = Some(block);
             }
             if self.rows >= self.wanted {
                 return Ok(Completion::Covered);

@@ -32,6 +32,7 @@ mod display_search;
 mod entity;
 mod excerpt;
 mod fold_batch;
+mod fold_intervals;
 mod fold_navigation;
 mod fold_ranges;
 mod folding;
@@ -52,6 +53,7 @@ mod navigation;
 mod paragraph_folds;
 mod references;
 mod search;
+mod source_fold_restore;
 mod source_folds;
 mod table;
 mod table_preview;
@@ -108,6 +110,7 @@ pub use paragraph_folds::{
 };
 pub use references::MAX_LABEL_BYTES;
 pub use search::{Selection, SourceSearch, TaskState};
+pub use source_fold_restore::{SourceFoldHost, SourceFoldRestore, SourceFoldSnapshot};
 pub use source_folds::{
     SourceFoldCandidates, SourceFoldId, SourceFoldProgress, SourceFoldRegistration,
 };

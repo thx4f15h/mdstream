@@ -135,8 +135,12 @@ impl FoldNavigation {
                     FoldSegment::Text { .. } => Step::Locate(source),
                     FoldSegment::Hidden(candidate) => match self.policy {
                         FoldNavigationPolicy::Reveal => {
+                            let covering = view
+                                .state
+                                .covering(document, source)
+                                .expect("hidden source is covered");
                             let opened = view
-                                .set_collapsed(document, candidate.id, false)?
+                                .set_collapsed(document, covering.id, false)?
                                 .expect("hidden fold is collapsed");
                             self.version = view.version();
                             change = Some(FoldChange {

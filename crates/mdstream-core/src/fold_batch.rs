@@ -1,3 +1,5 @@
+use std::ops::Bound;
+
 use crate::{
     BlockKind, Budget, Completion, ContainerFoldFilter, ContainerId, Document, DocumentId,
     FoldCandidate, FoldCandidates, FoldChange, FoldId, FoldView, LayoutError, Span, TableRowRange,
@@ -71,6 +73,7 @@ pub struct FoldBatch {
     row_next: Option<(usize, TableRowRange)>,
     rows_end: usize,
     source_next: Option<FoldCandidate>,
+    source_start: usize,
     visited: usize,
     changed: usize,
     container_next: usize,
@@ -123,6 +126,7 @@ impl FoldBatch {
             row_next: None,
             rows_end: 0,
             source_next: None,
+            source_start: 0,
             visited: 0,
             changed: 0,
             container_next: 0,
@@ -208,7 +212,7 @@ impl FoldBatch {
                         self.parent = view.candidate(document, target).unwrap().parent;
                         self.parent
                             .map_or(Span::new(0, document.source().len()), |id| {
-                                document.fold_candidate(id).unwrap().hidden
+                                view.candidate(document, id).unwrap().hidden
                             })
                     }
                     _ => Span::new(0, document.source().len()),
@@ -224,12 +228,14 @@ impl FoldBatch {
                     // syntax discovery still starts at the body as before.
                     let source_start = if matches!(self.action, FoldBatchAction::Siblings { .. }) {
                         self.parent.map_or(range.start, |id| {
-                            document.fold_candidate(id).unwrap().source.start
+                            view.candidate(document, id).unwrap().source.start
                         })
                     } else {
                         range.start
                     };
-                    self.source_next = view.next_source_fold(source_start, range.end);
+                    self.source_start = source_start;
+                    self.source_next =
+                        view.next_source_fold(document, Bound::Unbounded, source_start, range.end);
                 }
                 continue;
             }
@@ -238,8 +244,12 @@ impl FoldBatch {
                 self.row_next = view.next_table_rows(start + 1, self.rows_end);
                 document.fold_candidate(FoldId::TableRows(rows))
             } else if let Some(candidate) = source {
-                self.source_next =
-                    view.next_source_fold(candidate.source.end.min(self.rows_end), self.rows_end);
+                self.source_next = view.next_source_fold(
+                    document,
+                    Bound::Excluded(view.source_cursor(candidate.id)),
+                    self.source_start,
+                    self.rows_end,
+                );
                 Some(candidate)
             } else {
                 self.candidates.as_mut().unwrap().next_candidate(document)
@@ -250,7 +260,7 @@ impl FoldBatch {
             let collapsed = match self.action {
                 FoldBatchAction::All { collapsed } => collapsed,
                 FoldBatchAction::Subtree { collapsed, .. } => {
-                    if !self.root.unwrap().contains_candidate(&candidate) {
+                    if !view.contains_candidate(&self.root.unwrap(), &candidate) {
                         continue;
                     }
                     collapsed
@@ -270,7 +280,9 @@ impl FoldBatch {
                     }
                     collapsed
                 }
-                FoldBatchAction::Focus { .. } => !candidate.contains_candidate(&self.root.unwrap()),
+                FoldBatchAction::Focus { .. } => {
+                    !view.contains_candidate(&candidate, &self.root.unwrap())
+                }
                 FoldBatchAction::Containers { .. } => unreachable!(),
             };
             self.apply_choice(document, view, candidate.id, collapsed, &mut change)?;

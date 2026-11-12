@@ -2828,3 +2828,25 @@ URL 在封口时前向验证完整主机名，再处理路径尾标点、括号�
 最终代码验证：项目 `nix develop` 下 `cargo check --all-targets`、专项 **63/63**、完整 debug/release `cargo nextest run --no-fail-fast` 各 **1843/1843**、`cargo test --doc` **76/76**，fmt 与 diff 检查通过。15 个 Rust 文件与冻结哈希一致。日志及验收证据见 `/tmp/mdtui3-codex-todo/001-gate-debug.log`、`001-root-gate-release.log`、`001-root-gate-doc.log`、`001-root-gate-accepted.json` 和 `001-gate-source.sha256`；中间版本通过数不充作最终验收。
 
 保留的失败方言：失败 URL 候选只由普通行内机消费一次，不重新发现其内部另一个裸地址；例如 `http://foo_bar@bar.com` 的 email 恢复归入现有完整失败回退待办，相关红测已单独保留供后续任务。完整链接/图片嵌套、其它字面失败回退、分类窗口扩展及原始 HTML不由本项交付。TODO 仅完成裸自动链接核心，未完成要求保持。
+
+## 2026-11-12 手工嵌套交叉流式范围与显式重载映射交付
+
+本项交付手工范围的嵌套、交叉、流式增长与显式重载映射。`SourceFoldRegistration::overlapping` 接受包括 pending 来源的固定 UTF-8 切口，`stream` 支持任意正文/语法宿主内起点至真实 EOF，多个 live 尾共用终点和完整 tile 覆盖；finish 同 ID 停止增长，overlay 的 seal 可在 pending EOF 固定切口。原严格固定/根尾/段落接口保留验证规则。`paragraph_overlay` 复用开放/已闭合顶层与容器段落的前缀对齐、增长/收缩、改型撤销和段尾恢复，允许与手工范围按任一顺序登记。
+
+嵌套与交叉保留各 ID 的本地意愿，严格相交的实际收起区间共用一个并集占位，相邻区间各有占位。父收起/展开、预览、reset/resize、移除、导航及 All/Subtree/Focus/Siblings 不覆盖非显式操作的子意愿。Source 父关系通过包含索引惰性读取，与仍包含自身的原语法宿主比较；添加/移除外层不回写后代，交叉成员不互为父，语法/行范围不改挂。锚点投影到并集占位，Reveal 仅展开真正覆盖目的字节的成员；可见性查询的 hidden 为并集推进投影，按 ID 仍查询原范围。段尾事件对同一分量的多次推进只发一次，远端恢复保留一次段尾恢复。
+
+先验证直接前驱漏掉外层及无预算追走交叉链两个反例，再实现带最大终点/末个相交分量摘要的 AVL 索引。摘要合并、前缀占位、全包络前驱父查询和相交窗口枚举不走祖先或交叉链；6,000 次随机增删/查询对照独立排序并集及父关系，并核对实际 AVL 平衡、节点数。隐藏右端后续扩展按布局/导航步骤收费。每次元数据更新 O(log R + log F + log T)，任务 O(1)；两端语法链逐 query/object 付费，恢复发布另扣 recovery。多个同 EOF 固定范围按代际共享最后 tile，下一次 apply 仅检查当前组：tile 增长撤盖，整 tile/UTF-8 rollover 未增长则保留至最后成员删除。历史组不随追加访问，空组释放；源码范围注册数以源码字节数为上限，重复登记也不突破核心 O(n) 空间。解析语义与不可变源码不改，累计解析 O(n log n)，普通追加不访问历史注册/复制祖先链。新增 fold/source_index_visits 与 nodes 统计真实 AVL 操作/当前节点；旧稀疏容器/章节统计保留并明确为拓扑索引。
+
+`SourceFoldSnapshot` 保存显式宿主的相对源码切口和意愿，不保存正文或祖先链。宿主可为 Document、语法 ID 或 Paragraph；固定范围须在宿主内，文档尾可用起点宿主（含宿主已闭合或文档已 finish）。`SourceFoldRestore` 接受调用方明确映射的新宿主，校验类型/边界/UTF-8 和注册规则，按共享预算原子登记并恢复选择，返回旧→新 SourceFoldId 对应关系。已结束的尾保留固定切口，开放尾继续跟随新文档 EOF。零 recovery 可完成前置验证但不能发布；错误、取消和 stale 均不产生半个注册。元数据不能辨认同类型同长度的错误宿主，不承诺任意编辑后的内容匹配，也不提供跨进程序列化格式。
+
+新增独立区间/高度模型覆盖 128 种选择组合、500 轮随机语法交叉、嵌套父/Siblings/惰性改挂、双视图/预览/导航/锚点/resize、UTF-8 各切点、Setext/表头/定义/代码/数学/容器改型、源码及 runs 映射、多个封口和整 tile/Unicode rollover、段尾远端恢复、merged/replay/stale/ticket、恢复预算和宿主 ID 变化。4096 个 live 尾加百万字后逐字追加，真实 fold/source AVL 访问计数完全不增加，范围同步与高度访问维持固定/对数上界；深链注册逐步暂停而不发布。重载反例覆盖代码宿主前插入标题，旧/新文档各自 open/finished 的四种组合，明确映射新 BlockId 后恢复正确切口。
+
+README、TODO 精准同步：核心范围扩展单独勾选，实际选区控件、占位绘制和终端软换行仍单列未完成，未删除其它需求。新增 `source_overlays` 示例；依赖、hooks、rustfmt 配置、既有 fixtures/data/scripts 与旧测试输入不变。stream 的生命周期是文档 EOF，语法宿主关闭不自动封口；段落生命周期由 paragraph_overlay 提供，其它语法宿主自动局部封口及任意编辑的身份搜索不在本接口承诺内。
+
+验证：最终门禁结果见下段补记；前置项目 nix develop 的 check/clippy/fmt 已通过，针对性 nextest 283/283（增加最后一项重载反例前）通过。完整命令/日志及最终源码冻结记录位于 `/tmp/mdtui3-source-folds-002-validation/final-v3/`，第一次全套因补齐起点宿主映射主动中止，不作为最终验收结果。
+
+补充审查回归：finish 将语法父终点变为有限值时，Source EOF 哨兵不能接管同隐藏起点的父占位；保留原稀疏拓扑索引做有界语法父消歧，红测后修复。相同源码包络的 Subtree/Focus 改用注册存储顺序，与惰性父查询一致，避免把无界尾祖先当作同范围子节点。另核对了共享 EOF 模板的所有外部读取，remove_source_fold 的 FoldChange 返回当前真实 hidden 末端，而非最初登记末端；百万字尾移除的独立断言锁定该通知契约。最终前针对性回归 302/302、最后 20 项 overlay 测试通过。早期 full 的 1841 结果和后续 v2 过程（含源码冻结变化与旧 release 库/新增通知断言差异）均保留，不充作最终 frozen 验收；最终仅以 final-v3 为准。
+
+最终 frozen 门禁全部 exit 0（`nix develop`，Cargo metadata 定位本 worktree target）：`cargo check --workspace --all-targets`；`cargo fmt --all -- --check`；`cargo clippy --workspace --all-targets -- -D warnings`；`cargo nextest run --workspace --all-targets --no-fail-fast` 与 `--release` 各 **1843/1843**；`cargo test --workspace --doc` **76/76**；`cargo doc --workspace --no-deps`；13 个相关 release 示例（source_overlays/source_folding/source_tail_folding/paragraph_folding/container_paragraph_folding/paragraph_auto_folding/folding/fold_batch/container_folding/container_sections/table_row_folding/budget/display）。最终 `validation.json` 的 failed、changed_rs 均为空，391 个 Rust 文件冻结哈希保持一致。`git diff --check` 通过。既有 tests/fixtures、数据、脚本、依赖、hooks 与 rustfmt 配置保留。
+
+与裸自动链接合入后的组合门禁同样通过：check、fmt、完整 debug/release 各 1864/1864 项及 doc；Rust 源码冻结记录无变化，命令/退出码见 `/tmp/mdtui3-codex-todo/integration-001-002/result.json`。
