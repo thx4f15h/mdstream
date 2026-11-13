@@ -377,83 +377,6 @@ impl Document {
     }
 }
 
-#[cfg(test)]
-mod reference_boundary_tests {
-    use super::*;
-
-    #[test]
-    fn marker_and_suffix_only_tiles_pay_before_looking_up_the_current_target() {
-        let mut doc = Document::new();
-        let label = "b".repeat(999);
-        doc.append(&format!(
-            "{}[a][{label}]\n\n",
-            "x".repeat(crate::TILE_BYTES - 1)
-        ))
-        .unwrap();
-        let id = crate::LinkId(0);
-        let info = *doc.link_info(id).unwrap();
-        let LinkTarget::Reference(b) = doc.links()[0] else {
-            panic!()
-        };
-        assert_eq!(doc.references()[b.0].label, label);
-        let mut keys = Vec::new();
-        for tile in [TileId(0), TileId(2), TileId(3)] {
-            let source = doc.tile(tile).unwrap();
-            assert!(source.end <= info.label.start || info.label.end <= source.start);
-            assert_eq!(
-                doc.links_in(source).map(|(id, _)| id).collect::<Vec<_>>(),
-                [id]
-            );
-            let key = DependencyKey::capture(&doc, tile, &mut Budget::new(WorkLimit::unlimited()))
-                .unwrap()
-                .unwrap();
-            assert_eq!(key.symbols, [(b, 0)]);
-            keys.push(key);
-        }
-        // Empty references intentionally make an early lookup panic. All three
-        // failure charges must return before indexing the winning symbol.
-        let references = std::mem::take(&mut doc.references.entries);
-        for limit in [
-            WorkLimit {
-                queries: 0,
-                ..WorkLimit::unlimited()
-            },
-            WorkLimit {
-                objects: 0,
-                ..WorkLimit::unlimited()
-            },
-            WorkLimit {
-                dependencies: 0,
-                ..WorkLimit::unlimited()
-            },
-        ] {
-            assert!(
-                DependencyKey::capture(&doc, TileId(2), &mut Budget::new(limit))
-                    .unwrap()
-                    .is_none()
-            );
-        }
-        doc.references.entries = references;
-        doc.append("[a]: /old\n").unwrap();
-        assert_eq!(doc.link_destination(id), None);
-        for key in &keys {
-            assert_eq!(
-                key.validate(&doc, &mut Budget::new(WorkLimit::unlimited())),
-                Ok(CacheValidity::Valid)
-            );
-        }
-        doc.append(&format!("[{label}]: /new\n")).unwrap();
-        assert_eq!(doc.link_destination(id), Some("/new"));
-        assert_eq!(doc.link_info(id), Some(&info));
-        for key in &keys {
-            assert_eq!(
-                key.validate(&doc, &mut Budget::new(WorkLimit::unlimited())),
-                Ok(CacheValidity::Changed)
-            );
-        }
-    }
-}
-
 /// Resumable validation of an existing direct dependency key. Each symbol or
 /// footnote fact is inspected in its own paid step; a small frame need not fit
 /// the entire dependency list. The original atomic validate remains available.
@@ -536,6 +459,83 @@ impl DependencyValidation<'_> {
                 self.result = Some(CacheValidity::Changed);
                 return Ok(CacheValidity::Changed);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod reference_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn marker_and_suffix_only_tiles_pay_before_looking_up_the_current_target() {
+        let mut doc = Document::new();
+        let label = "b".repeat(999);
+        doc.append(&format!(
+            "{}[a][{label}]\n\n",
+            "x".repeat(crate::TILE_BYTES - 1)
+        ))
+        .unwrap();
+        let id = crate::LinkId(0);
+        let info = *doc.link_info(id).unwrap();
+        let LinkTarget::Reference(b) = doc.links()[0] else {
+            panic!()
+        };
+        assert_eq!(doc.references()[b.0].label, label);
+        let mut keys = Vec::new();
+        for tile in [TileId(0), TileId(2), TileId(3)] {
+            let source = doc.tile(tile).unwrap();
+            assert!(source.end <= info.label.start || info.label.end <= source.start);
+            assert_eq!(
+                doc.links_in(source).map(|(id, _)| id).collect::<Vec<_>>(),
+                [id]
+            );
+            let key = DependencyKey::capture(&doc, tile, &mut Budget::new(WorkLimit::unlimited()))
+                .unwrap()
+                .unwrap();
+            assert_eq!(key.symbols, [(b, 0)]);
+            keys.push(key);
+        }
+        // Empty references intentionally make an early lookup panic. All three
+        // failure charges must return before indexing the winning symbol.
+        let references = std::mem::take(&mut doc.references.entries);
+        for limit in [
+            WorkLimit {
+                queries: 0,
+                ..WorkLimit::unlimited()
+            },
+            WorkLimit {
+                objects: 0,
+                ..WorkLimit::unlimited()
+            },
+            WorkLimit {
+                dependencies: 0,
+                ..WorkLimit::unlimited()
+            },
+        ] {
+            assert!(
+                DependencyKey::capture(&doc, TileId(2), &mut Budget::new(limit))
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        doc.references.entries = references;
+        doc.append("[a]: /old\n").unwrap();
+        assert_eq!(doc.link_destination(id), None);
+        for key in &keys {
+            assert_eq!(
+                key.validate(&doc, &mut Budget::new(WorkLimit::unlimited())),
+                Ok(CacheValidity::Valid)
+            );
+        }
+        doc.append(&format!("[{label}]: /new\n")).unwrap();
+        assert_eq!(doc.link_destination(id), Some("/new"));
+        assert_eq!(doc.link_info(id), Some(&info));
+        for key in &keys {
+            assert_eq!(
+                key.validate(&doc, &mut Budget::new(WorkLimit::unlimited())),
+                Ok(CacheValidity::Changed)
+            );
         }
     }
 }

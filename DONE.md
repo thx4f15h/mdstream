@@ -3109,3 +3109,8 @@ BodyView 的显示、窗口/activity、ordered style/marker、活跃 math/footno
 完整编译输入（README 在内）、基点关联、命令/退出/计数与冻结后 debug/release/doc/docbuild/fmt/strict-clippy 证据位于 `/tmp/mdtui3-codex-todo/012-prototypes/implementation/`；模型原包保留在 `model-before-implementation/`。官方输入/HTML/生成器/SHA、旧黄金数组、TUI fixtures/ANSI、Cargo/hook/rustfmt 不改；原 bare_autolinks bool lint 单列。核心零运行时依赖/unsafe 禁用保持。此项为待根审查的核心交付，未自行 commit/push；父 TODO94 和 TUI 上标、脚注区、双向跳转及实际对象回调继续未完成。
 
 首次完整 debug 冻结发现并修复 title 映射使原读取游标超出 96 字节上限的问题；原大小/工作量断言保留。旧脚注正文引用现在真实发布 opaque/x/a 等全局符号，按确切源码和独立编号/原始位置模型调整旧 scalar 预期。三个历史输入的 24 个确切 EOF 前缀在小 helper 中先核验新增 unresolved a 记录及带宿主命名空间的正文对象，再与未修改的旧黄金数组比较所有其余字段与 Work；不重生成黄金数据。首次失败冻结和后续 99 项专项通过日志保留，最终全量以重新冻结结果为准。
+
+
+## 2026-11-13 本轮自有 strict clippy 回归清理
+
+固定基点 `29b3d8c1be7f4a8c23138734da7fe46e81cba6da`，完整保留原 DONE 前缀。本轮 001 的 `06643be` 引入了 `bare_autolinks.rs:594` 布尔比较，现改为最短等价 `assert!`，原条件、`{source:?}` 消息、测试输入及预期保持；首次完整 strict clippy 随后暴露 012 的 `29b3d8c` 将 `DependencyValidation` 及 impl 追加在 `cache.rs` 原测试模块之后的自有回归。首次失败冻结与日志已归档，按根追加授权仅交换完整 validation 块和测试模块的顺序；前缀、方法、文档、测试和分隔符逐块同字节，总字节及行数不变，没有 API/逻辑或 lint 豁免改动。重新冻结除本日志外的 675 个输入后，完整 workspace all-targets strict clippy `-D warnings`、fmt、bare_autolinks debug/release 各 28 项、原生 cache reference_boundary 单测各 1 项、四组 footnote_markdown 各 32 项及 workspace doc 82 项全部通过，逐命令前后 hash 一致；all-targets clippy 同时完成完整类型检查。原完整 workspace debug 2687 / release 2683 按已接受 012 的精确输入关系继承，未冒称本次重跑：534 个其它 Rust 文件及 Cargo/README 等输入同 hash，cache 仅为已证明的相同块重排，bare 仅为等价断言。全部官方 fixture/HTML/生成器/SHA、旧 golden、TUI fixture/ANSI、hook/rustfmt 和其它 TODO 原样。冻结清单、块移动证明、命令退出与实际计数见仓外 `/tmp/mdtui3-codex-todo/023-prototypes/` 和 `023-result.json`。本轮两项 lint 遗留已清理，完整 workspace 全目标严格检查恢复通过。

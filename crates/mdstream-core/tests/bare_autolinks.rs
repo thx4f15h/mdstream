@@ -591,7 +591,7 @@ fn review_email_uses_emphasis_text_nodes_and_preserves_literal_local_underscores
             let info = doc.link_info(LinkId(0)).unwrap();
             for run in doc.display_runs_in(info.label).unwrap() {
                 assert!(!run.style.contains(Style::HIDDEN), "{source:?}");
-                assert_eq!(run.style.contains(style), true, "{source:?}");
+                assert!(run.style.contains(style), "{source:?}");
             }
         }
     }
