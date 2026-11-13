@@ -416,7 +416,13 @@ fn failed_frame_write_is_not_committed_as_a_successful_frame() {
             .iter()
             .any(|write| matches!(write.result, RecordedWrite::Error { .. }))
     );
-    assert_eq!(writes.last().unwrap().bytes, END_SYNCHRONIZED_UPDATE);
+    assert!(
+        writes
+            .last()
+            .unwrap()
+            .bytes
+            .ends_with(END_SYNCHRONIZED_UPDATE)
+    );
     assert_terminal_matches_screen(writer.terminal(), engine.runtime().screen());
     assert_eq!(
         writer.frames().last().unwrap().outcome,

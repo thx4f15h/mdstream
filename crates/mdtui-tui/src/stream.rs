@@ -236,35 +236,68 @@ pub fn probe_has_drawable_lines(
     width: u16,
     budget: &mut Budget,
 ) -> Result<bool, StreamError> {
+    probe_with_links(document, width, budget, None).map(|source| source.is_some())
+}
+
+fn probe_with_links(
+    document: &Document,
+    width: u16,
+    budget: &mut Budget,
+    links: Option<crate::render::objects::SharedLinks>,
+) -> Result<Option<usize>, StreamError> {
     if width == 0 {
-        return Ok(false);
+        return Ok(None);
     }
-    let mut first = FirstFrame::new(
-        document,
-        FirstFrameConfig {
-            top_tile: TileId(0),
-            tile_limit: document.tile_count().max(1),
-            width,
-            row_limit: 1,
-        },
-    )?;
-    if !first
-        .lines()
-        .iter()
-        .any(|line| !line.cells.is_empty() || line.source.is_some())
-    {
-        let _ = first.advance(document, budget)?;
+    let links = links.unwrap_or_else(|| crate::render::objects::SharedLinks::new(document));
+    let _lease = links.hold();
+    // Pre-reading has an explicit finite input bound. Inspect bounded windows
+    // with the same owner and actual Budget; never prepare a whole-document
+    // renderer or privately replenish frame credit.
+    let end = document
+        .tile_count()
+        .min(MAX_PRE_READ_BYTES / mdtui3::TILE_BYTES + 1);
+    let mut top = 0;
+    while top < end {
+        let mut first = FirstFrame::new(
+            document,
+            FirstFrameConfig {
+                top_tile: TileId(top),
+                tile_limit: (end - top).min(64),
+                width,
+                row_limit: 1,
+            },
+        )?;
+        first.set_links(links.clone());
+        let step = first.advance(document, budget)?;
+        if let Some(line) = first
+            .lines()
+            .iter()
+            .find(|line| !line.cells.is_empty() || line.source.is_some())
+        {
+            return Ok(Some(
+                line.source
+                    .map_or(document.tile(TileId(top)).unwrap().start, |s| {
+                        s.source.start
+                    }),
+            ));
+        }
+        if matches!(
+            step.status,
+            FirstFrameStatus::BudgetExhausted | FirstFrameStatus::PendingScan
+        ) {
+            return Ok(None);
+        }
+        top = first.plan().tile_end.0.max(top + 1);
     }
-    Ok(first
-        .lines()
-        .iter()
-        .any(|line| !line.cells.is_empty() || line.source.is_some()))
+    Ok(None)
 }
 
 fn scratch_first_frame(
     document: &Document,
     width: u16,
     rows: u16,
+    links: crate::render::objects::SharedLinks,
+    budget: &mut Budget,
 ) -> Result<Option<ViewportFrame>, StreamError> {
     if rows == 0 || document.tile_count() == 0 {
         return Ok(None);
@@ -273,14 +306,14 @@ fn scratch_first_frame(
         document,
         FirstFrameConfig {
             top_tile: TileId(0),
-            tile_limit: document.tile_count(),
+            tile_limit: document.tile_count().min(64),
             width,
             row_limit: u64::from(rows),
         },
     )?;
-    let mut budget = Budget::new(mdtui3::WorkLimit::unlimited());
+    first.set_links(links);
     loop {
-        let step = first.advance(document, &mut budget)?;
+        let step = first.advance(document, budget)?;
         if first.lines().len() >= usize::from(rows)
             || matches!(
                 step.status,
@@ -501,6 +534,7 @@ impl StreamEngine {
     }
 
     pub fn request_render(&mut self) {
+        self.calibrated_frame = None;
         self.force_render = true;
     }
 
@@ -820,11 +854,23 @@ impl StreamEngine {
             }
             self.pre_read.bytes = self.pre_read.bytes.saturating_add(take);
             let mut probe_budget = Budget::new(PROBE_WORK);
-            if probe_has_drawable_lines(
+            if let Some(source) = probe_with_links(
                 self.runtime.document(),
                 self.runtime.geometry().content_width,
                 &mut probe_budget,
+                Some(self.runtime.viewport().shared_links()),
             )? {
+                let tile = self.runtime.document().tile_at(source).unwrap();
+                let (document, viewport) = self.runtime.document_and_viewport_mut();
+                viewport
+                    .set_top_from_refinement(
+                        document,
+                        mdtui3::Anchor { tile, offset: 0 },
+                        source,
+                        source,
+                        false,
+                    )
+                    .map_err(FrameError::Viewport)?;
                 return Ok(Some(true));
             }
         }
@@ -882,11 +928,13 @@ impl StreamEngine {
             Err(FrameError::Viewport(ViewportError::IncompleteFrame)) => {
                 self.calibration_pending = false;
                 let bounded_probe = self.runtime.document().source().len() <= MAX_PRE_READ_BYTES
-                    && probe_has_drawable_lines(
+                    && probe_with_links(
                         self.runtime.document(),
                         self.runtime.geometry().content_width,
                         &mut Budget::new(PROBE_WORK),
-                    )?;
+                        Some(self.runtime.viewport().shared_links()),
+                    )?
+                    .is_some();
                 if bounded_probe {
                     self.scratch_frame_requested = true;
                 } else {
@@ -909,18 +957,33 @@ impl StreamEngine {
         Ok(Some(frame))
     }
 
+    pub fn wire_pending(&self) -> bool {
+        self.runtime.wire_pending()
+    }
+    pub fn abort_output<W: io::Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        budget: &mut Budget,
+    ) -> Result<bool, StreamError> {
+        Ok(self.runtime.abort_output(writer, budget)?)
+    }
+
     pub fn due(&mut self, now: Duration) -> bool {
         if !self.first_frame_done && !self.first_frame_pending && self.pre_read.fallback_due(now) {
             self.first_frame_pending = true;
             self.first_frame_empty = true;
         }
-        self.calibrated_frame.is_some()
+        self.runtime.wire_pending()
+            || self.calibrated_frame.is_some()
             || (!self.first_frame_done && self.first_frame_pending && !self.calibration_pending)
             || self.force_render
             || (!self.calibration_pending && self.pending.due(now))
     }
 
     pub fn poll_timeout(&self, now: Duration) -> Duration {
+        if self.runtime.wire_pending() {
+            return Duration::from_millis(1);
+        }
         if self.calibrated_frame.is_some()
             || (!self.first_frame_done && self.first_frame_pending && !self.calibration_pending)
         {
@@ -951,8 +1014,8 @@ impl StreamEngine {
         now: Duration,
     ) -> Result<Option<FrameCommit>, StreamError> {
         if let Some(frame) = self.calibrated_frame.take() {
-            let commit = self.runtime.commit_frame(writer, &frame)?;
-            if commit.committed {
+            let commit = self.runtime.commit_frame_budgeted(writer, &frame, budget)?;
+            if commit.published || commit.committed {
                 self.first_frame_pending = false;
                 self.first_frame_empty = false;
                 self.first_frame_done = true;
@@ -978,13 +1041,15 @@ impl StreamEngine {
                     self.runtime.document(),
                     self.runtime.geometry().content_width,
                     self.runtime.geometry().rows,
+                    self.runtime.viewport().shared_links(),
+                    budget,
                 )? {
-                    self.runtime.commit_frame(writer, &frame)?
+                    self.runtime.commit_frame_budgeted(writer, &frame, budget)?
                 } else {
-                    self.runtime.commit_empty_frame(writer)?
+                    self.runtime.commit_empty_frame_budgeted(writer, budget)?
                 }
             } else if self.first_frame_empty {
-                self.runtime.commit_empty_frame(writer)?
+                self.runtime.commit_empty_frame_budgeted(writer, budget)?
             } else {
                 match self.runtime.frame_to(writer, budget) {
                     Ok(commit) => commit,
@@ -993,17 +1058,19 @@ impl StreamEngine {
                             self.runtime.document(),
                             self.runtime.geometry().content_width,
                             self.runtime.geometry().rows,
+                            self.runtime.viewport().shared_links(),
+                            budget,
                         )? {
-                            self.runtime.commit_frame(writer, &frame)?
+                            self.runtime.commit_frame_budgeted(writer, &frame, budget)?
                         } else {
                             self.first_frame_empty = true;
-                            self.runtime.commit_empty_frame(writer)?
+                            self.runtime.commit_empty_frame_budgeted(writer, budget)?
                         }
                     }
                     Err(error) => return Err(error.into()),
                 }
             };
-            if commit.committed {
+            if commit.published || commit.committed {
                 self.first_frame_pending = false;
                 self.first_frame_empty = false;
                 self.first_frame_done = true;
@@ -1017,12 +1084,13 @@ impl StreamEngine {
             self.metrics.output_bytes = self
                 .metrics
                 .output_bytes
-                .saturating_add(commit.metrics.clipboard_bytes);
+                .saturating_add(commit.metrics.output_bytes);
             return Ok(None);
         }
 
-        if (self.calibration_pending && !self.force_render)
-            || !(self.force_render || self.pending.due(now))
+        if !self.runtime.wire_pending()
+            && ((self.calibration_pending && !self.force_render)
+                || !(self.force_render || self.pending.due(now)))
         {
             return Ok(None);
         }
@@ -1031,13 +1099,15 @@ impl StreamEngine {
                 self.runtime.document(),
                 self.runtime.geometry().content_width,
                 self.runtime.geometry().rows,
+                self.runtime.viewport().shared_links(),
+                budget,
             )? {
-                self.runtime.commit_frame(writer, &frame)?
+                self.runtime.commit_frame_budgeted(writer, &frame, budget)?
             } else {
-                self.runtime.commit_empty_frame(writer)?
+                self.runtime.commit_empty_frame_budgeted(writer, budget)?
             }
         } else if self.empty_frame_requested {
-            self.runtime.commit_empty_frame(writer)?
+            self.runtime.commit_empty_frame_budgeted(writer, budget)?
         } else {
             self.runtime.frame_to(writer, budget)?
         };
@@ -1052,7 +1122,7 @@ impl StreamEngine {
         self.metrics.output_bytes = self
             .metrics
             .output_bytes
-            .saturating_add(commit.metrics.clipboard_bytes);
+            .saturating_add(commit.metrics.output_bytes);
         Ok(None)
     }
 

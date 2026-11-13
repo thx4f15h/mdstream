@@ -5,13 +5,10 @@ use mdtui3::{
     BlockId, Budget, DisplayCursor, DisplayRun, DisplayStep, Document, FootnoteReferenceId,
     FootnoteTarget, LayoutError, LinkId, Span, Style,
 };
-use unicode_segmentation::UnicodeSegmentation;
 
 use super::input::{InputToken, image_tokens, style_role, token_kind};
 use super::objects::{LinkLease, ObjectWindow, SharedLinks};
-use super::text::display_width;
-
-const CLUSTER_WINDOW: usize = super::edges::MAX_EDGE_OVERSCAN;
+use super::shape_unicode::WidthStream;
 
 pub(crate) struct WidthMeasure {
     cursor: DisplayCursor,
@@ -19,13 +16,13 @@ pub(crate) struct WidthMeasure {
     links: SharedLinks,
     lease: Option<LinkLease>,
     pending: Option<PendingRun>,
-    cluster: String,
-    oversized: bool,
-    width: usize,
+    width: WidthStream,
     image: Option<(LinkId, usize, bool)>,
     complete: bool,
     pub source_work: usize,
     memo_window: usize,
+    indexed: Option<Box<super::shape::ShapeWindow>>,
+    indexed_width: usize,
 }
 
 struct PendingRun {
@@ -51,25 +48,20 @@ impl WidthMeasure {
             links,
             lease: None,
             pending: None,
-            cluster: String::new(),
-            oversized: false,
-            width: 0,
+            width: WidthStream::default(),
             image: None,
             complete: false,
             source_work: 0,
             memo_window: source.start,
+            indexed: None,
+            indexed_width: 0,
         })
     }
 
     /// The caller has proved the complete measured prefix unchanged. A pending
-    /// paid run may be replayed (at most one core tile), never the old prefix.
+    /// paid run and its object recovery stay owned; no old prefix is replayed.
     pub fn rebind(&mut self, document: &Document) -> Option<()> {
-        let position = self
-            .pending
-            .as_ref()
-            .map_or(self.cursor.source_position(), |run| run.source.start);
-        self.pending = None;
-        self.lease = None;
+        let position = self.cursor.source_position();
         self.cursor = document.display_cursor(Span::new(position, self.source.end))?;
         self.memo_window = position;
         Some(())
@@ -77,7 +69,6 @@ impl WidthMeasure {
 
     pub fn capacity_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
-            + self.cluster.capacity()
             + self.cursor.scratch_stats().capacity_bytes
             + self.pending.as_ref().map_or(0, |run| {
                 run.text.capacity()
@@ -91,12 +82,38 @@ impl WidthMeasure {
         document: &Document,
         budget: &mut Budget,
     ) -> Result<Option<usize>, LayoutError> {
+        if self.source.len() > mdtui3::TILE_BYTES && !self.links.prepare_shape(document, budget)? {
+            return Ok(None);
+        }
+        if self.source.len() > mdtui3::TILE_BYTES
+            && let Some(shape) = self.links.shape()
+            && shape.requires_shape(self.source)
+        {
+            let window = self.indexed.get_or_insert_with(|| {
+                Box::new(
+                    super::shape::ShapeWindow::new(&shape, self.source, self.source)
+                        .expect("valid measured fragment"),
+                )
+            });
+            loop {
+                match window.advance(&shape, document, &self.links, budget)? {
+                    super::shape::ShapeWindowStep::BudgetExhausted => return Ok(None),
+                    super::shape::ShapeWindowStep::Glyph(glyph) => {
+                        self.indexed_width += usize::from(glyph.width)
+                    }
+                    super::shape::ShapeWindowStep::Complete => {
+                        self.complete = true;
+                        return Ok(Some(self.indexed_width));
+                    }
+                }
+            }
+        }
         // This also rejects a stale reader after source has been fully read.
         if !self.links.prepare(document, budget)? {
             return Ok(None);
         }
         if self.complete {
-            return Ok(Some(self.width));
+            return Ok(Some(self.width.width()));
         }
         if self.lease.is_none() {
             self.lease = Some(self.links.hold());
@@ -118,16 +135,10 @@ impl WidthMeasure {
                     DisplayStep::BudgetExhausted => return Ok(None),
                     DisplayStep::Complete => {
                         self.finish_image();
-                        self.width += if self.oversized {
-                            1
-                        } else {
-                            display_width(&self.cluster)
-                        };
-                        self.cluster.clear();
                         self.complete = true;
                         self.lease = None;
                         self.links.request_retirement();
-                        return Ok(Some(self.width));
+                        return Ok(Some(self.width.width()));
                     }
                     DisplayStep::Run(run) => {
                         self.pending = Some(PendingRun {
@@ -210,7 +221,7 @@ impl WidthMeasure {
                 tokens.push(InputToken {
                     source: pending.source,
                     replacement: pending.replacement,
-                    text: pending.text,
+                    text: pending.text.into(),
                     block: pending.block,
                     link: pending.link,
                     style: style_role(pending.style, pending.link.is_some()),
@@ -222,7 +233,7 @@ impl WidthMeasure {
                 if let Some((_, _, has_text)) = &mut self.image {
                     *has_text |= !token.text.is_empty();
                 }
-                self.push(&token.text);
+                self.push(token.text.contiguous().expect("paid cursor run"));
             }
             if self
                 .cursor
@@ -248,40 +259,7 @@ impl WidthMeasure {
     }
 
     fn push(&mut self, text: &str) {
-        if text.is_empty() {
-            return;
-        }
-        self.cluster.push_str(text);
-        let last = self
-            .cluster
-            .grapheme_indices(true)
-            .next_back()
-            .map_or(0, |(at, _)| at);
-        if last != 0 {
-            if self.oversized {
-                // The unfinished over-limit cluster has the same local ellipsis
-                // policy as window rendering. Later complete clusters are normal.
-                let first = self
-                    .cluster
-                    .grapheme_indices(true)
-                    .nth(1)
-                    .map_or(last, |(at, _)| at);
-                self.width += 1 + display_width(&self.cluster[first..last]);
-            } else {
-                self.width += display_width(&self.cluster[..last]);
-            }
-            self.cluster.drain(..last);
-            self.oversized = false;
-        }
-        if self.cluster.len() > CLUSTER_WINDOW {
-            // Keep only bounded Unicode lookbehind for the current cluster.
-            let mut lo = self.cluster.len() - CLUSTER_WINDOW;
-            while !self.cluster.is_char_boundary(lo) {
-                lo += 1;
-            }
-            self.cluster.drain(..lo);
-            self.oversized = true;
-        }
+        self.width.push(text);
     }
 }
 
@@ -461,5 +439,80 @@ mod source_order_footnote_tests {
                 Some(text.len() - "[^early]".len() - "[^later]".len())
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod giant_cluster_tests {
+    use super::*;
+    use unicode_width::UnicodeWidthStr;
+
+    #[test]
+    fn complete_long_emoji_cluster_uses_locked_width_oracle() {
+        let glyph = format!("👩{}‍💻", "\u{301}".repeat(10_000));
+        assert_eq!(UnicodeWidthStr::width(glyph.as_str()).min(2), 2);
+        let mut document = Document::new();
+        document.append(&format!("{glyph}\n")).unwrap();
+        document.finish();
+        let links = SharedLinks::new(&document);
+        let mut measure = WidthMeasure::new(&document, Span::new(0, glyph.len()), links).unwrap();
+        assert_eq!(
+            measure
+                .advance(&document, &mut Budget::new(mdtui3::WorkLimit::unlimited()))
+                .unwrap(),
+            Some(2)
+        );
+    }
+}
+
+#[cfg(test)]
+mod append_recovery_tests {
+    use super::*;
+    #[test]
+    fn conditional_pending_recovery_keeps_paid_events_across_unrelated_appends() {
+        let source = format!("**{} [x** z]", "a\u{301}".repeat(200));
+        let mut d = Document::new();
+        d.enable_display_shape_effects().unwrap();
+        d.append(&format!("{source}\n\n")).unwrap();
+        let links = SharedLinks::new(&d);
+        assert!(
+            links
+                .prepare_shape(&d, &mut Budget::new(mdtui3::WorkLimit::unlimited()))
+                .unwrap()
+        );
+        let shape = links.shape().unwrap();
+        let before = shape.work();
+        let mut measure = WidthMeasure::new(&d, Span::new(0, source.len()), links.clone()).unwrap();
+        let mut result = None;
+        for step in 0..400_000 {
+            if step != 0 && step % 32 == 0 {
+                let update = d.append("unrelated\n\n").unwrap();
+                links.apply_shape_update(&d, &update).unwrap();
+                measure.rebind(&d).unwrap();
+            }
+            let mut b = Budget::new(mdtui3::WorkLimit {
+                queries: 1,
+                objects: 1,
+                bytes: 6,
+                ..Default::default()
+            });
+            result = measure.advance(&d, &mut b).unwrap();
+            if result.is_some() {
+                break;
+            }
+        }
+        eprintln!(
+            "measured={} styles={:?} shape={:?}",
+            measure.indexed_width,
+            links.stats().styles,
+            shape.work()
+        );
+        assert_eq!(result, Some(206));
+        assert_eq!(links.stats().styles.events, 4);
+        let after = shape.work();
+        assert_eq!(
+            after.source_decode_bytes - before.source_decode_bytes,
+            d.source().len() - (source.len() + 2)
+        );
     }
 }

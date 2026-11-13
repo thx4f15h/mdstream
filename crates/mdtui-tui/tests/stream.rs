@@ -95,7 +95,7 @@ fn assert_terminal_matches_one_shot(terminal: &TerminalScreen, source: &str) {
                     actual.text.is_empty() || actual.text == " ",
                     "row {row} column {column}: continuation text mismatch"
                 );
-            } else if expected.text().trim().is_empty() {
+            } else if expected.text().collect_text().trim().is_empty() {
                 assert!(
                     actual.text.trim().is_empty(),
                     "row {row} column {column}: expected blank, got {:?}",
@@ -104,7 +104,7 @@ fn assert_terminal_matches_one_shot(terminal: &TerminalScreen, source: &str) {
             } else {
                 assert_eq!(
                     actual.text,
-                    expected.text(),
+                    expected.text().collect_text(),
                     "row {row} column {column}: text mismatch"
                 );
             }

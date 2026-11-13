@@ -4202,7 +4202,7 @@ Link facts 包含稳定文档内 ID、source/label、target、gate 变化、pare
 
 预算化零高入口先执行 O(1) 身份/维度/范围检查，再收取 `1q/1o`，之后才作固定次数 O(log T) 代际/checkpoint 查询及惰性区间写。查询发现 stale 仍收取该预算；零预算不访问索引。`zero_height_queries` 记录实际验证查询，`mutation_visits` 另计树访问。raw ticket capture 没有 Budget 参数，调用方须另计其 O(log T) 查询。此合同允许一个已付 query 执行固定 O(log T) 原语，不承诺硬 CPU 抢占。
 
-此桥接没有接入 TUI 的巨型字素索引、Cell/Screen、diff、输出续传、Reading、表格或 End；完整超长字素绘制仍在 TODO。验证见 `display_shape_effects`、`zero_height_range` 和 [交付记录](DONE.md#2026-11-13-可撤销显示效果与零高范围核心桥接)。
+018 此次核心桥接的独立交付不包含 TUI 消费；后续完整集成见下文“完整超长字素绘制”。桥接验证见 `display_shape_effects`、`zero_height_range` 和 [交付记录](DONE.md#2026-11-13-可撤销显示效果与零高范围核心桥接)。
 
 
 ## 缩进代码内部空行
@@ -4231,3 +4231,38 @@ assert_eq!(text, "a\n\nb\n");
 ```
 
 每个空白来源持有一个不可 Clone 的 SourceOwner 与固定大小前缀记录，不复制文本或祖先链。每条来源准入/退休一次，成功、失败或 EOF 的一次输入侧决议可以线性处理整个账本；不承诺单次 append 的固定延迟。复用区间标注后累计 O(N log N)、持久 O(N)。`code_blank_storage()` 报告记录/保留容量及增长次数，`Work.code_blank_*` 记录探测、缩进字节、准入、退休和决议；BodyWork 也累计真实子解析器计数。实际代码行、whole/middle/End、待定 End/follow 和 raw/visible OSC52 复制由新增双 crate 测试验证；原生 fenced code 的既有检查点重放红例仍由最终固定组合单独验收，完整容器/UI 间距与宽泛兼容性继续保留 TODO。
+
+
+## 完整超长字素绘制
+
+实际终端读取器现以完整显示 EGC 为绘制单位，超长 combining、ZWJ、RI 上下文不再生成窗口超限占位。普通段落、引用、列表、标题、代码和表格共用 TUI 的 `SharedShape`；分割输入先处理真实 Markdown 显示效果，再按 GCB 分段。隐藏标记、实体/escape、代码空白、tab/CRLF、图片 alt 和当前条件引用都影响显示序列。样式与 LinkId 取首个实际可见标量，源码保留整个字素的真实包络；读 payload 通过索引跳过包络内的语法间隙，不回扫原始包络。块、表格 cell 和显式 projection fragment 是 GCB 上下文屏障。核心库仍零运行时依赖并禁止 unsafe，Unicode 宽度策略只在 TUI。
+
+`unicode-segmentation = 1.13.3` 对应 Unicode 17，`unicode-width = 0.2.3` 对应 Unicode 18，两者版本刻意不同。固定生成的 24 状态 GCB / 132 状态非 CJK width 机器及属性范围在启动或帧内不遍历 Unicode 全域；离线复现、上游来源哈希与许可见 [Unicode 数据说明](data/unicode/README.md)。宽度采用既有固定字符政策，并对每个真实 EGC 上限两列；原始未截断 width transducer 另与锁定 crate 独立对照。官方 GraphemeBreakTest17 的 766 例、2,000 份随机组合、长 EP Extend* ZWJ EP 的旧 3 列/新 2 列反例都由实际测试固定。
+
+输入所有者必须在第一批输入前开启 `enable_display_shape_effects`，保存并严格按 revision/sequence 消费或合并 Update。`FrameRuntime::new` / `StreamEngine` 已完成这条生产接线，UTF-8 pending 与 EOF 也走同一通道。接收已解析 Document 的手动 API 可用 `initialize(document, budget)` 逐步采用当前只读元数据；计划继续追加的手动调用者先 `subscribe_display_shape_effects`，采用期间保持 Document revision 不变。`FrameRuntime::initialize` 则只传 Budget。它不是历史事件重建或第二次 Markdown 解析：原始 Unicode 属性仅分类一次，已有 checkpoint 的 baseline/current/undo 按原生数据付费恢复。采用完成前不能追加；取消采用保留 owner，`abort_output` 付费退役至完成。原生 `DisplayShapeSeed::retire` 的调用者同样须保留 seed，直到 Covered。
+
+`Cell::text()` / `SinkCell::text` 返回 `TextPayload`。小文本使用固定 inline metadata，完整巨型字素使用共享 source/property handle、保存的有限 display cut、当前 binding 和范围语义版本。front/back、逻辑已发布屏幕、wire inflight/ACK、cached body 和 diff 克隆/比较固定元数据，不复制或比较巨型 UTF-8。`reader().next(budget)` 逐步读取；旧 binding/cut 失效会明确拒绝，纯追加保留旧有限前缀。`collect_text`、`chars`、Display 及显式 `append` 是静态/断言便利接口，不提供帧级预算；实时单一 EGC 不通过这些接口拼接字符串。相邻 indexed 零宽来源用一对有限 cut 合并，孤立零宽字素保留独立 screen record，不能附到无关旧 base 上。
+
+追加属性及语义区间维护累计 O((N+A) log(N+1))，持久空间 O(N)；同一 binding 只保存当前摘要，不保存各次赋值整树。查询按已经分类的实际依赖 D 与所需输出 W 计 O((D+W) log(N+1))，共享单帧 Budget。64 标量叶的边界/frontier 读取、canonical resolver recovery、当前 scope cache、初始化与退役都分别计数。`ShapeWork` 区分 source decode、property refs、节点访问、完整 132-state 维护转换和恢复工作；一次已支付 query 可执行固定次数 O(log N) 树操作，不能理解为硬 CPU 抢占。`capacity_bytes` 是保留结构容量估计，包含显式容器/缓存容量与有序映射估算，不是 allocator 总堆或 RSS。大批 append 的输入维护可以耗时，不能用窗口查询复杂度冒充输入延迟。
+
+输出保持 prepare/enqueue/advance/ACK 状态。普通 write 的实际请求长度受当前 byte credit 限制，短写、EAGAIN 和 Interrupted 保留进度；完整 logical payload 可跨多帧逐标量发送。持续 Extend 的最后 EGC 保留同一 wire 事务，status、SGR、OSC8、OSC52 和 sync marker 等待其边界，不因每批追加重发前缀。真正 resize、晚表头、相关 binding/样式变化会取消并重绘一次；q/abort 最多补完当前 UTF-8 标量的三字节尾部，再发固定 CAN/ST、reset、sync cleanup，OSC8 关闭遵守 no-links 设置。stdout 使用安全的非阻塞、无行缓冲句柄，退出恢复原 flags 与 termios。OSC52 沿用已付完整字节 credit 的至多 64KiB 原文所生成的有界原子 packet；它可跨短写恢复，不能称作每次只发六字节的普通绘制。
+
+中间源码位置、End 与 Ctrl+End 都归一到完整同一字素，不扫描巨型旧 prefix；Ctrl+End 固定 cut 不混入未来 append，End/FOLLOW 保持跟随意愿。巨型 continuation tile 通过同一 HeightIndex 的零高票据测量，不清空整棵树或折叠 mask；fold/resize/checkpoint/相关语义变化失效后重新取票。原生 fenced 检查点失效重放恢复准确的 line source，固定组合同时保留 indented-code 内部空白与 CRLF copy。v/Shift 选区、source highlight、y 可见/Y 原文、搜索 n/N、目录和 Alt 历史共用真实来源；大于64KiB的单一 payload 可见复制先按 metadata 拒绝，不先展开。表格 min/max、pan、alignment、row owner、softwrap 与尾部共用相同 shape/width 结果。
+
+应用承诺完整逻辑 UTF-8、宽度/来源、实际有界 wire 发送及可响应取消。字体/终端对超长组合序列的内部储存和成字能力属于外部限制：实测 tmux 对 10,000 combining marks 只保留 16 个，不据此截断、默认拒绝或增加终端探测 gate，也不声称发完字节就等于字体画出完整 glyph。正文折叠 UI、长段落按显示行 prefix/媒体摘要、数学与脚注绘制及原有完整语法后缀待办继续独立保留。
+
+专项入口为 `giant_clusters`、`giant_pty`、Reading 的巨型复制/搜索/OSC52 测试、`display_shape_seed` 及 `zero_height_range`。实际64MiB源文档与百万 continuation 的 HeightIndex-only scale 分开报告；后者不分配对应源码。仓外021验收材料保留独立 oracle、冷查询最大值、真实 kernel PTY EAGAIN、UTF-8 cleanup、输入/查询/输出/容量/CPU/RSS及冻结命令，不把纯模型当成生产交付。
+
+
+最后一批 Extend 与 EOF/换行在旧 cut ACK 前同时到来时，输出先证明并排队同一 EGC 的有限 suffix，再关闭事务；保存单元格 ACK 与其余屏幕 ACK 分开，不能靠 EOF 取消重发旧 prefix。额外红例原为2000 marks实发3000，现按partial/full旧ACK、EOF/换行四组真实微预算路径核对完整2000且无cancel。真实resize+q syscall红例确认crossterm0.29的mio边沿事件批次先交付SIGWINCH后漏掉同时就绪TTY键；TUI启用同版本支持的 `use-dev-tty` level-triggered入口，轮询至少1ms，保留q/CtrlC与held FIFO退出。Cargo版本未升级，新增feature使用lock内已有filedescriptor；核心依赖不变。真实kernel EAGAIN与同批resize/q、固定cleanup、termios及stdout flags恢复另有独立probe，不以无背压的伪writer替代。
+
+剪贴板请求本身不取消未改变的 open EGC：正常 frame 继续发送/ACK，raw copy 保留原始有限 Span，OSC52 等待真实下一字素边界或 EOF。只有 packet 已开始时才阻止其它终端控制交错；追加导致 visible copy 失效沿用原策略。新增真实 Y 请求+32次重绘+纯Extend+下一字素边界的测试，逐字节验证新增marks完整连续、原Span复制准确且无CAN/旧prefix重发。
+
+公开 shape 任务在任何扣费、修改或缓存完成返回前校验原始 SharedShape 的 Rc 身份、DocumentId 和 SharedLinks/native resolver 的 owner；同文档的另一个索引也不能接管中途任务。ShapeSeed 固定文档并绑定首次实际索引；`SharedShape::from_current` 只建立O(1)当前元数据身份，必须用真实seed完成初始化，不分类源码。`SharedLinks::set_shape` 返回Result，异owner/替换索引拒绝，重复设置同Rc不会丢弃待定seed。新增同revision异文档、同文档异索引、零/微预算、缓存完成/空window和正确clone回归；根的两个原始外部红例现明确WrongDocument且零扣费、零外国source写入。
+
+
+原生 `Document::style_markers_reverse` 在同一 canonical resolver 的已分类 marker/gap 树上作付费前驱查询，不读取/解码旧源码。TUI GCB正向、width反向逐快照合成，移除了随N增长的样式Span暂存Vec；每个查询帧只保留一个104-byte快照，`ShapeQuery::scratch_capacity_bytes`单列实际frame/嵌套query/object buffers，不能与共享索引容量混算。8/64/512/4096 marker的真实query与Unicode正文UI原buffer峰为8/64/512/4096项，现均为1项；零/1q1o6b、正反快照及独立Unicode oracle、取消后的共享memo付费退役路径保持。
+
+已解析source的分预算采用也不能把旧Vec整体搬移藏在一个步骤里。atoms/positions/nodes及first-save索引现用固定目录的指数分块，位运算O(1)寻址，增长只申请新的未初始化chunk，不realloc或复制旧元素。replacement目录改用当前BTreeMap；单个replacement的保存节点仍为固定数量区间的O(logN)canonical分解。每步至多256个新source bytes（微预算时至多6）分类，维护的132-state转换及固定O(logN)树操作分别计数；chunk容量申请单列，不把allocator延迟/新保留地址空间称为硬CPU或malloc字节预算。131073字节实际采用、100000个不可Clone元素与指针稳定测试覆盖增长边界，old_items_relocated为0；取消seed保留宿主当前index，native undo scratch逐预算退休。孤立字素跨append ACK现在同步更新front行来源，根原三批256/512/768包络探针与64批不重发测试通过。
+
+取消按UTF8标量而非replacement atom收尾：一个实体可同时产生两个标量，旧路径会在q后多发第二个标量。`&NotEqualTilde;`的真实红例现在只补齐U2242的两字节尾部，不发送后续U0338。OSC8控制串也按完整UTF8边界暂存至多8字节，实际write继续受当前byte credit限制；8种chunk对齐、单字节短写/EAGAIN与q回归验证最多3个当前标量尾字节。固定cleanup的实际长度为NoOsc8模式15字节、允许OSC8模式22字节，与终端最后的session恢复操作分账。

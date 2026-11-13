@@ -6,7 +6,6 @@ use mdtui3::Document;
 use crate::cli::LinkMode;
 use crate::render::diff::{DiffRun, ScreenDiff};
 use crate::render::link::osc8_destination;
-use crate::render::text::display_width;
 use crate::screen::{Cell, Screen, StyleRole};
 use crate::theme::MONOKAI;
 
@@ -215,6 +214,26 @@ fn encode_segment(
     )
 }
 
+pub(crate) fn segment_boundaries(
+    document: &Document,
+    style: StyleRole,
+    link_id: Option<mdtui3::LinkId>,
+    options: OutputOptions,
+    stats: &mut OutputStats,
+    destinations: &mut HashMap<mdtui3::LinkId, Option<String>>,
+) -> (String, String, bool) {
+    let segment = TextSegment {
+        style,
+        link_id,
+        text: "\0".to_owned(),
+    };
+    let (encoded, linked) = encode_segment(document, &segment, options, stats, destinations);
+    let (prefix, suffix) = encoded
+        .split_once('\0')
+        .expect("encoding preserves sentinel");
+    (prefix.to_owned(), suffix.to_owned(), linked)
+}
+
 fn append_cell_text(output: &mut String, cell: &Cell) {
     for character in cell.text().chars() {
         output.push(if character == '\t' { ' ' } else { character });
@@ -229,7 +248,7 @@ fn cursor_sequence(run: &DiffRun) -> String {
     )
 }
 
-fn validate_diff(screen: &Screen, diff: &ScreenDiff) -> io::Result<()> {
+pub(crate) fn validate_diff(screen: &Screen, diff: &ScreenDiff) -> io::Result<()> {
     let content = screen.content_area();
     let left = u32::from(content.x);
     let right = u32::from(content.right());
@@ -260,13 +279,13 @@ fn validate_diff(screen: &Screen, diff: &ScreenDiff) -> io::Result<()> {
                 continue;
             }
             let width = u32::from(cell.width());
-            if !(1..=2).contains(&width) {
+            if !(0..=2).contains(&width) {
                 return Err(invalid_data(format!(
                     "cell at row {} column {column} has invalid width {width}",
                     run.row
                 )));
             }
-            let text_width = display_width(cell.text());
+            let text_width = cell.text().width();
             if text_width != usize::from(cell.width()) {
                 return Err(invalid_data(format!(
                     "cell at row {} column {column} has declared width {width} but text width {text_width}",
@@ -292,15 +311,13 @@ fn validate_diff(screen: &Screen, diff: &ScreenDiff) -> io::Result<()> {
 }
 
 fn validate_cell_text(cell: &Cell) -> io::Result<()> {
-    for character in cell.text().chars() {
-        if character != '\t' && character.is_control() {
-            return Err(invalid_data(format!(
-                "cell text contains unsupported control character U+{:04X}",
-                u32::from(character)
-            )));
-        }
+    if cell.text().is_safe() {
+        Ok(())
+    } else {
+        Err(invalid_data(
+            "cell text contains an unsupported control character".to_owned(),
+        ))
     }
-    Ok(())
 }
 
 fn invalid_data(message: String) -> io::Error {

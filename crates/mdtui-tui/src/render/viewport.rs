@@ -324,6 +324,7 @@ impl EndPosition {
 // Every suppression, measured tile, row selection and final publication is
 // independently resumable. In particular a one-query frame can make progress.
 struct EndSelection {
+    zero_progress: super::first_frame::ZeroRangeProgress,
     suppressed: usize,
     segment: usize,
     row: usize,
@@ -671,7 +672,16 @@ impl ViewportState {
                 }) {
                     return Ok(self.end_pending(budget));
                 }
+                if let Some(glyph) = first
+                    .scanner()
+                    .segments()
+                    .first()
+                    .filter(|g| g.text.is_indexed())
+                {
+                    end.next_before = end.next_before.min(glyph.source.start);
+                }
                 end.selection = Some(EndSelection {
+                    zero_progress: Default::default(),
                     suppressed: 0,
                     segment: 0,
                     row: 0,
@@ -705,6 +715,14 @@ impl ViewportState {
     ) -> Result<bool, ViewportError> {
         let first = end.first.as_ref().ok_or(ViewportError::InvalidTop)?;
         let selection = end.selection.as_mut().ok_or(ViewportError::InvalidTop)?;
+        if !super::first_frame::measure_zero_ranges(
+            first.zero_ranges(),
+            &mut self.heights,
+            &mut selection.zero_progress,
+            budget,
+        )? {
+            return Ok(false);
+        }
         while let Some(range) = first.suppressed_heading_tiles().get(selection.suppressed) {
             if !budget.charge(WorkLimit {
                 queries: 1,
@@ -922,6 +940,14 @@ impl ViewportState {
             status: ViewportFrameStatus::EndOfDocument,
             stats: end.stats,
         }
+    }
+
+    pub fn initialize(
+        &mut self,
+        document: &Document,
+        budget: &mut Budget,
+    ) -> Result<bool, mdtui3::LayoutError> {
+        self.links.prepare_shape(document, budget)
     }
 
     pub fn shared_links(&self) -> crate::render::objects::SharedLinks {
@@ -1164,6 +1190,7 @@ impl ViewportState {
         if update.base_revision != self.revision {
             return Err(ViewportError::OutOfOrderUpdate);
         }
+        self.links.apply_shape_update(document, update)?;
         self.refined_top = false;
         self.restart_end(document);
 
@@ -1765,6 +1792,23 @@ impl ViewportState {
             });
         };
 
+        let render = self.render.as_mut().ok_or(ViewportError::InvalidTop)?;
+        if !super::first_frame::measure_zero_ranges(
+            render.first.zero_ranges(),
+            &mut self.heights,
+            &mut render.zero_progress,
+            budget,
+        )? {
+            return Ok(ViewportFrame {
+                document: self.document,
+                revision: self.revision,
+                lines: Vec::new(),
+                top: self.top_position,
+                rows: 0,
+                status: ViewportFrameStatus::BudgetExhausted,
+                stats: render.stats(),
+            });
+        }
         frame.stats.layout_budget = budget.used();
         let render = self.render.take().ok_or(ViewportError::InvalidTop)?;
         self.shown_tables = render.first.sink().map_or_else(Vec::new, |sink| {
@@ -2012,6 +2056,7 @@ fn approximate_source(document: &Document, anchor: Anchor) -> Option<usize> {
 }
 
 struct ViewportRender {
+    zero_progress: super::first_frame::ZeroRangeProgress,
     document: DocumentId,
     revision: u64,
     anchor: Anchor,
@@ -2076,6 +2121,25 @@ impl ViewportRender {
                 .saturating_add(4),
         });
         first.set_links(links);
+        if heights.height_state(anchor.tile) == Some(mdtui3::HeightState::Local)
+            && let Some(source) = checkpoints
+                .exact(anchor.tile)
+                .and_then(|c| c.line_source_start)
+            && document
+                .tile(anchor.tile)
+                .is_some_and(|tile| tile.start < source && source < tile.end)
+            && document
+                .block_at(source)
+                .and_then(|id| document.block(id))
+                .is_some_and(|block| {
+                    matches!(
+                        block.kind,
+                        mdtui3::BlockKind::Paragraph | mdtui3::BlockKind::Quote { .. }
+                    )
+                })
+        {
+            first.set_cluster_floor(source);
+        }
         first.set_table_widths(table_widths)?;
         let replay_enabled = match top {
             TopPosition::ReplayFrom { from, target, .. } => {
@@ -2110,6 +2174,7 @@ impl ViewportRender {
             _ => 0,
         };
         Ok(Self {
+            zero_progress: Default::default(),
             document: document.id(),
             revision: document.revision(),
             anchor,
@@ -2162,7 +2227,9 @@ impl ViewportRender {
     ) -> Result<Option<ViewportFrame>, ViewportError> {
         let target = self.anchor.tile;
         let sink = self.first.sink().ok_or(ViewportError::MissingLineSource)?;
-        let Some((resolved, target_rows)) = resolve_target_tile(&self.first, sink, target) else {
+        let Some((resolved, target_rows)) =
+            resolve_target_tile(&self.first, sink, target, self.preserve_refined_source)
+        else {
             if self.first.rows() == 0 && self.first.plan().tile_end.0 == document.tile_count() {
                 return Ok(Some(ViewportFrame {
                     document: self.document,
@@ -2184,7 +2251,9 @@ impl ViewportRender {
             .iter()
             .take_while(|segment| segment.tile < resolved)
         {
-            skip = skip.saturating_add(sink.tile_rows(segment.tile).unwrap_or(0));
+            if sink.tile_rendered(segment.tile) {
+                skip = skip.saturating_add(sink.tile_rows(segment.tile).unwrap_or(0));
+            }
         }
         let offset = self.anchor.offset.min(target_rows - 1);
         skip = skip.saturating_add(offset);
@@ -2354,10 +2423,28 @@ fn resolve_target_tile(
     first: &FirstFrame,
     sink: &crate::render::sink::TileLayoutSink,
     target: TileId,
+    normalize_crossing: bool,
 ) -> Option<(TileId, u64)> {
     let plan = first.plan();
-    let start = target.0.saturating_sub(plan.tile_start.0);
     let end = plan.segments.len();
+    if normalize_crossing
+        && let Some(target_source) = plan
+            .segments
+            .iter()
+            .find(|s| s.tile == target)
+            .map(|s| s.source.start)
+        && let Some(glyph) = first.scanner().segments().first().filter(|g| {
+            g.text.is_indexed() && g.source.start < target_source && target_source < g.source.end
+        })
+        && let Some(owner) = plan
+            .segments
+            .iter()
+            .find(|s| s.source.start <= glyph.source.start && glyph.source.start < s.source.end)
+        && let Some(rows) = sink.tile_rows(owner.tile).filter(|&rows| rows > 0)
+    {
+        return Some((owner.tile, rows));
+    }
+    let start = target.0.saturating_sub(plan.tile_start.0).min(end);
     if let Some((segment, rows)) = plan.segments.get(start..end)?.iter().find_map(|segment| {
         sink.tile_rows(segment.tile)
             .filter(|rows| *rows > 0)

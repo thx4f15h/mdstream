@@ -313,6 +313,19 @@ pub struct LinkActivity {
     memo: Option<usize>,
 }
 impl LinkActivity {
+    pub fn rebind_with(
+        &mut self,
+        document: &Document,
+        resolver: &LinkResolver,
+    ) -> Result<(), LayoutError> {
+        if self.document != document.id() {
+            return Err(LayoutError::WrongDocument);
+        }
+        resolver.retained(document, self.revision)?;
+        self.revision = document.revision();
+        Ok(())
+    }
+
     pub(crate) fn new(document: &Document, id: LinkId) -> Option<Self> {
         document.link_info(id)?;
         let gate = document.link_order.gate(id);
@@ -327,6 +340,9 @@ impl LinkActivity {
             resolution: Resolution::default(),
             memo: None,
         })
+    }
+    pub(crate) fn rebind_shared_revision(&mut self, document: &Document) {
+        self.revision = document.revision();
     }
     pub fn work(&self) -> LinkResolutionWork {
         self.resolution.work
@@ -648,13 +664,80 @@ impl Resolution {
 /// a frame boundary. Do not accumulate abandoned revision memos. Cross-revision
 /// payload caches use DependencyKey for their actual nested dependencies.
 pub struct LinkResolver {
+    retained_revision: u64,
+    source_len: usize,
+    link_count: usize,
     document: DocumentId,
     revision: u64,
     pub(crate) resolution: Resolution,
 }
 impl LinkResolver {
+    /// Retain the current memo only when typed effects prove all previous
+    /// bindings and classified scopes unchanged. Does not replay source text.
+    pub fn rebind_display_shape(
+        &mut self,
+        document: &Document,
+        update: &crate::Update,
+    ) -> Result<bool, LayoutError> {
+        use crate::DisplayShapeEffectKind as E;
+        if self.document != document.id() || update.document != Some(self.document) {
+            return Err(LayoutError::WrongDocument);
+        }
+        if self.revision != update.base_revision || document.revision() != update.revision {
+            return Err(LayoutError::StaleContinuation);
+        }
+        if self.resolution.retiring || !update.display_shape.enabled() {
+            return Ok(false);
+        }
+        for event in update.display_shape.events() {
+            let changed = match event.kind {
+                E::ScopeEvent { scope, .. } => scope < self.source_len,
+                E::Mark { source, .. } | E::Replacement { source, .. } => {
+                    source.start < self.source_len
+                }
+                E::TruncateReplacements { .. } => true,
+                E::Link { id, .. }
+                | E::LinkGate { id, .. }
+                | E::LinkParent { id, .. }
+                | E::LinkActive { id, .. }
+                | E::LinkState { id, .. } => id.0 < self.link_count,
+                E::Reference { id, .. } => document
+                    .references()
+                    .get(id.0)
+                    .is_some_and(|r| r.first_use.is_some_and(|at| at < self.source_len)),
+                E::Footnote { .. }
+                | E::FootnoteReference { .. }
+                | E::Math { .. }
+                | E::Rollback(_) => true,
+                _ => false,
+            };
+            if changed {
+                return Ok(false);
+            }
+        }
+        self.revision = update.revision;
+        self.source_len = document.source().len();
+        self.link_count = document.links().len();
+        Ok(true)
+    }
+    pub fn can_rebind(&self, document: &Document, revision: u64) -> bool {
+        self.retained(document, revision).is_ok()
+    }
+    pub fn document_id(&self) -> DocumentId {
+        self.document
+    }
+    pub(crate) fn retained(&self, document: &Document, revision: u64) -> Result<(), LayoutError> {
+        self.check(document)?;
+        if revision < self.retained_revision || revision > self.revision {
+            return Err(LayoutError::StaleContinuation);
+        }
+        Ok(())
+    }
     pub(crate) fn new(document: &Document) -> Self {
         Self {
+            retained_revision: document.revision(),
+            source_len: document.source().len(),
+            link_count: document.links().len(),
             document: document.id(),
             revision: document.revision(),
             resolution: Resolution::default(),
@@ -678,6 +761,9 @@ impl LinkResolver {
     }
     pub(crate) fn empty_like(&self) -> Self {
         Self {
+            retained_revision: self.retained_revision,
+            source_len: self.source_len,
+            link_count: self.link_count,
             document: self.document,
             revision: self.revision,
             resolution: Resolution::default(),
@@ -696,6 +782,9 @@ impl LinkResolver {
         if self.memo_entries() != 0 {
             return Err(LayoutError::InvalidRange);
         }
+        self.retained_revision = document.revision();
+        self.source_len = document.source().len();
+        self.link_count = document.links().len();
         self.document = document.id();
         self.revision = document.revision();
         self.resolution.token = memo_token();

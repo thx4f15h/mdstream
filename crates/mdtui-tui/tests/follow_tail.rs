@@ -63,7 +63,7 @@ fn text(engine: &StreamEngine) -> String {
     (0..screen.rows())
         .map(|r| {
             (0..screen.cols())
-                .map(|c| screen.front_cell(r, c).unwrap().text())
+                .map(|c| screen.front_cell(r, c).unwrap().text().collect_text())
                 .collect::<String>()
         })
         .collect::<Vec<_>>()
@@ -309,6 +309,7 @@ fn repeated_update_preserves_pending_tail_and_bounded_resume() {
     use mdtui_tui::render::viewport::{ViewportConfig, ViewportFrameStatus, ViewportState};
     use mdtui3::Document;
     let mut doc = Document::new();
+    doc.enable_display_shape_effects().unwrap();
     let mut view = ViewportState::new(
         &doc,
         ViewportConfig {
@@ -349,7 +350,7 @@ fn repeated_update_preserves_pending_tail_and_bounded_resume() {
     assert_eq!(
         last.cells
             .iter()
-            .map(|c| c.text.as_str())
+            .map(|c| c.text.collect_text())
             .collect::<String>(),
         "FINAL_TAIL"
     );
@@ -373,6 +374,9 @@ fn sixty_four_mib_tail_updates_read_only_bounded_windows_and_retain_checkpoints(
     let mut engine = engine(&source, 80, 24);
     let mut app = AppState::default();
     let parser_work = engine.runtime().document().work();
+    let shape = engine.runtime().viewport().shared_links().shape().unwrap();
+    let shape_input = shape.work();
+    assert_eq!(shape_input.source_decode_bytes, source.len());
     assert!(parser_work.input_bytes >= 64 * 1024 * 1024);
     app.handle_action(&mut engine, KeyAction::End).unwrap();
     let initial_steps = frame(&mut engine);
@@ -380,6 +384,10 @@ fn sixty_four_mib_tail_updates_read_only_bounded_windows_and_retain_checkpoints(
     let initial = engine.runtime().viewport().end_work();
     assert!(initial.source_bytes < 32 * 1024, "{initial:?}");
     assert!(initial.planned_tiles <= 16, "{initial:?}");
+    assert_eq!(
+        shape.work().source_decode_bytes,
+        shape_input.source_decode_bytes
+    );
     assert_eq!(
         engine.runtime().document().work(),
         parser_work,
@@ -405,6 +413,13 @@ fn sixty_four_mib_tail_updates_read_only_bounded_windows_and_retain_checkpoints(
     eprintln!(
         "64MiB end: steps={initial_steps} {initial:?}; updates=64 checkpoint_peak_entries={peak_entries} checkpoint_peak_nodes={peak_nodes}; input_work={parser_work:?}; content_index={:?}",
         engine.runtime().document().content_block_index_stats()
+    );
+    eprintln!(
+        "64MiB actual source: bytes={} TILE_BYTES={} shape_input={shape_input:?} shape_final={:?} shape_retained_capacity_bytes={}; this allocates the real source, unlike the million-continuation HeightIndex-only test",
+        source.len(),
+        mdtui3::TILE_BYTES,
+        shape.work(),
+        shape.capacity_bytes()
     );
 }
 
@@ -548,6 +563,7 @@ fn one_query_one_object_six_byte_frames_converge_to_cells_and_source() {
     ];
     for source in cases {
         let mut doc = Document::new();
+        doc.enable_display_shape_effects().unwrap();
         doc.append(&source).unwrap();
         doc.finish();
         let mut view = ViewportState::new(
@@ -603,7 +619,7 @@ fn one_query_one_object_six_byte_frames_converge_to_cells_and_source() {
             let text = last
                 .cells
                 .iter()
-                .map(|c| c.text.as_str())
+                .map(|c| c.text.collect_text())
                 .collect::<String>();
             let expected = if source.contains("TAIL_MICRO") {
                 "TAIL_MICRO"

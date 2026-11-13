@@ -116,7 +116,46 @@ impl From<TableWidthError> for FirstFrameError {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct ZeroRangeProgress {
+    at: usize,
+    ticket: Option<mdtui3::ZeroHeightMeasurement>,
+}
+pub(crate) fn measure_zero_ranges(
+    ranges: &[std::ops::Range<usize>],
+    heights: &mut HeightIndex,
+    progress: &mut ZeroRangeProgress,
+    budget: &mut Budget,
+) -> Result<bool, LayoutError> {
+    while let Some(range) = ranges.get(progress.at) {
+        if progress.ticket.is_none() {
+            if !budget.charge(WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            }) {
+                return Ok(false);
+            }
+            progress.ticket = Some(
+                heights
+                    .zero_height_ticket(range.clone())
+                    .ok_or(LayoutError::InvalidRange)?,
+            );
+        }
+        if heights.measure_zero_height(progress.ticket.unwrap(), false, budget)?
+            == Completion::BudgetExhausted
+        {
+            return Ok(false);
+        }
+        progress.ticket = None;
+        progress.at += 1;
+    }
+    Ok(true)
+}
+
 pub struct FirstFrame {
+    zero_progress: ZeroRangeProgress,
+    relocated: bool,
     width_cache: TableWidthCache,
     code_prefix_metadata_reads: usize,
     code_prefix_resolution: mdtui3::LinkResolutionWork,
@@ -231,6 +270,8 @@ impl FirstFrame {
             suppressed_heading_tiles.push(range.clone());
         }
         Ok(Self {
+            zero_progress: Default::default(),
+            relocated: false,
             width_cache: TableWidthCache::new(document),
             code_prefix_metadata_reads,
             code_prefix_resolution,
@@ -265,8 +306,22 @@ impl FirstFrame {
         })
     }
 
+    pub(crate) fn set_cluster_floor(&mut self, source: usize) {
+        self.scanner.set_cluster_floor(source);
+    }
+    pub(crate) fn zero_ranges(&self) -> &[std::ops::Range<usize>] {
+        self.scanner.zero_ranges()
+    }
     pub fn code_prefix_work(&self) -> (usize, mdtui3::LinkResolutionWork) {
         (self.code_prefix_metadata_reads, self.code_prefix_resolution)
+    }
+
+    pub fn initialize(
+        &mut self,
+        document: &Document,
+        budget: &mut Budget,
+    ) -> Result<bool, mdtui3::LayoutError> {
+        self.scanner.shared_links().prepare_shape(document, budget)
     }
 
     pub fn shared_links(&self) -> crate::render::objects::SharedLinks {
@@ -432,6 +487,7 @@ impl FirstFrame {
     }
 
     pub(crate) fn set_table_view(&mut self, view: super::table_window::TableView) {
+        self.scanner.set_source_cut(view.tail);
         self.table_view = Some(view);
     }
 
@@ -559,6 +615,14 @@ impl FirstFrame {
             {
                 self.heights.measure_local(ticket, expected)?;
             }
+            if self.scanner.cluster_floor().is_some_and(|floor| {
+                document
+                    .tile(tile)
+                    .is_some_and(|s| s.start < floor && floor < s.end)
+            }) && let Some(ticket) = self.heights.ticket(tile)
+            {
+                self.heights.measure_local(ticket, expected)?;
+            }
             let checkpoint = self
                 .sink
                 .as_ref()
@@ -643,6 +707,49 @@ impl FirstFrame {
                 ScanStatus::BudgetExhausted => return Ok(Some(FirstFrameStatus::PendingScan)),
                 ScanStatus::Complete => self.scan_complete = true,
             }
+        }
+        if !self.relocated
+            && let Some(first) = self
+                .scanner
+                .segments()
+                .first()
+                .filter(|s| s.text.is_indexed() && s.source.start < self.plan.visible.start)
+        {
+            let owner = document
+                .tile_at(first.source.start)
+                .ok_or(FirstFrameError::InvalidTop)?;
+            let floor = first.source.start;
+            let extra = usize::from(self.config.top_tile.0.saturating_sub(owner.0) == 1);
+            let config = FirstFrameConfig {
+                top_tile: owner,
+                tile_limit: self.config.tile_limit.saturating_add(extra),
+                ..self.config
+            };
+            let links = self.scanner.shared_links();
+            let widths = self.table_widths.clone();
+            let view = self.table_view;
+            let mut replacement = Self::new(document, config)?;
+            replacement.set_links(links);
+            replacement.set_table_widths(widths)?;
+            replacement.table_view = view;
+            replacement
+                .scanner
+                .set_source_cut(view.and_then(|v| v.tail));
+            replacement.scanner.set_cluster_floor(floor);
+            let mut checkpoint = RenderCheckpoint::line_start();
+            checkpoint.line_source_start = Some(floor);
+            replacement.checkpoints.insert(owner, checkpoint)?;
+            replacement.relocated = true;
+            *self = replacement;
+            return Ok(Some(FirstFrameStatus::PendingScan));
+        }
+        if !measure_zero_ranges(
+            self.scanner.zero_ranges(),
+            &mut self.heights,
+            &mut self.zero_progress,
+            budget,
+        )? {
+            return Ok(Some(FirstFrameStatus::BudgetExhausted));
         }
         if self.sink.is_none() {
             // Dynamic selection is now prepared. Classify from that window,
@@ -884,4 +991,76 @@ fn suppress_nonwrapping(
         }
     }
     Ok(ranges)
+}
+
+#[cfg(test)]
+mod giant_fold_seam_tests {
+    use super::*;
+    use mdtui3::{FoldId, FoldView, HeadingId, TILE_BYTES};
+    #[test]
+    fn giant_continuations_measure_the_fold_views_same_tree_without_erasing_masks() {
+        let mut d = Document::new();
+        let cluster = format!("a{}", "\u{301}".repeat(10_000));
+        d.append(&format!("# A\n{cluster}\n# B\ntail\n")).unwrap();
+        d.finish();
+        let mut fold = FoldView::<()>::with_state(&d, 2).unwrap();
+        fold.set_collapsed(&d, FoldId::Heading(HeadingId(0)), true)
+            .unwrap();
+        let range = 1..(4 + cluster.len()) / TILE_BYTES;
+        let (heights, _) = fold.layout_parts_mut(&d).unwrap();
+        let before: Vec<_> = (0..d.tile_count())
+            .map(|t| heights.height(TileId(t)))
+            .collect();
+        let ranges = [range.clone()];
+        let mut progress = ZeroRangeProgress::default();
+        assert!(
+            !measure_zero_ranges(
+                &ranges,
+                heights,
+                &mut progress,
+                &mut Budget::new(WorkLimit::default())
+            )
+            .unwrap()
+        );
+        for _ in 0..4 {
+            let mut b = Budget::new(WorkLimit {
+                queries: 1,
+                objects: 1,
+                bytes: 6,
+                ..Default::default()
+            });
+            if measure_zero_ranges(&ranges, heights, &mut progress, &mut b).unwrap() {
+                break;
+            }
+        }
+        assert_eq!(progress.at, 1);
+        for (t, old) in before.into_iter().enumerate() {
+            assert_eq!(
+                heights.base_height(TileId(t)),
+                Some(if range.contains(&t) { 0 } else { 2 })
+            );
+            assert_eq!(
+                heights.height(TileId(t)),
+                if range.contains(&t) { Some(0) } else { old }
+            );
+        }
+        fold.set_collapsed(&d, FoldId::Heading(HeadingId(0)), false)
+            .unwrap();
+        let (heights, _) = fold.layout_parts_mut(&d).unwrap();
+        // A fold change invalidates layout, so capture and pay a fresh
+        // measurement rather than treating the old proof as permanent.
+        let mut progress = ZeroRangeProgress::default();
+        assert!(
+            measure_zero_ranges(
+                &ranges,
+                heights,
+                &mut progress,
+                &mut Budget::new(WorkLimit::unlimited())
+            )
+            .unwrap()
+        );
+        for t in range {
+            assert_eq!(heights.height(TileId(t)), Some(0));
+        }
+    }
 }

@@ -133,6 +133,8 @@ pub struct SourceRefiner {
     finish_candidate: Option<(usize, crate::screen::LineSource)>,
     finish_first: Option<(usize, crate::screen::LineSource)>,
     finish_content: Option<(usize, crate::screen::LineSource)>,
+    zero_progress: super::first_frame::ZeroRangeProgress,
+    normalized_source: Option<usize>,
 }
 
 impl SourceRefiner {
@@ -290,6 +292,8 @@ impl SourceRefiner {
             finish_candidate: None,
             finish_first: None,
             finish_content: None,
+            zero_progress: Default::default(),
+            normalized_source: None,
         })
     }
 
@@ -392,6 +396,9 @@ impl SourceRefiner {
                                 .get_or_insert((self.finish_line, source));
                         }
                         if mapped.start <= self.lookup_source && self.lookup_source < mapped.end {
+                            if cell.text.is_indexed() {
+                                self.normalized_source = Some(mapped.start);
+                            }
                             self.finish_candidate = Some((self.finish_line, source));
                             self.finish_content = self.finish_candidate;
                             self.finish_line = lines.len();
@@ -417,6 +424,14 @@ impl SourceRefiner {
             self.result = Some(None);
             return Ok(RefineProgress::NotFound);
         };
+        if !super::first_frame::measure_zero_ranges(
+            self.first.zero_ranges(),
+            heights,
+            &mut self.zero_progress,
+            budget,
+        )? {
+            return Ok(RefineProgress::BudgetExhausted);
+        }
         sync_layout_parts(&self.first, heights, checkpoints)?;
         let render_start = match (self.status, self.first.replay_used()) {
             (RefineStatus::ReplayFrom { from, .. }, true) => from,
@@ -438,7 +453,7 @@ impl SourceRefiner {
             ));
         }
         let target = RefinedTarget {
-            source: self.source,
+            source: self.normalized_source.unwrap_or(self.source),
             line_start: line_source.source.start,
             row,
             anchor,

@@ -60,7 +60,7 @@ fn frame_text(frame: &ViewportFrame) -> String {
         .lines
         .iter()
         .flat_map(|line| line.cells.iter())
-        .map(|cell| cell.text.as_str())
+        .map(|cell| cell.text.collect_text())
         .collect()
 }
 
@@ -71,6 +71,7 @@ fn append(document: &mut Document, text: &str) -> mdtui3::Update {
 #[test]
 fn sequential_updates_keep_top_source_and_produce_new_revision_frames() {
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     let mut state = ViewportState::new(&document, config(40, 4)).unwrap();
 
     let first = append(&mut document, "first\n");
@@ -97,6 +98,7 @@ fn sequential_updates_keep_top_source_and_produce_new_revision_frames() {
 #[test]
 fn append_after_the_top_tile_preserves_the_exact_anchor() {
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     append(&mut document, &format!("head\n\n{}\n", "body ".repeat(300)));
     let first = first_frame(&document, 40);
     let mut state = ViewportState::from_first_frame(&document, first, config(40, 6)).unwrap();
@@ -119,6 +121,7 @@ fn append_after_the_top_tile_preserves_the_exact_anchor() {
 #[test]
 fn append_inside_the_top_tile_keeps_the_anchor_and_source() {
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     append(&mut document, "alpha\n");
     let mut state = ViewportState::new(&document, config(40, 4)).unwrap();
     let _ = ready_frame(&mut state, &document);
@@ -140,11 +143,17 @@ fn append_inside_the_top_tile_keeps_the_anchor_and_source() {
 #[test]
 fn pending_frame_is_stale_after_append_and_discarded_by_apply() {
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     append(
         &mut document,
         &format!("{}\n", "paragraph text ".repeat(100)),
     );
     let mut state = ViewportState::new(&document, config(40, 5)).unwrap();
+    assert!(
+        state
+            .initialize(&document, &mut Budget::new(WorkLimit::unlimited()))
+            .unwrap()
+    );
     let pending = state
         .frame(
             &document,
@@ -164,6 +173,7 @@ fn pending_frame_is_stale_after_append_and_discarded_by_apply() {
     assert!(state.has_pending_frame());
     assert_eq!(pending.revision, 1);
     let mut foreign = Document::new();
+    foreign.enable_display_shape_effects().unwrap();
     foreign.append("foreign\n").unwrap();
     assert!(!pending.matches(&foreign));
 
@@ -184,6 +194,7 @@ fn pending_frame_is_stale_after_append_and_discarded_by_apply() {
 #[test]
 fn empty_append_and_repeated_finish_do_not_discard_or_invalidate() {
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     append(&mut document, &format!("{}\n", "line\n\n".repeat(400)));
     let mut state = ViewportState::new(&document, config(40, 5)).unwrap();
     let _ = state
@@ -255,6 +266,7 @@ fn empty_append_and_repeated_finish_do_not_discard_or_invalidate() {
 #[test]
 fn offscreen_invalidated_tiles_are_remeasured_only_when_scrolled_back() {
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     append(
         &mut document,
         &format!("intro\n\n{}", "a".repeat(TILE_BYTES * 5)),
@@ -300,6 +312,7 @@ fn offscreen_invalidated_tiles_are_remeasured_only_when_scrolled_back() {
 #[test]
 fn top_at_tail_boundary_survives_append_without_jumping() {
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     append(
         &mut document,
         &format!("{}\n", "tail text ".repeat(TILE_BYTES)),
@@ -323,6 +336,7 @@ fn top_at_tail_boundary_survives_append_without_jumping() {
 #[test]
 fn out_of_order_and_foreign_updates_are_rejected_without_rebinding() {
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     append(&mut document, "base\n");
     let mut state = ViewportState::new(&document, config(40, 4)).unwrap();
     let first = append(&mut document, "one\n");
@@ -338,6 +352,7 @@ fn out_of_order_and_foreign_updates_are_rejected_without_rebinding() {
     assert!(!state.matches(&document));
 
     let mut foreign = Document::new();
+    foreign.enable_display_shape_effects().unwrap();
     let foreign_update = append(&mut foreign, "foreign\n");
     assert_eq!(
         state.apply_update(&foreign, &foreign_update),

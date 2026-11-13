@@ -121,6 +121,7 @@ pub enum TableWidthError {
     OutOfOrderUpdate,
     MissingTable(TableId),
     Table(TableError),
+    Layout(mdtui3::LayoutError),
 }
 
 impl fmt::Display for TableWidthError {
@@ -132,6 +133,7 @@ impl fmt::Display for TableWidthError {
             Self::OutOfOrderUpdate => formatter.write_str("table width update is out of order"),
             Self::MissingTable(id) => write!(formatter, "table {} is missing", id.0),
             Self::Table(error) => error.fmt(formatter),
+            Self::Layout(error) => error.fmt(formatter),
         }
     }
 }
@@ -276,6 +278,14 @@ impl TableWidthCache {
         Ok(true)
     }
 
+    pub fn initialize(
+        &mut self,
+        document: &Document,
+        budget: &mut Budget,
+    ) -> Result<bool, mdtui3::LayoutError> {
+        self.links.prepare_shape(document, budget)
+    }
+
     pub fn set_links(&mut self, links: crate::render::objects::SharedLinks) {
         self.links = links;
     }
@@ -310,6 +320,9 @@ impl TableWidthCache {
         if update.base_revision != self.revision {
             return Err(TableWidthError::OutOfOrderUpdate);
         }
+        self.links
+            .apply_shape_update(document, update)
+            .map_err(TableWidthError::Layout)?;
         self.document = document.id();
         self.revision = update.revision;
         // Preserve visible scalar identity and unchanged partial measurements.

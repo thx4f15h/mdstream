@@ -3,6 +3,7 @@ use mdtui3::{BlockKind, Budget, Document, TableId, WorkLimit};
 
 fn parse(source: &str) -> (Document, TableId) {
     let mut doc = Document::new();
+    doc.enable_display_shape_effects().unwrap();
     doc.append(source).unwrap();
     doc.finish();
     let id = doc
@@ -179,7 +180,7 @@ fn ready(
 fn line_text(line: &mdtui_tui::render::sink::SinkLine) -> String {
     line.cells
         .iter()
-        .map(|cell| cell.text.as_str())
+        .map(|cell| cell.text.collect_text())
         .collect::<String>()
         .trim_end()
         .to_owned()
@@ -223,7 +224,7 @@ fn cell_boundaries_reset_unicode_but_display_runs_inside_one_cell_join() {
     assert_eq!(
         cells
             .iter()
-            .map(|cell| cell.text.as_str())
+            .map(|cell| cell.text.collect_text())
             .collect::<Vec<_>>(),
         ["🇺", "🇸", "👩\u{200d}", "💻", "👩\u{200d}💻"]
     );
@@ -306,6 +307,7 @@ fn far_column_layout_reads_indexed_window_and_keeps_original_row_source_and_hits
 fn pan_policy_resize_and_append_preserve_identity_and_invalidate_tickets() {
     use mdtui_tui::render::viewport::{ViewportConfig, ViewportState};
     let mut doc = Document::new();
+    doc.enable_display_shape_effects().unwrap();
     doc.append("|a|b|c|d|\n|---|:---:|---:|---|\n|aa|bb|cc|dd|\n")
         .unwrap();
     let id = TableId(0);
@@ -366,6 +368,7 @@ fn long_precision_does_not_starve_other_visible_columns() {
 #[test]
 fn pending_precision_survives_unrelated_appends_without_replaying_old_prefix() {
     let mut doc = Document::new();
+    doc.enable_display_shape_effects().unwrap();
     doc.append(&format!(
         "|a|b|\n|---|---|\n|{}|z|\n",
         "x".repeat(1_000_000)
@@ -373,6 +376,11 @@ fn pending_precision_survives_unrelated_appends_without_replaying_old_prefix() {
     .unwrap();
     let id = TableId(0);
     let mut cache = TableWidthCache::new(&doc);
+    assert!(
+        cache
+            .initialize(&doc, &mut Budget::new(WorkLimit::unlimited()))
+            .unwrap()
+    );
     for _ in 0..30 {
         cache
             .advance(
@@ -632,7 +640,10 @@ fn million_byte_image_alt_and_local_giant_cluster_have_explicit_width_truth() {
             .unwrap();
             let body = ready(&mut view, &doc);
             assert!(
-                body.lines.iter().any(|l| line_text(l).contains('…')),
+                body.lines
+                    .iter()
+                    .flat_map(|l| &l.cells)
+                    .any(|cell| cell.text == format!("a{}", "\u{301}".repeat(5000))),
                 "{:?} {:?}",
                 frame.lines,
                 body.lines
@@ -644,6 +655,7 @@ fn million_byte_image_alt_and_local_giant_cluster_have_explicit_width_truth() {
 #[test]
 fn late_definition_discards_stale_precision_and_remeasures_real_display() {
     let mut doc = Document::new();
+    doc.enable_display_shape_effects().unwrap();
     doc.append(&format!(
         "|h|\n|---|\n|{}![y][late]|\n",
         "x".repeat(400_000)
@@ -651,6 +663,11 @@ fn late_definition_discards_stale_precision_and_remeasures_real_display() {
     .unwrap();
     let id = TableId(0);
     let mut cache = TableWidthCache::new(&doc);
+    assert!(
+        cache
+            .initialize(&doc, &mut Budget::new(WorkLimit::unlimited()))
+            .unwrap()
+    );
     cache
         .advance(
             &doc,
@@ -956,7 +973,14 @@ fn table_status_covers_the_entire_row_without_invisible_source_or_image_hits() {
         }
     }
     let message: String = (0..80)
-        .map(|x| runtime.screen().front_cell(7, x).unwrap().text())
+        .map(|x| {
+            runtime
+                .screen()
+                .front_cell(7, x)
+                .unwrap()
+                .text()
+                .collect_text()
+        })
         .collect();
     assert!(message.starts_with("table 1 cols 1-12 / 12"), "{message}");
     assert!(

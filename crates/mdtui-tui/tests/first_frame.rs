@@ -100,7 +100,7 @@ fn empty_info_fence_produces_first_frame_label_without_finish() {
         first.lines()[0]
             .cells
             .iter()
-            .map(|cell| cell.text.as_str())
+            .map(|cell| cell.text.collect_text())
             .collect::<String>()
             .contains("[rust]")
     );
@@ -192,6 +192,11 @@ fn large_unfinished_document_gets_a_bounded_first_batch() {
         },
     )
     .unwrap();
+    assert!(
+        first
+            .initialize(&document, &mut Budget::new(WorkLimit::unlimited()))
+            .unwrap()
+    );
     assert_eq!(first.plan().tile_end, TileId(4));
     assert!(first.plan().tile_end.0 < document.tile_count());
 

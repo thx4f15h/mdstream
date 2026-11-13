@@ -736,6 +736,136 @@ impl Iterator for Segments<'_> {
     }
 }
 
+/// Read-only current annotation seed. The saved physical-line checkpoint is
+/// emitted separately, so a late subscriber can honor its next real rollback.
+pub(crate) struct ShapeSeed {
+    undo_at: usize,
+    old: std::collections::BTreeMap<usize, Node>,
+    stack: Vec<(usize, Span)>,
+    phase: u8,
+    pub(crate) work: crate::display_shape::DisplayShapeSeedWork,
+}
+impl ShapeSeed {
+    pub(crate) fn new() -> Self {
+        Self {
+            undo_at: 0,
+            old: Default::default(),
+            stack: Vec::new(),
+            phase: 0,
+            work: Default::default(),
+        }
+    }
+    pub(crate) fn capacity_bytes(&self) -> usize {
+        self.stack.capacity() * std::mem::size_of::<(usize, Span)>()
+            + self.old.len() * (std::mem::size_of::<(usize, Node)>() + 256)
+    }
+    pub(crate) fn retire(&mut self, budget: &mut crate::Budget) -> crate::Completion {
+        self.phase = 3;
+        while !self.old.is_empty() || !self.stack.is_empty() {
+            if !budget.charge(crate::WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            }) {
+                return crate::Completion::BudgetExhausted;
+            }
+            self.work.steps += 1;
+            self.work.retired_nodes += 1;
+            if self.old.pop_first().is_none() {
+                self.stack.pop();
+            }
+        }
+        crate::Completion::Covered
+    }
+    pub(crate) fn next(
+        &mut self,
+        annotations: &Annotations,
+        budget: &mut crate::Budget,
+    ) -> Result<Option<crate::display_shape::DisplayShapeSeedItem>, crate::Completion> {
+        use crate::display_shape::DisplayShapeSeedItem as Item;
+        loop {
+            if !budget.charge(crate::WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            }) {
+                return Err(crate::Completion::BudgetExhausted);
+            }
+            self.work.steps += 1;
+            if self.phase == 0 {
+                if let Some((_, _, _, _, undo)) = &annotations.checkpoint {
+                    if let Some(&(id, node)) = undo.get(self.undo_at) {
+                        self.old.insert(id, node);
+                        self.undo_at += 1;
+                        self.work.undo_copies += 1;
+                        continue;
+                    }
+                    let (_, root, capacity, _, _) = annotations.checkpoint.as_ref().unwrap();
+                    self.stack.push((*root, Span::new(0, *capacity)));
+                    self.phase = 1;
+                    return Ok(Some(Item::AnnotationCheckpoint));
+                }
+                self.phase = 2;
+                self.stack
+                    .push((annotations.root, Span::new(0, annotations.capacity)));
+            }
+            if let Some((id, source)) = self.stack.pop() {
+                self.work.annotation_nodes += 1;
+                let baseline = self.phase == 1;
+                let node = if baseline {
+                    self.old.get(&id).copied().unwrap_or(annotations.nodes[id])
+                } else {
+                    annotations.nodes[id]
+                };
+                let mid = source.start + (source.len() / 2);
+                for side in (0..2).rev() {
+                    if let Some(child) = node.child(side) {
+                        self.stack.push((
+                            child,
+                            if side == 0 {
+                                Span::new(source.start, mid)
+                            } else {
+                                Span::new(mid, source.end)
+                            },
+                        ));
+                    }
+                }
+                let mark = node.tag;
+                if mark != Mark::default() {
+                    return Ok(Some(Item::Mark {
+                        source,
+                        baseline,
+                        mark: crate::DisplayShapeMark {
+                            style: mark.style,
+                            base_hidden: mark.base_hidden,
+                            delimiter_hidden: mark.delimiter_hidden,
+                            emphasis_depth: mark.emphasis_depth,
+                            strong_depth: mark.strong_depth,
+                            link: mark.link,
+                            hide_owner: mark.hide_owner(),
+                            hide_alternative: mark.alternative_owner(),
+                            object_syntax: mark.link_syntax,
+                            order: mark.serial,
+                        },
+                    }));
+                }
+                continue;
+            }
+            if self.phase == 1 {
+                self.phase = 2;
+                self.stack
+                    .push((annotations.root, Span::new(0, annotations.capacity)));
+                continue;
+            }
+            if self.old.pop_first().is_some() {
+                self.work.retired_nodes += 1;
+                continue;
+            }
+            return Ok(None);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

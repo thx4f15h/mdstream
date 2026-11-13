@@ -25,6 +25,7 @@ pub(crate) fn row_owner(row: &mdtui3::TableRow) -> usize {
 
 pub(crate) struct TableWindow {
     pub ranges: Vec<(Span, bool)>,
+    pub contexts: HashMap<usize, Span>,
     pub cuts: Vec<usize>,
     pub rows: HashMap<TableId, Range<usize>>,
     pub skipped: Vec<(mdtui3::TileId, usize, u64)>,
@@ -48,6 +49,7 @@ impl TableWindow {
     pub fn new(source: Span) -> Self {
         Self {
             ranges: Vec::new(),
+            contexts: HashMap::new(),
             cuts: Vec::new(),
             rows: HashMap::new(),
             skipped: Vec::new(),
@@ -153,6 +155,16 @@ impl TableWindow {
                             self.cuts.push(end);
                         }
                         if cell.source.start < end {
+                            self.contexts.insert(
+                                cell.source.start,
+                                Span::new(
+                                    cell.source.start,
+                                    cell.source
+                                        .end
+                                        .min(view.and_then(|v| v.tail).unwrap_or(usize::MAX))
+                                        .max(cell.source.start),
+                                ),
+                            );
                             self.ranges.push((Span::new(cell.source.start, end), true));
                         }
                     }

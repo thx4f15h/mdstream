@@ -214,7 +214,12 @@ fn points(screen: &Screen, area: ContentArea) -> Vec<Point> {
     let mut out = Vec::new();
     for row in 0..screen.rows() {
         for col in area.x..area.x.saturating_add(area.width).min(screen.cols()) {
-            if let Some(cell) = screen.front_cell(row, col)
+            if let Some(cell) = screen.reading_zero_cell(row, col)
+                && let Some(source) = cell.source()
+            {
+                out.push(Point { row, col, source });
+            }
+            if let Some(cell) = screen.reading_cell(row, col)
                 && !cell.is_continuation()
                 && let Some(source) = cell.source().filter(|source| !source.is_empty())
             {
@@ -250,6 +255,7 @@ pub struct ReadingTools {
     copy: Option<CopyTask>,
     message: &'static str,
     clipboard_bytes: usize,
+    clipboard_close_at: Option<usize>,
 }
 
 impl ReadingTools {
@@ -275,7 +281,7 @@ impl ReadingTools {
         self.message
     }
     pub fn pending(&self) -> bool {
-        self.searching || self.copy.is_some() || self.selection.pending.is_some()
+        self.searching || self.copy_pending() || self.selection.pending.is_some()
     }
     pub fn status_visible(&self) -> bool {
         self.input.is_some()
@@ -444,7 +450,7 @@ impl ReadingTools {
         self.search = None;
         self.searching = false;
         self.current = None;
-        self.copy = None;
+        self.cancel_copy();
         self.selection.clear();
         self.query.clear();
         self.input = None;
@@ -473,7 +479,7 @@ impl ReadingTools {
             .as_ref()
             .is_some_and(|copy| copy.kind == CopyKind::Visible && copy.revision != revision)
         {
-            self.copy = None;
+            self.cancel_copy();
             self.message = "copy cancelled: content changed";
         }
     }
@@ -483,7 +489,7 @@ impl ReadingTools {
             .as_ref()
             .is_some_and(|copy| copy.kind == CopyKind::Visible)
         {
-            self.copy = None;
+            self.cancel_copy();
             self.message = "copy cancelled: view changed";
         }
     }
@@ -493,12 +499,47 @@ impl ReadingTools {
             .as_ref()
             .is_some_and(|copy| copy.kind == CopyKind::Visible)
         {
-            self.copy = None;
+            self.cancel_copy();
             self.message = "copy cancelled: width changed";
         }
     }
+    fn cancel_copy(&mut self) {
+        if self.copy.take().is_some_and(|copy| copy.packet_written > 0) {
+            self.clipboard_close_at = Some(0);
+        }
+    }
+    pub fn copy_pending(&self) -> bool {
+        self.copy.is_some() || self.clipboard_close_at.is_some()
+    }
+    pub(crate) fn start_copy_payload(
+        &mut self,
+        document: &Document,
+        kind: CopyKind,
+        width: u16,
+        payload: Option<crate::render::payload::TextPayload>,
+    ) {
+        if kind == CopyKind::Visible
+            && let Some(payload) = payload
+        {
+            self.cancel_copy();
+            let Some(selection) = self.selection.selection(document) else {
+                self.message = "select text first (v)";
+                return;
+            };
+            if payload.len() > MAX_CLIPBOARD_BYTES {
+                self.message = "copy too large (64 KiB limit)";
+                return;
+            }
+            let mut task = CopyTask::new(document, selection.source, kind, width);
+            task.direct = Some(payload);
+            self.copy = Some(task);
+            self.message = "copy preparing; Esc cancels";
+            return;
+        }
+        self.start_copy(document, kind, width);
+    }
     pub fn start_copy(&mut self, document: &Document, kind: CopyKind, width: u16) {
-        self.copy = None;
+        self.cancel_copy();
         let Some(selection) = self.selection.selection(document) else {
             self.message = "select text first (v)";
             return;
@@ -594,16 +635,44 @@ impl ReadingTools {
             // Forward restart skips through the current display offset below.
             self.search = None;
         }
+        if let Some(at) = self.clipboard_close_at.as_mut() {
+            const CLOSE: &[u8] = b"\x18\x1b\\";
+            if budget.remaining().bytes > 0
+                && budget.charge(WorkLimit {
+                    queries: 1,
+                    objects: 1,
+                    ..Default::default()
+                })
+            {
+                let count = (CLOSE.len() - *at).min(budget.remaining().bytes);
+                if let Ok(n) = writer.write(&CLOSE[*at..*at + count]) {
+                    assert!(budget.charge(WorkLimit {
+                        bytes: n,
+                        ..Default::default()
+                    }));
+                    *at += n;
+                    self.clipboard_bytes += n;
+                }
+                if *at == CLOSE.len() {
+                    self.clipboard_close_at = None;
+                }
+            }
+            if self.clipboard_close_at.is_some() {
+                return target;
+            }
+        }
         if let Some(copy) = self.copy.as_mut() {
-            match copy.advance(document, links, budget, writer, tables) {
+            let before = copy.packet_written;
+            let result = copy.advance(document, links, budget, writer, tables);
+            self.clipboard_bytes += copy.packet_written - before;
+            match result {
                 Ok(false) => {}
                 Ok(true) => {
-                    self.clipboard_bytes += copy.encoded.len() + 8;
                     self.copy = None;
                     self.message = "clipboard request sent";
                 }
                 Err(message) => {
-                    self.copy = None;
+                    self.cancel_copy();
                     self.message = message;
                 }
             }
@@ -613,6 +682,13 @@ impl ReadingTools {
 }
 
 struct CopyTask {
+    direct: Option<crate::render::payload::TextPayload>,
+    direct_at: usize,
+    packet_written: usize,
+    cell_reader: Option<crate::render::payload::PayloadReader>,
+    cell_pending: [u8; 8],
+    cell_pending_at: usize,
+    cell_pending_end: usize,
     kind: CopyKind,
     revision: u64,
     source: Span,
@@ -646,6 +722,13 @@ struct CopyTask {
 impl CopyTask {
     fn new(document: &Document, source: Span, kind: CopyKind, width: u16) -> Self {
         Self {
+            direct: None,
+            direct_at: 0,
+            packet_written: 0,
+            cell_reader: None,
+            cell_pending: [0; 8],
+            cell_pending_at: 0,
+            cell_pending_end: 0,
             kind,
             revision: document.revision(),
             source,
@@ -704,6 +787,30 @@ impl CopyTask {
                 self.bytes
                     .extend_from_slice(ch.encode_utf8(&mut scalar).as_bytes());
                 self.position += ch.len_utf8();
+            }
+        } else if let Some(payload) = &self.direct {
+            let reader = self.cell_reader.get_or_insert_with(|| payload.reader());
+            while self.direct_at < payload.len() {
+                if self.cell_pending_at == self.cell_pending_end {
+                    match reader.next(budget).map_err(|_| "copy changed")? {
+                        crate::render::payload::PayloadStep::BudgetExhausted => return Ok(false),
+                        crate::render::payload::PayloadStep::Complete => break,
+                        crate::render::payload::PayloadStep::Bytes { utf8, len } => {
+                            self.cell_pending = utf8;
+                            self.cell_pending_at = 0;
+                            self.cell_pending_end = usize::from(len);
+                        }
+                    }
+                }
+                if !budget.charge(WorkLimit {
+                    bytes: 1,
+                    ..Default::default()
+                }) {
+                    return Ok(false);
+                }
+                self.bytes.push(self.cell_pending[self.cell_pending_at]);
+                self.cell_pending_at += 1;
+                self.direct_at += 1;
             }
         } else {
             if self.layout.is_none() {
@@ -844,12 +951,14 @@ impl CopyTask {
                 });
                 // One object/query and up to six bytes makes progress even for
                 // a cell containing many combining scalars. Output is chunked.
-                if !budget.charge(WorkLimit {
-                    queries: 1,
-                    objects: 1,
-                    bytes: 1,
-                    ..WorkLimit::default()
-                }) {
+                if self.cell_reader.is_none()
+                    && !budget.charge(WorkLimit {
+                        queries: 1,
+                        objects: 1,
+                        bytes: 1,
+                        ..WorkLimit::default()
+                    })
+                {
                     return Ok(false);
                 }
                 let line = if extra {
@@ -986,19 +1095,42 @@ impl CopyTask {
                     {
                         return Err("copy too large (64 KiB limit)");
                     }
-                    // Cell text is already bounded by the renderer's edge
-                    // policy. A per-cell byte cursor below avoids free copies.
+                    if self.cell_reader.is_none() {
+                        self.cell_reader = Some(cell.text.reader());
+                    }
                     while self.position - self.source.start < cell.text.len() {
+                        if self.cell_pending_at == self.cell_pending_end {
+                            match self
+                                .cell_reader
+                                .as_mut()
+                                .unwrap()
+                                .next(budget)
+                                .map_err(|_| "copy changed")?
+                            {
+                                crate::render::payload::PayloadStep::BudgetExhausted => {
+                                    return Ok(false);
+                                }
+                                crate::render::payload::PayloadStep::Complete => break,
+                                crate::render::payload::PayloadStep::Bytes { utf8, len } => {
+                                    self.cell_pending = utf8;
+                                    self.cell_pending_at = 0;
+                                    self.cell_pending_end = usize::from(len);
+                                }
+                            }
+                        }
                         if !budget.charge(WorkLimit {
                             bytes: 1,
                             ..WorkLimit::default()
                         }) {
                             return Ok(false);
                         }
-                        self.bytes
-                            .push(cell.text.as_bytes()[self.position - self.source.start]);
+                        self.bytes.push(self.cell_pending[self.cell_pending_at]);
+                        self.cell_pending_at += 1;
                         self.position += 1;
                     }
+                    self.cell_reader = None;
+                    self.cell_pending_at = 0;
+                    self.cell_pending_end = 0;
                     self.position = self.source.start;
                     self.last_source_end = cell.source.map(|source| source.end);
                 }
@@ -1070,19 +1202,36 @@ impl CopyTask {
         }) {
             return Ok(false);
         }
-        write_clipboard(writer, &self.encoded).map_err(|_| "clipboard write failed")?;
+        // The complete bounded OSC52 packet has already earned its byte
+        // credit. It remains atomic with respect to other terminal output,
+        // including across short writes and EAGAIN; its reserved credit is
+        // intentionally independent of the current six-byte micro budget.
+        while self.packet_written < self.encoded.len() + 8 {
+            let at = self.packet_written;
+            let bytes = if at < 7 {
+                &b"\x1b]52;c;"[at..]
+            } else if at < 7 + self.encoded.len() {
+                &self.encoded[at - 7..]
+            } else {
+                b"\x07"
+            };
+            match writer.write(bytes) {
+                Ok(0) => return Err("clipboard write failed"),
+                Ok(n) => self.packet_written += n,
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                    ) =>
+                {
+                    return Ok(false);
+                }
+                Err(_) => return Err("clipboard write failed"),
+            }
+        }
         Ok(true)
     }
 }
-fn write_clipboard<W: Write + ?Sized>(writer: &mut W, encoded: &[u8]) -> io::Result<()> {
-    writer.write_all(b"\x1b]52;c;")?;
-    let result = writer.write_all(encoded);
-    let end = writer.write_all(b"\x07");
-    result?;
-    end?;
-    writer.flush()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1426,6 +1575,16 @@ mod style_confirmation_tests {
         column: Option<usize>,
     ) -> (Vec<u8>, usize, u64) {
         let links = SharedLinks::new(doc);
+        // One input/adoption pass precedes the per-query source-work meter.
+        assert!(
+            links
+                .prepare_shape(doc, &mut Budget::new(WorkLimit::unlimited()))
+                .unwrap()
+        );
+        assert_eq!(
+            links.shape().unwrap().work().source_decode_bytes,
+            doc.source().len()
+        );
         let mut tables = TableWidthCache::new(doc);
         tables.set_links(links.clone());
         if let Some(column) = column {

@@ -138,6 +138,7 @@ fn streaming_fixtures_after_finish_match_one_shot_static_cells() {
     for (name, source) in sources {
         for width in [20, 80] {
             let mut document = Document::new();
+            document.enable_display_shape_effects().unwrap();
             let mut state = ViewportState::new(&document, config(width, 12)).unwrap();
             append_chunks(&mut state, &mut document, source);
             let before = ready_frame(&mut state, &document);
@@ -157,6 +158,7 @@ fn streaming_fixtures_after_finish_match_one_shot_static_cells() {
 #[test]
 fn setext_late_confirmation_calibrates_to_heading_cells() {
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     let mut state = ViewportState::new(&document, config(40, 8)).unwrap();
     let update = document.append("Title\n===").unwrap();
     state.apply_update(&document, &update).unwrap();
@@ -176,6 +178,7 @@ fn unclosed_code_and_table_constructs_match_static_after_finish() {
         ("| A | B |\n| --- | --- |\n| one | two", 40),
     ] {
         let mut document = Document::new();
+        document.enable_display_shape_effects().unwrap();
         let mut state = ViewportState::new(&document, config(width, 10)).unwrap();
         let update = document.append(source).unwrap();
         state.apply_update(&document, &update).unwrap();
@@ -195,6 +198,7 @@ fn eof_calibration_preserves_top_source_in_middle_and_tail() {
             "tail line\n\n".repeat(20)
         );
         let mut document = Document::new();
+        document.enable_display_shape_effects().unwrap();
         let update = document.append(&source).unwrap();
         let mut state = ViewportState::new(&document, config(40, 6)).unwrap();
         state.apply_update(&document, &update).unwrap();
@@ -220,6 +224,7 @@ fn tiny_budget_calibration_resumes_and_can_be_exited_while_pending() {
         source.push_str(&format!("| row-{index} | 中文🙂 |\n"));
     }
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     let update = document.append(&source).unwrap();
     let mut state = ViewportState::new(&document, config(30, 8)).unwrap();
     state.apply_update(&document, &update).unwrap();
@@ -253,6 +258,7 @@ fn visible_table_widths_become_final_during_calibration() {
         source.push_str(&format!("| value-{index} | 中文 |\n"));
     }
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     let update = document.append(&source).unwrap();
     let mut state = ViewportState::new(&document, config(24, 8)).unwrap();
     state.apply_update(&document, &update).unwrap();
@@ -278,6 +284,7 @@ fn visible_table_widths_become_final_during_calibration() {
 #[test]
 fn repeated_finish_returns_cached_calibration_without_rework() {
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     let mut state = ViewportState::new(&document, config(40, 8)).unwrap();
     let update = document.append("# Final\n\nbody\n").unwrap();
     state.apply_update(&document, &update).unwrap();
@@ -306,6 +313,7 @@ fn repeated_finish_returns_cached_calibration_without_rework() {
 #[test]
 fn external_finish_update_can_start_eof_calibration() {
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     let mut state = ViewportState::new(&document, config(40, 8)).unwrap();
     let update = document.append("## External finish\n\nbody\n").unwrap();
     state.apply_update(&document, &update).unwrap();

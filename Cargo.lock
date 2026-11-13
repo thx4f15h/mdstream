@@ -46,6 +46,7 @@ checksum = "d8b9f2e4c67f833b660cdb0a3523065869fb35570177239812ed4c905aeff87b"
 dependencies = [
  "bitflags 2.13.2",
  "document-features",
+ "filedescriptor",
  "mio",
  "parking_lot",
  "rustix",
@@ -174,6 +175,7 @@ dependencies = [
  "insta",
  "mdstream-core",
  "portable-pty",
+ "rustix",
  "tempfile",
  "unicode-segmentation",
  "unicode-width",

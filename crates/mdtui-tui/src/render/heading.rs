@@ -3,7 +3,7 @@ use std::fmt;
 use mdtui3::{Document, Heading};
 
 use crate::render::input::{DisplayInput, TokenKind};
-use crate::render::text::{TextCursor, TextError, fit_prefix, graphemes};
+use crate::render::text::{TextCursor, TextError};
 use crate::render::visibility::visible_input;
 use crate::screen::{LineSource, Screen, ScreenError, StyleRole};
 
@@ -66,7 +66,7 @@ pub(crate) fn compose_inline_input(input: &DisplayInput) -> DisplayInput {
             let mut token = token.clone();
             if token.kind != TokenKind::Text {
                 token.kind = TokenKind::Text;
-                token.text = " ".to_owned();
+                token.text = " ".into();
                 token.replacement = Some(token.source);
             }
             base.push(token);
@@ -122,29 +122,36 @@ pub(crate) fn render_heading_input(
     let content = screen.content_area();
     let style = StyleRole::heading(heading.level);
     let mut cursor = TextCursor::new(content.x);
-    for token in input.tokens() {
+    for glyph in
+        super::input::display_glyphs(input.tokens().iter().map(|token| super::input::GlyphInput {
+            text: &token.text,
+            source: token.source,
+            replacement: token.replacement,
+            block: token.block,
+            link: token.link,
+            style: token.style,
+            kind: token.kind,
+        }))
+    {
         let available = content
             .x
             .saturating_add(screen.render_width())
             .saturating_sub(cursor.next_col());
-        let fit = fit_prefix(&token.text, usize::from(available));
-        for grapheme in graphemes(&token.text[..fit.end]) {
-            let source = if token.replacement.is_none() && token.source.len() == token.text.len() {
-                mdtui3::Span::new(
-                    token.source.start + grapheme.start,
-                    token.source.start + grapheme.end,
-                )
-            } else {
-                token.source
-            };
-            if let Err(error) = cursor.place(screen, row, grapheme, style, token.link, Some(source))
-                && error != TextError::NoBaseForZeroWidth
-            {
-                return Err(error.into());
-            }
-        }
-        if fit.clipped {
+        if u16::from(glyph.width) > available {
             break;
+        }
+        if let Err(error) = cursor.place_payload(
+            screen,
+            row,
+            &glyph.text,
+            glyph.width,
+            glyph.kind,
+            style,
+            glyph.link,
+            Some(glyph.source),
+        ) && error != TextError::NoBaseForZeroWidth
+        {
+            return Err(error.into());
         }
     }
     screen.set_line_source(row, LineSource::new(heading.source, heading.block))?;
@@ -178,7 +185,7 @@ mod tests {
         let content = screen.content_area();
         let mut text = String::new();
         for col in content.x..content.right() {
-            text.push_str(screen.cell(row, col).unwrap().text());
+            text.push_str(&screen.cell(row, col).unwrap().text().collect_text());
         }
         text
     }

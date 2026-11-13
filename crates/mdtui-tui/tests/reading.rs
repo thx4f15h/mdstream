@@ -106,6 +106,245 @@ fn clipboard(bytes: &[u8]) -> Vec<u8> {
 }
 
 #[test]
+fn visible_copy_of_indexed_source_aliases_keeps_all_projected_characters() {
+    let cases = [
+        ("![](界)".to_owned(), "[image]".to_owned(), "!"),
+        ("&fjlig;界".to_owned(), "fj".to_owned(), "&fjlig;"),
+        ("```\n\t界\n```".to_owned(), " ".to_owned(), "\t"),
+    ];
+    let mut copied = Vec::new();
+    for (source, expected, raw) in cases {
+        let mut engine = engine(&source, 24, 8);
+        let mut app = AppState::default();
+        key(&mut app, &mut engine, KeyCode::Char('v'));
+        key(&mut app, &mut engine, KeyCode::Char('y'));
+        copied.push((clipboard(&finish_task(&mut engine)), expected.into_bytes()));
+        key(&mut app, &mut engine, KeyCode::Char('Y'));
+        assert_eq!(clipboard(&finish_task(&mut engine)), raw.as_bytes());
+    }
+    for (actual, expected) in copied {
+        assert_eq!(actual, expected);
+    }
+    let marks = "\u{301}".repeat(500);
+    let raw = format!("&fjlig;{marks}");
+    let mut engine = engine(&format!("{raw}界"), 24, 8);
+    let mut app = AppState::default();
+    key(&mut app, &mut engine, KeyCode::Char('v'));
+    key(&mut app, &mut engine, KeyCode::Right);
+    assert_eq!(
+        engine.runtime().reading().selection.range(),
+        Some(Span::new(0, raw.len()))
+    );
+    key(&mut app, &mut engine, KeyCode::Char('y'));
+    assert_eq!(
+        clipboard(&finish_task(&mut engine)),
+        format!("fj{marks}").as_bytes()
+    );
+    key(&mut app, &mut engine, KeyCode::Char('Y'));
+    assert_eq!(clipboard(&finish_task(&mut engine)), raw.as_bytes());
+}
+
+#[test]
+fn giant_selection_copy_search_resize_sidebar_and_history_use_one_complete_cluster() {
+    use mdtui_tui::history::HistoryPosition;
+    let raw = format!("a&#x301;{}", "\u{301}".repeat(5000));
+    let visible = format!("a{}", "\u{301}".repeat(5001));
+    let source = format!("{raw}!\n\n# Destination\n\ntail\n");
+    let mut engine = engine(&source, 48, 8);
+    let mut app = AppState::default();
+    let span = Span::new(0, raw.len());
+    key(&mut app, &mut engine, KeyCode::Char('v'));
+    assert_eq!(engine.runtime().reading().selection.range(), Some(span));
+    paint(&mut engine);
+    assert!(
+        engine
+            .screen()
+            .front_cell(0, 0)
+            .unwrap()
+            .style()
+            .contains(StyleRole::SELECTION)
+    );
+    key(&mut app, &mut engine, KeyCode::Char('y'));
+    assert_eq!(clipboard(&finish_task(&mut engine)), visible.as_bytes());
+    key(&mut app, &mut engine, KeyCode::Char('Y'));
+    assert_eq!(clipboard(&finish_task(&mut engine)), raw.as_bytes());
+    app.handle_key(&mut engine, KeyCode::Right, KeyModifiers::SHIFT)
+        .unwrap();
+    assert_eq!(
+        engine.runtime().reading().selection.range(),
+        Some(Span::new(0, raw.len() + 1))
+    );
+    engine.resize(10, 120).unwrap();
+    key(&mut app, &mut engine, KeyCode::Char('s'));
+    assert!(engine.runtime().sidebar_visible());
+    for _ in 0..1000 {
+        paint(&mut engine);
+        if !engine.runtime().sidebar_pending() {
+            break;
+        }
+    }
+    assert_eq!(
+        engine.runtime().reading().selection.range(),
+        Some(Span::new(0, raw.len() + 1))
+    );
+    key(&mut app, &mut engine, KeyCode::Char('s'));
+    key(&mut app, &mut engine, KeyCode::Esc);
+    query(&mut app, &mut engine, "\u{301}\u{301}");
+    finish_task(&mut engine);
+    let first = engine
+        .runtime()
+        .reading()
+        .current_match()
+        .unwrap()
+        .display
+        .clone();
+    paint(&mut engine);
+    key(&mut app, &mut engine, KeyCode::Char('n'));
+    finish_task(&mut engine);
+    assert!(
+        engine
+            .runtime()
+            .reading()
+            .current_match()
+            .unwrap()
+            .display
+            .start
+            > first.start
+    );
+    key(&mut app, &mut engine, KeyCode::Char('N'));
+    finish_task(&mut engine);
+    assert_eq!(
+        engine.runtime().reading().current_match().unwrap().display,
+        first
+    );
+    paint(&mut engine);
+    assert!(
+        engine
+            .screen()
+            .front_cell(0, 0)
+            .unwrap()
+            .style()
+            .contains(StyleRole::SEARCH)
+    );
+    key(&mut app, &mut engine, KeyCode::Esc);
+    engine
+        .restore_navigation_position(HistoryPosition {
+            source: raw.len() / 2,
+            row_offset: 0,
+        })
+        .unwrap();
+    paint(&mut engine);
+    assert_eq!(
+        engine.screen().front_cell(0, 0).unwrap().source(),
+        Some(span)
+    );
+    assert_eq!(
+        engine.screen().front_cell(0, 0).unwrap().text().len(),
+        visible.len()
+    );
+    // A directory activation and real Alt history must return through the
+    // same refiner, retaining the full source envelope rather than its cut.
+    key(&mut app, &mut engine, KeyCode::Char('s'));
+    assert!(engine.runtime().sidebar_visible());
+    for _ in 0..1000 {
+        paint(&mut engine);
+        if !engine.runtime().sidebar_pending() {
+            break;
+        }
+    }
+    key(&mut app, &mut engine, KeyCode::Tab);
+    assert_eq!(app.focus(), mdtui_tui::app::FocusTarget::Sidebar);
+    key(&mut app, &mut engine, KeyCode::End);
+    assert!(engine.runtime().sidebar_selection().is_some());
+    key(&mut app, &mut engine, KeyCode::Enter);
+    paint(&mut engine);
+    app.frame_committed(&engine);
+    assert!(!app.history().is_empty());
+    app.handle_key(&mut engine, KeyCode::Left, KeyModifiers::ALT)
+        .unwrap();
+    paint(&mut engine);
+    assert!(
+        (0..engine.screen().cols()).any(|col| engine
+            .screen()
+            .front_cell(0, col)
+            .unwrap()
+            .text()
+            .len()
+            == visible.len())
+    );
+}
+
+#[derive(Default)]
+struct ClipboardShortWriter {
+    wire: Vec<u8>,
+    calls: usize,
+    max_request: usize,
+}
+impl std::io::Write for ClipboardShortWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.calls += 1;
+        self.max_request = self.max_request.max(bytes.len());
+        if self.calls.is_multiple_of(3) {
+            return Err(std::io::ErrorKind::WouldBlock.into());
+        }
+        let n = bytes.len().min(2);
+        self.wire.extend_from_slice(&bytes[..n]);
+        Ok(n)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn giant_osc52_resumes_short_writes_and_eagain_and_cancel_closes_partial_packet() {
+    let cluster = format!("a{}", "\u{301}".repeat(5000));
+    let mut engine = engine(&format!("{cluster}\n"), 40, 8);
+    let mut app = AppState::default();
+    key(&mut app, &mut engine, KeyCode::Char('v'));
+    key(&mut app, &mut engine, KeyCode::Char('y'));
+    let mut writer = ClipboardShortWriter::default();
+    for _ in 0..200_000 {
+        engine
+            .runtime_mut()
+            .advance_reading(&mut writer, &mut tiny());
+        if !engine.runtime().reading().pending() {
+            break;
+        }
+    }
+    assert!(!engine.runtime().reading().pending());
+    assert_eq!(clipboard(&writer.wire), cluster.as_bytes());
+    assert!(
+        writer.max_request > 6,
+        "OSC52 uses its bounded prepaid atomic packet credit"
+    );
+    key(&mut app, &mut engine, KeyCode::Char('y'));
+    let mut partial = ClipboardShortWriter::default();
+    for _ in 0..200_000 {
+        engine
+            .runtime_mut()
+            .advance_reading(&mut partial, &mut tiny());
+        if !partial.wire.is_empty() {
+            break;
+        }
+    }
+    assert!(!partial.wire.is_empty());
+    assert!(!partial.wire.contains(&7));
+    key(&mut app, &mut engine, KeyCode::Esc);
+    for _ in 0..100 {
+        engine
+            .runtime_mut()
+            .advance_reading(&mut partial, &mut tiny());
+        if !engine.runtime().reading().copy_pending() {
+            break;
+        }
+    }
+    assert!(!engine.runtime().reading().copy_pending());
+    assert!(partial.wire.ends_with(b"\x18\x1b\\"));
+    assert!(!partial.wire.contains(&7));
+}
+
+#[test]
 fn exact_display_and_source_clipboards_and_selection_do_not_reanchor_body() {
     let mut engine = engine("a **b&amp;c** d\r\nnext\n", 40, 8);
     let mut app = AppState::default();
@@ -230,7 +469,10 @@ fn actual_unicode_cells_whole_grapheme_source_mapping_and_continuations() {
         (7, "!", Span::new(25, 26)),
     ] {
         let cell = engine.screen().front_cell(0, col).unwrap();
-        assert_eq!((cell.text(), cell.source()), (text, Some(span)));
+        assert_eq!(
+            (cell.text().collect_text(), cell.source()),
+            (text.to_owned(), Some(span))
+        );
     }
     key(&mut app, &mut engine, KeyCode::Char('v'));
     for expected in [
@@ -383,7 +625,10 @@ fn small_selection_in_multimegabyte_paragraph_is_logical_and_cut_independent() {
         for col in 0..23 {
             let cell = engine.screen().front_cell(0, col).unwrap();
             let at = cell.source().unwrap().start;
-            assert_eq!(cell.text().as_bytes(), &b"abcdefghij"[at % 10..at % 10 + 1]);
+            assert_eq!(
+                cell.text().collect_text().as_bytes(),
+                &b"abcdefghij"[at % 10..at % 10 + 1]
+            );
         }
         key(&mut app, &mut engine, KeyCode::Esc);
         key(&mut app, &mut engine, KeyCode::Char('v'));
@@ -514,10 +759,15 @@ fn panned_table_copy_uses_current_column_and_width_policy_with_exact_raw_envelop
     );
     assert_eq!(
         (
-            engine.screen().front_cell(1, 2).unwrap().text(),
+            engine
+                .screen()
+                .front_cell(1, 2)
+                .unwrap()
+                .text()
+                .collect_text(),
             engine.screen().front_cell(1, 2).unwrap().source()
         ),
-        ("b", Some(Span::new(6, 7)))
+        ("b".to_owned(), Some(Span::new(6, 7)))
     );
     key(&mut app, &mut engine, KeyCode::Char('v'));
     key(&mut app, &mut engine, KeyCode::Char(' '));
@@ -618,7 +868,7 @@ fn submitted_search_reveals_the_indexed_table_column_and_highlights_real_cells()
         for col in 0..20 {
             let cell = engine.screen().front_cell(row, col).unwrap();
             if cell.style().contains(StyleRole::SEARCH) {
-                found.push((cell.text().to_owned(), cell.source()));
+                found.push((cell.text().collect_text(), cell.source()));
             }
         }
     }
@@ -697,7 +947,14 @@ fn a_match_beyond_configured_cell_clip_navigates_to_content_and_reports_clipped(
         Span::new(4, 5)
     );
     let text: String = (0..20)
-        .map(|col| engine.screen().front_cell(0, col).unwrap().text())
+        .map(|col| {
+            engine
+                .screen()
+                .front_cell(0, col)
+                .unwrap()
+                .text()
+                .collect_text()
+        })
         .collect();
     assert!(text.contains("abc"), "{text:?}");
     assert!(
@@ -728,7 +985,8 @@ fn logical_image_alt_nested_alt_and_terminal_empty_placeholder_have_explicit_sea
         let drawn: String = (0..40)
             .filter_map(|col| {
                 let cell = engine.screen().front_cell(0, col).unwrap();
-                (!cell.is_continuation() && cell.source().is_some()).then(|| cell.text().to_owned())
+                (!cell.is_continuation() && cell.source().is_some())
+                    .then(|| cell.text().collect_text())
             })
             .collect();
         assert_eq!(drawn, expected_text);
@@ -764,7 +1022,7 @@ fn logical_image_alt_nested_alt_and_terminal_empty_placeholder_have_explicit_sea
                 .filter_map(|(row, col)| {
                     let cell = engine.screen().front_cell(row, col).unwrap();
                     (cell.style().contains(StyleRole::SEARCH) && !cell.is_continuation())
-                        .then(|| (cell.text().to_owned(), cell.source()))
+                        .then(|| (cell.text().collect_text(), cell.source()))
                 })
                 .collect();
             assert_eq!(
@@ -800,12 +1058,20 @@ fn omitted_heading_and_list_links_complete_without_fake_highlight_or_bottom_navi
         let drawn: String = (0..40)
             .filter_map(|col| {
                 let cell = engine.screen().front_cell(0, col).unwrap();
-                (!cell.is_continuation() && cell.source().is_some()).then(|| cell.text().to_owned())
+                (!cell.is_continuation() && cell.source().is_some())
+                    .then(|| cell.text().collect_text())
             })
             .collect();
         assert_eq!(drawn, expected_sources);
         let row: String = (0..40)
-            .map(|col| engine.screen().front_cell(0, col).unwrap().text())
+            .map(|col| {
+                engine
+                    .screen()
+                    .front_cell(0, col)
+                    .unwrap()
+                    .text()
+                    .collect_text()
+            })
             .collect();
         assert_eq!(row.trim_end(), expected_row);
         query(&mut app, &mut engine, "secret");
@@ -1133,4 +1399,78 @@ fn header_footnote_active_order_distinguishes_drawn_literal_and_hidden_core_matc
         );
         assert!(!engine.runtime().has_pending_jump());
     }
+}
+
+#[test]
+fn raw_clipboard_waits_for_a_true_giant_boundary_and_never_cancels_pure_extend() {
+    let prefix = format!("a{}", "\u{301}".repeat(1000));
+    let mut runtime = FrameRuntime::new(
+        FrameGeometry {
+            rows: 6,
+            cols: 40,
+            content_width: 40,
+        },
+        LinkMode::NoOsc8,
+    )
+    .unwrap();
+    let update = runtime.append_bytes(prefix.as_bytes()).unwrap().unwrap();
+    runtime.apply_update(&update).unwrap();
+    let mut engine = StreamEngine::new(runtime);
+    paint(&mut engine);
+    let mut app = AppState::default();
+    key(&mut app, &mut engine, KeyCode::Char('v'));
+    paint(&mut engine); // Explicit selection style change may repaint once.
+    key(&mut app, &mut engine, KeyCode::Char('Y'));
+    let mut wire = Vec::new();
+    for _ in 0..32 {
+        engine
+            .runtime_mut()
+            .frame_to(&mut wire, &mut Budget::new(WorkLimit::unlimited()))
+            .unwrap();
+    }
+    assert!(
+        wire.is_empty(),
+        "OSC52/status must wait outside the open EGC"
+    );
+    assert!(engine.runtime().reading().copy_pending());
+    let marks = "\u{301}".repeat(128);
+    let update = engine
+        .runtime_mut()
+        .append_bytes(marks.as_bytes())
+        .unwrap()
+        .unwrap();
+    engine.runtime_mut().apply_update(&update).unwrap();
+    for _ in 0..1000 {
+        if engine
+            .runtime_mut()
+            .frame_to(&mut wire, &mut Budget::new(WorkLimit::unlimited()))
+            .unwrap()
+            .committed
+        {
+            break;
+        }
+    }
+    assert_eq!(wire, marks.as_bytes());
+    let update = engine
+        .runtime_mut()
+        .append_bytes(b"X\n\n")
+        .unwrap()
+        .unwrap();
+    engine.runtime_mut().apply_update(&update).unwrap();
+    for _ in 0..100_000 {
+        engine
+            .runtime_mut()
+            .frame_to(&mut wire, &mut tiny())
+            .unwrap();
+        if !engine.runtime().reading().copy_pending() {
+            break;
+        }
+    }
+    assert!(!engine.runtime().reading().copy_pending());
+    assert_eq!(clipboard(&wire), prefix.as_bytes());
+    assert_eq!(wire.iter().filter(|&&b| b == 0xcc).count(), 128);
+    assert!(
+        !wire.contains(&24),
+        "copy did not cancel/repaint the existing glyph"
+    );
 }

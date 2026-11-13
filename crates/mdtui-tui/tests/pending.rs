@@ -39,12 +39,15 @@ fn frame_text(frame: &ViewportFrame) -> String {
         .lines
         .iter()
         .flat_map(|line| line.cells.iter())
-        .map(|cell| cell.text.as_str())
+        .map(|cell| cell.text.collect_text())
         .collect()
 }
 
 fn line_text(line: &mdtui_tui::render::sink::SinkLine) -> String {
-    line.cells.iter().map(|cell| cell.text.as_str()).collect()
+    line.cells
+        .iter()
+        .map(|cell| cell.text.collect_text())
+        .collect()
 }
 
 fn full_first_frame(document: &Document, width: u16) -> FirstFrame {
@@ -127,6 +130,7 @@ fn assert_final_matches_static(frame: &ViewportFrame, document: &Document, width
 #[test]
 fn empty_document_character_appends_show_evolving_pending_text() {
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     let mut state = ViewportState::new(&document, config(40, 5, 32)).unwrap();
     let mut expected = String::new();
     let mut previous: Option<ViewportFrame> = None;
@@ -155,6 +159,7 @@ fn empty_document_character_appends_show_evolving_pending_text() {
 #[test]
 fn long_pending_line_wraps_and_preserves_pending_line_source() {
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     let source = "x".repeat(500);
     let update = document.append(&source).unwrap();
     let mut state = ViewportState::new(&document, config(20, 8, 64)).unwrap();
@@ -177,6 +182,7 @@ fn long_pending_line_wraps_and_preserves_pending_line_source() {
 #[test]
 fn pending_raw_text_preserves_source_and_wide_cells_while_pending() {
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     let source = "plain **bold** [link](https://example.com) 🙂 中";
     let update = document.append(source).unwrap();
     let mut state = ViewportState::new(&document, config(60, 6, 32)).unwrap();
@@ -200,6 +206,7 @@ fn pending_raw_text_preserves_source_and_wide_cells_while_pending() {
 #[test]
 fn pending_and_committed_blocks_are_not_duplicated() {
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     let update = document.append("committed\npending-tail").unwrap();
     let mut state = ViewportState::new(&document, config(40, 6, 32)).unwrap();
     state.apply_update(&document, &update).unwrap();
@@ -229,6 +236,7 @@ fn pending_is_only_loaded_when_inside_visible_plan() {
     }
     source.push_str("far-pending-tail");
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     document.append(&source).unwrap();
     let first = full_first_frame(&document, 40);
     let mut state = ViewportState::from_first_frame(&document, first, config(40, 4, 16)).unwrap();
@@ -243,6 +251,7 @@ fn pending_is_only_loaded_when_inside_visible_plan() {
 #[test]
 fn tiny_budget_resumes_pending_scan() {
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     let update = document.append(&"pending ".repeat(100)).unwrap();
     let mut state = ViewportState::new(&document, config(30, 6, 64)).unwrap();
     state.apply_update(&document, &update).unwrap();
@@ -278,6 +287,7 @@ fn setext_and_table_pending_replaced_by_final_calibration() {
         ("| A | B |\n| --- | --- |\n| one | two", 40, "one"),
     ] {
         let mut document = Document::new();
+        document.enable_display_shape_effects().unwrap();
         let update = document.append(source).unwrap();
         let mut state = ViewportState::new(&document, config(width, 8, 32)).unwrap();
         state.apply_update(&document, &update).unwrap();
@@ -292,6 +302,7 @@ fn setext_and_table_pending_replaced_by_final_calibration() {
 #[test]
 fn empty_append_and_repeated_finish_do_not_duplicate_pending_text() {
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     let update = document.append("tail-once").unwrap();
     let mut state = ViewportState::new(&document, config(40, 6, 32)).unwrap();
     state.apply_update(&document, &update).unwrap();
@@ -328,6 +339,7 @@ fn unclosed_code_and_table_pending_text_is_visible_then_final() {
         ("| A | B |\n| --- | --- |\n| pending", "pending", 40),
     ] {
         let mut document = Document::new();
+        document.enable_display_shape_effects().unwrap();
         let update = document.append(source).unwrap();
         let mut state = ViewportState::new(&document, config(width, 8, 32)).unwrap();
         state.apply_update(&document, &update).unwrap();

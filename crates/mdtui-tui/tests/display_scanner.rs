@@ -36,7 +36,7 @@ fn scanned_text(scanner: &DisplayScanner) -> String {
     scanner
         .segments()
         .iter()
-        .map(|segment| segment.text.as_str())
+        .map(|segment| segment.text.collect_text())
         .collect()
 }
 
@@ -125,7 +125,7 @@ fn ordinary_runs_split_at_tile_boundaries_in_source_order() {
     assert_eq!(
         scanner
             .segments_for_tile(TileId(0))
-            .map(|segment| segment.text.as_str())
+            .map(|segment| segment.text.collect_text())
             .collect::<String>(),
         "x".repeat(TILE_BYTES)
     );
@@ -181,6 +181,11 @@ fn tiny_budget_resumes_without_duplicates_and_loses_no_prefix() {
     let span = Span::new(0, source.len());
     let expected = static_visible(&document, span);
     let mut scanner = DisplayScanner::new(&document, span).unwrap();
+    assert!(
+        scanner
+            .initialize(&document, &mut Budget::new(WorkLimit::unlimited()))
+            .unwrap()
+    );
     let limit = WorkLimit {
         queries: 1,
         objects: 1,
@@ -255,6 +260,11 @@ fn tiny_budget_cannot_scan_a_large_document_in_one_frame() {
     let document = parse(&source);
     let span = Span::new(0, source.len());
     let mut scanner = DisplayScanner::new(&document, span).unwrap();
+    assert!(
+        scanner
+            .initialize(&document, &mut Budget::new(WorkLimit::unlimited()))
+            .unwrap()
+    );
     let mut budget = Budget::new(WorkLimit {
         queries: 1,
         objects: 1,

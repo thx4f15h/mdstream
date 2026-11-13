@@ -496,6 +496,19 @@ pub struct LinkWindow {
 }
 
 impl LinkWindow {
+    pub fn rebind_with(
+        &mut self,
+        document: &Document,
+        resolver: &crate::LinkResolver,
+    ) -> Result<(), LayoutError> {
+        if self.document != document.id() {
+            return Err(LayoutError::WrongDocument);
+        }
+        resolver.retained(document, self.revision)?;
+        self.revision = document.revision();
+        Ok(())
+    }
+
     pub(crate) fn new(document: &Document, source: Span) -> Self {
         Self {
             document: document.id(),

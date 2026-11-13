@@ -73,7 +73,10 @@ fn frame_until_ready(state: &mut ViewportState, document: &Document) -> Viewport
 }
 
 fn line_text(line: &mdtui_tui::render::sink::SinkLine) -> String {
-    line.cells.iter().map(|cell| cell.text.as_str()).collect()
+    line.cells
+        .iter()
+        .map(|cell| cell.text.collect_text())
+        .collect()
 }
 
 #[test]

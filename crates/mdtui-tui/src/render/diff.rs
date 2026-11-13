@@ -54,7 +54,14 @@ pub fn diff_screen(screen: &Screen) -> ScreenDiff {
         let Some(back) = screen.back_row(row) else {
             continue;
         };
-        let runs = diff_row(row, front, back, content);
+        let runs = diff_row_with_zeros(
+            row,
+            front,
+            back,
+            content,
+            screen.zero_row(row, true),
+            screen.zero_row(row, false),
+        );
         if runs.is_empty() {
             continue;
         }
@@ -67,7 +74,18 @@ pub fn diff_screen(screen: &Screen) -> ScreenDiff {
     diff
 }
 
+#[cfg(test)]
 fn diff_row(row: u16, front: &[Cell], back: &[Cell], content: ContentArea) -> Vec<DiffRun> {
+    diff_row_with_zeros(row, front, back, content, None, None)
+}
+fn diff_row_with_zeros(
+    row: u16,
+    front: &[Cell],
+    back: &[Cell],
+    content: ContentArea,
+    front_zeros: Option<&[Option<Cell>]>,
+    back_zeros: Option<&[Option<Cell>]>,
+) -> Vec<DiffRun> {
     debug_assert!(front.len() >= usize::from(content.right()));
     debug_assert!(back.len() >= usize::from(content.right()));
     let width = usize::from(content.width);
@@ -78,7 +96,10 @@ fn diff_row(row: u16, front: &[Cell], back: &[Cell], content: ContentArea) -> Ve
     let mut changed = vec![false; width];
     let mut any = false;
     for column in content.x..content.right() {
-        if !front[usize::from(column)].same_visual(&back[usize::from(column)]) {
+        if !front[usize::from(column)].same_visual(&back[usize::from(column)])
+            || front_zeros.and_then(|z| z[usize::from(column)].as_ref())
+                != back_zeros.and_then(|z| z[usize::from(column)].as_ref())
+        {
             mark_pair(
                 &mut changed,
                 front,
@@ -106,11 +127,16 @@ fn diff_row(row: u16, front: &[Cell], back: &[Cell], content: ContentArea) -> Ve
         while run_end < width && changed[run_end] {
             run_end += 1;
         }
-        run_end = run_start
-            + trim_safe_blank_tail(
-                &front[base + run_start..base + run_end],
-                &back[base + run_start..base + run_end],
-            );
+        if !(run_start..run_end).any(|at| {
+            front_zeros.and_then(|z| z[base + at].as_ref()).is_some()
+                || back_zeros.and_then(|z| z[base + at].as_ref()).is_some()
+        }) {
+            run_end = run_start
+                + trim_safe_blank_tail(
+                    &front[base + run_start..base + run_end],
+                    &back[base + run_start..base + run_end],
+                );
+        }
         if run_end > run_start {
             let start_col = content.x
                 + u16::try_from(run_start).expect("run offset came from a u16 content width");
@@ -119,7 +145,14 @@ fn diff_row(row: u16, front: &[Cell], back: &[Cell], content: ContentArea) -> Ve
             runs.push(DiffRun {
                 row,
                 start_col,
-                cells: back[usize::from(start_col)..usize::from(end_col)].to_vec(),
+                cells: (usize::from(start_col)..usize::from(end_col))
+                    .flat_map(|at| {
+                        back_zeros
+                            .and_then(|z| z[at].clone())
+                            .into_iter()
+                            .chain(std::iter::once(back[at].clone()))
+                    })
+                    .collect(),
             });
             run_start = run_end;
         } else {

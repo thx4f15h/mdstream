@@ -5,8 +5,9 @@ edition.workspace = true
 description = "Terminal Markdown reader for mdstream-core"
 
 [dependencies]
-crossterm = { workspace = true, default-features = false, features = ["events"] }
+crossterm = { workspace = true, default-features = false, features = ["events", "use-dev-tty"] }
 mdtui3.workspace = true
+rustix = { workspace = true, features = ["fs"] }
 unicode-segmentation.workspace = true
 unicode-width = { workspace = true, default-features = false }
 

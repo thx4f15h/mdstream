@@ -32,6 +32,8 @@ pub struct ObjectStats {
 pub struct SharedLinks(Rc<RefCell<LinkState>>);
 
 pub struct LinkState {
+    shape: Option<super::shape::SharedShape>,
+    seed: Option<super::shape::ShapeSeed>,
     pub resolver: LinkResolver,
     document: mdtui3::DocumentId,
     revision: u64,
@@ -55,6 +57,8 @@ impl SharedLinks {
     pub fn new(document: &Document) -> Self {
         Self(Rc::new(RefCell::new(LinkState {
             resolver: document.link_resolver(),
+            shape: None,
+            seed: None,
             document: document.id(),
             revision: document.revision(),
             retirement_requested: false,
@@ -66,8 +70,120 @@ impl SharedLinks {
         })))
     }
 
+    pub fn set_shape(&self, shape: super::shape::SharedShape) -> Result<(), LayoutError> {
+        let mut state = self.0.borrow_mut();
+        if shape.document_id() != state.document || state.resolver.document_id() != state.document {
+            return Err(LayoutError::WrongDocument);
+        }
+        if let Some(current) = &state.shape {
+            return if current.same_index(&shape) {
+                Ok(())
+            } else {
+                Err(LayoutError::WrongDocument)
+            };
+        }
+        if shape.applied_revision() != state.revision {
+            return Err(LayoutError::StaleContinuation);
+        }
+        state.shape = Some(shape);
+        Ok(())
+    }
+    pub(crate) fn set_seed(&self, seed: super::shape::ShapeSeed) {
+        self.0.borrow_mut().seed = Some(seed);
+    }
+    pub(crate) fn retire_initialization(&self, budget: &mut Budget) -> bool {
+        let mut state = self.0.borrow_mut();
+        let shape = state.shape.clone();
+        if let Some(seed) = state.seed.as_mut() {
+            if seed.retire(
+                shape.as_ref().expect("seed retains its shape owner"),
+                budget,
+            ) != Completion::Covered
+            {
+                return false;
+            }
+            state.seed = None;
+        }
+        true
+    }
+    pub fn shape_ready(&self) -> bool {
+        let state = self.0.borrow();
+        state.shape.is_some() && state.seed.is_none()
+    }
+    pub fn prepare_shape(
+        &self,
+        document: &Document,
+        budget: &mut Budget,
+    ) -> Result<bool, LayoutError> {
+        let mut state = self.0.borrow_mut();
+        if state.document != document.id() || state.resolver.document_id() != document.id() {
+            return Err(LayoutError::WrongDocument);
+        }
+        if state
+            .shape
+            .as_ref()
+            .is_some_and(|shape| shape.document_id() != document.id())
+        {
+            return Err(LayoutError::WrongDocument);
+        }
+        if state.shape.is_none() {
+            state.shape = Some(super::shape::SharedShape::from_current(document));
+            state.seed = Some(super::shape::ShapeSeed::new(document));
+        }
+        let shape = state.shape.as_ref().unwrap().clone();
+        if let Some(seed) = state.seed.as_mut() {
+            if !seed.advance(&shape, document, budget)? {
+                return Ok(false);
+            }
+            state.seed = None;
+        }
+        Ok(true)
+    }
+    pub(crate) fn apply_shape_update(
+        &self,
+        document: &Document,
+        update: &mdtui3::Update,
+    ) -> Result<(), LayoutError> {
+        let mut state = self.0.borrow_mut();
+        if state.document != document.id() || state.resolver.document_id() != document.id() {
+            return Err(LayoutError::WrongDocument);
+        }
+        if state.revision == update.base_revision
+            && state.revision != update.revision
+            && state.resolver.rebind_display_shape(document, update)?
+        {
+            state.revision = update.revision;
+        }
+        let Some(shape) = state.shape.as_ref() else {
+            return Ok(());
+        };
+        if state.seed.is_some() {
+            if shape.source_len() == 0 {
+                state.shape = None;
+                state.seed = None;
+                return Ok(());
+            }
+            return Err(LayoutError::StaleContinuation);
+        }
+        if shape.applied_revision() != update.revision {
+            shape.apply(document, update)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn can_rebind(&self, document: &Document, revision: u64) -> bool {
+        self.0.borrow().resolver.can_rebind(document, revision)
+    }
+
+    pub fn shape(&self) -> Option<super::shape::SharedShape> {
+        self.0.borrow().shape.clone()
+    }
+
     pub fn prepare(&self, document: &Document, budget: &mut Budget) -> Result<bool, LayoutError> {
         let mut state = self.0.borrow_mut();
+        if state.document != document.id() || state.resolver.document_id() != document.id() {
+            return Err(LayoutError::WrongDocument);
+        }
         if state.document == document.id()
             && state.revision == document.revision()
             && (!state.retirement_requested || state.active_tasks != 0)
@@ -87,7 +203,6 @@ impl SharedLinks {
             state.retired += 1;
         }
         state.resolver.reset(document)?;
-        state.document = document.id();
         state.revision = document.revision();
         state.retirement_requested = false;
         Ok(true)
@@ -109,6 +224,23 @@ impl SharedLinks {
 
     pub fn with_resolver<T>(&self, apply: impl FnOnce(&mut LinkResolver) -> T) -> T {
         apply(&mut self.0.borrow_mut().resolver)
+    }
+    pub(crate) fn check_shape_context(
+        &self,
+        document: &Document,
+        shape: &super::shape::SharedShape,
+    ) -> Result<(), LayoutError> {
+        let state = self.0.borrow();
+        if state.document != document.id()
+            || state.resolver.document_id() != document.id()
+            || state
+                .shape
+                .as_ref()
+                .is_some_and(|current| !current.same_index(shape))
+        {
+            return Err(LayoutError::WrongDocument);
+        }
+        Ok(())
     }
 
     pub fn presentation(&self, id: LinkId) -> Presentation {
@@ -205,6 +337,8 @@ impl ObjectWindow {
         if !self.links.prepare(document, budget)? {
             return Ok(false);
         }
+        self.links
+            .with_resolver(|r| self.window.rebind_with(document, r))?;
         while !self.complete {
             if self.pending.is_none() {
                 match self.window.advance(document, budget)? {
@@ -269,6 +403,11 @@ impl ObjectWindow {
                 }
                 if pending.disposition.is_none() {
                     pending.disposition = self.links.with_resolver(|resolver| {
+                        pending
+                            .activity
+                            .as_mut()
+                            .expect("valid object")
+                            .rebind_with(document, resolver)?;
                         pending
                             .activity
                             .as_mut()

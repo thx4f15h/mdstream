@@ -92,14 +92,18 @@ fn assert_incremental_protocol(writer: &Vt100Writer, frame: usize, first: bool) 
         return;
     }
 
-    assert_eq!(body[0].bytes, BEGIN_SYNCHRONIZED_UPDATE);
-    assert_eq!(body.last().unwrap().bytes, END_SYNCHRONIZED_UPDATE);
     let bytes: Vec<u8> = body
         .iter()
         .flat_map(|write| write.bytes.iter().copied())
         .collect();
-    assert_eq!(count(&bytes, BEGIN_SYNCHRONIZED_UPDATE), 1);
-    assert_eq!(count(&bytes, END_SYNCHRONIZED_UPDATE), 1);
+    // A published frame can leave its final EGC transaction open. Sync closes
+    // before that payload; a later append closes its style/OSC tail first.
+    assert_eq!(
+        count(&bytes, BEGIN_SYNCHRONIZED_UPDATE)
+            + count(&bytes, b"\x18\x1b\\\x1b]8;;\x1b\\\x1b[0m\x1b[?2026l")
+            + count(&bytes, b"\x18\x1b\\\x1b[0m\x1b[?2026l"),
+        count(&bytes, END_SYNCHRONIZED_UPDATE)
+    );
     assert!(!contains(&bytes, CLEAR), "normal frame contains 2J");
     assert!(!contains(&bytes, HOME), "normal frame contains bare H");
     assert!(!contains(&bytes, ERASE), "normal frame contains K");

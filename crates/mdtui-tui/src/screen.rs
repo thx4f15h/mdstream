@@ -1,3 +1,4 @@
+use crate::render::payload::TextPayload;
 use std::fmt;
 
 use mdtui3::{BlockId, LinkId, Span};
@@ -107,7 +108,7 @@ impl Default for StyleRole {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cell {
-    text: String,
+    text: TextPayload,
     style: StyleRole,
     width: u8,
     continuation: bool,
@@ -117,7 +118,7 @@ pub struct Cell {
 
 impl Cell {
     pub fn new(
-        text: impl Into<String>,
+        text: impl Into<TextPayload>,
         style: StyleRole,
         width: u8,
         link_id: Option<LinkId>,
@@ -127,7 +128,7 @@ impl Cell {
         if text.is_empty() {
             return Err(ScreenError::EmptyCellText);
         }
-        if !matches!(width, 1 | 2) {
+        if !matches!(width, 0..=2) {
             return Err(ScreenError::InvalidCellWidth(width));
         }
         Ok(Self {
@@ -143,7 +144,7 @@ impl Cell {
     #[must_use]
     pub fn blank() -> Self {
         Self {
-            text: " ".to_owned(),
+            text: " ".into(),
             style: StyleRole::DEFAULT,
             width: 1,
             continuation: false,
@@ -154,7 +155,7 @@ impl Cell {
 
     fn continuation(style: StyleRole, link_id: Option<LinkId>, source: Option<Span>) -> Self {
         Self {
-            text: String::new(),
+            text: TextPayload::default(),
             style,
             width: 0,
             continuation: true,
@@ -164,7 +165,7 @@ impl Cell {
     }
 
     #[must_use]
-    pub fn text(&self) -> &str {
+    pub fn text(&self) -> &TextPayload {
         &self.text
     }
 
@@ -281,7 +282,7 @@ impl fmt::Display for ScreenError {
                 formatter.write_str("content area must fit inside the terminal")
             }
             Self::InvalidCellWidth(width) => {
-                write!(formatter, "cell width must be 1 or 2, got {width}")
+                write!(formatter, "cell width must be 0, 1 or 2, got {width}")
             }
             Self::EmptyCellText => formatter.write_str("cell text must not be empty"),
             Self::RowOutOfBounds(row) => write!(formatter, "row {row} is outside the screen"),
@@ -301,6 +302,7 @@ impl std::error::Error for ScreenError {}
 #[derive(Debug, Clone)]
 struct Buffer {
     cells: Vec<Cell>,
+    zeros: Vec<Option<Cell>>,
     line_sources: Vec<Option<LineSource>>,
 }
 
@@ -309,12 +311,14 @@ impl Buffer {
         let cells = usize::from(rows) * usize::from(cols);
         Self {
             cells: vec![Cell::blank(); cells],
+            zeros: vec![None; cells],
             line_sources: vec![None; usize::from(rows)],
         }
     }
 
     fn clear(&mut self) {
         self.cells.fill(Cell::blank());
+        self.zeros.fill(None);
         self.line_sources.fill(None);
     }
 }
@@ -325,8 +329,33 @@ pub struct Screen {
     cols: u16,
     content: ContentArea,
     write_right: u16,
+    logical_published: bool,
     front: Buffer,
     back: Buffer,
+}
+
+#[derive(Clone)]
+pub(crate) struct ScreenSnapshot {
+    rows: u16,
+    cols: u16,
+    buffer: Buffer,
+}
+impl ScreenSnapshot {
+    pub(crate) fn acknowledge_cell(&mut self, row: u16, col: u16, cell: Cell) {
+        let at = usize::from(row) * usize::from(self.cols) + usize::from(col);
+        if cell.width() == 0 {
+            self.buffer.zeros[at] = Some(cell);
+        } else {
+            if self.buffer.cells[at].width() == 2 && cell.width() != 2 {
+                self.buffer.cells[at + 1] = Cell::blank();
+            }
+            if cell.width() == 2 {
+                self.buffer.cells[at + 1] =
+                    Cell::continuation(cell.style(), cell.link_id(), cell.source());
+            }
+            self.buffer.cells[at] = cell;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -372,6 +401,7 @@ impl Screen {
             cols,
             content,
             write_right,
+            logical_published: false,
             front: Buffer::blank(rows, cols),
             back: Buffer::blank(rows, cols),
         }
@@ -384,6 +414,7 @@ impl Screen {
         content: ContentArea,
     ) -> Result<(), ScreenError> {
         validate_geometry(rows, cols, content)?;
+        self.logical_published = false;
         self.rows = rows;
         self.cols = cols;
         self.content = content;
@@ -432,6 +463,54 @@ impl Screen {
     pub fn cell(&self, row: u16, col: u16) -> Option<&Cell> {
         let index = self.index(row, col)?;
         self.back.cells.get(index)
+    }
+
+    pub(crate) fn publish_back(&mut self) {
+        self.logical_published = true;
+    }
+    pub fn zero_cell(&self, row: u16, col: u16) -> Option<&Cell> {
+        self.back.zeros.get(self.index(row, col)?)?.as_ref()
+    }
+    pub fn front_zero_cell(&self, row: u16, col: u16) -> Option<&Cell> {
+        self.front.zeros.get(self.index(row, col)?)?.as_ref()
+    }
+    pub(crate) fn reading_zero_cell(&self, row: u16, col: u16) -> Option<&Cell> {
+        if self.logical_published {
+            self.zero_cell(row, col)
+        } else {
+            self.front_zero_cell(row, col)
+        }
+    }
+    pub(crate) fn zero_row(&self, row: u16, front: bool) -> Option<&[Option<Cell>]> {
+        if row >= self.rows {
+            return None;
+        }
+        let start = usize::from(row) * usize::from(self.cols);
+        let end = start + usize::from(self.cols);
+        Some(if front {
+            &self.front.zeros[start..end]
+        } else {
+            &self.back.zeros[start..end]
+        })
+    }
+    pub(crate) fn set_zero_style(
+        &mut self,
+        row: u16,
+        col: u16,
+        style: StyleRole,
+    ) -> Result<(), ScreenError> {
+        let at = self.index(row, col).ok_or(ScreenError::OutsideContent)?;
+        if let Some(cell) = self.back.zeros[at].as_mut() {
+            cell.style = style;
+        }
+        Ok(())
+    }
+    pub(crate) fn reading_cell(&self, row: u16, col: u16) -> Option<&Cell> {
+        if self.logical_published {
+            self.cell(row, col)
+        } else {
+            self.front_cell(row, col)
+        }
     }
 
     #[must_use]
@@ -483,10 +562,88 @@ impl Screen {
     }
 
     pub fn clear_back(&mut self) {
+        self.logical_published = false;
         self.back.clear();
     }
 
+    pub(crate) fn snapshot_back(&self) -> ScreenSnapshot {
+        ScreenSnapshot {
+            rows: self.rows,
+            cols: self.cols,
+            buffer: self.back.clone(),
+        }
+    }
+    pub(crate) fn back_matches_front(&self) -> bool {
+        self.front.cells == self.back.cells
+            && self.front.zeros == self.back.zeros
+            && self.front.line_sources == self.back.line_sources
+    }
+    pub(crate) fn snapshot_matches_back(&self, snapshot: &ScreenSnapshot) -> bool {
+        self.rows == snapshot.rows
+            && self.cols == snapshot.cols
+            && self.back.cells == snapshot.buffer.cells
+            && self.back.zeros == snapshot.buffer.zeros
+            && self.back.line_sources == snapshot.buffer.line_sources
+    }
+    /// A closed indexed EGC may keep identical bytes while a late header
+    /// changes its style. Inspect fixed cell metadata, never payload bytes;
+    /// unrelated status/offscreen updates do not cancel the body transaction.
+    pub(crate) fn indexed_snapshot_changed(&self, snapshot: &ScreenSnapshot) -> bool {
+        self.rows != snapshot.rows
+            || self.cols != snapshot.cols
+            || snapshot
+                .buffer
+                .cells
+                .iter()
+                .zip(&self.back.cells)
+                .any(|(old, next)| old.text.is_indexed() && !old.same_visual(next))
+            || snapshot
+                .buffer
+                .zeros
+                .iter()
+                .zip(&self.back.zeros)
+                .any(|(old, next)| {
+                    old.as_ref().is_some_and(|old| {
+                        old.text.is_indexed()
+                            && next.as_ref().is_none_or(|next| !old.same_visual(next))
+                    })
+                })
+    }
+    pub(crate) fn acknowledge(&mut self, snapshot: ScreenSnapshot) -> bool {
+        if self.rows != snapshot.rows || self.cols != snapshot.cols {
+            return false;
+        }
+        self.front = snapshot.buffer;
+        true
+    }
+    pub(crate) fn acknowledge_cell(
+        &mut self,
+        row: u16,
+        col: u16,
+        cell: Cell,
+    ) -> Result<(), ScreenError> {
+        let at = self
+            .index(row, col)
+            .ok_or(ScreenError::RowOutOfBounds(row))?;
+        self.front.line_sources[usize::from(row)] = self.back.line_sources[usize::from(row)];
+        if cell.width() == 0 {
+            self.front.zeros[at] = Some(cell);
+            return Ok(());
+        }
+        let old = self.front.cells[at].width();
+        self.front.cells[at] = cell.clone();
+        if old == 2 && cell.width() != 2 {
+            self.front.cells[at + 1] = Cell::blank();
+        }
+        if cell.width() == 2 {
+            self.front.cells[at + 1] =
+                Cell::continuation(cell.style(), cell.link_id(), cell.source());
+        }
+        Ok(())
+    }
+
     pub fn swap_buffers(&mut self) {
+        self.logical_published = false;
         std::mem::swap(&mut self.front, &mut self.back);
         self.back.clear();
     }
@@ -500,6 +657,18 @@ impl Screen {
             return Err(ScreenError::OutsideContent);
         }
 
+        if cell.width() == 0 {
+            let at = self.index(row, col).ok_or(ScreenError::OutsideContent)?;
+            if let Some(old) = self.back.zeros[at].as_mut() {
+                old.text.append_adjacent(&cell.text);
+                if let (Some(a), Some(b)) = (old.source, cell.source) {
+                    old.source = Some(Span::new(a.start, b.end));
+                }
+            } else {
+                self.back.zeros[at] = Some(cell);
+            }
+            return Ok(());
+        }
         let style = cell.style();
         let link_id = cell.link_id();
         let source = cell.source();
@@ -720,10 +889,9 @@ mod tests {
         assert!(!screen.cell(0, 1).unwrap().is_continuation());
         assert_eq!(screen.cell(0, 1).unwrap().text(), " ");
 
-        assert_eq!(
-            Cell::new("\u{301}", StyleRole::DEFAULT, 0, None, None).unwrap_err(),
-            ScreenError::InvalidCellWidth(0)
-        );
+        let zero = Cell::new("\u{301}", StyleRole::DEFAULT, 0, None, None).unwrap();
+        assert!(!zero.is_continuation());
+        assert_eq!(zero.width(), 0);
         screen.write_cell(0, 2, wide("你")).unwrap();
         assert_eq!(
             screen.append_combining(0, 3, "\u{301}").unwrap_err(),

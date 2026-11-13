@@ -54,6 +54,9 @@ impl<T> UndoLog<T> {
     pub fn len(&self) -> usize {
         self.items.len()
     }
+    pub(crate) fn get(&self, index: usize) -> Option<&T> {
+        self.items.get(index).map(|(item, _)| item)
+    }
     pub fn last(&self) -> Option<&T> {
         self.items.last().map(|(item, _)| item)
     }

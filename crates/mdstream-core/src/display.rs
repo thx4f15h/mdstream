@@ -43,6 +43,30 @@ enum Kind {
 }
 
 impl DisplayIndex {
+    pub(crate) fn shape_seed_entry(
+        &self,
+        at: usize,
+    ) -> Option<(Span, crate::DisplayShapeReplacement)> {
+        self.entries.get(at).map(|entry| {
+            (
+                entry.source,
+                match &entry.kind {
+                    Kind::Entity(text) => {
+                        let mut utf8 = [0; 8];
+                        utf8[..text.len()].copy_from_slice(text.as_bytes());
+                        crate::DisplayShapeReplacement::Entity {
+                            utf8,
+                            len: text.len() as u8,
+                        }
+                    }
+                    Kind::Code { leading, trailing } => crate::DisplayShapeReplacement::Code {
+                        leading: *leading,
+                        trailing: *trailing,
+                    },
+                },
+            )
+        })
+    }
     pub(crate) fn entries_len(&self) -> usize {
         self.entries.len()
     }

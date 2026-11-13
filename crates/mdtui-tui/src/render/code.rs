@@ -101,22 +101,22 @@ pub(crate) fn render_code_lines(
         }
         let remaining = width.saturating_sub(prefix_fit.cells);
         if remaining > 0 {
-            let fit = fit_prefix(&line.text, remaining);
-            for grapheme in graphemes(&line.text[..fit.end]) {
-                let first = line
-                    .mappings
-                    .partition_point(|(offset, _)| *offset <= grapheme.start)
-                    .saturating_sub(1);
-                let last = line
-                    .mappings
-                    .partition_point(|(offset, _)| *offset < grapheme.end)
-                    .saturating_sub(1);
-                let source = line
-                    .mappings
-                    .get(first)
-                    .zip(line.mappings.get(last))
-                    .map(|(first, last)| mdtui3::Span::new(first.1.start, last.1.end));
-                cursor.place(screen, row, grapheme, StyleRole::CODE, None, source)?;
+            let mut used = 0usize;
+            for glyph in &line.glyphs {
+                if used + usize::from(glyph.width) > remaining {
+                    break;
+                }
+                cursor.place_payload(
+                    screen,
+                    row,
+                    &glyph.text,
+                    glyph.width,
+                    glyph.kind,
+                    StyleRole::CODE,
+                    None,
+                    Some(glyph.source),
+                )?;
+                used += usize::from(glyph.width);
             }
         }
         screen.set_line_source(row, LineSource::new(line.source, block_id))?;
@@ -184,10 +184,9 @@ fn format_info_label(text: &str) -> Option<String> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CodeLine {
-    pub text: String,
+    pub(crate) glyphs: Vec<super::input::DisplayGlyph>,
     pub source: mdtui3::Span,
     pub end: mdtui3::Span,
-    mappings: Vec<(usize, mdtui3::Span)>,
 }
 
 pub(crate) fn code_lines(
@@ -204,57 +203,43 @@ pub(crate) fn code_lines_from_input(
     source_fallback: mdtui3::Span,
 ) -> Result<Option<Vec<CodeLine>>, CodeError> {
     let mut lines = Vec::new();
-    let mut text = String::new();
-    let mut mappings = Vec::new();
+    let mut glyphs = Vec::new();
     let mut start = None;
     let mut end = None;
     let mut pending_cr = None;
     let mut saw_text = false;
-
-    for run in input.tokens() {
-        for (offset, character) in run.text.char_indices() {
-            saw_text = true;
-            let source = if run.replacement.is_none() && run.source.len() == run.text.len() {
-                mdtui3::Span::new(
-                    run.source.start + offset,
-                    run.source.start + offset + character.len_utf8(),
-                )
-            } else {
-                run.source
-            };
-            if character == '\r' {
-                pending_cr = Some(source);
-                continue;
-            }
-            if character == '\n' {
-                let newline = pending_cr
-                    .take()
-                    .map_or(source, |cr| mdtui3::Span::new(cr.start, source.end));
-                lines.push(CodeLine {
-                    text: std::mem::take(&mut text),
-                    source: start.unwrap_or(newline),
-                    end: newline,
-                    mappings: std::mem::take(&mut mappings),
-                });
-                start = None;
-                end = None;
-                continue;
-            }
-            pending_cr = None;
-            start.get_or_insert(source);
-            end = Some(source);
-            mappings.push((text.len(), source));
-            text.push(character);
+    for glyph in input.glyphs() {
+        saw_text = true;
+        let source = glyph.source;
+        if glyph.text == "\r" {
+            pending_cr = Some(source);
+            continue;
         }
+        if glyph.text == "\n" || glyph.text == "\r\n" {
+            let newline = pending_cr.take().map_or(source, |cr: mdtui3::Span| {
+                mdtui3::Span::new(cr.start, source.end)
+            });
+            lines.push(CodeLine {
+                glyphs: std::mem::take(&mut glyphs),
+                source: start.unwrap_or(newline),
+                end: newline,
+            });
+            start = None;
+            end = None;
+            continue;
+        }
+        pending_cr = None;
+        start.get_or_insert(source);
+        end = Some(source);
+        glyphs.push(glyph);
     }
-    if !text.is_empty() || start.is_some() {
+    if !glyphs.is_empty() || start.is_some() {
         let source = start.unwrap_or(source_fallback);
         let end = end.unwrap_or(source);
         lines.push(CodeLine {
-            text,
+            glyphs,
             source,
             end,
-            mappings,
         });
     }
     if lines.is_empty() && !saw_text {
@@ -291,7 +276,7 @@ mod tests {
         let content = screen.content_area();
         let mut text = String::new();
         for col in content.x..content.right() {
-            text.push_str(screen.cell(row, col).unwrap().text());
+            text.push_str(&screen.cell(row, col).unwrap().text().collect_text());
         }
         text
     }

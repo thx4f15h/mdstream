@@ -42,7 +42,7 @@ fn ready(v: &mut ViewportState, d: &Document) -> Vec<String> {
             return f
                 .lines
                 .iter()
-                .map(|l| l.cells.iter().map(|c| c.text.as_str()).collect())
+                .map(|l| l.cells.iter().map(|c| c.text.collect_text()).collect())
                 .collect();
         }
     }
@@ -63,7 +63,12 @@ fn actual_producer_code_lines_whole_middle_and_end() {
     let whole = f
         .lines()
         .iter()
-        .map(|l| l.cells.iter().map(|c| c.text.as_str()).collect::<String>())
+        .map(|l| {
+            l.cells
+                .iter()
+                .map(|c| c.text.collect_text())
+                .collect::<String>()
+        })
         .collect::<Vec<_>>();
     assert_eq!(whole.len(), 1801);
     for (i, line) in whole.iter().enumerate() {
@@ -115,7 +120,7 @@ fn screen(r: &FrameRuntime) -> String {
     (0..7)
         .map(|y| {
             (0..40)
-                .map(|x| r.screen().front_cell(y, x).unwrap().text())
+                .map(|x| r.screen().front_cell(y, x).unwrap().text().collect_text())
                 .collect::<String>()
         })
         .collect::<Vec<_>>()

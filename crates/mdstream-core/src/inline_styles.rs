@@ -212,6 +212,19 @@ impl Forest {
             authoritative,
         }
     }
+    fn previous_boundary(&self, at: usize, lower: usize) -> usize {
+        let boundary = self
+            .boundaries
+            .range(..=at)
+            .next_back()
+            .map_or(lower, |(&at, _)| at);
+        let marker = self
+            .markers
+            .range(..=at)
+            .next_back()
+            .map_or(lower, |(&start, &end)| if at < end { start } else { end });
+        lower.max(boundary).max(marker)
+    }
     fn undo_stats(&self) -> crate::rewind::UndoStats {
         self.pairs
             .undo_stats()
@@ -401,7 +414,7 @@ impl Styles {
         self.scopes[&key].source.end
     }
     pub(crate) fn conditional_source(&self, key: usize) -> Option<Span> {
-        let scope = &self.scopes[&key];
+        let scope = self.scopes.get(&key)?;
         (scope.conditional != 0 && scope.runs != 0).then_some(scope.source)
     }
     pub(crate) fn touch(&mut self, key: usize, span: Span, work: &mut Work) {
@@ -606,6 +619,18 @@ impl Styles {
             |(_, s)| s.source.end.min(end),
         );
         self.forest.at(at, limit, false)
+    }
+    fn previous_scope_boundary(&self, at: usize, lower: usize) -> usize {
+        self.scopes
+            .range(..=at)
+            .next_back()
+            .map_or(lower, |(&start, scope)| {
+                lower.max(if at < scope.source.end {
+                    start
+                } else {
+                    scope.source.end
+                })
+            })
     }
 }
 
@@ -817,6 +842,7 @@ impl Recovery {
                 return Ok(true);
             }
             if let Phase::Guard { task, .. } = &mut self.phase {
+                task.rebind_shared_revision(doc);
                 let Some(active) = task.advance_in(doc, resolution, budget, 0)? else {
                     return Ok(false);
                 };
@@ -1090,6 +1116,14 @@ impl Resolver {
             doc.inline_styles.unconditional(at, end)
         }
     }
+    fn previous_boundary(&self, doc: &Document, at: usize, lower: usize) -> usize {
+        let lower = doc.inline_styles.previous_scope_boundary(at, lower);
+        if let Some(key) = doc.inline_styles.conditional(at) {
+            self.scopes[&key].forest.previous_boundary(at, lower)
+        } else {
+            doc.inline_styles.forest.previous_boundary(at, lower)
+        }
+    }
     pub(crate) fn retire(&mut self, budget: &mut Budget) -> Completion {
         while let Some((&key, state)) = self.scopes.first_key_value() {
             let _ = state;
@@ -1274,6 +1308,7 @@ pub struct StyleMarkers {
     revision: u64,
     position: usize,
     end: usize,
+    reverse: bool,
 }
 impl Document {
     pub fn style_markers(&self, source: Span) -> Option<StyleMarkers> {
@@ -1283,10 +1318,34 @@ impl Document {
             revision: self.revision(),
             position: source.start,
             end: source.end,
+            reverse: false,
         })
+    }
+    /// Native classified marker/gap spans in reverse source order. This keeps
+    /// one snapshot and uses fixed O(log n) predecessor queries; no source
+    /// decoding, buffering or separate resolver is involved.
+    pub fn style_markers_reverse(&self, source: Span) -> Option<StyleMarkers> {
+        let mut cursor = self.style_markers(source)?;
+        cursor.position = source.end;
+        cursor.end = source.start;
+        cursor.reverse = true;
+        Some(cursor)
     }
 }
 impl StyleMarkers {
+    pub fn rebind_with(
+        &mut self,
+        document: &Document,
+        resolver: &crate::LinkResolver,
+    ) -> Result<(), LayoutError> {
+        if self.document != document.id() {
+            return Err(LayoutError::WrongDocument);
+        }
+        resolver.retained(document, self.revision)?;
+        self.revision = document.revision();
+        Ok(())
+    }
+
     pub fn source_position(&self) -> usize {
         self.position
     }
@@ -1309,23 +1368,43 @@ impl StyleMarkers {
         if self.position == self.end {
             return Ok(StyleMarkerStep::Complete);
         }
-        if !resolver
-            .resolution
-            .prepare_styles(doc, self.position, budget)?
-        {
+        // A last-byte lookup selects already classified metadata, including
+        // inside a UTF-8 scalar; returned boundaries remain native source cuts.
+        let at = if self.reverse {
+            self.position - 1
+        } else {
+            self.position
+        };
+        if !resolver.resolution.prepare_styles(doc, at, budget)? {
             return Ok(StyleMarkerStep::BudgetExhausted);
         }
         if !charge(budget) {
             return Ok(StyleMarkerStep::BudgetExhausted);
         }
-        let snapshot = resolver
-            .resolution
-            .style_snapshot(doc, self.position, self.end);
-        let scope = doc.inline_styles.scope(self.position).map(|(key, _)| key);
-        let next = snapshot.next.min(self.end);
-        debug_assert!(next > self.position);
+        let snapshot = resolver.resolution.style_snapshot(
+            doc,
+            at,
+            if self.reverse {
+                self.position
+            } else {
+                self.end
+            },
+        );
+        let scope = doc.inline_styles.scope(at).map(|(key, _)| key);
+        let source = if self.reverse {
+            let previous = resolver
+                .resolution
+                .styles
+                .previous_boundary(doc, at, self.end);
+            debug_assert!(previous < self.position);
+            Span::new(previous, self.position)
+        } else {
+            let next = snapshot.next.min(self.end);
+            debug_assert!(next > self.position);
+            Span::new(self.position, next)
+        };
         let value = ResolvedStyleSpan {
-            source: Span::new(self.position, next),
+            source,
             scope,
             scope_generation: scope.map_or(0, |key| doc.inline_styles.shape_generation(key)),
             marker_hidden: snapshot.hidden,
@@ -1335,7 +1414,61 @@ impl StyleMarkers {
             emphasis_depth: snapshot.emphasis,
             strong_depth: snapshot.strong,
         };
-        self.position = next;
+        self.position = if self.reverse {
+            source.start
+        } else {
+            source.end
+        };
         Ok(StyleMarkerStep::Span(value))
+    }
+}
+
+/// One real classified event per step; no source lexing or pair reconstruction.
+#[derive(Default)]
+pub(crate) struct ShapeSeed {
+    scope: Option<usize>,
+    event: Option<EventKey>,
+    done: bool,
+}
+impl ShapeSeed {
+    pub(crate) fn conditional_source(&self, styles: &Styles) -> Option<Span> {
+        styles.conditional_source(self.scope?)
+    }
+    pub(crate) fn next(&mut self, styles: &Styles) -> Option<Option<Span>> {
+        if self.done {
+            return None;
+        }
+        if self.scope.is_none() {
+            self.scope = styles.scopes.first_key_value().map(|(&key, _)| key);
+        }
+        loop {
+            let Some(key) = self.scope else {
+                self.done = true;
+                return None;
+            };
+            let scope = &styles.scopes[&key];
+            let next = match self.event {
+                Some(key) => scope.events.range((Excluded(key), Unbounded)).next(),
+                None => scope.events.first_key_value(),
+            };
+            if let Some((&key, event)) = next {
+                self.event = Some(key);
+                return Some(if let Event::Run { run, .. } = event {
+                    Some(run.source)
+                } else {
+                    None
+                });
+            }
+            self.scope = styles
+                .scopes
+                .range((Excluded(key), Unbounded))
+                .next()
+                .map(|(&key, _)| key);
+            self.event = None;
+            // The caller pays another metadata step before visiting a new scope.
+            if self.scope.is_some() {
+                return Some(None);
+            }
+        }
     }
 }

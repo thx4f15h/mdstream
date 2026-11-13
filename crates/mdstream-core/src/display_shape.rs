@@ -335,3 +335,211 @@ impl Document {
         update.display_shape.sort();
     }
 }
+
+/// Work performed by a current-metadata seed. Counts include checkpoint undo
+/// gathering, both tree traversals, phase visits and paid retirement.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DisplayShapeSeedWork {
+    pub steps: usize,
+    pub undo_copies: usize,
+    pub annotation_nodes: usize,
+    pub retired_nodes: usize,
+}
+
+/// Current metadata, not an invented Update/event history. Annotation spans
+/// address source bytes and may end within a scalar: consumers assign each tag
+/// to scalar starts inside the span. Source classification is separately paid.
+#[derive(Clone, Copy, Debug)]
+pub enum DisplayShapeSeedItem {
+    AnnotationCheckpoint,
+    Mark {
+        source: Span,
+        mark: DisplayShapeMark,
+        baseline: bool,
+    },
+    Replacement {
+        source: Span,
+        replacement: DisplayShapeReplacement,
+    },
+    Candidate {
+        source: Span,
+        conditional_scope: Option<Span>,
+    },
+    Link {
+        id: LinkId,
+        info: LinkInfo,
+        active: bool,
+    },
+    FootnoteReference {
+        id: FootnoteReferenceId,
+        source: Span,
+    },
+}
+/// Bounded read-only traversal of one current root namespace. It excludes
+/// body-local IDs and carries the live annotation rollback checkpoint.
+pub struct DisplayShapeSeed {
+    document: crate::DocumentId,
+    revision: u64,
+    phase: u8,
+    at: usize,
+    annotations: crate::annotations::ShapeSeed,
+    styles: crate::inline_styles::ShapeSeed,
+    steps: usize,
+}
+impl Document {
+    /// Current classified conditional-style dependency for one root scope ID.
+    /// Pure extent growth does not change its generation or recover any source.
+    pub fn display_shape_scope_dependency(&self, scope: usize) -> Option<Span> {
+        self.inline_styles.conditional_source(scope)
+    }
+    pub fn display_shape_seed(&self) -> DisplayShapeSeed {
+        DisplayShapeSeed {
+            document: self.id,
+            revision: self.revision,
+            phase: 0,
+            at: 0,
+            annotations: crate::annotations::ShapeSeed::new(),
+            styles: Default::default(),
+            steps: 0,
+        }
+    }
+    /// Subscribe after obtaining the current-metadata seed. Complete that seed
+    /// before the next append; its revision check prevents mixing both views.
+    /// This retains no historical effects and does not inspect source bytes.
+    pub fn subscribe_display_shape_effects(&mut self) {
+        if self.shape.enabled() {
+            return;
+        }
+        let clock = Arc::new(ShapeClock::default());
+        for log in [
+            &mut self.shape,
+            &mut self.annotations.shape,
+            &mut self.display.shape,
+            &mut self.inline_styles.shape,
+            &mut self.link_order.shape,
+            &mut self.references.shape,
+            &mut self.footnotes.shape,
+        ] {
+            log.enable(clock.clone());
+        }
+    }
+}
+impl DisplayShapeSeed {
+    pub fn work(&self) -> DisplayShapeSeedWork {
+        let mut work = self.annotations.work;
+        work.steps += self.steps;
+        work
+    }
+    pub fn capacity_bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + self.annotations.capacity_bytes()
+    }
+    /// Cancel without synchronously dropping a checkpoint's gathered map.
+    /// Keep this owner until retirement returns Covered.
+    pub fn retire(&mut self, budget: &mut crate::Budget) -> crate::Completion {
+        self.phase = 6;
+        self.annotations.retire(budget)
+    }
+
+    pub fn advance(
+        &mut self,
+        document: &Document,
+        budget: &mut crate::Budget,
+    ) -> Result<Result<Option<DisplayShapeSeedItem>, crate::Completion>, crate::LayoutError> {
+        use DisplayShapeSeedItem as Item;
+        if document.id != self.document {
+            return Err(crate::LayoutError::WrongDocument);
+        }
+        if document.revision != self.revision {
+            return Err(crate::LayoutError::StaleContinuation);
+        }
+        loop {
+            if self.phase == 0 {
+                match self.annotations.next(&document.annotations, budget) {
+                    Ok(Some(item)) => return Ok(Ok(Some(item))),
+                    Err(e) => return Ok(Err(e)),
+                    Ok(None) => {
+                        self.phase = 1;
+                        self.at = 0;
+                    }
+                }
+            }
+            if !budget.charge(crate::WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            }) {
+                return Ok(Err(crate::Completion::BudgetExhausted));
+            }
+            self.steps += 1;
+            match self.phase {
+                1 => {
+                    if let Some((source, replacement)) = document.display.shape_seed_entry(self.at)
+                    {
+                        self.at += 1;
+                        return Ok(Ok(Some(Item::Replacement {
+                            source,
+                            replacement,
+                        })));
+                    }
+                    self.phase = 2;
+                    self.at = 0;
+                }
+                2 => {
+                    if let Some(&(source, columns)) = document.display.space_mappings().get(self.at)
+                    {
+                        self.at += 1;
+                        return Ok(Ok(Some(Item::Replacement {
+                            source,
+                            replacement: DisplayShapeReplacement::Spaces { columns },
+                        })));
+                    }
+                    self.phase = 3;
+                    self.at = 0;
+                }
+                3 => match self.styles.next(&document.inline_styles) {
+                    Some(Some(source)) => {
+                        return Ok(Ok(Some(Item::Candidate {
+                            source,
+                            conditional_scope: self
+                                .styles
+                                .conditional_source(&document.inline_styles),
+                        })));
+                    }
+                    Some(None) => {}
+                    None => {
+                        self.phase = 4;
+                        self.at = 0;
+                    }
+                },
+                4 => {
+                    if let Some(&info) = document.link_info.get(self.at) {
+                        let id = LinkId(self.at);
+                        self.at += 1;
+                        return Ok(Ok(Some(Item::Link {
+                            id,
+                            info,
+                            active: document.link_order.active(id),
+                        })));
+                    }
+                    self.phase = 5;
+                    self.at = 0;
+                }
+                5 => {
+                    if let Some(reference) = document.footnote_references().get(self.at) {
+                        let id = FootnoteReferenceId(self.at);
+                        self.at += 1;
+                        if document.footnote_reference_state(id).is_some() {
+                            return Ok(Ok(Some(Item::FootnoteReference {
+                                id,
+                                source: reference.source,
+                            })));
+                        }
+                    } else {
+                        self.phase = 6;
+                    }
+                }
+                _ => return Ok(Ok(None)),
+            }
+        }
+    }
+}

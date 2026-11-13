@@ -8,6 +8,7 @@ use mdtui3::{Budget, Document, LinkId, Span, TILE_BYTES, TileId, WorkLimit};
 
 fn document(source: &str, finish: bool) -> Document {
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     document.append(source).unwrap();
     if finish {
         document.finish();
@@ -41,7 +42,7 @@ fn first(document: &Document, tile_limit: usize, width: u16) -> FirstFrame {
 
 fn row(screen: &Screen, row: u16) -> String {
     (0..screen.cols())
-        .map(|col| screen.cell(row, col).unwrap().text())
+        .map(|col| screen.cell(row, col).unwrap().text().collect_text())
         .collect::<String>()
         .trim_end()
         .to_owned()
@@ -229,6 +230,11 @@ fn unicode_clusters_cross_tiles_and_one_scalar_budget_steps_without_splitting_ce
                 },
             )
             .unwrap();
+            assert!(
+                viewport
+                    .initialize(&document, &mut Budget::new(WorkLimit::unlimited()))
+                    .unwrap()
+            );
             // Start a real frame on the incomplete cluster, then invalidate it
             // through the same append/update path used by the CLI.
             let _ = viewport.frame(&document, &mut Budget::new(limit)).unwrap();
@@ -245,7 +251,7 @@ fn unicode_clusters_cross_tiles_and_one_scalar_budget_steps_without_splitting_ce
             )
             .unwrap();
             let mut complete = false;
-            for _ in 0..10_000 {
+            for _ in 0..source.chars().count().saturating_mul(512) {
                 let mut budget = Budget::new(limit);
                 let step = first.advance(&document, &mut budget).unwrap();
                 assert!(budget.used().bytes <= limit.bytes);
@@ -477,6 +483,11 @@ fn viewport_window_edges_keep_complete_clusters_and_ri_parity_with_budgeted_cont
             },
         )
         .unwrap();
+        assert!(
+            first
+                .initialize(&document, &mut Budget::new(WorkLimit::unlimited()))
+                .unwrap()
+        );
         let limit = WorkLimit {
             queries: 2,
             objects: 2,
@@ -486,7 +497,7 @@ fn viewport_window_edges_keep_complete_clusters_and_ri_parity_with_budgeted_cont
             recovery: 2,
         };
         let mut done = false;
-        for _ in 0..10_000 {
+        for _ in 0..(expected.len() + 1) * 128 * (source.chars().count().ilog2() as usize + 1) {
             let mut budget = Budget::new(limit);
             let step = first.advance(&document, &mut budget).unwrap();
             assert!(budget.used().bytes <= limit.bytes);
@@ -504,10 +515,10 @@ fn viewport_window_edges_keep_complete_clusters_and_ri_parity_with_budgeted_cont
             .lines()
             .iter()
             .flat_map(|line| line.cells.iter())
-            .map(|cell| (cell.text.clone(), cell.source.unwrap()))
+            .map(|cell| (cell.text.collect_text(), cell.source.unwrap()))
             .collect();
         assert_eq!(actual, expected, "{unit:?} source window {requested:?}");
-        assert!(first.scanner().stats().edge_source_bytes > 0);
+        assert_eq!(first.scanner().stats().edge_source_bytes, 0);
         assert_eq!(first.scanner().stats().omitted_edge_clusters, 0);
         assert!(first.scanner().stats().scanned_bytes <= requested.len() + unit.len() * 2);
         assert_eq!(first.sink_stats().unwrap().preparation_source_bytes, 0);
@@ -692,7 +703,14 @@ fn giant_cell_keeps_provisional_screen_and_key_redraw_available_during_width_cal
         1_000_000
     );
     let first_row: String = (0..80)
-        .map(|x| engine.screen().front_cell(0, x).unwrap().text())
+        .map(|x| {
+            engine
+                .screen()
+                .front_cell(0, x)
+                .unwrap()
+                .text()
+                .collect_text()
+        })
         .collect();
     assert!(first_row.contains('┌'));
 }
@@ -777,7 +795,7 @@ fn semantic_zwj_and_hidden_markers_survive_real_viewport_edge_scroll_and_checkpo
 }
 
 #[test]
-fn overlong_edge_cluster_has_one_source_mapped_local_height_placeholder() {
+fn overlong_edge_cluster_has_one_complete_source_mapped_owner() {
     let source = format!("a{}\n", "\u{301}".repeat(100_000));
     let document = document(&source, true);
     let start = TileId(100);
@@ -812,15 +830,18 @@ fn overlong_edge_cluster_has_one_source_mapped_local_height_placeholder() {
     assert_eq!(first.lines().len(), 1);
     assert_eq!(first.lines()[0].cells.len(), 1);
     let cell = &first.lines()[0].cells[0];
-    assert_eq!(cell.text, "…");
-    assert_eq!(cell.source, Some(requested));
+    assert_eq!(cell.text, format!("a{}", "\u{301}".repeat(100_000)));
+    assert_eq!(cell.source, Some(Span::new(0, 200_001)));
+    assert!(
+        cell.source.unwrap().start <= requested.start && requested.end <= cell.source.unwrap().end
+    );
     assert_eq!(cell.width, 1);
-    assert_eq!(first.sink_stats().unwrap().edge_placeholders, 1);
+    assert_eq!(first.sink_stats().unwrap().edge_placeholders, 0);
     assert_eq!(
         first.heights().height_state(TileId(101)),
-        Some(mdtui3::HeightState::Local)
+        Some(mdtui3::HeightState::Measured)
     );
-    assert_eq!(first.heights().height(TileId(101)), Some(1));
+    assert_eq!(first.heights().height(TileId(101)), Some(0));
     assert!(first.scanner().stats().edge_source_bytes < 40_000);
     assert!(first.scanner().stats().display_source_work < 40_000);
 }
@@ -965,14 +986,20 @@ fn distant_ri_lookbehind_limit_never_guesses_flag_parity() {
         }
     }
     assert!(done);
-    assert!(first.scanner().stats().context_limited_edges > 0);
+    assert_eq!(first.scanner().stats().context_limited_edges, 0);
     assert!(first.scanner().stats().edge_source_bytes < 40_000);
-    assert_eq!(first.lines().len(), 1);
-    assert_eq!(first.lines()[0].cells[0].text, "…");
-    assert_eq!(first.sink_stats().unwrap().edge_placeholders, 1);
+    assert!(!first.lines().is_empty());
+    assert!(
+        first
+            .lines()
+            .iter()
+            .flat_map(|line| &line.cells)
+            .all(|cell| cell.text == "🇨🇳")
+    );
+    assert_eq!(first.sink_stats().unwrap().edge_placeholders, 0);
     assert_eq!(
         first.heights().height_state(TileId(101)),
-        Some(mdtui3::HeightState::Local)
+        Some(mdtui3::HeightState::Measured)
     );
 }
 
@@ -980,6 +1007,7 @@ fn distant_ri_lookbehind_limit_never_guesses_flag_parity() {
 fn append_revisions_keep_table_cache_capacity_tied_to_visible_tables() {
     use mdtui_tui::render::viewport::{ViewportConfig, ViewportFrameStatus, ViewportState};
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     let mut state = ViewportState::new(
         &document,
         ViewportConfig {
@@ -1067,7 +1095,7 @@ fn unresolved_images_remain_literal_until_a_late_definition_invalidates_layout()
             .lines
             .iter()
             .flat_map(|line| &line.cells)
-            .map(|cell| cell.text.as_str())
+            .map(|cell| cell.text.collect_text())
             .collect();
         assert_eq!(text, if label.is_empty() { "[image]" } else { label });
         assert!(
@@ -1135,7 +1163,12 @@ fn million_byte_fence_line_is_raw_before_lf_then_bounded_label_and_body_without_
         let lines: Vec<String> = frame
             .lines
             .iter()
-            .map(|line| line.cells.iter().map(|cell| cell.text.as_str()).collect())
+            .map(|line| {
+                line.cells
+                    .iter()
+                    .map(|cell| cell.text.collect_text())
+                    .collect()
+            })
             .collect();
         assert!(
             lines.iter().any(|line| line.contains("body one")),

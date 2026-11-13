@@ -26,3 +26,13 @@ pub mod visibility;
 mod width_measure;
 
 pub mod objects;
+
+pub mod payload;
+pub mod shape;
+pub(crate) mod shape_unicode;
+
+pub(crate) mod wire;
+
+mod html_shape;
+
+mod append_store;

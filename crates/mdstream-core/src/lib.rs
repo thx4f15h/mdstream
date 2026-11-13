@@ -101,7 +101,8 @@ pub use display_search::{DisplayMatch, DisplaySearch};
 pub use display_shape::{
     DisplayDelimiterKind, DisplayShapeBoundary, DisplayShapeDomain, DisplayShapeEffect,
     DisplayShapeEffectKind, DisplayShapeEffects, DisplayShapeMark, DisplayShapeReplacement,
-    DisplayShapeStats, DisplayShapeStyleEvent,
+    DisplayShapeSeed, DisplayShapeSeedItem, DisplayShapeSeedWork, DisplayShapeStats,
+    DisplayShapeStyleEvent,
 };
 pub use excerpt::{DisplayExcerpt, ExcerptEnd, ExcerptLimits, ExcerptStep};
 pub use fold_batch::{FoldBatch, FoldBatchAction, FoldBatchProgress};

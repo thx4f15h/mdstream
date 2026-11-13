@@ -35,6 +35,7 @@ fn wide_source(columns: usize) -> String {
 #[test]
 fn hundred_thousand_columns_prepare_only_paid_terminal_prefix() {
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     document.append(&wide_source(100_000)).unwrap();
     document.finish();
     let id = table_id(&document);
@@ -119,6 +120,11 @@ fn hundred_thousand_columns_prepare_only_paid_terminal_prefix() {
     assert_eq!(frame.status, ViewportFrameStatus::BudgetExhausted);
     assert_eq!(viewport.table_widths().memory_stats().tables, 0);
     assert_eq!(viewport.table_widths().work().column_metadata_reads, 0);
+    assert!(
+        viewport
+            .initialize(&document, &mut Budget::new(WorkLimit::unlimited()))
+            .unwrap()
+    );
     // Real interactive layout also remains on a bounded tile/source window.
     let mut steps = 0;
     loop {
@@ -165,6 +171,7 @@ fn observe_history(document: &Document, cache: &mut TableWidthCache, id: TableId
 #[test]
 fn out_of_order_history_has_bounded_eviction_and_revision_offscreen_resize_cleanup() {
     let mut document = Document::new();
+    document.enable_display_shape_effects().unwrap();
     let mut source = format!("{}|\n{}|\n", "|h".repeat(10), "|---".repeat(10));
     for row in 0..20_000 {
         source.push_str(if row == 0 {

@@ -75,7 +75,13 @@ fn once_storage_width(document: &Document, width: u16) -> Result<u16, StaticRend
                     max_width = max_width.max(
                         lines
                             .iter()
-                            .map(|line| display_width(&line.text).saturating_add(2))
+                            .map(|line| {
+                                line.glyphs
+                                    .iter()
+                                    .map(|g| usize::from(g.width))
+                                    .sum::<usize>()
+                                    .saturating_add(2)
+                            })
                             .max()
                             .unwrap_or(0),
                     );
@@ -146,7 +152,7 @@ fn encode_row(
             continue;
         }
         if segment.accepts(cell, code_row) {
-            segment.text.push_str(cell.text());
+            segment.text.push_str(&cell.text().collect_text());
         } else {
             segment.write(output, document, link_mode);
             segment = RawSegment::new(cell);
@@ -167,7 +173,7 @@ impl RawSegment {
         Self {
             style: cell.style(),
             link_id: cell.link_id(),
-            text: cell.text().to_owned(),
+            text: cell.text().collect_text(),
             last_source: cell.source(),
         }
     }

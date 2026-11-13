@@ -52,7 +52,7 @@ impl From<ScreenError> for SinkError {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SinkCell {
-    pub text: String,
+    pub text: super::payload::TextPayload,
     pub style: StyleRole,
     pub width: u8,
     pub link: Option<LinkId>,
@@ -89,7 +89,7 @@ pub struct LayoutSinkStats {
 
 #[derive(Debug, Clone)]
 struct OwnedGlyph {
-    text: String,
+    text: super::payload::TextPayload,
     width: u8,
     kind: GraphemeKind,
     style: StyleRole,
@@ -276,8 +276,11 @@ impl TileLayoutSink {
             segments_consumed += 1;
             let Some(block) = segment.block else {
                 if !pending_visible.is_empty()
-                    && segment.source.start >= pending_visible.start
-                    && segment.source.end <= pending_visible.end
+                    && ((segment.source.start >= pending_visible.start
+                        && segment.source.end <= pending_visible.end)
+                        || segment.text.is_indexed()
+                            && segment.source.end > pending_visible.start
+                            && segment.source.start < pending_visible.end)
                 {
                     pending_segments.push(segment);
                 }
@@ -335,8 +338,9 @@ impl TileLayoutSink {
             );
             if matches!(block.kind, BlockKind::Table { .. }) {
                 for glyph in &mut glyphs {
-                    if glyph.text.len() > super::edges::MAX_EDGE_OVERSCAN
-                        || scanner.cell_cut(glyph.source.end)
+                    if !glyph.text.is_indexed()
+                        && (glyph.text.len() > super::edges::MAX_EDGE_OVERSCAN
+                            || scanner.cell_cut(glyph.source.end))
                     {
                         edge_placeholders += 1;
                         glyph.text = "…".into();
@@ -360,9 +364,12 @@ impl TileLayoutSink {
                 let cut_end = overlaps_end
                     && context_source.end < document.source().len()
                     && (omit_end || glyph.source.end == context_source.end);
-                if (cut_start || cut_end) && !matches!(block.kind, BlockKind::Table { .. }) {
+                if !glyph.text.is_indexed()
+                    && (cut_start || cut_end)
+                    && !matches!(block.kind, BlockKind::Table { .. })
+                {
                     edge_placeholders += 1;
-                    glyph.text = "…".to_owned();
+                    glyph.text = "…".into();
                     glyph.width = 1;
                     glyph.kind = GraphemeKind::Narrow;
                     glyph.source = Span::new(
@@ -386,11 +393,11 @@ impl TileLayoutSink {
                     || (limited_end
                         && block.source.start < context_source.end
                         && block.source.end >= context_source.end));
-            if uncertain && !glyphs.is_empty() {
+            if uncertain && !glyphs.is_empty() && !glyphs.iter().all(|g| g.text.is_indexed()) {
                 edge_placeholders += 1;
                 glyphs.clear();
                 glyphs.push(OwnedGlyph {
-                    text: "…".to_owned(),
+                    text: "…".into(),
                     width: 1,
                     kind: GraphemeKind::Narrow,
                     style: StyleRole::META,
@@ -402,11 +409,28 @@ impl TileLayoutSink {
                     ),
                 });
             }
-            let Some(content) =
+            let Some(mut content) =
                 prepare_block(&context, planned.id, block, glyphs, has_label, has_rule)?
             else {
                 continue;
             };
+            if let PreparedContent::Streamed { quote, glyphs } = &content
+                && glyphs.iter().any(|g| g.text.is_indexed())
+            {
+                let rows = stream_lines(glyphs, *quote, width)
+                    .into_iter()
+                    .map(|line| {
+                        let start = line.source.map_or(block.source.start, |s| s.source.start);
+                        let owner = document.tile_at(start).unwrap_or(plan.tile_start);
+                        PreparedRow {
+                            line,
+                            owner_tile: owner,
+                            source_start: start,
+                        }
+                    })
+                    .collect();
+                content = PreparedContent::Rows(rows);
+            }
             if matches!(block.kind, BlockKind::Table { .. })
                 && let PreparedContent::Rows(rows) = &content
             {
@@ -420,12 +444,19 @@ impl TileLayoutSink {
                 containers,
             )?;
             match &content {
-                PreparedContent::Streamed { .. } => {
-                    let owner = owner_tile(
-                        document,
-                        Span::new(block.source.start, block.source.end.min(plan_source.end)),
-                        plan.tile_start,
-                    );
+                PreparedContent::Streamed { glyphs, .. } => {
+                    let owner = if glyphs.len() == 1 && glyphs[0].text.is_indexed() {
+                        document
+                            .tile_at(glyphs[0].source.start)
+                            .filter(|tile| tile_index(plan, *tile).is_some())
+                            .unwrap_or(plan.tile_start)
+                    } else {
+                        owner_tile(
+                            document,
+                            Span::new(block.source.start, block.source.end.min(plan_source.end)),
+                            plan.tile_start,
+                        )
+                    };
                     if let Some(index) = tile_index(plan, owner) {
                         work[index].push(WorkItem {
                             source_start: block.source.end.saturating_sub(1),
@@ -476,9 +507,15 @@ impl TileLayoutSink {
         let pending = if pending_glyphs.is_empty() {
             None
         } else {
+            let source_owner = if pending_glyphs.len() == 1 && pending_glyphs[0].text.is_indexed() {
+                pending_glyphs[0].source.start
+            } else {
+                pending_visible.end.saturating_sub(1)
+            };
             let owner = document
-                .tile_at(pending_visible.end.saturating_sub(1))
-                .unwrap_or(TileId(plan.tile_end.0.saturating_sub(1)));
+                .tile_at(source_owner)
+                .filter(|tile| tile_index(plan, *tile).is_some())
+                .unwrap_or(plan.tile_start);
             if let Some(index) = tile_index(plan, owner) {
                 work[index].push(WorkItem {
                     source_start: pending_visible.start,
@@ -660,6 +697,14 @@ impl TileLayoutSink {
     }
 
     #[must_use]
+    pub(crate) fn tile_rendered(&self, tile: TileId) -> bool {
+        tile.0
+            .checked_sub(self.tile_start.0)
+            .and_then(|at| self.rendered_tiles.get(at))
+            .copied()
+            .unwrap_or(false)
+    }
+
     pub fn tile_rows(&self, tile: TileId) -> Option<u64> {
         let index = tile.0.checked_sub(self.tile_start.0)?;
         if tile >= self.tile_end {
@@ -1149,11 +1194,7 @@ fn prepare_block(
                             .rows()
                             .iter()
                             .filter_map(|row| row.cells.get(widths.first_column + column))
-                            .map(|cell| {
-                                crate::render::text::display_width(
-                                    &input.clipped(cell.source).visible_text(),
-                                )
-                            })
+                            .map(|cell| input.clipped(cell.source).display_width())
                             .max()
                             .unwrap_or(0),
                     );
@@ -1316,6 +1357,15 @@ fn extract_rows(
             if cell.is_continuation() {
                 continue;
             }
+            if let Some(zero) = screen.zero_cell(row, column) {
+                cells.push(SinkCell {
+                    text: zero.text().clone(),
+                    style: zero.style(),
+                    width: 0,
+                    link: zero.link_id(),
+                    source: zero.source(),
+                });
+            }
             cells.push(SinkCell {
                 text: cell.text().to_owned(),
                 style: cell.style(),
@@ -1378,12 +1428,6 @@ fn stream_lines(glyphs: &[OwnedGlyph], quote: bool, width: u16) -> Vec<SinkLine>
         if glyph.kind == GraphemeKind::Control {
             continue;
         }
-        if glyph.width == 0 {
-            if let Some(last) = line.last_mut() {
-                last.text.push_str(&glyph.text);
-            }
-            continue;
-        }
         let glyph_width = usize::from(glyph.width);
         if glyph_width > body_width {
             continue;
@@ -1432,7 +1476,7 @@ fn quote_prefix(width: usize) -> Vec<SinkCell> {
         return Vec::new();
     }
     let mut cells = vec![SinkCell {
-        text: "│".to_owned(),
+        text: "│".into(),
         style: StyleRole::QUOTE,
         width: 1,
         link: None,
@@ -1440,7 +1484,7 @@ fn quote_prefix(width: usize) -> Vec<SinkCell> {
     }];
     if width >= 2 {
         cells.push(SinkCell {
-            text: " ".to_owned(),
+            text: " ".into(),
             style: StyleRole::QUOTE,
             width: 1,
             link: None,
@@ -1451,10 +1495,7 @@ fn quote_prefix(width: usize) -> Vec<SinkCell> {
 }
 
 fn trim_glyph(glyph: &OwnedGlyph) -> bool {
-    glyph
-        .text
-        .chars()
-        .all(|character| character.is_ascii_whitespace())
+    glyph.text.is_ascii_whitespace()
 }
 
 fn text_line(
@@ -1473,7 +1514,7 @@ fn text_line(
             break;
         }
         cells.push(SinkCell {
-            text: grapheme.text.to_owned(),
+            text: grapheme.text.into(),
             style,
             width: grapheme.width,
             link,
@@ -1491,7 +1532,7 @@ fn rule_line(source: Span, block: BlockId, width: u16) -> SinkLine {
     SinkLine {
         cells: (0..width)
             .map(|_| SinkCell {
-                text: "─".to_owned(),
+                text: "─".into(),
                 style: StyleRole::RULE,
                 width: 1,
                 link: None,
@@ -1600,6 +1641,22 @@ fn boundary_checkpoints(
                 },
                 |block| block.checkpoint,
             );
+            // A code checkpoint restores the physical source line crossing the
+            // boundary, not the block opener. Its row owner remains the tile
+            // containing that line's newline (including blank lines).
+            if matches!(block.kind, BlockKind::Code { .. })
+                && let Some(PreparedBlock {
+                    content: PreparedContent::Rows(rows),
+                    ..
+                }) = blocks.get(&block.id)
+            {
+                let at = rows.partition_point(|row| {
+                    row.line.source.is_some_and(|s| s.source.end <= next_start)
+                });
+                if let Some(row) = rows.get(at) {
+                    checkpoint.line_source_start = Some(row.source_start);
+                }
+            }
         }
         if let Some(next) = plan.segments.get(index + 1) {
             let mut pending = PendingBlockEvents::default();
@@ -1639,7 +1696,7 @@ mod pending_metadata_tests {
             tile: TileId(0),
             source: Span::new(10, 15),
             replacement: None,
-            text: "🙂x".to_owned(),
+            text: "🙂x".into(),
             block: None,
             link: Some(LinkId(0)),
             style: StyleRole::STRONG,

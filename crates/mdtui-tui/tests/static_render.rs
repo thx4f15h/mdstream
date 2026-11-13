@@ -63,7 +63,7 @@ fn row_text(screen: &Screen, row: u16) -> String {
     let mut text = String::new();
     for column in content.x..content.right() {
         let cell = screen.cell(row, column).expect("row cell must exist");
-        text.push_str(cell.text());
+        text.push_str(&cell.text().collect_text());
     }
     text.truncate(text.trim_end_matches(' ').len());
     text.replace('\t', "\\t")

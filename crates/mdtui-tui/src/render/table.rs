@@ -3,8 +3,8 @@ use std::ops::Range;
 
 use mdtui3::{Alignment, Block, BlockId, BlockKind, Document, Span, TableId};
 
-use crate::render::input::{DisplayInput, TokenKind};
-use crate::render::text::{GraphemeKind, display_width, graphemes};
+use crate::render::input::DisplayInput;
+use crate::render::text::GraphemeKind;
 use crate::render::visibility::visible_input;
 use crate::screen::{Cell, LineSource, Screen, ScreenError, StyleRole};
 
@@ -248,7 +248,7 @@ pub(crate) fn table_geometry_window(
                         } else {
                             visible_input(document, source).ok_or(TableError::MissingContent)?
                         };
-                        let content_width = display_width(&input.visible_text());
+                        let content_width = input.display_width();
                         Ok(TableCellGeometry {
                             source: cell.source,
                             input,
@@ -294,7 +294,7 @@ pub(crate) fn table_geometry_window(
 
 pub(crate) fn cell_width(document: &Document, source: Span) -> Result<usize, TableError> {
     let input = visible_input(document, source).ok_or(TableError::MissingContent)?;
-    Ok(display_width(&input.visible_text()))
+    Ok(input.display_width())
 }
 
 pub(crate) fn table_width(widths: &[usize]) -> usize {
@@ -478,52 +478,25 @@ fn data_row(
             cells.push(border_cell(' ')?);
         }
         let mut used = leading;
-        'tokens: for token in cell.input.tokens() {
-            match token.kind {
-                TokenKind::HardBreak => {}
-                TokenKind::SoftBreak => {
-                    if used < column.content_width {
-                        cells.push(Cell::new(" ", token.style, 1, None, None)?);
-                        used += 1;
-                    }
-                }
-                TokenKind::Text => {
-                    for grapheme in graphemes(&token.text) {
-                        if matches!(
-                            grapheme.kind,
-                            GraphemeKind::Control | GraphemeKind::ZeroWidth
-                        ) {
-                            continue;
-                        }
-                        let width = usize::from(grapheme.width);
-                        if used + width > column.content_width {
-                            break 'tokens;
-                        }
-                        cells.push(Cell::new(
-                            grapheme.text,
-                            token.style,
-                            grapheme.width,
-                            token.link.filter(|_| {
-                                token.style.contains(StyleRole::IMAGE)
-                                    || token.style.contains(StyleRole::LITERAL_LINK)
-                            }),
-                            Some(
-                                if token.replacement.is_none()
-                                    && token.source.len() == token.text.len()
-                                {
-                                    Span::new(
-                                        token.source.start + grapheme.start,
-                                        token.source.start + grapheme.end,
-                                    )
-                                } else {
-                                    token.source
-                                },
-                            ),
-                        )?);
-                        used += width;
-                    }
-                }
+        for glyph in cell.input.glyphs() {
+            if matches!(glyph.kind, GraphemeKind::Control) {
+                continue;
             }
+            let width = usize::from(glyph.width);
+            if used + width > column.content_width {
+                break;
+            }
+            cells.push(Cell::new(
+                glyph.text,
+                glyph.style,
+                glyph.width,
+                glyph.link.filter(|_| {
+                    glyph.style.contains(StyleRole::IMAGE)
+                        || glyph.style.contains(StyleRole::LITERAL_LINK)
+                }),
+                Some(glyph.source),
+            )?);
+            used += width;
         }
         for _ in used..column.content_width {
             cells.push(border_cell(' ')?);
@@ -589,7 +562,7 @@ mod tests {
         let content = screen.content_area();
         let mut text = String::new();
         for col in content.x..content.right() {
-            text.push_str(screen.cell(row, col).unwrap().text());
+            text.push_str(&screen.cell(row, col).unwrap().text().collect_text());
         }
         text
     }

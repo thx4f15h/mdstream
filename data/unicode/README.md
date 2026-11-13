@@ -51,3 +51,32 @@ classify their two sides. The parser retains one previous semantic scalar while
 scanning forward, with constant work for at most four UTF-8 bytes per decode.
 Old body text, reference history and ancestor paths are never revisited for
 flanking. The existing cumulative O(n log n), O(n) space contract is retained.
+
+## Fixed TUI grapheme and width transducers
+
+`17.0.0/GraphemeBreakTest.txt` is the unmodified Unicode 17 test file; its
+766 cases and SHA-256 `e2d134d2c52919bace503ebb6a551c1855fe1a1faec18478c78fff254a1793ec`
+are checked independently of the production transducer. It uses the Unicode
+License V3 already included here. Existing official files and generators stay
+unchanged.
+
+The TUI pins **unicode-segmentation 1.13.3 (Unicode 17)** and
+**unicode-width 0.2.3 (Unicode 18, non-CJK)**. These versions are intentionally
+different. `scripts/generate_display_shape.py` reads the locked local registry
+sources and fixed `scripts/display_shape/width-states.json`, verifies their Rust
+source hashes, and emits `crates/mdtui-tui/src/render/shape_tables.rs`. Run it with
+`nix develop -c python3 scripts/generate_display_shape.py`; add `--check` for an
+offline reproducibility check. Neither build nor application startup runs a
+Unicode-domain generator. The generated GCB machine has 24 reachable states and
+18 classes; the reverse width machine has 132 states. The accepted exhaustive
+closure used 146,792,448 scalar/state transitions and 106,464,468 append
+compositions compared to the original width crate. Regeneration uses that fixed
+closure rather than repeating its search.
+
+`display-shape-provenance.json` records source versions/hashes, the official
+oracle and generated-table digest. Both crates and adapted generator code use
+MIT OR Apache-2.0; complete copyright and both license notices are retained in
+`display-shape-licenses/`. The fixed tables also derive from Unicode data under
+the accompanying Unicode License V3. Tests retain the original crates as
+independent oracles, including **unclamped** width-map comparisons; terminal
+width is capped at two separately for each actual display EGC.

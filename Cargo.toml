@@ -8,6 +8,7 @@ edition = "2024"
 
 [workspace.dependencies]
 crossterm = "=0.29.0"
+rustix = "=1.1.6"
 mdtui3 = { package = "mdstream-core", path = "crates/mdstream-core" }
 unicode-segmentation = "=1.13.3"
 unicode-width = "=0.2.3"

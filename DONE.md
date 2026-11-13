@@ -3128,3 +3128,36 @@ BodyView 的显示、窗口/activity、ordered style/marker、活跃 math/footno
 官方输入/HTML、生成器、原黄金数组和全部原 ANSI 输入/期望保持；当前评分 Indented107–118为11/1/0（113保留）、Setext80–106为26/1/0（87保留）、ListItems253–300为47/1/0（291保留）。110–112、85、264/289 逐真实源与原始 HTML 验证，历史观察字符串保留并通过窄分类适配；具体非官方旧断言只按同作用域代码合并、首尾来源和代码内部不构成列表分隔的独立机制调整。
 
 最终固定在根指定 `77d32b1`：完整 workspace debug2699/release2695 在29基线含最终功能改动实际通过，按精确 cache 块重排、等价 bool 断言和最终报告诊断文字差异证明继承；组合77实际通过 all-targets check、专项 debug/release 各476、doc83、docbuild、fmt 和完整 workspace all-targets strict clippy `-D warnings`，无 lint 豁免。最终报告仅修正 ListItems 计数输出后另跑该官方报告、fmt/全目标严格 clippy，README 与已通过的 doc83 输入保持。冻结输入、来源关系及真实 PTY/ANSI 验证记录位于仓外交付材料，本项以独立提交交付。本记录不勾选 parent88 的实际间距、宽泛完整容器/UI兼容性。原生 fenced 检查点失效后恢复错位已由根交021，最终 giant+codeblank+restore 仍需根的固定组合联合验收。
+
+
+## 2026-11-13 完整超长字素绘制
+
+固定组合基点 `be74c01477274f7d8a2f39356df93510a0ff9fec`（含授权012/018/022/023），完整保留此前 DONE 前缀。完整显示 EGC 接入实际终端主循环、所有正文 renderer、Cell/Screen/diff/cached body、预算化 wire、Reading、表格与 End。核心新增当前只读 seed、native resolver rebind 与反向样式游标接缝，保持零运行时依赖和 forbid unsafe；不把 Unicode 宽度策略搬进核心，不建第二份 Markdown parser 或全篇预排 renderer。
+
+输入订阅真实可撤销 effects，原始 scalar/property append 一次，current 条件摘要与首可见 scalar 样式/链接保存有限来源 cut。已解析手动 Document 逐预算采用真实 annotation/checkpoint/有序 styles/当前 pending-code 元数据；取消采用和 memo 逐节点付费退役并记入宿主 Work。scope 纯 extent、新无关普通追加与 unused reference 保留旧摘要；相关晚定义/表头决议明确拒绝旧 payload。Unicode17 GCB24 与 Unicode18 非CJK width132 固定数据离线复现，版本、官方766例 SHA、上游源码 SHA 和许可均保留。旧长 EP Extend* ZWJ EP 为3列而 oracle为2列的真实红例修复；未 clamp 的原始 width 机器独立对照，不能靠两列 cap 隐藏错误。
+
+TextPayload 使用固定 inline 或共享 source/property descriptor，front/back/inflight/ACK 与 diff 不展开巨型字节。完整 EGC 从0、中间 source window 和 End 得到同一来源包络；条件 markup/entity/image/code/tab/CRLF 先构造显示序列，再作 GCB。节点/叶边界和保存的 display cut 同时约束读取，修复扩大256批时发现的“wire只发suffix但reader重读旧prefix”真实反例。8/64/256批的16,385/131,073/524,289字节分别只发送一次，同一事务中32次状态更新等待边界；微预算测试的正常实际 write ≤6 bytes；生产暂存上限为8 bytes，实际 write 仍受当前 byte credit 约束，短写/EAGAIN 保留进度。真实样式/晚表头/resize 单次取消重绘，q/abort最多补齐3个UTF8尾字节后固定 cleanup；NoOsc8 不产生 OSC8 关闭。
+
+孤立巨型零宽字素保留独立 cell、LinkId 与来源，连续追加和实际 block fragment 测试证明不积累 Joined/history pieces。原生代码检查点无效重放恢复同一 row0350/空行及准确 line source，固定022缩进代码内部空白/CRLF复制保持。巨型 continuation 通过同一 HeightIndex 的零高票据回填，保留 fold mask；fold改变后重新捕获/付费，不将旧票据永久化。显式 fragment 是 GCB 上下文屏障，正文折叠 UI 仍独立未交付。
+
+真实巨型 v/Shift 选区、高亮、y visible/Y raw、搜索 n/N、目录/Alt历史、resize/sidebar 与 fixed CtrlEnd/FOLLOW 联合测试覆盖来源。可见复制超过64KiB先按metadata拒绝；OSC52 保留原有有界 prepaid atomic packet 合同，并验证短写/EAGAIN/取消。表格 min/max、pan、alignment、row owner、softwrap/End 共用当前 shape/width，不另扫尾。原21 TUI fixture、11 ANSI golden、官方输入/HTML/原生成器/SHA及所有旧golden数组保持；少量旧窗口占位/RI限界预期改为独立完整Unicode oracle，API采用与协议断言迁移按逐机制账本审查。
+
+冷查询含实际2MiB prefix+100k combining，以及百万 combining/ZWJ/RI 分类前沿，分别报告 source decode、property refs、summary/recovery、输出P和容量；不拿warmup摊销冒充单查询界。64MiB真实源文档与百万 continuation 的 HeightIndex-only scale 明确区分，真实TILE_BYTES=256。预算计固定次数O(logN)树操作，不承诺任意append硬CPU延迟；132-state维护及容量估算、CPU和RSS分账。应用完整发出UTF8不等于外部字体/终端可保存或成字，tmux万marks只保留16的限制诚实记录，不增加ellipsis/default gate。
+
+完整冻结输入含README、所有untracked Rust/生成数据/许可/测试，命令退出/计数、全workspace check/debug+release nextest/doc/docbuild/fmt/all-targets strict clippy、实际PTY与容量/来源证据保留在仓外 `/tmp/mdtui3-codex-todo/021-prototypes/frozen-final/` 及021结果报告，冻结输入和最终提交由根核验，提交 hook 保持启用。原长段落显示行prefix/媒体摘要、正文折叠UI、数学与脚注绘制、完整语法后缀等独立TODO保持。
+
+
+最后一批 Extend 与 EOF/换行在旧 cut ACK 前同时到来时，输出先证明并排队同一 EGC 的有限 suffix，再关闭事务；保存单元格 ACK 与其余屏幕 ACK 分开，不能靠 EOF 取消重发旧 prefix。额外红例原为2000 marks实发3000，现按partial/full旧ACK、EOF/换行四组真实微预算路径核对完整2000且无cancel。真实resize+q syscall红例确认crossterm0.29的mio边沿事件批次先交付SIGWINCH后漏掉同时就绪TTY键；TUI启用同版本支持的 `use-dev-tty` level-triggered入口，轮询至少1ms，保留q/CtrlC与held FIFO退出。Cargo版本未升级，新增feature使用lock内已有filedescriptor；核心依赖不变。真实kernel EAGAIN与同批resize/q、固定cleanup、termios及stdout flags恢复另有独立probe，不以无背压的伪writer替代。
+
+剪贴板请求本身不取消未改变的 open EGC：正常 frame 继续发送/ACK，raw copy 保留原始有限 Span，OSC52 等待真实下一字素边界或 EOF。只有 packet 已开始时才阻止其它终端控制交错；追加导致 visible copy 失效沿用原策略。新增真实 Y 请求+32次重绘+纯Extend+下一字素边界的测试，逐字节验证新增marks完整连续、原Span复制准确且无CAN/旧prefix重发。
+
+公开 shape 任务在任何扣费、修改或缓存完成返回前校验原始 SharedShape 的 Rc 身份、DocumentId 和 SharedLinks/native resolver 的 owner；同文档的另一个索引也不能接管中途任务。ShapeSeed 固定文档并绑定首次实际索引；`SharedShape::from_current` 只建立O(1)当前元数据身份，必须用真实seed完成初始化，不分类源码。`SharedLinks::set_shape` 返回Result，异owner/替换索引拒绝，重复设置同Rc不会丢弃待定seed。新增同revision异文档、同文档异索引、零/微预算、缓存完成/空window和正确clone回归；根的两个原始外部红例现明确WrongDocument且零扣费、零外国source写入。
+
+
+原生 `Document::style_markers_reverse` 在同一 canonical resolver 的已分类 marker/gap 树上作付费前驱查询，不读取/解码旧源码。TUI GCB正向、width反向逐快照合成，移除了随N增长的样式Span暂存Vec；每个查询帧只保留一个104-byte快照，`ShapeQuery::scratch_capacity_bytes`单列实际frame/嵌套query/object buffers，不能与共享索引容量混算。8/64/512/4096 marker的真实query与Unicode正文UI原buffer峰为8/64/512/4096项，现均为1项；零/1q1o6b、正反快照及独立Unicode oracle、取消后的共享memo付费退役路径保持。
+
+已解析source的分预算采用也不能把旧Vec整体搬移藏在一个步骤里。atoms/positions/nodes及first-save索引现用固定目录的指数分块，位运算O(1)寻址，增长只申请新的未初始化chunk，不realloc或复制旧元素。replacement目录改用当前BTreeMap；单个replacement的保存节点仍为固定数量区间的O(logN)canonical分解。每步至多256个新source bytes（微预算时至多6）分类，维护的132-state转换及固定O(logN)树操作分别计数；chunk容量申请单列，不把allocator延迟/新保留地址空间称为硬CPU或malloc字节预算。131073字节实际采用、100000个不可Clone元素与指针稳定测试覆盖增长边界，old_items_relocated为0；取消seed保留宿主当前index，native undo scratch逐预算退休。孤立字素跨append ACK现在同步更新front行来源，根原三批256/512/768包络探针与64批不重发测试通过。
+
+取消按UTF8标量而非replacement atom收尾：一个实体可同时产生两个标量，旧路径会在q后多发第二个标量。`&NotEqualTilde;`的真实红例现在只补齐U2242的两字节尾部，不发送后续U0338。OSC8控制串也按完整UTF8边界暂存至多8字节，实际write继续受当前byte credit限制；8种chunk对齐、单字节短写/EAGAIN与q回归验证最多3个当前标量尾字节。固定cleanup的实际长度为NoOsc8模式15字节、允许OSC8模式22字节，与终端最后的session恢复操作分账。
+
+共享源码范围的 replacement 可能产生多个可见字素，y 快捷复制现在只采用首尾均完整覆盖 source atom 的 payload，其余走原预算化显示投影；图片占位、双字符实体、tab 与附加 combining 的真实 y/Y 回归通过。最终 debug 新跑2752项，另3个源码和调用路径未受影响的大规模用例继承此前完整通过记录；完整 release2751项、doc83项和九项门槛均通过，根另验严格 rustdoc 与真实内核背压下 q/resize/同时按键三个PTY场景。冻结输入、继承关系和实际日志分开保留。

@@ -12,7 +12,7 @@ pub struct DisplaySegment {
     pub tile: TileId,
     pub source: Span,
     pub replacement: Option<Span>,
-    pub text: String,
+    pub text: super::payload::TextPayload,
     pub block: Option<BlockId>,
     pub link: Option<LinkId>,
     pub style: StyleRole,
@@ -43,6 +43,7 @@ pub struct DisplayScanStats {
 
 struct Selection {
     ranges: Vec<(Span, bool)>,
+    contexts: std::collections::HashMap<usize, Span>,
     cuts: Vec<usize>,
     rows: std::collections::HashMap<mdtui3::TableId, std::ops::Range<usize>>,
     next: usize,
@@ -52,9 +53,24 @@ struct Selection {
     index_work: mdtui3::LinkWindowWork,
 }
 
+struct IndexedScan {
+    next: usize,
+    end: usize,
+    window: Option<super::shape::ShapeWindow>,
+}
+
 pub struct DisplayScanner {
+    indexed: Option<Box<IndexedScan>>,
+    zero_ranges: Vec<std::ops::Range<usize>>,
+    tail: Option<Box<super::shape::ShapeWindow>>,
+    tail_original: Option<Span>,
+    tail_glyphs: Vec<DisplaySegment>,
+    tail_ready: bool,
+    cluster_floor: Option<usize>,
+    source_cut: Option<usize>,
     selection: Option<Selection>,
     table_mode: bool,
+    table_context: Option<Span>,
     footnote_index: Option<usize>,
     hidden_footnotes: Vec<Span>,
     links: crate::render::objects::SharedLinks,
@@ -110,8 +126,17 @@ impl DisplayScanner {
             context_end = requested.end;
         }
         Some(Self {
+            indexed: None,
+            zero_ranges: Vec::new(),
+            tail: None,
+            tail_original: None,
+            tail_glyphs: Vec::new(),
+            tail_ready: false,
+            cluster_floor: None,
+            source_cut: None,
             selection: None,
             table_mode: false,
+            table_context: None,
             footnote_index: None,
             hidden_footnotes: Vec::new(),
             links: crate::render::objects::SharedLinks::new(document),
@@ -168,6 +193,7 @@ impl DisplayScanner {
         assert!(!self.complete && self.segments.is_empty());
         self.selection = Some(Selection {
             ranges: window.ranges,
+            contexts: window.contexts,
             cuts: window.cuts,
             rows: window.rows,
             next: 0,
@@ -211,6 +237,8 @@ impl DisplayScanner {
                 .ok_or(LayoutError::InvalidRange)?;
                 child.links = self.links.clone();
                 child.table_mode = table;
+                child.source_cut = self.source_cut;
+                child.table_context = selection.contexts.get(&source.start).copied();
                 selection.child = Some(Box::new(child));
             }
             let child = selection.child.as_mut().unwrap();
@@ -230,6 +258,7 @@ impl DisplayScanner {
             self.cursor_steps += child.cursor_steps;
             self.budget_exhausted += child.budget_exhausted;
             self.display_bytes += child.display_bytes;
+            self.zero_ranges.append(&mut child.zero_ranges);
             self.layout_segments.extend(child.segments.iter().cloned());
             self.segments.append(&mut child.segments);
             selection.next += 1;
@@ -256,6 +285,26 @@ impl DisplayScanner {
             .map_or(mdtui3::LinkWindowWork::default(), |objects| {
                 objects.index_work()
             })
+    }
+
+    pub(crate) fn set_source_cut(&mut self, cut: Option<usize>) {
+        self.source_cut = cut;
+    }
+    pub(crate) fn cluster_floor(&self) -> Option<usize> {
+        self.cluster_floor
+    }
+    pub(crate) fn set_cluster_floor(&mut self, source: usize) {
+        self.cluster_floor = Some(source);
+    }
+    pub(crate) fn zero_ranges(&self) -> &[std::ops::Range<usize>] {
+        &self.zero_ranges
+    }
+    pub fn initialize(
+        &mut self,
+        document: &Document,
+        budget: &mut Budget,
+    ) -> Result<bool, LayoutError> {
+        self.links.prepare_shape(document, budget)
     }
 
     pub fn shared_links(&self) -> crate::render::objects::SharedLinks {
@@ -321,7 +370,7 @@ impl DisplayScanner {
                 || {
                     self.scanned_through
                         .min(self.requested.end)
-                        .saturating_sub(self.requested.start)
+                        .saturating_sub(self.requested.start.max(self.cluster_floor.unwrap_or(0)))
                 },
                 |s| s.source_work + s.child.as_ref().map_or(0, |c| c.stats().scanned_bytes),
             ),
@@ -377,11 +426,34 @@ impl DisplayScanner {
             return self.advance_selected(document, budget);
         }
 
+        if !self.links.prepare_shape(document, budget)? {
+            return Ok(ScanStatus::BudgetExhausted);
+        }
         if !self.links.prepare(document, budget)? {
             return Ok(ScanStatus::BudgetExhausted);
         }
         if self.lease.is_none() {
             self.lease = Some(self.links.hold());
+        }
+        let shape_context = if self.table_mode {
+            self.table_context.unwrap_or(self.requested)
+        } else {
+            Span::new(
+                document
+                    .block_at(self.requested.start)
+                    .and_then(|id| document.block(id))
+                    .map_or(self.requested.start, |b| b.source.start),
+                document
+                    .block_at(self.requested.end.saturating_sub(1))
+                    .and_then(|id| document.block(id))
+                    .map_or(self.requested.end, |b| b.source.end),
+            )
+        };
+        if let Some(shape) = self.links.shape()
+            && (self.source_cut.is_some_and(|cut| shape_context.end > cut)
+                || shape.requires_shape(shape_context))
+        {
+            return self.advance_indexed(document, &shape, budget);
         }
         if !self.cursor_initialized {
             if let Some(probe) = &mut self.start_probe {
@@ -479,6 +551,218 @@ impl DisplayScanner {
         }
     }
 
+    fn advance_indexed(
+        &mut self,
+        document: &Document,
+        shape: &super::shape::SharedShape,
+        budget: &mut Budget,
+    ) -> Result<ScanStatus, LayoutError> {
+        let scan = self.indexed.get_or_insert_with(|| {
+            Box::new(IndexedScan {
+                next: self.cluster_floor.unwrap_or(self.requested.start),
+                end: self.requested.end,
+                window: None,
+            })
+        });
+        let view_end = self
+            .requested
+            .end
+            .min(self.source_cut.unwrap_or(usize::MAX));
+        while scan.next < view_end {
+            if scan.window.is_none() {
+                if !budget.charge(mdtui3::WorkLimit {
+                    queries: 1,
+                    objects: 1,
+                    ..Default::default()
+                }) {
+                    return Ok(ScanStatus::BudgetExhausted);
+                }
+                // Block and selected table-cell boundaries are explicit GCB
+                // barriers. Source windows inside a block retain its context.
+                let mut fragment = if self.table_mode {
+                    self.table_context.unwrap_or(self.requested)
+                } else if let Some(block) = document
+                    .block_at(scan.next)
+                    .and_then(|id| document.block(id))
+                {
+                    block.source
+                } else {
+                    Span::new(
+                        document.pending().start.min(scan.next),
+                        document.source().len(),
+                    )
+                };
+                fragment.end = fragment.end.min(self.source_cut.unwrap_or(usize::MAX));
+                scan.end = fragment.end.min(view_end);
+                if scan.end <= scan.next {
+                    return Err(LayoutError::InvalidRange);
+                }
+                scan.window = Some(super::shape::ShapeWindow::new(
+                    shape,
+                    Span::new(scan.next, scan.end),
+                    fragment,
+                )?);
+            }
+            match scan
+                .window
+                .as_mut()
+                .unwrap()
+                .advance(shape, document, &self.links, budget)?
+            {
+                super::shape::ShapeWindowStep::BudgetExhausted => {
+                    return Ok(ScanStatus::BudgetExhausted);
+                }
+                super::shape::ShapeWindowStep::Complete => {
+                    scan.next = scan.end;
+                    scan.window = None;
+                }
+                super::shape::ShapeWindowStep::Glyph(glyph) => {
+                    let first = document
+                        .tile_at(glyph.source.start)
+                        .ok_or(LayoutError::InvalidRange)?;
+                    let last = document
+                        .tile_at(glyph.source.end.saturating_sub(1))
+                        .ok_or(LayoutError::InvalidRange)?;
+                    let end =
+                        last.0 + usize::from(document.tile(last).unwrap().end <= glyph.source.end);
+                    if first.0 + 1 < end {
+                        self.zero_ranges.push(first.0 + 1..end);
+                    }
+                    let segment = DisplaySegment {
+                        tile: document
+                            .tile_at(glyph.source.start)
+                            .ok_or(LayoutError::InvalidRange)?,
+                        source: glyph.source,
+                        replacement: Some(glyph.source),
+                        text: glyph.text,
+                        block: glyph.block,
+                        link: glyph.link,
+                        style: glyph.style,
+                        kind: TokenKind::Text,
+                    };
+                    self.display_bytes = self.display_bytes.saturating_add(segment.text.len());
+                    self.segments.push(segment.clone());
+                    self.layout_segments.push(segment);
+                    self.cursor_steps += 1;
+                }
+            }
+        }
+        self.resolved_start = Some(
+            self.layout_segments
+                .first()
+                .map_or(self.requested.start, |s| s.source.start),
+        );
+        self.resolved_end = Some(
+            self.layout_segments
+                .last()
+                .map_or(self.requested.end, |s| s.source.end)
+                .max(self.requested.end),
+        );
+        self.scanned_through = self.requested.end;
+        self.refresh_complete_tiles(document)?;
+        self.source_complete = true;
+        self.complete = true;
+        self.lease = None;
+        Ok(ScanStatus::Complete)
+    }
+
+    fn finish_ascii_tail(
+        &mut self,
+        document: &Document,
+        budget: &mut Budget,
+    ) -> Result<bool, LayoutError> {
+        if self.tail_ready {
+            return Ok(true);
+        }
+        if document.is_finished() || self.table_mode || document.source().ends_with(['\r', '\n']) {
+            self.tail_ready = true;
+            return Ok(true);
+        }
+        let shape = self.links.shape().ok_or(LayoutError::InvalidRange)?;
+        if self.tail.is_none() {
+            let Some(last) = self.layout_segments.last() else {
+                self.tail_ready = true;
+                return Ok(true);
+            };
+            let fragment = last.block.and_then(|id| document.block(id)).map_or(
+                Span::new(document.pending().start, document.source().len()),
+                |block| block.source,
+            );
+            if fragment.end != document.source().len() {
+                self.tail_ready = true;
+                return Ok(true);
+            }
+            let source = if last.replacement.is_none() && last.text.len() == last.source.len() {
+                Span::new(last.source.end - 1, last.source.end)
+            } else {
+                last.source
+            };
+            self.tail_original = Some(source);
+            self.tail = Some(Box::new(super::shape::ShapeWindow::new(
+                &shape, source, fragment,
+            )?));
+        }
+        loop {
+            match self
+                .tail
+                .as_mut()
+                .unwrap()
+                .advance(&shape, document, &self.links, budget)?
+            {
+                super::shape::ShapeWindowStep::BudgetExhausted => return Ok(false),
+                super::shape::ShapeWindowStep::Glyph(glyph) => {
+                    self.tail_glyphs.push(DisplaySegment {
+                        tile: document
+                            .tile_at(glyph.source.start)
+                            .ok_or(LayoutError::InvalidRange)?,
+                        source: glyph.source,
+                        replacement: Some(glyph.source),
+                        text: glyph.text,
+                        block: glyph.block,
+                        link: glyph.link,
+                        style: glyph.style,
+                        kind: TokenKind::Text,
+                    })
+                }
+                super::shape::ShapeWindowStep::Complete => break,
+            }
+        }
+        if let Some(first) = self.tail_glyphs.first() {
+            let source = Span::new(first.source.start, self.tail_original.unwrap().end);
+            fn trim(segments: &mut Vec<DisplaySegment>, source: Span) {
+                segments.retain_mut(|segment| {
+                    if segment.source.end <= source.start || source.end <= segment.source.start {
+                        return true;
+                    }
+                    if segment.replacement.is_some() {
+                        return false;
+                    }
+                    if segment.source.start < source.start {
+                        let text = segment.text.contiguous().expect("bounded ASCII cursor run");
+                        segment.text = text[..source.start - segment.source.start].into();
+                        segment.source.end = source.start;
+                        return true;
+                    }
+                    false
+                });
+            }
+            trim(&mut self.layout_segments, source);
+            trim(&mut self.segments, source);
+            for glyph in self.tail_glyphs.drain(..) {
+                self.layout_segments.push(glyph.clone());
+                if glyph.source.end > self.requested.start
+                    && glyph.source.start < self.requested.end
+                {
+                    self.segments.push(glyph);
+                }
+            }
+            self.display_bytes = self.segments.iter().map(|segment| segment.text.len()).sum();
+        }
+        self.tail_ready = true;
+        self.tail = None;
+        Ok(true)
+    }
+
     fn finish_empty(
         &mut self,
         document: &Document,
@@ -501,7 +785,7 @@ impl DisplayScanner {
                 tile: document.tile_at(object.source.start).expect("image source"),
                 source: object.source,
                 replacement: Some(object.source),
-                text: "[image]".to_owned(),
+                text: "[image]".into(),
                 block: document.block_at(object.source.start),
                 link: Some(object.hit),
                 style: StyleRole::LINK.with(StyleRole::IMAGE),
@@ -597,6 +881,9 @@ impl DisplayScanner {
                 .collect();
             self.segments = self.layout_segments.clone();
         }
+        if !self.finish_ascii_tail(document, budget)? {
+            return Ok(ScanStatus::BudgetExhausted);
+        }
         self.complete = true;
         self.lease = None;
         Ok(ScanStatus::Complete)
@@ -649,7 +936,7 @@ impl DisplayScanner {
                 tile,
                 source: run.source,
                 replacement: Some(replacement),
-                text: run.text.to_owned(),
+                text: run.text.into(),
                 block: run.block,
                 link: run.link,
                 style,
@@ -680,7 +967,7 @@ impl DisplayScanner {
                 tile,
                 source: Span::new(position, end),
                 replacement: None,
-                text: run.text[start_offset..end_offset].to_owned(),
+                text: run.text[start_offset..end_offset].into(),
                 block: run.block,
                 link: run.link,
                 style,
@@ -708,11 +995,13 @@ impl DisplayScanner {
             let hi = segment.source.end.min(self.requested.end);
             let Some(text) = segment
                 .text
+                .contiguous()
+                .expect("cursor token is contiguous")
                 .get(lo - segment.source.start..hi - segment.source.start)
             else {
                 return;
             };
-            segment.text = text.to_owned();
+            segment.text = text.into();
             segment.source = Span::new(lo, hi);
         }
         self.display_bytes = self.display_bytes.saturating_add(segment.text.len());

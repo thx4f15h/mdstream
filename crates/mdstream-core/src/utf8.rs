@@ -16,6 +16,9 @@ impl Utf8Document {
         Self::default()
     }
     /// Subscribe before decoded input, with the same contract as Document.
+    pub fn subscribe_display_shape_effects(&mut self) {
+        self.document.subscribe_display_shape_effects();
+    }
     pub fn enable_display_shape_effects(&mut self) -> Result<(), crate::LayoutError> {
         self.document.enable_display_shape_effects()
     }

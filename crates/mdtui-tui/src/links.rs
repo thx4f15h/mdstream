@@ -38,7 +38,20 @@ impl LinkTable {
         for row in 0..screen.rows() {
             let mut open: Option<LinkHit> = None;
             for column in left..right {
-                let Some(cell) = screen.front_cell(row, column) else {
+                if let Some(zero) = screen.reading_zero_cell(row, column)
+                    && let Some(id) = zero.link_id()
+                {
+                    if !table.ids.contains(&id) {
+                        table.ids.push(id);
+                    }
+                    table.hits.push(LinkHit {
+                        row,
+                        x0: column,
+                        x1: column,
+                        id,
+                    });
+                }
+                let Some(cell) = screen.reading_cell(row, column) else {
                     break;
                 };
                 if cell.is_continuation() {

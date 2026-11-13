@@ -89,13 +89,10 @@ impl From<ScreenError> for ListError {
 
 pub fn list_visual(document: &Document, block: &Block) -> Result<Option<ListVisual>, ListError> {
     let input = visible_input(document, block.source).ok_or(ListError::MissingContent)?;
-    let body_visible = input.tokens().iter().any(|token| {
-        token.kind == TokenKind::Text
-            && !token
-                .text
-                .chars()
-                .all(|character| character.is_ascii_whitespace())
-    });
+    let body_visible = input
+        .tokens()
+        .iter()
+        .any(|token| token.kind == TokenKind::Text && !token.text.is_ascii_whitespace());
     if !body_visible {
         return Ok(None);
     }
@@ -239,14 +236,7 @@ pub(crate) fn render_list_input_with_visual(
     start_row: u16,
 ) -> Result<u16, ListError> {
     let input = compose_inline_input(input);
-    let text = input.visible_text();
-    let words = list_words(&text);
-    let mut mappings = Vec::with_capacity(input.len());
-    let mut offset = 0;
-    for token in input.tokens() {
-        mappings.push((offset, token));
-        offset += token.text.len();
-    }
+    let words = words_from_glyphs(input.glyphs());
     if words.is_empty() {
         return Ok(0);
     }
@@ -281,10 +271,6 @@ pub(crate) fn render_list_input_with_visual(
         used: 0,
         has_content: false,
         last_class: None,
-        inline: &text,
-        mappings: &mappings,
-        next_word: 0,
-        word_offset: None,
     };
     writer.place_words(&words)?;
     writer.line.checked_add(1).ok_or(ListError::RowOverflow)
@@ -315,7 +301,7 @@ pub(crate) fn item_input(
         if !tokens.is_empty() {
             tokens.push(InputToken {
                 kind: TokenKind::Text,
-                text: " ".to_owned(),
+                text: " ".into(),
                 source: Span::new(candidate.source.start, candidate.source.start),
                 replacement: None,
                 block: Some(block_id),
@@ -337,91 +323,107 @@ enum ListWordClass {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ListWord {
-    text: String,
+    glyphs: Vec<super::input::DisplayGlyph>,
+    width: usize,
     class: ListWordClass,
     separated: bool,
+    preserved_boundary: bool,
 }
-
-fn list_words(text: &str) -> Vec<ListWord> {
-    let mut words = Vec::new();
-    let mut current = String::new();
-    let mut current_separated = false;
+fn words_from_glyphs(glyphs: Vec<super::input::DisplayGlyph>) -> Vec<ListWord> {
+    let mut words = Vec::<ListWord>::new();
+    let mut current = Vec::new();
+    let mut separated = false;
     let mut pending_space = false;
-
-    for grapheme in graphemes(text) {
-        if grapheme.kind == GraphemeKind::Control {
+    let mut prior_preserved = false;
+    let mut current_preserved = false;
+    let finish = |words: &mut Vec<ListWord>,
+                  current: &mut Vec<super::input::DisplayGlyph>,
+                  separated: bool,
+                  preserved_boundary: bool| {
+        if !current.is_empty() {
+            let glyphs = std::mem::take(current);
+            let width = glyphs.iter().map(|g| usize::from(g.width)).sum();
+            words.push(ListWord {
+                glyphs,
+                width,
+                class: ListWordClass::Other,
+                separated,
+                preserved_boundary,
+            });
+        }
+    };
+    for glyph in glyphs {
+        if glyph.kind == GraphemeKind::Control {
             continue;
         }
-        if grapheme.text.chars().all(char::is_whitespace) {
-            if !current.is_empty() {
-                words.push(ListWord {
-                    text: std::mem::take(&mut current),
-                    class: ListWordClass::Other,
-                    separated: current_separated,
-                });
-                current_separated = false;
-            }
+        let preserved =
+            glyph.style.contains(StyleRole::IMAGE) || glyph.style.contains(StyleRole::LITERAL_LINK);
+        let boundary = preserved || prior_preserved;
+        prior_preserved = preserved;
+        if glyph.text.is_whitespace() {
+            finish(&mut words, &mut current, separated, current_preserved);
+            separated = false;
             if !words.is_empty() {
                 pending_space = true;
             }
             continue;
         }
-        if grapheme.width == 0 {
+        if glyph.width == 0 {
             if current.is_empty() {
                 if let Some(last) = words.last_mut() {
-                    last.text.push_str(grapheme.text);
+                    last.glyphs.push(glyph)
+                } else {
+                    current.push(glyph)
                 }
             } else {
-                current.push_str(grapheme.text);
+                current.push(glyph)
             }
             continue;
         }
-
-        let class = list_word_class(grapheme.text);
+        let first = glyph.text.first_char().unwrap();
+        let class = if is_cjk(first) {
+            ListWordClass::Cjk
+        } else if is_punctuation(first) {
+            ListWordClass::Punctuation
+        } else {
+            ListWordClass::Other
+        };
         if class == ListWordClass::Other {
             if current.is_empty() {
-                current_separated = pending_space && !words.is_empty();
+                separated = pending_space && !words.is_empty();
+                current_preserved = boundary;
             }
-            current.push_str(grapheme.text);
+            current.push(glyph);
             pending_space = false;
         } else {
-            if !current.is_empty() {
-                words.push(ListWord {
-                    text: std::mem::take(&mut current),
-                    class: ListWordClass::Other,
-                    separated: current_separated,
-                });
-                current_separated = false;
-            }
+            finish(&mut words, &mut current, separated, current_preserved);
+            separated = false;
+            let width = usize::from(glyph.width);
             words.push(ListWord {
-                text: grapheme.text.to_owned(),
+                glyphs: vec![glyph],
+                width,
                 class,
                 separated: pending_space && !words.is_empty(),
+                preserved_boundary: boundary,
             });
             pending_space = false;
         }
     }
-    if !current.is_empty() {
-        words.push(ListWord {
-            text: current,
-            class: ListWordClass::Other,
-            separated: current_separated,
-        });
-    }
+    finish(&mut words, &mut current, separated, current_preserved);
     words
 }
-
-fn list_word_class(text: &str) -> ListWordClass {
-    let Some(first) = text.chars().next() else {
-        return ListWordClass::Other;
-    };
-    if is_cjk(first) {
-        ListWordClass::Cjk
-    } else if is_punctuation(first) {
-        ListWordClass::Punctuation
-    } else {
-        ListWordClass::Other
-    }
+#[cfg(test)]
+fn list_words(text: &str) -> Vec<ListWord> {
+    let input = DisplayInput::from_tokens(vec![InputToken {
+        kind: TokenKind::Text,
+        text: text.into(),
+        source: Span::new(0, text.len()),
+        replacement: None,
+        block: None,
+        link: None,
+        style: StyleRole::DEFAULT,
+    }]);
+    words_from_glyphs(input.glyphs())
 }
 
 fn is_cjk(character: char) -> bool {
@@ -487,10 +489,6 @@ struct BodyWriter<'a> {
     used: usize,
     has_content: bool,
     last_class: Option<ListWordClass>,
-    inline: &'a str,
-    mappings: &'a [(usize, &'a InputToken)],
-    next_word: usize,
-    word_offset: Option<usize>,
 }
 
 impl BodyWriter<'_> {
@@ -502,47 +500,30 @@ impl BodyWriter<'_> {
     }
 
     fn place_word(&mut self, word: &ListWord) -> Result<(), ListError> {
-        let offset = self.inline[self.next_word..]
-            .find(&word.text)
-            .map(|offset| self.next_word + offset)
-            .ok_or(ListError::MissingContent)?;
-        self.next_word = offset + word.text.len();
-        self.word_offset = Some(offset);
-        let word_width = display_width(&word.text);
-        if word_width == 0 {
-            return Ok(());
-        }
-        let preserved_boundary = [offset.saturating_sub(1), offset]
-            .into_iter()
-            .any(|position| {
-                let index = self.mappings.partition_point(|(at, _)| *at <= position);
-                index
-                    .checked_sub(1)
-                    .and_then(|index| self.mappings.get(index))
-                    .is_some_and(|(_, token)| {
-                        token.style.contains(StyleRole::IMAGE)
-                            || token.style.contains(StyleRole::LITERAL_LINK)
-                    })
-            });
-        let separator = self.has_content
-            && (word.separated
-                || (!preserved_boundary
-                    && self
-                        .last_class
-                        .is_some_and(|previous| needs_separator(previous, word.class))));
-        if word_width + usize::from(separator) <= self.capacity.saturating_sub(self.used) {
-            if separator {
-                self.word_offset = None;
-                self.write_text(" ")?;
-                self.word_offset = Some(offset);
-            }
-            self.write_text(&word.text)?;
-            self.used += word_width + usize::from(separator);
+        if word.width == 0 {
+            self.write_glyphs(&word.glyphs, false)?;
             self.has_content = true;
             self.last_class = Some(word.class);
             return Ok(());
         }
-
+        let separator = self.has_content
+            && (word.separated
+                || !word.preserved_boundary
+                    && self
+                        .last_class
+                        .is_some_and(|last| needs_separator(last, word.class)));
+        if word.width + usize::from(separator) <= self.capacity.saturating_sub(self.used) {
+            if separator {
+                let space = graphemes(" ").next().unwrap();
+                self.cursor
+                    .place(self.screen, self.row, space, self.body_style, None, None)?;
+            }
+            self.write_glyphs(&word.glyphs, false)?;
+            self.used += word.width + usize::from(separator);
+            self.has_content = true;
+            self.last_class = Some(word.class);
+            return Ok(());
+        }
         if self.has_content {
             if !self.start_continuation()? {
                 return Ok(());
@@ -550,55 +531,24 @@ impl BodyWriter<'_> {
         } else if self.capacity == 0 && (self.line != 0 || !self.start_continuation()?) {
             return Ok(());
         }
-
-        if word_width <= self.capacity {
-            self.write_text(&word.text)?;
-            self.used += word_width;
+        if word.width <= self.capacity {
+            self.write_glyphs(&word.glyphs, false)?;
+            self.used += word.width;
             self.has_content = true;
         } else {
-            self.write_hard_word(&word.text)?;
+            self.write_glyphs(&word.glyphs, true)?;
         }
         self.last_class = Some(word.class);
         Ok(())
     }
-
-    fn write_text(&mut self, text: &str) -> Result<(), ListError> {
-        for grapheme in graphemes(text) {
-            let (link, source) = self.glyph_metadata(grapheme.start, grapheme.end);
-            if let Err(error) = self.cursor.place(
-                self.screen,
-                self.row,
-                grapheme,
-                self.body_style,
-                link,
-                source,
-            ) && error != TextError::NoBaseForZeroWidth
-            {
-                return Err(error.into());
-            }
-        }
-        Ok(())
-    }
-
-    fn write_hard_word(&mut self, text: &str) -> Result<(), ListError> {
-        for grapheme in graphemes(text) {
-            let width = usize::from(grapheme.width);
-            let (link, source) = self.glyph_metadata(grapheme.start, grapheme.end);
-            if width == 0 {
-                if let Err(error) = self.cursor.place(
-                    self.screen,
-                    self.row,
-                    grapheme,
-                    self.body_style,
-                    link,
-                    source,
-                ) && error != TextError::NoBaseForZeroWidth
-                {
-                    return Err(error.into());
-                }
-                continue;
-            }
-            if self.used + width > self.capacity {
+    fn write_glyphs(
+        &mut self,
+        glyphs: &[super::input::DisplayGlyph],
+        hard: bool,
+    ) -> Result<(), ListError> {
+        for glyph in glyphs {
+            let width = usize::from(glyph.width);
+            if hard && width > 0 && self.used + width > self.capacity {
                 if self.has_content && !self.start_continuation()? {
                     return Ok(());
                 }
@@ -609,41 +559,25 @@ impl BodyWriter<'_> {
                     continue;
                 }
             }
-            self.cursor.place(
+            if let Err(error) = self.cursor.place_payload(
                 self.screen,
                 self.row,
-                grapheme,
+                &glyph.text,
+                glyph.width,
+                glyph.kind,
                 self.body_style,
-                link,
-                source,
-            )?;
-            self.used += width;
-            self.has_content = true;
+                glyph.link,
+                Some(glyph.source),
+            ) && error != TextError::NoBaseForZeroWidth
+            {
+                return Err(error.into());
+            }
+            if hard {
+                self.used += width;
+                self.has_content |= width > 0;
+            }
         }
         Ok(())
-    }
-
-    fn glyph_metadata(&self, start: usize, end: usize) -> (Option<mdtui3::LinkId>, Option<Span>) {
-        let Some(offset) = self.word_offset else {
-            return (None, None);
-        };
-        let position = offset + start;
-        let index = self.mappings.partition_point(|(at, _)| *at <= position);
-        let Some((at, token)) = index
-            .checked_sub(1)
-            .and_then(|index| self.mappings.get(index))
-        else {
-            return (None, None);
-        };
-        let source = if token.replacement.is_none() && token.source.len() == token.text.len() {
-            Span::new(
-                token.source.start + position - at,
-                token.source.start + offset + end - at,
-            )
-        } else {
-            token.source
-        };
-        (token.link, Some(source))
     }
 
     fn start_continuation(&mut self) -> Result<bool, ListError> {
@@ -774,7 +708,7 @@ mod tests {
         let content = screen.content_area();
         let mut text = String::new();
         for col in content.x..content.right() {
-            text.push_str(screen.cell(row, col).unwrap().text());
+            text.push_str(&screen.cell(row, col).unwrap().text().collect_text());
         }
         text
     }

@@ -104,6 +104,9 @@ pub(crate) fn visible_prepared_input(
     input: DisplayInput,
 ) -> Option<DisplayInput> {
     let tokens = input.into_tokens();
+    if tokens.iter().all(|token| token.text.is_indexed()) {
+        return Some(DisplayInput::from_tokens(tokens));
+    }
     let mut hidden = Vec::new();
 
     let operations = source.len().saturating_add(2);
@@ -136,7 +139,9 @@ pub(crate) fn visible_tokens(
             && !token.style.contains(StyleRole::CODE)
             && is_mapping_safe(token)
         {
-            for (start, end) in inline_html_ranges(&token.text) {
+            for (start, end) in
+                inline_html_ranges(token.text.contiguous().expect("mapping-safe source token"))
+            {
                 hidden.push(Span::new(
                     token.source.start + start,
                     token.source.start + end,
@@ -179,10 +184,17 @@ fn merge_spans(spans: Vec<Span>, limit: Span) -> Vec<Span> {
 }
 
 fn is_mapping_safe(token: &InputToken) -> bool {
-    token.replacement.is_none() && token.source.len() == token.text.len()
+    !token.text.is_indexed()
+        && token.replacement.is_none()
+        && token.source.len() == token.text.len()
 }
 
 fn visibly_split_token(token: InputToken, hidden: &[Span]) -> Vec<InputToken> {
+    // Indexed clusters already consumed canonical conditional footnote facts;
+    // their gapped source envelope must not be dropped by a second span filter.
+    if token.text.is_indexed() {
+        return vec![token];
+    }
     let first = hidden.partition_point(|span| span.end <= token.source.start);
     if first == hidden.len() || hidden[first].start >= token.source.end {
         return vec![token];
@@ -214,7 +226,9 @@ fn token_fragment(token: &InputToken, start: usize, end: usize) -> InputToken {
     let relative_start = start - token.source.start;
     let relative_end = end - token.source.start;
     let mut fragment = token.clone();
-    fragment.text = token.text[relative_start..relative_end].to_owned();
+    fragment.text = token.text.contiguous().expect("mapping-safe source token")
+        [relative_start..relative_end]
+        .into();
     fragment.source = Span::new(start, end);
     fragment.replacement = None;
     fragment
@@ -252,70 +266,17 @@ fn starts_with_ignore_ascii_case(text: &str, prefix: &str) -> bool {
 }
 
 fn inline_html_ranges(text: &str) -> Vec<(usize, usize)> {
-    let bytes = text.as_bytes();
-    let mut ranges = Vec::new();
-    let mut position = 0;
-    while position < bytes.len() {
-        let Some(relative) = text[position..].find('<') else {
-            break;
-        };
-        let start = position + relative;
-        if bytes[start..].starts_with(b"<!--") {
-            let end = find_sequence(bytes, start + 4, b"-->").map_or(bytes.len(), |at| at + 3);
-            ranges.push((start, end));
-            position = end;
-            continue;
-        }
-        if bytes[start..].starts_with(b"<![CDATA[") {
-            let end = find_sequence(bytes, start + 9, b"]]>").map_or(bytes.len(), |at| at + 3);
-            ranges.push((start, end));
-            position = end;
-            continue;
-        }
-
-        let next = bytes.get(start + 1).copied();
-        let declaration = matches!(next, Some(b'!' | b'?'));
-        let tag = next.is_some_and(|byte| byte.is_ascii_alphabetic())
-            || (next == Some(b'/')
-                && bytes
-                    .get(start + 2)
-                    .is_some_and(|byte| byte.is_ascii_alphabetic()));
-        if !declaration && !tag {
-            position = start + 1;
-            continue;
-        }
-        if let Some(end) = find_tag_end(bytes, start + 1) {
-            ranges.push((start, end));
-            position = end;
-        } else if declaration {
-            ranges.push((start, bytes.len()));
-            position = bytes.len();
-        } else {
-            position = start + 1;
+    let mut recognizer = super::html_shape::HtmlShape::default();
+    let mut spans = Vec::new();
+    for (at, ch) in text.char_indices() {
+        if let Some(span) = recognizer.push(at, ch) {
+            spans.push((span.start, span.end));
         }
     }
-    ranges
-}
-
-fn find_sequence(bytes: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
-    bytes
-        .get(from..)?
-        .windows(needle.len())
-        .position(|window| window == needle)
-        .map(|offset| from + offset)
-}
-
-fn find_tag_end(bytes: &[u8], from: usize) -> Option<usize> {
-    let mut quote = None;
-    for (offset, byte) in bytes.iter().copied().enumerate().skip(from) {
-        match (quote, byte) {
-            (Some(expected), current) if current == expected => quote = None,
-            (None, b'\'' | b'"') => quote = Some(byte),
-            (None, b'>') => return Some(offset + 1),
-            _ => {}
-        }
+    if let Some(span) = recognizer.open(text.len()) {
+        spans.push((span.start, span.end));
     }
-    None
+    spans
 }
 
 #[cfg(test)]
@@ -345,7 +306,7 @@ mod tests {
             .tokens()
             .iter()
             .filter(|token| token.kind == TokenKind::Text)
-            .map(|token| token.text.as_str())
+            .map(|token| token.text.collect_text())
             .collect();
         text.trim_end_matches(['\r', '\n']).to_owned()
     }

@@ -15,7 +15,7 @@ use crate::fragment::{
 use crate::history::HistoryPosition;
 use crate::links::LinkTable;
 use crate::render::diff::{DiffRun, ScreenDiff, diff_screen};
-use crate::render::output::{OutputOptions, OutputStats, write_diff};
+use crate::render::output::{OutputOptions, OutputStats};
 use crate::render::refine::{
     RefineConfig, RefineProgress, RefineStatus, RefinedTarget, SourceRefiner,
 };
@@ -25,6 +25,7 @@ use crate::render::viewport::{
     ContentWidthChange, EofCalibrationProgress, TopPosition, ViewportConfig, ViewportError,
     ViewportFrame, ViewportFrameStatus, ViewportState,
 };
+use crate::render::wire::{OpenCell, Progress, Transaction};
 use crate::screen::{Cell, ContentArea, Screen, ScreenError, StyleRole};
 use crate::sidebar::SidebarStats;
 use crate::sidebar::directory::{Directory, DirectoryEvent, HEADER_ROWS};
@@ -80,6 +81,8 @@ pub struct SidebarLayout {
 pub struct FrameCommit {
     pub status: Option<ViewportFrameStatus>,
     pub committed: bool,
+    /// Logical back frame published; wire acknowledgement may still be pending.
+    pub published: bool,
     pub rows: u16,
     pub bytes: usize,
     pub output: OutputStats,
@@ -131,6 +134,7 @@ impl HistoryRestoreStatus {
 pub enum FrameError {
     InvalidGeometry,
     InputFinished,
+    InitializationPending,
     RowOverflow,
     BodyOverflow {
         row: u16,
@@ -150,6 +154,9 @@ impl fmt::Display for FrameError {
         match self {
             Self::InvalidGeometry => formatter.write_str("invalid terminal frame geometry"),
             Self::InputFinished => formatter.write_str("input is already finished"),
+            Self::InitializationPending => {
+                formatter.write_str("complete budgeted shape initialization before appending")
+            }
             Self::RowOverflow => formatter.write_str("viewport frame exceeds terminal rows"),
             Self::BodyOverflow {
                 row,
@@ -202,6 +209,7 @@ impl From<io::Error> for FrameError {
 }
 
 pub struct FrameRuntime {
+    shape: Option<super::shape::SharedShape>,
     document: Utf8Document,
     viewport: ViewportState,
     navigator: Navigator,
@@ -277,17 +285,49 @@ impl FrameRuntime {
         link_mode: LinkMode,
     ) -> Result<Self, FrameError> {
         let mut document = Utf8Document::new();
+        document.enable_display_shape_effects()?;
+        let shape = super::shape::SharedShape::new(document.document())?;
         if !source.is_empty() {
-            document
+            let update = document
                 .append(source.as_bytes())
                 .map_err(|_| FrameError::InputFinished)?;
+            shape.apply(document.document(), &update)?;
         }
-        document.finish();
-        Self::from_utf8_document(document, geometry, link_mode)
+        let update = document.finish();
+        shape.apply(document.document(), &update)?;
+        Self::from_indexed_document(document, Some(shape), geometry, link_mode)
     }
 
     pub fn from_utf8_document(
+        mut document: Utf8Document,
+        geometry: FrameGeometry,
+        link_mode: LinkMode,
+    ) -> Result<Self, FrameError> {
+        if document.document().source().is_empty() && !document.document().is_finished() {
+            document.enable_display_shape_effects()?;
+            let shape = super::shape::SharedShape::new(document.document())?;
+            return Self::from_indexed_document(document, Some(shape), geometry, link_mode);
+        }
+        document.subscribe_display_shape_effects();
+        let shape = super::shape::SharedShape::from_current(document.document());
+        let seed = super::shape::ShapeSeed::new(document.document());
+        let runtime = Self::from_indexed_document(document, Some(shape), geometry, link_mode)?;
+        runtime.viewport.shared_links().set_seed(seed);
+        Ok(runtime)
+    }
+
+    /// Adopt an already parsed document without re-lexing Markdown. The caller
+    /// must finish this budgeted seed before supplying another input batch.
+    pub fn initialize(&mut self, budget: &mut Budget) -> Result<bool, FrameError> {
+        Ok(self
+            .viewport
+            .shared_links()
+            .prepare_shape(self.document.document(), budget)?)
+    }
+
+    fn from_indexed_document(
         document: Utf8Document,
+        shape: Option<super::shape::SharedShape>,
         geometry: FrameGeometry,
         link_mode: LinkMode,
     ) -> Result<Self, FrameError> {
@@ -300,6 +340,9 @@ impl FrameRuntime {
                 ..ViewportConfig::default()
             },
         )?;
+        if let Some(shape) = &shape {
+            viewport.shared_links().set_shape(shape.clone())?;
+        }
         let presenter = FramePresenter::new(
             geometry.rows,
             geometry.cols,
@@ -309,6 +352,7 @@ impl FrameRuntime {
             },
         )?;
         Ok(Self {
+            shape,
             document,
             viewport,
             navigator: Navigator::new(),
@@ -404,15 +448,36 @@ impl FrameRuntime {
         }
         match code {
             KeyCode::Char(' ') => self.reading.selection.toggle_extension(),
-            KeyCode::Char('y' | 'Y') => self.reading.start_copy(
-                self.document.document(),
-                if code == KeyCode::Char('Y') {
-                    CopyKind::Source
-                } else {
-                    CopyKind::Visible
-                },
-                self.geometry.content_width,
-            ),
+            KeyCode::Char('y' | 'Y') => {
+                let range = self.reading.selection.range();
+                let payload = (0..self.geometry.rows)
+                    .flat_map(|row| {
+                        (self.content_x..self.content_x + self.geometry.content_width)
+                            .map(move |column| (row, column))
+                    })
+                    .find_map(|(row, column)| {
+                        [
+                            self.presenter.screen().reading_zero_cell(row, column),
+                            self.presenter.screen().reading_cell(row, column),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .find_map(|cell| {
+                            (cell.source() == range && cell.text().contains_whole_source_atoms())
+                                .then(|| cell.text().clone())
+                        })
+                    });
+                self.reading.start_copy_payload(
+                    self.document.document(),
+                    if code == KeyCode::Char('Y') {
+                        CopyKind::Source
+                    } else {
+                        CopyKind::Visible
+                    },
+                    self.geometry.content_width,
+                    payload,
+                );
+            }
             KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
                 if !modifiers.contains(KeyModifiers::CONTROL) =>
             {
@@ -445,6 +510,12 @@ impl FrameRuntime {
     }
 
     pub fn advance_reading<W: Write + ?Sized>(&mut self, writer: &mut W, budget: &mut Budget) {
+        if self.reading.copy_pending() && self.presenter.wire.is_some() {
+            // Clipboard controls wait for a real EGC boundary. The normal
+            // frame path continues/ACKs the retained wire transaction; a copy
+            // request must never cancel an otherwise unchanged open glyph.
+            return;
+        }
         let links = self.viewport.shared_links();
         if let Some(source) = self.reading.advance(
             self.document.document(),
@@ -502,6 +573,7 @@ impl FrameRuntime {
     }
 
     pub fn document_and_viewport_mut(&mut self) -> (&Document, &mut ViewportState) {
+        self.body_dirty = true;
         (self.document.document(), &mut self.viewport)
     }
 
@@ -626,6 +698,7 @@ impl FrameRuntime {
     }
 
     pub fn viewport_mut(&mut self) -> &mut ViewportState {
+        self.body_dirty = true;
         &mut self.viewport
     }
 
@@ -781,10 +854,16 @@ impl FrameRuntime {
     }
 
     pub fn append_bytes(&mut self, bytes: &[u8]) -> Result<Option<Update>, FrameError> {
+        if !self.viewport.shared_links().shape_ready() {
+            return Err(FrameError::InitializationPending);
+        }
         let update = self
             .document
             .append(bytes)
             .map_err(|_| FrameError::InputFinished)?;
+        if let Some(shape) = &self.shape {
+            shape.apply(self.document.document(), &update)?;
+        }
         Ok((update.revision != update.base_revision).then_some(update))
     }
 
@@ -807,7 +886,13 @@ impl FrameRuntime {
     }
 
     pub fn finish_input(&mut self) -> Result<Option<Update>, FrameError> {
+        if !self.viewport.shared_links().shape_ready() {
+            return Err(FrameError::InitializationPending);
+        }
         let update = self.document.finish();
+        if let Some(shape) = &self.shape {
+            shape.apply(self.document.document(), &update)?;
+        }
         Ok((update.revision != update.base_revision).then_some(update))
     }
 
@@ -1021,7 +1106,7 @@ impl FrameRuntime {
             }
         }
         let clipboard_before = self.reading.clipboard_bytes();
-        let reading_first = self.reading_first;
+        let reading_first = self.reading_first || self.reading.copy_pending();
         self.reading_first = !reading_first;
         if reading_first {
             self.advance_reading(writer, budget);
@@ -1085,7 +1170,6 @@ impl FrameRuntime {
             self.pending_search_target = None;
         }
         let frame = if !self.body_dirty
-            && self.reading.status_visible()
             && self
                 .cached_body
                 .as_ref()
@@ -1125,7 +1209,21 @@ impl FrameRuntime {
             self.advance_reading(writer, budget);
         }
         let clipboard_bytes = self.reading.clipboard_bytes() - clipboard_before;
-        let mut commit = self.commit_frame_started(writer, &frame, started)?;
+        if self.reading.copy_pending() && self.presenter.wire.is_none() {
+            return Ok(FrameCommit {
+                status: Some(ViewportFrameStatus::BudgetExhausted),
+                bytes: clipboard_bytes,
+                metrics: FrameMetrics {
+                    layout_budget: budget.used(),
+                    output_bytes: clipboard_bytes,
+                    clipboard_bytes,
+                    frame_elapsed: started.elapsed(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+        }
+        let mut commit = self.commit_frame_started(writer, &frame, started, budget)?;
         commit.metrics.layout_budget = budget.used();
         commit.metrics.clipboard_bytes = clipboard_bytes;
         commit.metrics.output_bytes += clipboard_bytes;
@@ -1133,12 +1231,63 @@ impl FrameRuntime {
         Ok(commit)
     }
 
+    pub fn wire_pending(&self) -> bool {
+        self.presenter.wire_pending()
+    }
+    pub fn abort_output<W: Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        budget: &mut Budget,
+    ) -> Result<bool, FrameError> {
+        let Some(tx) = self.presenter.wire.as_mut() else {
+            return Ok(self.viewport.shared_links().retire_initialization(budget));
+        };
+        tx.cancel();
+        let done = tx.advance(writer, budget)? == Progress::Complete;
+        if done {
+            self.presenter.wire = None;
+            self.presenter.sent = None;
+            self.presenter.full_repaint = true;
+        }
+        Ok(done && self.viewport.shared_links().retire_initialization(budget))
+    }
+    pub fn commit_frame_budgeted<W: Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        frame: &ViewportFrame,
+        budget: &mut Budget,
+    ) -> Result<FrameCommit, FrameError> {
+        self.commit_frame_started(writer, frame, Instant::now(), budget)
+    }
+    pub fn commit_empty_frame_budgeted<W: Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        budget: &mut Budget,
+    ) -> Result<FrameCommit, FrameError> {
+        let document = self.document.document();
+        let frame = ViewportFrame {
+            document: document.id(),
+            revision: document.revision(),
+            lines: Vec::new(),
+            top: TopPosition::Empty,
+            rows: 0,
+            status: ViewportFrameStatus::Ready,
+            stats: Default::default(),
+        };
+        self.commit_frame_started(writer, &frame, Instant::now(), budget)
+    }
+
     pub fn commit_frame<W: Write + ?Sized>(
         &mut self,
         writer: &mut W,
         frame: &ViewportFrame,
     ) -> Result<FrameCommit, FrameError> {
-        self.commit_frame_started(writer, frame, Instant::now())
+        self.commit_frame_started(
+            writer,
+            frame,
+            Instant::now(),
+            &mut Budget::new(WorkLimit::unlimited()),
+        )
     }
 
     fn commit_frame_started<W: Write + ?Sized>(
@@ -1146,6 +1295,7 @@ impl FrameRuntime {
         writer: &mut W,
         frame: &ViewportFrame,
         started: Instant,
+        budget: &mut Budget,
     ) -> Result<FrameCommit, FrameError> {
         self.ensure_sidebar_model()?;
         let table_notice = self
@@ -1180,6 +1330,10 @@ impl FrameRuntime {
         });
         self.reading.set_match_visible(match_visible);
         let reading_status = self.reading.status();
+        // Publication is distinct from wire acknowledgement. Reuse the finite
+        // logical back frame while a micro-budget writer drains its descriptor.
+        self.cached_body = Some(frame.clone());
+        self.body_dirty = false;
         let commit = self.presenter.commit(
             writer,
             self.document.document(),
@@ -1208,8 +1362,9 @@ impl FrameRuntime {
                 search: self.reading.current_match().map(|hit| hit.source),
             },
             started,
+            budget,
         )?;
-        if commit.committed {
+        if commit.published {
             self.cached_body = Some(frame.clone());
             self.body_dirty = false;
             if let Some(anchor) = frame.top.anchor()
@@ -1257,7 +1412,12 @@ impl FrameRuntime {
             status: ViewportFrameStatus::Ready,
             stats: Default::default(),
         };
-        self.commit_frame_started(writer, &frame, started)
+        self.commit_frame_started(
+            writer,
+            &frame,
+            started,
+            &mut Budget::new(WorkLimit::unlimited()),
+        )
     }
 
     fn prepare_sidebar(&mut self, budget: &mut Budget) -> Result<(), FrameError> {
@@ -1720,9 +1880,8 @@ impl FrameRuntime {
             progress
         };
         match progress {
-            RefineProgress::Ready(mut target) => {
+            RefineProgress::Ready(target) => {
                 self.refiner = None;
-                target.source = source;
                 Ok(RefineTarget::Ready(target))
             }
             RefineProgress::PendingScan | RefineProgress::BudgetExhausted => {
@@ -1755,6 +1914,10 @@ struct FramePresenter {
     options: OutputOptions,
     first_clear_sent: bool,
     full_repaint: bool,
+    wire: Option<Transaction>,
+    sent: Option<crate::screen::ScreenSnapshot>,
+    sent_revision: u64,
+    reset_pending: bool,
 }
 
 impl FramePresenter {
@@ -1765,6 +1928,10 @@ impl FramePresenter {
             options,
             first_clear_sent: false,
             full_repaint: false,
+            wire: None,
+            sent: None,
+            sent_revision: 0,
+            reset_pending: false,
         })
     }
 
@@ -1773,12 +1940,20 @@ impl FramePresenter {
     }
 
     fn resize(&mut self, rows: u16, cols: u16) -> Result<(), FrameError> {
+        if let Some(tx) = self.wire.as_mut() {
+            tx.cancel();
+            self.reset_pending = true;
+        }
         self.screen.resize(rows, cols, ContentArea::new(0, cols))?;
         self.full_repaint = true;
         Ok(())
     }
 
     fn reset_baseline(&mut self) -> Result<(), FrameError> {
+        if let Some(tx) = self.wire.as_mut() {
+            tx.cancel();
+            self.reset_pending = true;
+        }
         self.screen.resize(
             self.screen.rows(),
             self.screen.cols(),
@@ -1788,6 +1963,34 @@ impl FramePresenter {
         Ok(())
     }
 
+    fn wire_pending(&self) -> bool {
+        self.wire.as_ref().is_some_and(Transaction::pending)
+    }
+    fn open_cell(&self, document: &Document) -> Option<OpenCell> {
+        if document.is_finished() {
+            return None;
+        }
+        for row in 0..self.screen.rows() {
+            for column in 0..self.screen.cols() {
+                let cell = self
+                    .screen
+                    .zero_cell(row, column)
+                    .filter(|c| c.text().ends_at_source(document.source().len()))
+                    .or_else(|| self.screen.cell(row, column))?;
+                if !cell.is_continuation()
+                    && cell.text().is_indexed()
+                    && cell.text().ends_at_source(document.source().len())
+                {
+                    return Some(OpenCell {
+                        row,
+                        column,
+                        cell: cell.clone(),
+                    });
+                }
+            }
+        }
+        None
+    }
     fn commit<W: Write + ?Sized>(
         &mut self,
         writer: &mut W,
@@ -1795,69 +1998,258 @@ impl FramePresenter {
         frame: &ViewportFrame,
         layout: FramePaintLayout<'_>,
         started: Instant,
+        budget: &mut Budget,
     ) -> Result<FrameCommit, FrameError> {
+        if self.wire.is_none()
+            && !budget.charge(WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            })
+        {
+            return Ok(FrameCommit::default());
+        }
         self.paint(frame, layout)?;
         self.paint_link_focus(layout)?;
         self.paint_reading(layout)?;
         self.paint_notice(layout)?;
+        self.screen.publish_back();
+        let candidate = self.open_cell(document);
         let cleared = !self.first_clear_sent;
         let full_repaint = self.full_repaint;
-        let diff = if full_repaint {
-            full_screen_diff(&self.screen)
-        } else {
-            diff_screen(&self.screen)
-        };
-
-        let mut bytes = 0_usize;
-        if cleared {
-            writer.write_all(FIRST_FRAME_CLEAR)?;
-            bytes = bytes.saturating_add(FIRST_FRAME_CLEAR.len());
-        }
-        let output = if diff_has_output(&diff) {
-            if let Err(error) = writer.write_all(BEGIN_SYNCHRONIZED_UPDATE) {
-                let _ = writer.write_all(END_SYNCHRONIZED_UPDATE);
-                return Err(error.into());
+        let mut bytes = 0;
+        let mut output = OutputStats::default();
+        let mut rows_changed = 0;
+        for _ in 0..2 {
+            if let Some(tx) = self.wire.as_mut() {
+                if tx.closed.as_ref().is_some_and(|closed| {
+                    let current = if closed.cell.width() == 0 {
+                        self.screen.zero_cell(closed.row, closed.column)
+                    } else {
+                        self.screen.cell(closed.row, closed.column)
+                    };
+                    current.is_none_or(|cell| !cell.same_visual(&closed.cell))
+                }) {
+                    tx.cancel();
+                    self.reset_pending = true;
+                    self.full_repaint = true;
+                }
+                if tx.open.is_none()
+                    && self
+                        .sent
+                        .as_ref()
+                        .is_some_and(|sent| self.screen.indexed_snapshot_changed(sent))
+                {
+                    tx.cancel();
+                    self.reset_pending = true;
+                    self.full_repaint = true;
+                }
+                if tx.open.is_some() {
+                    if budget.remaining().queries == 0 || budget.remaining().objects == 0 {
+                        return Ok(FrameCommit {
+                            published: true,
+                            bytes,
+                            metrics: FrameMetrics {
+                                output_bytes: bytes,
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        });
+                    }
+                    let old = tx.open.as_ref().unwrap();
+                    let same_position = candidate
+                        .as_ref()
+                        .is_some_and(|next| next.row == old.row && next.column == old.column);
+                    if same_position {
+                        if tx.extend(candidate.clone().unwrap(), budget) {
+                            self.sent_revision = frame.revision;
+                            tx.report_open_cut();
+                        } else {
+                            tx.cancel();
+                            self.reset_pending = true;
+                            self.full_repaint = true;
+                        }
+                    } else {
+                        let next = if old.cell.width() == 0 {
+                            self.screen.zero_cell(old.row, old.column)
+                        } else {
+                            self.screen.cell(old.row, old.column)
+                        }
+                        .map(|cell| OpenCell {
+                            row: old.row,
+                            column: old.column,
+                            cell: cell.clone(),
+                        });
+                        // The final Extend and EOF/newline can arrive before
+                        // an old cut is ACKed. Extend that same proven prefix
+                        // before closing, without repainting its old bytes.
+                        if let Some(next) = next
+                            && tx.extend(next.clone(), budget)
+                        {
+                            tx.close();
+                            self.sent_revision = frame.revision;
+                            if let Some(sent) = self.sent.as_mut() {
+                                sent.acknowledge_cell(next.row, next.column, next.cell);
+                            }
+                        } else {
+                            tx.cancel();
+                            self.reset_pending = true;
+                            self.full_repaint = true;
+                        }
+                    }
+                }
+            } else {
+                let diff = if self.full_repaint {
+                    full_screen_diff(&self.screen)
+                } else {
+                    diff_screen(&self.screen)
+                };
+                rows_changed = diff.rows_changed;
+                // Hold only an EGC actually present in this diff. An unchanged
+                // open cut is retained by its existing transaction.
+                let open = candidate.clone().filter(|open| {
+                    diff.runs.iter().any(|run| {
+                        run.row == open.row
+                            && run.start_col <= open.column
+                            && open.column < run.end_col()
+                    })
+                });
+                self.wire = Some(Transaction::prepare(
+                    document,
+                    &self.screen,
+                    &diff,
+                    self.options,
+                    !self.first_clear_sent,
+                    open,
+                )?);
+                self.sent = Some(self.screen.snapshot_back());
+                self.sent_revision = frame.revision;
             }
-            bytes = bytes.saturating_add(BEGIN_SYNCHRONIZED_UPDATE.len());
-            let output = match write_diff(writer, document, &self.screen, &diff, self.options) {
-                Ok(output) => output,
+            let tx = self.wire.as_mut().unwrap();
+            let before = tx.bytes;
+            let progress = match tx.advance(writer, budget) {
+                Ok(progress) => progress,
                 Err(error) => {
-                    let _ = writer.write_all(END_SYNCHRONIZED_UPDATE);
+                    let _ = writer.write_all(crate::render::wire::cleanup(self.options));
                     return Err(error.into());
                 }
             };
-            writer.write_all(END_SYNCHRONIZED_UPDATE)?;
-            bytes = bytes.saturating_add(END_SYNCHRONIZED_UPDATE.len());
-            output
-        } else {
-            write_diff(writer, document, &self.screen, &diff, self.options)?
-        };
-        bytes = bytes.saturating_add(output.bytes);
-        self.screen.swap_buffers();
-        let metrics = FrameMetrics {
-            layout_budget: frame.stats.layout_budget,
-            planned_tiles: frame.stats.planned_tiles,
-            visible_tiles: frame.stats.visible_tiles,
-            recovery_tiles: frame.stats.replay_tiles,
-            diff_rows: diff.rows_changed,
-            output_bytes: bytes,
-            body_bytes: output.bytes,
-            clipboard_bytes: 0,
-            layout: frame.stats.layout,
-            frame_elapsed: started.elapsed(),
-        };
-        self.first_clear_sent = true;
-        self.full_repaint = false;
+            let written = tx.bytes - before;
+            bytes += written;
+            output = tx.stats;
+            if tx.cancelled {
+                self.reset_pending = true;
+                self.full_repaint = true;
+            }
+            match progress {
+                Progress::Pending => {
+                    return Ok(FrameCommit {
+                        published: true,
+                        bytes,
+                        output,
+                        metrics: FrameMetrics {
+                            output_bytes: bytes,
+                            body_bytes: bytes,
+                            frame_elapsed: started.elapsed(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    });
+                }
+                Progress::OpenCut => {
+                    if let Some(sent) = self.sent.take() {
+                        self.screen.acknowledge(sent);
+                    }
+                    if let Some(open) = &tx.open {
+                        self.screen
+                            .acknowledge_cell(open.row, open.column, open.cell.clone())?;
+                    }
+                    self.first_clear_sent = true;
+                    self.full_repaint = false;
+                    return Ok(FrameCommit {
+                        published: true,
+                        status: Some(frame.status),
+                        committed: true,
+                        rows: frame.rows,
+                        bytes,
+                        output,
+                        cleared,
+                        first_frame: cleared,
+                        full_repaint,
+                        metrics: FrameMetrics {
+                            layout_budget: frame.stats.layout_budget,
+                            planned_tiles: frame.stats.planned_tiles,
+                            visible_tiles: frame.stats.visible_tiles,
+                            recovery_tiles: frame.stats.replay_tiles,
+                            diff_rows: rows_changed,
+                            output_bytes: bytes,
+                            body_bytes: bytes,
+                            layout: frame.stats.layout,
+                            frame_elapsed: started.elapsed(),
+                            ..Default::default()
+                        },
+                    });
+                }
+                Progress::Complete => {
+                    let closed = tx.closed.clone();
+                    let mut latest = self.screen.back_matches_front();
+                    if let Some(sent) = self.sent.take() {
+                        latest = self.screen.snapshot_matches_back(&sent);
+                        if !self.reset_pending {
+                            self.screen.acknowledge(sent);
+                        }
+                    }
+                    if let Some(closed) = closed
+                        && !self.reset_pending
+                    {
+                        self.screen
+                            .acknowledge_cell(closed.row, closed.column, closed.cell)?;
+                        latest = self.screen.back_matches_front();
+                    }
+                    self.wire = None;
+                    self.first_clear_sent = true;
+                    if self.reset_pending || self.sent_revision != frame.revision || !latest {
+                        self.reset_pending = false;
+                        continue;
+                    }
+                    self.full_repaint = false;
+                    return Ok(FrameCommit {
+                        published: true,
+                        status: Some(frame.status),
+                        committed: true,
+                        rows: frame.rows,
+                        bytes,
+                        output,
+                        cleared,
+                        first_frame: cleared,
+                        full_repaint,
+                        metrics: FrameMetrics {
+                            layout_budget: frame.stats.layout_budget,
+                            planned_tiles: frame.stats.planned_tiles,
+                            visible_tiles: frame.stats.visible_tiles,
+                            recovery_tiles: frame.stats.replay_tiles,
+                            diff_rows: rows_changed,
+                            output_bytes: bytes,
+                            body_bytes: bytes,
+                            layout: frame.stats.layout,
+                            frame_elapsed: started.elapsed(),
+                            ..Default::default()
+                        },
+                    });
+                }
+            }
+        }
         Ok(FrameCommit {
-            status: Some(frame.status),
-            committed: true,
-            rows: frame.rows,
+            published: true,
             bytes,
             output,
-            cleared,
-            first_frame: cleared,
-            full_repaint,
-            metrics,
+            metrics: FrameMetrics {
+                output_bytes: bytes,
+                body_bytes: bytes,
+                frame_elapsed: started.elapsed(),
+                ..Default::default()
+            },
+            ..Default::default()
         })
     }
 
@@ -2001,6 +2393,17 @@ impl FramePresenter {
             .min(self.screen.cols());
         for row in 0..self.screen.rows() {
             for column in layout.content_x..right {
+                if let Some(zero) = self
+                    .screen
+                    .zero_cell(row, column)
+                    .filter(|c| c.link_id() == Some(focused))
+                {
+                    self.screen.set_zero_style(
+                        row,
+                        column,
+                        zero.style().with(StyleRole::LINK_FOCUS),
+                    )?;
+                }
                 let Some(cell) = self.screen.cell(row, column) else {
                     continue;
                 };
@@ -2022,6 +2425,21 @@ impl FramePresenter {
                     .saturating_add(layout.content_width)
                     .min(self.screen.cols())
             {
+                if let Some(zero) = self.screen.zero_cell(row, col)
+                    && let Some(source) = zero.source()
+                {
+                    let mut style = zero.style();
+                    for (range, role) in [
+                        (layout.search, StyleRole::SEARCH),
+                        (layout.selection, StyleRole::SELECTION),
+                        (layout.cursor, StyleRole::CURSOR),
+                    ] {
+                        if range.is_some_and(|range| crate::reading::overlaps(source, range)) {
+                            style = style.with(role);
+                        }
+                    }
+                    self.screen.set_zero_style(row, col, style)?;
+                }
                 let Some(cell) = self.screen.cell(row, col) else {
                     continue;
                 };
@@ -2113,12 +2531,6 @@ fn clip_sidebar_text(text: &str, width: usize) -> String {
     clipped
 }
 
-fn diff_has_output(diff: &ScreenDiff) -> bool {
-    diff.runs
-        .iter()
-        .any(|run| run.cells.iter().any(|cell| !cell.is_continuation()))
-}
-
 fn sidebar_layout_for(cols: u16, visible: bool) -> (bool, u16, u16) {
     if !visible {
         return (false, 0, cols);
@@ -2139,7 +2551,15 @@ fn full_screen_diff(screen: &Screen) -> ScreenDiff {
         let Some(back) = screen.back_row(row) else {
             continue;
         };
-        let cells = back[usize::from(content.x)..usize::from(content.right())].to_vec();
+        let cells: Vec<_> = (usize::from(content.x)..usize::from(content.right()))
+            .flat_map(|at| {
+                screen
+                    .zero_cell(row, at as u16)
+                    .cloned()
+                    .into_iter()
+                    .chain(std::iter::once(back[at].clone()))
+            })
+            .collect();
         diff.rows_changed += 1;
         diff.cells_changed = diff.cells_changed.saturating_add(cells.len());
         diff.runs.push(DiffRun {

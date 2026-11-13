@@ -46,7 +46,7 @@ impl From<ScreenError> for ParagraphError {
 }
 
 struct StyledGrapheme {
-    text: String,
+    text: super::payload::TextPayload,
     width: usize,
     kind: GraphemeKind,
     style: StyleRole,
@@ -161,26 +161,6 @@ fn layout_flow(
         if grapheme.kind == GraphemeKind::Control {
             continue;
         }
-        if grapheme.width == 0 {
-            if line_source.is_none() {
-                continue;
-            }
-            let row = start_row
-                .checked_add(lines)
-                .ok_or(ParagraphError::RowOverflow)?;
-            if let Err(error) = cursor.place(
-                screen,
-                row,
-                glyph(grapheme),
-                grapheme.style,
-                grapheme.link,
-                Some(grapheme.source),
-            ) && error != TextError::NoBaseForZeroWidth
-            {
-                return Err(error.into());
-            }
-            continue;
-        }
         if grapheme.width > body_width {
             continue;
         }
@@ -199,10 +179,12 @@ fn layout_flow(
             write_quote_prefix(screen, row, content.x, content_width)?;
             prefix_written = true;
         }
-        if let Err(error) = cursor.place(
+        if let Err(error) = cursor.place_payload(
             screen,
             row,
-            glyph(grapheme),
+            &grapheme.text,
+            grapheme.width as u8,
+            grapheme.kind,
             grapheme.style,
             grapheme.link,
             Some(grapheme.source),
@@ -334,17 +316,6 @@ fn styled_graphemes(input: &DisplayInput, block_id: BlockId) -> Vec<StyledGraphe
     .collect()
 }
 
-fn glyph(grapheme: &StyledGrapheme) -> crate::render::text::Grapheme<'_> {
-    crate::render::text::Grapheme {
-        text: &grapheme.text,
-        start: 0,
-        end: grapheme.text.len(),
-        width: u8::try_from(grapheme.width).unwrap_or(2),
-        raw_width: grapheme.width,
-        kind: grapheme.kind,
-    }
-}
-
 fn trim_whitespace(grapheme: &StyledGrapheme) -> bool {
     grapheme
         .text
@@ -406,7 +377,7 @@ mod tests {
         let content = screen.content_area();
         let mut text = String::new();
         for col in content.x..content.right() {
-            text.push_str(screen.cell(row, col).unwrap().text());
+            text.push_str(&screen.cell(row, col).unwrap().text().collect_text());
         }
         text
     }

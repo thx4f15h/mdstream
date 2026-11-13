@@ -96,6 +96,36 @@ impl TextCursor {
         self.next_col
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn place_payload(
+        &mut self,
+        screen: &mut Screen,
+        row: u16,
+        text: &super::payload::TextPayload,
+        width: u8,
+        kind: GraphemeKind,
+        style: StyleRole,
+        link_id: Option<LinkId>,
+        source: Option<Span>,
+    ) -> Result<Placement, TextError> {
+        if kind == GraphemeKind::Control {
+            return Ok(Placement::SkippedControl);
+        }
+        if kind == GraphemeKind::ZeroWidth {
+            screen.write_cell(
+                row,
+                self.next_col,
+                Cell::new(text, style, 0, link_id, source)?,
+            )?;
+            return Ok(Placement::Written);
+        }
+        let base = self.next_col;
+        screen.write_cell(row, base, Cell::new(text, style, width, link_id, source)?)?;
+        self.last_base = Some(base);
+        self.next_col += u16::from(width);
+        Ok(Placement::Written)
+    }
+
     pub fn place(
         &mut self,
         screen: &mut Screen,

@@ -12,7 +12,7 @@ pub enum TokenKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputToken {
     pub kind: TokenKind,
-    pub text: String,
+    pub text: super::payload::TextPayload,
     pub source: Span,
     pub replacement: Option<Span>,
     pub block: Option<BlockId>,
@@ -92,7 +92,7 @@ impl DisplayInput {
             .iter()
             .map(|object| InputToken {
                 kind: TokenKind::Text,
-                text: "[image]".to_owned(),
+                text: "[image]".into(),
                 source: object.source,
                 replacement: Some(object.source),
                 block: document.block_at(object.source.start),
@@ -113,6 +113,10 @@ impl DisplayInput {
             .iter()
             .take_while(|token| token.source.start < source.end)
         {
+            if token.text.is_indexed() {
+                tokens.push(token.clone());
+                continue;
+            }
             if token.replacement.is_some() || token.source.len() != token.text.len() {
                 if token.source.start >= source.start {
                     tokens.push(token.clone());
@@ -123,11 +127,13 @@ impl DisplayInput {
             let hi = token.source.end.min(source.end);
             if let Some(text) = token
                 .text
+                .contiguous()
+                .expect("unindexed source token")
                 .get(lo - token.source.start..hi - token.source.start)
             {
                 let mut clipped = token.clone();
                 clipped.source = Span::new(lo, hi);
-                clipped.text = text.to_owned();
+                clipped.text = text.into();
                 tokens.push(clipped);
             }
         }
@@ -141,7 +147,7 @@ impl DisplayInput {
         let kind = token_kind(run.style);
         self.tokens.push(InputToken {
             kind,
-            text: run.text.to_owned(),
+            text: run.text.into(),
             source: run.source,
             replacement: run.replacement,
             block: run.block,
@@ -152,6 +158,20 @@ impl DisplayInput {
     }
 
     #[must_use]
+    pub(crate) fn glyphs(&self) -> Vec<DisplayGlyph> {
+        display_glyphs(self.tokens.iter().map(|t| GlyphInput {
+            text: &t.text,
+            source: t.source,
+            replacement: t.replacement,
+            block: t.block,
+            link: t.link,
+            style: t.style,
+            kind: t.kind,
+        }))
+    }
+    pub(crate) fn display_width(&self) -> usize {
+        self.glyphs().iter().map(|g| usize::from(g.width)).sum()
+    }
     pub fn tokens(&self) -> &[InputToken] {
         &self.tokens
     }
@@ -165,7 +185,7 @@ impl DisplayInput {
     pub fn visible_text(&self) -> String {
         self.tokens
             .iter()
-            .map(|token| token.text.as_str())
+            .map(|token| token.text.collect_text())
             .collect()
     }
 
@@ -231,7 +251,7 @@ pub(crate) fn image_tokens<'a>(
         .take_while(move |object| object.source.start < run.source.end)
         .map(move |object| InputToken {
             kind: TokenKind::Text,
-            text: "[image]".to_owned(),
+            text: "[image]".into(),
             source: object.source,
             replacement: Some(object.source),
             block: run.block,
@@ -248,7 +268,8 @@ pub(crate) fn image_tokens<'a>(
                 run.text
                     [syntax.source.start - run.source.start..syntax.source.end - run.source.start]
                     .to_owned()
-            },
+            }
+            .into(),
             source: syntax.source,
             replacement: run.replacement,
             block: run.block,
@@ -286,7 +307,7 @@ pub(crate) fn merge_source<T>(left: Vec<T>, right: Vec<T>, source: impl Fn(&T) -
 /// Borrowed pieces of one display stream. Grapheme boundaries are determined
 /// after joining the bounded window, never independently at cursor/tile cuts.
 pub(crate) struct GlyphInput<'a> {
-    pub text: &'a str,
+    pub text: &'a super::payload::TextPayload,
     pub source: Span,
     pub replacement: Option<Span>,
     pub block: Option<BlockId>,
@@ -295,8 +316,9 @@ pub(crate) struct GlyphInput<'a> {
     pub kind: TokenKind,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DisplayGlyph {
-    pub text: String,
+    pub text: super::payload::TextPayload,
     pub source: Span,
     pub block: Option<BlockId>,
     pub link: Option<LinkId>,
@@ -306,13 +328,39 @@ pub(crate) struct DisplayGlyph {
 }
 
 pub(crate) fn display_glyphs<'a>(parts: impl Iterator<Item = GlyphInput<'a>>) -> Vec<DisplayGlyph> {
+    let mut output = Vec::new();
+    let mut plain = Vec::new();
+    for part in parts {
+        if let Some(kind) = part.text.cluster_kind() {
+            if !plain.is_empty() {
+                output.extend(plain_glyphs(std::mem::take(&mut plain).into_iter()));
+            }
+            output.push(DisplayGlyph {
+                text: part.text.clone(),
+                source: part.source,
+                block: part.block,
+                link: part.link,
+                style: part.style,
+                width: part.text.width() as u8,
+                kind,
+            });
+        } else {
+            plain.push(part)
+        }
+    }
+    if !plain.is_empty() {
+        output.extend(plain_glyphs(plain.into_iter()));
+    }
+    output
+}
+fn plain_glyphs<'a>(parts: impl Iterator<Item = GlyphInput<'a>>) -> Vec<DisplayGlyph> {
     let mut text = String::new();
     let mut spans = Vec::new();
     for part in parts {
         let value = match part.kind {
             TokenKind::HardBreak => continue,
             TokenKind::SoftBreak => " ",
-            TokenKind::Text => part.text,
+            TokenKind::Text => part.text.contiguous().expect("unindexed token"),
         };
         if value.is_empty() {
             continue;
@@ -350,7 +398,7 @@ pub(crate) fn display_glyphs<'a>(parts: impl Iterator<Item = GlyphInput<'a>>) ->
             last.replacement.unwrap_or(last.source).end
         };
         glyphs.push(DisplayGlyph {
-            text: grapheme.text.to_owned(),
+            text: grapheme.text.into(),
             source: Span::new(source_start, source_end),
             block: first.block,
             link: first.link,

@@ -9,6 +9,7 @@ use mdtui3::{Budget, Document, Span, TileId, WorkLimit};
 
 fn doc(source: &str) -> Document {
     let mut d = Document::new();
+    d.enable_display_shape_effects().unwrap();
     d.append(source).unwrap();
     d
 }
@@ -31,7 +32,7 @@ fn text(frame: &ViewportFrame) -> String {
         .lines
         .iter()
         .flat_map(|l| &l.cells)
-        .map(|c| c.text.as_str())
+        .map(|c| c.text.collect_text())
         .collect()
 }
 
@@ -69,7 +70,7 @@ fn nested_alt_is_flattened_and_hit_targets_are_independent_of_raw_allocation_ord
             .lines
             .iter()
             .flat_map(|l| &l.cells)
-            .filter(|c| !c.text.trim().is_empty())
+            .filter(|c| !c.text.collect_text().trim().is_empty())
         {
             assert_eq!(
                 cell.link.and_then(|id| d.link_destination(id)),
@@ -80,7 +81,14 @@ fn nested_alt_is_flattened_and_hit_targets_are_independent_of_raw_allocation_ord
         }
         let static_frame = render_static(&d, 80, 24).unwrap();
         let static_text: String = (0..80)
-            .map(|x| static_frame.screen.cell(0, x).unwrap().text())
+            .map(|x| {
+                static_frame
+                    .screen
+                    .cell(0, x)
+                    .unwrap()
+                    .text()
+                    .collect_text()
+            })
             .collect();
         assert_eq!(static_text.trim_end(), expected);
         let ansi = mdtui_tui::static_render::render_once_ansi(
@@ -177,6 +185,11 @@ fn deep_cross_tile_alt_and_revision_cancel_share_and_retire_one_memo_under_micro
     )
     .unwrap();
     first.set_links(links.clone());
+    assert!(
+        first
+            .initialize(&d, &mut Budget::new(WorkLimit::unlimited()))
+            .unwrap()
+    );
     let limit = WorkLimit {
         queries: 1,
         objects: 1,
@@ -203,7 +216,9 @@ fn deep_cross_tile_alt_and_revision_cancel_share_and_retire_one_memo_under_micro
     }
     let mut screen = Screen::new(40, 80, ContentArea::new(0, 80)).unwrap();
     first.write_to_screen(&mut screen, 0).unwrap();
-    let cells: String = (0..80).map(|x| screen.cell(0, x).unwrap().text()).collect();
+    let cells: String = (0..80)
+        .map(|x| screen.cell(0, x).unwrap().text().collect_text())
+        .collect();
     assert_eq!(cells.trim_end(), "alt");
     assert_eq!(
         screen.cell(0, 0).unwrap().link_id(),
@@ -517,7 +532,14 @@ fn unresolved_parent_does_not_hide_literal_syntax_or_override_real_child_targets
         assert!(targets.iter().all(|&actual| actual == target));
         let static_frame = render_static(&d, 80, 24).unwrap();
         let static_text: String = (0..80)
-            .map(|x| static_frame.screen.cell(0, x).unwrap().text())
+            .map(|x| {
+                static_frame
+                    .screen
+                    .cell(0, x)
+                    .unwrap()
+                    .text()
+                    .collect_text()
+            })
             .collect();
         assert_eq!(static_text.trim_end(), expected);
     }
@@ -697,7 +719,7 @@ fn million_byte_code_failure_replay_does_not_turn_visible_image_layout_into_a_pr
         .lines()
         .iter()
         .flat_map(|l| &l.cells)
-        .map(|c| c.text.as_str())
+        .map(|c| c.text.collect_text())
         .collect();
     assert!(text.contains("[image]"));
     let linked: Vec<_> = first
@@ -862,11 +884,11 @@ fn confirmed_table_displays_withdrawn_footnote_spelling_without_stalling() {
     let mut screen = Screen::new(12, 80, ContentArea::new(0, 80)).unwrap();
     first.write_to_screen(&mut screen, 0).unwrap();
     let line = (0..80)
-        .map(|x| screen.cell(4, x).unwrap().text())
+        .map(|x| screen.cell(4, x).unwrap().text().collect_text())
         .collect::<String>();
     let all = (0..12)
         .flat_map(|y| (0..80).map(move |x| (y, x)))
-        .map(|(y, x)| screen.cell(y, x).unwrap().text())
+        .map(|(y, x)| screen.cell(y, x).unwrap().text().collect_text())
         .collect::<String>();
     assert!(all.contains("[^n]"), "{line} / {all}");
 }

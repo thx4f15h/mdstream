@@ -480,7 +480,7 @@ fn p31_partial_table_uses_measured_width_snapshot() {
         .lines()
         .iter()
         .flat_map(|line| line.cells.iter())
-        .map(|cell| cell.text.as_str())
+        .map(|cell| cell.text.collect_text())
         .collect::<String>();
     assert!(text.contains('B'));
     assert!(first.sink_stats().unwrap().table_rows_prepared < 50);

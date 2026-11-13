@@ -116,7 +116,7 @@ fn sidebar_style(engine: &StreamEngine, text: &str) -> StyleRole {
         for column in 0..sidebar_width {
             let cell = screen.front_cell(row, column).expect("sidebar cell");
             if !cell.is_continuation() {
-                line.push_str(cell.text());
+                line.push_str(&cell.text().collect_text());
             }
         }
         rows.push(line.clone());

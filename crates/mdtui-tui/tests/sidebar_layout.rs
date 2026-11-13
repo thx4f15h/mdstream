@@ -56,7 +56,7 @@ fn onscreen_text(screen: &Screen, row: u16, start: u16, end: u16) -> String {
     for column in start..end {
         let cell = screen.front_cell(row, column).expect("screen cell");
         if !cell.is_continuation() {
-            text.push_str(cell.text());
+            text.push_str(&cell.text().collect_text());
         }
     }
     text

@@ -6,6 +6,7 @@ use mdtui3::{Budget, Document, TableId, WorkLimit};
 
 fn document(source: &str) -> Document {
     let mut doc = Document::new();
+    doc.enable_display_shape_effects().unwrap();
     doc.append(source).unwrap();
     doc
 }
@@ -28,8 +29,8 @@ fn text(f: &ViewportFrame) -> String {
         .flat_map(|l| {
             l.cells
                 .iter()
-                .map(|c| c.text.as_str())
-                .chain(std::iter::once("\n"))
+                .map(|c| c.text.collect_text())
+                .chain(std::iter::once("\n".to_owned()))
         })
         .collect()
 }

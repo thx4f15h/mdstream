@@ -20,7 +20,14 @@ fn static_lines(document: &Document, width: u16, height: u16) -> Vec<String> {
         .map(|row| {
             let mut text = String::new();
             for column in content.x..content.right() {
-                text.push_str(rendered.screen.cell(row, column).unwrap().text());
+                text.push_str(
+                    &rendered
+                        .screen
+                        .cell(row, column)
+                        .unwrap()
+                        .text()
+                        .collect_text(),
+                );
             }
             text.truncate(text.trim_end_matches(' ').len());
             text
