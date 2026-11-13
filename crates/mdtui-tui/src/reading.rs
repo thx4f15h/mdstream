@@ -859,6 +859,30 @@ impl CopyTask {
                     published.unwrap()
                 };
                 let Some(cell) = line.cells.get(self.cell) else {
+                    // An empty code row owns its physical LF even though its
+                    // indentation cells have no source. Serialize that row
+                    // before moving on; the next selected row supplies the
+                    // following separator. The one terminator byte is covered
+                    // by this paid step, never a scan of the source gap.
+                    if self.emitted_row != Some(self.line_serial)
+                        && let Some(owner) = line.source
+                        && owner
+                            .block
+                            .and_then(|id| document.block(id))
+                            .is_some_and(|b| matches!(b.kind, mdtui3::BlockKind::Code { .. }))
+                        && owner.source.len() == 1
+                        && overlaps(owner.source, self.source)
+                        && document.source().as_bytes()[owner.source.start] == b'\n'
+                    {
+                        if self.emitted_row.is_some() {
+                            if self.bytes.len() >= MAX_CLIPBOARD_BYTES {
+                                return Err("copy too large (64 KiB limit)");
+                            }
+                            self.bytes.push(b'\n');
+                        }
+                        self.emitted_row = Some(self.line_serial);
+                        self.emitted_block = owner.block;
+                    }
                     if extra {
                         self.extra_row += 1;
                         self.extra_ready = false;

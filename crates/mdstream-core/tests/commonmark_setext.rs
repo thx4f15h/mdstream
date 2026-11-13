@@ -215,7 +215,20 @@ enum Assessment {
 
 // Current observations are separate from the verbatim upstream oracle. Both a
 // regression and an improvement require review, never automatic reclassification.
+// The original observed strings below remain immutable historical evidence.
+// These exact official sources now join indented chunks across internal blanks;
+// the unchanged projection must match the verbatim upstream HTML.
 fn assessment(number: usize) -> Assessment {
+    let previous = legacy_assessment(number);
+    if matches!(number, 85) {
+        assert!(matches!(previous, Assessment::DeliberateDifference { .. }));
+        Assessment::Supported
+    } else {
+        previous
+    }
+}
+
+fn legacy_assessment(number: usize) -> Assessment {
     match number {
         80..=84 | 86 | 88..=106 => Assessment::Supported,
         85 => Assessment::DeliberateDifference {
@@ -263,7 +276,7 @@ fn pinned_commonmark_setext_report() {
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [25, 2, 0]);
+    assert_eq!(counts, [26, 1, 0]);
     eprintln!(
         "CommonMark 0.31.2 Setext headings (80–106): {} supported, {} deliberate differences, {} unsupported; other sections not scored by this test",
         counts[0], counts[1], counts[2]
@@ -364,9 +377,12 @@ fn setext_projection_preserves_whitespace_styles_and_block_scope() {
     assert_eq!(project(&parse("  a\t\n")), "<p>a</p>\n");
     assert_eq!(project(&parse("a\tb\n")), "<p>a\tb</p>\n");
     assert_eq!(project(&parse("a\n\nb\n")), "<p>a</p>\n<p>b</p>\n");
-    assert_eq!(
-        project(&parse("    a  \n\n    b\n")),
+    // Exact same-scope blank continuation; historical split HTML is retained.
+    let actual = project(&parse("    a  \n\n    b\n"));
+    assert_ne!(
+        actual,
         "<pre><code>a  \n</code></pre>\n<pre><code>b\n</code></pre>\n"
     );
+    assert_eq!(actual, "<pre><code>a  \n\nb\n</code></pre>\n");
     assert_eq!(project(&parse("a  \nb\n")), "<p>a<br />\nb</p>\n");
 }

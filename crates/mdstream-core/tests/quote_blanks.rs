@@ -206,9 +206,16 @@ fn blank_quotes_preserve_list_spacing_code_and_pending_header_boundaries() {
     assert!(doc.tables().is_empty());
     assert_eq!(doc.blocks()[1].kind, BlockKind::Blank);
     let doc = parse(">     code\n>\n>     next\n");
-    assert_eq!(doc.blocks().len(), 3);
-    assert_eq!(doc.blocks()[1].kind, BlockKind::Blank);
-    assert!(matches!(doc.blocks()[2].kind, BlockKind::Code { .. }));
+    assert_eq!(doc.blocks().len(), 1);
+    assert!(matches!(doc.blocks()[0].kind, BlockKind::Code { .. }));
+    assert_eq!(
+        doc.display_runs_in(doc.blocks()[0].source)
+            .unwrap()
+            .filter(|r| !r.style.contains(Style::HIDDEN))
+            .map(|r| r.text)
+            .collect::<String>(),
+        "code\n\nnext\n"
+    );
 }
 
 #[test]

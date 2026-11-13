@@ -558,6 +558,32 @@ impl DisplayCursor {
             if self.position == self.end {
                 return Ok(DisplayStep::Complete);
             }
+            if let Some(pending) = document.indented_code_pending()
+                && pending.source.start <= self.position
+                && self.position < pending.source.end
+            {
+                if !budget.charge(WorkLimit {
+                    queries: 1,
+                    objects: 1,
+                    ..Default::default()
+                }) {
+                    return Ok(DisplayStep::BudgetExhausted);
+                }
+                let source = Span::new(self.position, self.end.min(pending.source.end));
+                self.position = source.end;
+                self.pending = None;
+                return Ok(DisplayStep::Run(DisplayRun {
+                    source,
+                    replacement: None,
+                    text: "",
+                    block: None,
+                    style: Style::HIDDEN,
+                    emphasis_depth: 0,
+                    strong_depth: 0,
+                    style_pair: None,
+                    link: None,
+                }));
+            }
             if let Some(pending) = &mut self.pending {
                 if !pending.task.advance(document, resolution, budget, 0) {
                     return Ok(DisplayStep::BudgetExhausted);

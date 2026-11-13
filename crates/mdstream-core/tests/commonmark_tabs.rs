@@ -402,7 +402,18 @@ fn tabs_projection_preserves_literals_whitespace_and_structure() {
             "<ul>\n<li>\n<p>foo</p>\n<p>bar</p>\n</li>\n</ul>\n",
         ),
     ] {
-        assert_eq!(project(&parse(source)), expected, "input {source:?}");
+        if source == "    a\n\n    b\n" {
+            assert_eq!(
+                expected,
+                "<pre><code>a\n</code></pre>\n<pre><code>b\n</code></pre>\n"
+            );
+            assert_eq!(
+                project(&parse(source)),
+                "<pre><code>a\n\nb\n</code></pre>\n"
+            );
+        } else {
+            assert_eq!(project(&parse(source)), expected, "input {source:?}");
+        }
     }
 }
 

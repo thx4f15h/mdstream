@@ -137,8 +137,9 @@ fn failed_paths_active_prose_fences_and_blank_lines_keep_dialect() {
         .iter()
         .filter(|b| matches!(b.kind, BlockKind::Code { .. }))
         .collect();
-    assert_eq!(codes.len(), 2);
-    assert_eq!(codes[0].container, codes[1].container);
+    // One physical Item owns both chunks and the internal unprefixed blank.
+    assert_eq!(codes.len(), 1);
+    assert_eq!(visible(&doc), "seed\n\n  a\n\n  b\nsibling\n");
     assert_ne!(codes[0].container, doc.blocks().last().unwrap().container);
 }
 

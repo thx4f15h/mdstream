@@ -874,6 +874,21 @@ impl BodyMapTask {
 }
 
 impl<'a> BodyView<'a> {
+    /// Current child-parser blank ownership, qualified into this body's source.
+    pub fn indented_code_pending(self) -> Option<BodyObject<crate::PendingCodeBlanks>> {
+        self.body
+            .engine
+            .indented_code_pending()
+            .map(|value| BodyObject {
+                body: self.key(),
+                value,
+            })
+    }
+
+    pub fn code_blank_storage(self) -> crate::CodeBlankStorage {
+        self.body.engine.code_blank_storage()
+    }
+
     fn span(self, span: BodySpan) -> Result<Span, LayoutError> {
         self.check(span.body)?;
         self.body
@@ -1280,6 +1295,11 @@ pub enum BodyResolveStep {
 }
 
 fn add_engine_work(total: &mut crate::Work, before: crate::Work, after: crate::Work) {
+    total.code_blank_probes += after.code_blank_probes - before.code_blank_probes;
+    total.code_blank_bytes += after.code_blank_bytes - before.code_blank_bytes;
+    total.code_blank_admissions += after.code_blank_admissions - before.code_blank_admissions;
+    total.code_blank_retirements += after.code_blank_retirements - before.code_blank_retirements;
+    total.code_blank_decisions += after.code_blank_decisions - before.code_blank_decisions;
     total.inline_undo_peak += after
         .inline_undo_peak
         .saturating_sub(before.inline_undo_peak);

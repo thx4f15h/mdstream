@@ -47,9 +47,11 @@ pub use header_effects::ConfirmationStats;
 mod heading_search;
 mod headings;
 mod history;
+mod indented;
 #[cfg(test)]
 mod index_boundaries;
 mod inline;
+pub use indented::{CodeBlankStorage, PendingCodeBlanks};
 mod inline_styles;
 mod rewind;
 pub use inline_styles::{
@@ -326,6 +328,7 @@ pub struct Document {
     // Inline continuity is independent of the physical leaf-block identity.
     container_inline: Option<ContainerId>,
     current: Option<BlockId>,
+    code_blanks: indented::Blanks,
     fence: Option<Fence>,
     streaming_fence: Option<StreamingFence>,
     structural_prefix: Option<StreamingPrefix>,
@@ -586,6 +589,13 @@ impl Document {
                 .next_visible_using(at, self.source.len(), &mut |mark| {
                     resolution.hidden(self, mark)
                 });
+            if let (Some(text), Some(pending)) = (text, self.indented_code_pending())
+                && pending.source.start <= text
+                && text < pending.source.end
+            {
+                at = pending.source.end;
+                continue;
+            }
             let Some(key) = self
                 .inline_styles
                 .conditional_scope_after(Span::new(at, self.source.len()), None)
@@ -657,9 +667,15 @@ impl Document {
             .lower_bound(offset, &mut 0)
             .map(|id| self.link_info[id.0].source.start);
         let end = object.unwrap_or(self.source.len());
-        let text =
+        let mut text =
             self.annotations
                 .next_visible_resolving(offset, end, &self.references, &self.links);
+        if let (Some(at), Some(pending)) = (text, self.indented_code_pending())
+            && pending.source.start <= at
+            && at < pending.source.end
+        {
+            text = self.next_layout_anchor(pending.source.end);
+        }
         text.into_iter().chain(object).chain(conditional).min()
     }
 
@@ -1015,6 +1031,7 @@ impl Document {
         self.flush_definition_candidate(update);
         self.seal_definition_title(update);
         self.flush_table_header(update);
+        self.resolve_code_blanks(false, update);
         self.close_current(update);
         let closed_start = update.closed_containers.len();
         self.containers
@@ -2245,6 +2262,9 @@ impl Document {
         self.work.classified_bytes += span.len() as u64;
         self.containers.end = span.end;
         self.headings.parsed_end = span.end;
+        if self.indented_source(span, complete, update) {
+            return;
+        }
         if self
             .definition_candidate
             .as_ref()
@@ -3679,16 +3699,30 @@ impl<'a> Iterator for Runs<'a> {
         {
             self.block += 1;
         }
-        let (block, limit) = match self.document.blocks.get(self.block) {
+        let (block, mut limit) = match self.document.blocks.get(self.block) {
             Some(b) if b.source.start <= start => {
                 (Some(BlockId(self.block)), b.source.end.min(self.end))
             }
             Some(b) => (None, b.source.start.min(self.end)),
             None => (None, self.end),
         };
+        let withheld = self.document.indented_code_pending().is_some_and(|p| {
+            if start < p.source.start {
+                limit = limit.min(p.source.start);
+                false
+            } else if start < p.source.end {
+                limit = limit.min(p.source.end);
+                true
+            } else {
+                false
+            }
+        });
         let (span, raw) = self.pending.take().or_else(|| self.marks.next())?;
         let snapshot = self.style_at(start, limit);
         let mut first = snapshot.apply(raw);
+        if withheld {
+            first.style = first.style.union(Style::HIDDEN);
+        }
         self.last_mark = first;
         if !self.raw {
             first = self.resolution.mark(self.document, first);

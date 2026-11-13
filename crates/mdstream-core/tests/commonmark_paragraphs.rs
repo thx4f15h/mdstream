@@ -219,10 +219,13 @@ fn paragraphs_projection_preserves_whitespace_breaks_and_block_boundaries() {
         project(&parse("    a  \n")),
         "<pre><code>a  \n</code></pre>\n"
     );
-    assert_eq!(
-        project(&parse("    a\n\n    b\n")),
+    // Exact same-scope blank continuation; historical split HTML is retained.
+    let actual = project(&parse("    a\n\n    b\n"));
+    assert_ne!(
+        actual,
         "<pre><code>a\n</code></pre>\n<pre><code>b\n</code></pre>\n"
     );
+    assert_eq!(actual, "<pre><code>a\n\nb\n</code></pre>\n");
     assert_eq!(
         project(&parse("*a* & <\n")),
         "<p><em>a</em> &amp; &lt;</p>\n"

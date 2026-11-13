@@ -207,6 +207,14 @@ pub struct ContentBlockIndexStats {
 /// Tree visits count mutation traversals; view queries do not mutate statistics.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Work {
+    /// Actual new-source qualification calls for an active indented Code.
+    pub code_blank_probes: u64,
+    /// Additional new blank indentation bytes inspected (at most four per line).
+    pub code_blank_bytes: u64,
+    pub code_blank_admissions: u64,
+    pub code_blank_retirements: u64,
+    /// One input-side commit/release wakeup per nonempty blank ledger.
+    pub code_blank_decisions: u64,
     /// Maxima of sums of actual per-component undo peaks, not an instantaneous
     /// cross-component maximum; bytes include retained Clear buffer capacity.
     pub inline_undo_peak: u64,

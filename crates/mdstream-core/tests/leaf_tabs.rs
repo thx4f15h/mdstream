@@ -277,18 +277,25 @@ fn failed_paths_new_containers_blank_and_unhandled_leaf_tabs_are_atomic() {
     }
     let doc = parse("- first\n\t  raw\n  \n\t  next\n- sibling\n\t# sibling title\n");
     assert_eq!(doc.blocks()[1].kind, BlockKind::Code { info: None });
-    assert_eq!(doc.blocks()[3].kind, BlockKind::Code { info: None });
+    assert_eq!(visible(&doc, doc.blocks()[1].source), "raw\n\nnext\n");
+    assert_eq!(
+        doc.blocks()
+            .iter()
+            .filter(|b| matches!(b.kind, BlockKind::Code { .. }))
+            .count(),
+        1
+    );
     assert_ne!(
         doc.blocks()[1].container,
         doc.headings().entries()[0].container
     );
     assert_eq!(
-        doc.blocks()[4].container,
+        doc.blocks()[2].container,
         doc.headings().entries()[0].container
     );
     assert_eq!(
         doc.container(ContainerId(0)).unwrap().list_tightness,
-        Some(ListTightness::Loose)
+        Some(ListTightness::Tight)
     );
 }
 

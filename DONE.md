@@ -3114,3 +3114,17 @@ BodyView 的显示、窗口/activity、ordered style/marker、活跃 math/footno
 ## 2026-11-13 本轮自有 strict clippy 回归清理
 
 固定基点 `29b3d8c1be7f4a8c23138734da7fe46e81cba6da`，完整保留原 DONE 前缀。本轮 001 的 `06643be` 引入了 `bare_autolinks.rs:594` 布尔比较，现改为最短等价 `assert!`，原条件、`{source:?}` 消息、测试输入及预期保持；首次完整 strict clippy 随后暴露 012 的 `29b3d8c` 将 `DependencyValidation` 及 impl 追加在 `cache.rs` 原测试模块之后的自有回归。首次失败冻结与日志已归档，按根追加授权仅交换完整 validation 块和测试模块的顺序；前缀、方法、文档、测试和分隔符逐块同字节，总字节及行数不变，没有 API/逻辑或 lint 豁免改动。重新冻结除本日志外的 675 个输入后，完整 workspace all-targets strict clippy `-D warnings`、fmt、bare_autolinks debug/release 各 28 项、原生 cache reference_boundary 单测各 1 项、四组 footnote_markdown 各 32 项及 workspace doc 82 项全部通过，逐命令前后 hash 一致；all-targets clippy 同时完成完整类型检查。原完整 workspace debug 2687 / release 2683 按已接受 012 的精确输入关系继承，未冒称本次重跑：534 个其它 Rust 文件及 Cargo/README 等输入同 hash，cache 仅为已证明的相同块重排，bare 仅为等价断言。全部官方 fixture/HTML/生成器/SHA、旧 golden、TUI fixture/ANSI、hook/rustfmt 和其它 TODO 原样。冻结清单、块移动证明、命令退出与实际计数见仓外 `/tmp/mdtui3-codex-todo/023-prototypes/` 和 `023-result.json`。本轮两项 lint 遗留已清理，完整 workspace 全目标严格检查恢复通过。
+
+## 2026-11-13 缩进代码内部空行与来源账本交付
+
+完成原 TODO73 明列的 indented-code blank continuation 剩余核心：同确切 root/Quote/Item 代码跨内部空行及仅空白行保留同一 BlockId，首尾空白释放为源码有序 Blank；叶块四列与部分 tab 的原物理来源保持。既有路径/叶块分类只读入口共享 Prefix 与 block classifier，不重写 renderer Markdown parser。缺失引用、兄弟、子容器和非代码后继封口；113/223 段落中断、lone CR 及 EOF 源码约定不变。
+
+已完成未决空白暂不显示，独立 `indented_code_pending()` 暴露 owner+全 Span，原始源码始终可读。每行只保存固定大小前缀和不可 Clone SourceOwner；后继前一次提交/释放列表分隔及来源，成功不使列表 Loose，不撤销/删除 sealed 对象。付费 DisplayCursor 可按元数据跳过整段待定空白；真实 Structure/Mark/Spaces/changed_blocks 更新驱动 height/checkpoint 失效，012 同机解析与 BodyObject 命名空间、BodyWork 子计数同步。
+
+新增双 crate 12 项回归覆盖冻结74组手写语义与900组独立物理列空白模型、每字节切分/空追加/前缀 EOF、完整 CRLF/UTF8/部分 tab 映射、身份/分区/列表松紧、零与1q1o6b预算、真实 Update/ticket、hosted正文、1801行 whole/middle/End、待定 End/follow/EOF，以及原文和可见 OSC52 复制。代码空白行没有可复制字符 cell 时，可见复制现在消费已排版行的真实 LF 来源，按既有共享预算保留该行。没有回读旧源码间隙或新 Markdown 分类。
+
+百万空白的一字追加 success/failure/EOF、千层列表百万空白、百万 continuation 字节和20k旧代码历史的真实 Work/typed-effects/record与annotation容量另存交付材料。账本准入/退休各一次，输入决议可为一次大的线性/对数线性调用；累计 O(N log N)、持久 O(N)，不宣称硬 append 延迟或完整 allocator/RSS统计。
+
+官方输入/HTML、生成器、原黄金数组和全部原 ANSI 输入/期望保持；当前评分 Indented107–118为11/1/0（113保留）、Setext80–106为26/1/0（87保留）、ListItems253–300为47/1/0（291保留）。110–112、85、264/289 逐真实源与原始 HTML 验证，历史观察字符串保留并通过窄分类适配；具体非官方旧断言只按同作用域代码合并、首尾来源和代码内部不构成列表分隔的独立机制调整。
+
+最终固定在根指定 `77d32b1`：完整 workspace debug2699/release2695 在29基线含最终功能改动实际通过，按精确 cache 块重排、等价 bool 断言和最终报告诊断文字差异证明继承；组合77实际通过 all-targets check、专项 debug/release 各476、doc83、docbuild、fmt 和完整 workspace all-targets strict clippy `-D warnings`，无 lint 豁免。最终报告仅修正 ListItems 计数输出后另跑该官方报告、fmt/全目标严格 clippy，README 与已通过的 doc83 输入保持。冻结输入、来源关系及真实 PTY/ANSI 验证记录位于仓外交付材料，本项以独立提交交付。本记录不勾选 parent88 的实际间距、宽泛完整容器/UI兼容性。原生 fenced 检查点失效后恢复错位已由根交021，最终 giant+codeblank+restore 仍需根的固定组合联合验收。

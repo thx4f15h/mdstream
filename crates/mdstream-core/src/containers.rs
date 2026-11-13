@@ -152,6 +152,17 @@ pub(crate) struct ContainerLine {
     pub detached_blank: bool,
 }
 
+/// Read-only qualification of the next source of an active indented code block.
+pub(crate) enum CodeContinuation {
+    Indented,
+    Blank {
+        prefix: usize,
+        virtual_spaces: u8,
+        column: u8,
+        from: Option<usize>,
+    },
+}
+
 impl Containers {
     pub fn len(&self) -> usize {
         self.nodes.len()
@@ -652,12 +663,26 @@ impl Containers {
         ordinary: bool,
         work: &mut Work,
     ) -> Result<Prefix<'a>, (Prefix<'a>, Option<Active>)> {
+        self.path_cursor_depth(source, span, scope, split_tabs, ordinary, work)
+            .map_err(|(prefix, missing, _)| (prefix, missing))
+    }
+
+    fn path_cursor_depth<'a>(
+        &self,
+        source: &'a str,
+        span: Span,
+        scope: Option<ContainerId>,
+        split_tabs: bool,
+        ordinary: bool,
+        work: &mut Work,
+    ) -> Result<Prefix<'a>, (Prefix<'a>, Option<Active>, usize)> {
         let mut prefix = Prefix::new(source, span, false);
         if scope != self.inner() {
-            return Err((prefix, None));
+            return Err((prefix, None, 0));
         }
         prefix.split_tabs = split_tabs;
         let mut missing = None;
+        let mut matched_depth = 0;
         for (depth, frame) in self.active.iter().enumerate() {
             work.container_steps += 1;
             let matched = match *frame {
@@ -667,7 +692,7 @@ impl Containers {
                     // text. Targets retain their established exception.
                     if ordinary && depth + 1 == self.active.len() && prefix.quote_code().is_some() {
                         work.container_bytes += prefix.inspected;
-                        return Err((prefix, Some(*frame)));
+                        return Err((prefix, Some(*frame), depth));
                     }
                     prefix.quote()
                 }
@@ -677,13 +702,127 @@ impl Containers {
                 missing = Some(*frame);
                 break;
             }
+            matched_depth += 1;
         }
         work.container_bytes += prefix.inspected;
         if missing.is_some() {
-            Err((prefix, missing))
+            Err((prefix, missing, matched_depth))
         } else {
             Ok(prefix)
         }
+    }
+
+    pub(crate) fn code_continuation(
+        &self,
+        source: &str,
+        span: Span,
+        complete: bool,
+        work: &mut Work,
+    ) -> Option<CodeContinuation> {
+        let partial = self.partial_prefix(source, span, Some(complete), false, false, work);
+        // A split ancestor with omitted descendant List indentation is routed
+        // through line() as structural. A completed blank still retains those
+        // Lists. Reuse the split exact matcher to recover its missing depth;
+        // the Quote-depth check below must still reject any missing Quote.
+        let split_blank = partial.as_ref().is_some_and(|line| line.new_container);
+        if split_blank {
+            let line = partial.as_ref().unwrap();
+            let end = crate::block::body_end(source, span);
+            work.classified_bytes += (end - line.prefix) as u64;
+            if !complete
+                || !source.as_bytes()[line.prefix..end]
+                    .iter()
+                    .all(u8::is_ascii_whitespace)
+            {
+                return None;
+            }
+        }
+        let partial = partial.filter(|line| !line.new_container);
+        let (prefix, virtual_spaces, column, from) = if let Some(line) = partial {
+            if line.lazy {
+                return None;
+            }
+            if line.indented {
+                return Some(CodeContinuation::Indented);
+            }
+            let column =
+                crate::block::prefix_column(source, Span::new(span.start, line.prefix), work);
+            (line.prefix, line.virtual_spaces, column, None)
+        } else {
+            match self.path_cursor_depth(source, span, self.inner(), split_blank, false, work) {
+                Ok(prefix) => (
+                    prefix.pos,
+                    prefix.virtual_spaces as u8,
+                    ((prefix.column + prefix.virtual_spaces) % 4) as u8,
+                    None,
+                ),
+                Err((prefix, Some(Active::List { .. }), depth)) if complete => {
+                    let end = crate::block::body_end(source, span);
+                    work.classified_bytes += (end - prefix.pos) as u64;
+                    if !source.as_bytes()[prefix.pos..end]
+                        .iter()
+                        .all(u8::is_ascii_whitespace)
+                    {
+                        return None;
+                    }
+                    let next_quote = self.quotes.partition_point(|&quote| {
+                        work.container_steps += 1;
+                        quote < depth
+                    });
+                    if next_quote < self.quotes.len() {
+                        return None;
+                    }
+                    let from = if depth > 0 && matches!(self.active[depth - 1], Active::List { .. })
+                    {
+                        depth - 1
+                    } else {
+                        depth
+                    };
+                    return Some(CodeContinuation::Blank {
+                        prefix: prefix.pos,
+                        virtual_spaces: prefix.virtual_spaces as u8,
+                        column: ((prefix.column + prefix.virtual_spaces) % 4) as u8,
+                        from: Some(from),
+                    });
+                }
+                _ => return None,
+            }
+        };
+        let payload = Span::new(prefix, span.end);
+        work.classified_bytes += payload.len() as u64;
+        match crate::block::classify_indented(
+            source,
+            payload,
+            complete,
+            None,
+            false,
+            virtual_spaces,
+            column,
+        ) {
+            crate::block::Line::Indented { .. } => Some(CodeContinuation::Indented),
+            crate::block::Line::Blank => Some(CodeContinuation::Blank {
+                prefix,
+                virtual_spaces,
+                column,
+                from,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Commit only the constant summary, before a successor can close a path or
+    /// replace an Item. Successful code continuation never calls this method.
+    pub(crate) fn code_blank_separator(
+        &mut self,
+        from: Option<usize>,
+        start: usize,
+        work: &mut Work,
+        update: &mut Update,
+    ) {
+        if let Some(from) = from {
+            self.blank_from = Some(self.blank_from.map_or(from, |old| old.min(from)));
+        }
+        self.observe_payload(true, start, work, update);
     }
 
     pub fn stats(&self) -> ArenaStats {

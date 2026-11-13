@@ -255,7 +255,20 @@ enum Assessment {
     },
 }
 
+// The original observed strings below remain immutable historical evidence.
+// These exact official sources now join indented chunks across internal blanks;
+// the unchanged projection must match the verbatim upstream HTML.
 fn assessment(number: usize) -> Assessment {
+    let previous = legacy_assessment(number);
+    if matches!(number, 264 | 289) {
+        assert!(matches!(previous, Assessment::DeliberateDifference { .. }));
+        Assessment::Supported
+    } else {
+        previous
+    }
+}
+
+fn legacy_assessment(number: usize) -> Assessment {
     match number {
         253..=263 | 265..=288 | 290 | 292..=300 => Assessment::Supported,
         264 => Assessment::DeliberateDifference {
@@ -326,9 +339,10 @@ fn pinned_commonmark_list_items_report() {
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [45, 3, 0]);
+    assert_eq!(counts, [47, 1, 0]);
     eprintln!(
-        "CommonMark 0.31.2 List items (253–300): 45 supported, 3 deliberate differences, 0 unsupported; other sections not scored by this test"
+        "CommonMark 0.31.2 List items (253–300): {} supported, {} deliberate differences, {} unsupported; other sections not scored by this test",
+        counts[0], counts[1], counts[2]
     );
 }
 

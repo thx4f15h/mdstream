@@ -54,11 +54,10 @@ fn merging_blank_interruption_and_container_boundaries_keep_explicit_dialects() 
     assert_eq!(doc.blocks()[0].kind, BlockKind::Code { info: None });
     assert_eq!(visible(&doc), "first\nsecond\nthird\n");
     let doc = parse("prose\n\t*raw*\n\t \n\tlast\n");
-    assert_eq!(doc.blocks().len(), 4);
+    assert_eq!(doc.blocks().len(), 2);
     assert_eq!(doc.blocks()[0].kind, BlockKind::Paragraph);
     assert_eq!(doc.blocks()[1].kind, BlockKind::Code { info: None });
-    assert_eq!(doc.blocks()[2].kind, BlockKind::Blank);
-    assert_eq!(doc.blocks()[3].kind, BlockKind::Code { info: None });
+    assert_eq!(visible(&doc), "prose\n*raw*\n \nlast\n");
     for source in ["\t", " \t\r\n", "\t\t\n"] {
         assert_eq!(parse(source).blocks()[0].kind, BlockKind::Blank);
     }
@@ -242,7 +241,13 @@ fn million_byte_append_and_many_code_lines_do_not_rescan_history() {
         doc.append(" \ta\n").unwrap();
     }
     assert_eq!(doc.work().inline_bytes, before.inline_bytes);
-    assert!(doc.work().classified_bytes - before.classified_bytes <= 4096 * 4);
+    // One actual four-byte leaf probe plus the original four-byte classifier.
+    assert_eq!(
+        doc.work().code_blank_probes - before.code_blank_probes,
+        4096
+    );
+    assert_eq!(doc.work().code_blank_admissions, 0);
+    assert!(doc.work().classified_bytes - before.classified_bytes <= 4096 * 8);
     assert!(doc.work().container_bytes - before.container_bytes < 4096 * 20);
     assert!(doc.work().tree_visits - before.tree_visits < 4096 * 500);
     let before = doc.work();

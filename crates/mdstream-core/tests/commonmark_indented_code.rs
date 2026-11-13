@@ -227,7 +227,20 @@ enum Assessment {
 
 // Observations never replace the verbatim upstream oracle. Any change in
 // either direction requires review instead of automatic reclassification.
+// The original observed strings below remain immutable historical evidence.
+// These exact official sources now join indented chunks across internal blanks;
+// the unchanged projection must match the verbatim upstream HTML.
 fn assessment(number: usize) -> Assessment {
+    let previous = legacy_assessment(number);
+    if matches!(number, 110..=112) {
+        assert!(matches!(previous, Assessment::DeliberateDifference { .. }));
+        Assessment::Supported
+    } else {
+        previous
+    }
+}
+
+fn legacy_assessment(number: usize) -> Assessment {
     match number {
         107..=109 | 114..=118 => Assessment::Supported,
         110 => Assessment::DeliberateDifference {
@@ -288,9 +301,9 @@ fn pinned_commonmark_indented_code_report() {
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [8, 4, 0]);
+    assert_eq!(counts, [11, 1, 0]);
     eprintln!(
-        "CommonMark 0.31.2 Indented code blocks (107–118): 8 supported, 4 deliberate differences, 0 unsupported; other sections not scored by this test"
+        "CommonMark 0.31.2 Indented code blocks (107–118): 11 supported, 1 deliberate difference, 0 unsupported; other sections not scored by this test"
     );
 }
 
@@ -373,7 +386,18 @@ fn indented_code_projection_preserves_literals_whitespace_and_structure() {
         ),
         ("1. a\n", "<ol>\n<li>a</li>\n</ol>\n"),
     ] {
-        assert_eq!(project(&parse(source)), expected, "input {source:?}");
+        if source == "    a\n\n    b\n" {
+            assert_eq!(
+                expected,
+                "<pre><code>a\n</code></pre>\n<pre><code>b\n</code></pre>\n"
+            );
+            assert_eq!(
+                project(&parse(source)),
+                "<pre><code>a\n\nb\n</code></pre>\n"
+            );
+        } else {
+            assert_eq!(project(&parse(source)), expected, "input {source:?}");
+        }
     }
 }
 

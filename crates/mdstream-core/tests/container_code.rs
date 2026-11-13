@@ -123,6 +123,13 @@ fn indented_code_merges_only_within_exact_scope_and_blank_seals() {
         "item code\nmore\n",
         "sibling code\n",
     ];
+    // The exact Quote blank joins the first two historical chunks; every scope
+    // boundary represented by the remaining unchanged array still seals code.
+    let expected = [
+        std::iter::once(format!("{}\n{}", expected[0], expected[1])).collect::<Vec<_>>(),
+        expected[2..].iter().map(|s| (*s).to_owned()).collect(),
+    ]
+    .concat();
     let ids = codes(&doc);
     assert_eq!(ids.len(), expected.len());
     for (&id, expected) in ids.iter().zip(expected) {
@@ -131,18 +138,21 @@ fn indented_code_merges_only_within_exact_scope_and_blank_seals() {
         assert_eq!(block.kind, BlockKind::Code { info: None });
         assert_eq!(block.state, SyntaxState::Sealed);
     }
+    let [joined, nested, outer, root, item, sibling] = ids.as_slice() else {
+        panic!("six independently bounded codes")
+    };
     assert_ne!(
-        doc.block(ids[1]).unwrap().container,
-        doc.block(ids[2]).unwrap().container
+        doc.block(*joined).unwrap().container,
+        doc.block(*nested).unwrap().container
     );
     assert_eq!(
-        doc.block(ids[1]).unwrap().container,
-        doc.block(ids[3]).unwrap().container
+        doc.block(*joined).unwrap().container,
+        doc.block(*outer).unwrap().container
     );
-    assert_eq!(doc.block(ids[4]).unwrap().container, None);
+    assert_eq!(doc.block(*root).unwrap().container, None);
     assert_ne!(
-        doc.block(ids[5]).unwrap().container,
-        doc.block(ids[6]).unwrap().container
+        doc.block(*item).unwrap().container,
+        doc.block(*sibling).unwrap().container
     );
     // Five marker spaces start code; only one belongs to the item prefix,
     // so the continuation preserves its four extra spaces in the same block.

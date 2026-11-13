@@ -150,7 +150,13 @@ fn code_payload_blanks_are_opaque_but_separating_blanks_end_indented_code() {
         "- ```\n  raw\n  ```\n  \n  after\n",
         "- start\n      code\n  \n      next\n",
     ] {
-        assert_eq!(lists(&parse(source)), [ListTightness::Loose], "{source:?}");
+        // No separator precedes this code: its only blank is now internal.
+        let expected = if source == "- start\n      code\n  \n      next\n" {
+            ListTightness::Tight
+        } else {
+            ListTightness::Loose
+        };
+        assert_eq!(lists(&parse(source)), [expected], "{source:?}");
     }
 }
 
