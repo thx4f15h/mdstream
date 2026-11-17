@@ -2,6 +2,8 @@ use crate::{
     BlockId, Budget, Document, DocumentId, LayoutError, LinkId, QueryScratch, RenderRun, Runs,
     Span, Style, TILE_BYTES, WorkLimit,
 };
+#[path = "slug_metadata.rs"]
+pub(crate) mod slug_metadata;
 
 /// A fragment of display text with its original source mapping. Hidden syntax
 /// is returned too; omit HIDDEN runs when copying or displaying visible text.

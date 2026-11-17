@@ -1,17 +1,15 @@
 use std::fmt;
 use std::io::{self, Write};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use mdtui3::{
-    Anchor, Budget, Completion, Document, FragmentStep, HeadingAnchors, HeadingId, LayoutError,
-    LinkId, NavAction, Navigator, Update, Utf8Document, WorkLimit,
+    Anchor, Budget, Completion, CurrentFragment, Document, FragmentStep, HeadingId,
+    HeadingSlugSession, LayoutError, LinkId, NavAction, Navigator, Update, Utf8Document, WorkLimit,
 };
 
 use crate::cli::LinkMode;
-use crate::fragment::{
-    AnchorBuildStatus, FragmentActivation, FragmentActivationStatus, FragmentDecodeError,
-    decode_fragment_destination,
-};
+use crate::fragment::{AnchorBuildStatus, FragmentActivation, FragmentActivationStatus};
 use crate::history::HistoryPosition;
 use crate::links::LinkTable;
 use crate::render::diff::{DiffRun, ScreenDiff, diff_screen};
@@ -208,6 +206,20 @@ impl From<io::Error> for FrameError {
     }
 }
 
+struct PendingFragment {
+    id: LinkId,
+    revision: u64,
+    activity: Option<mdtui3::LinkActivity>,
+    active: bool,
+    destination: Option<mdtui3::LinkDestinationTask>,
+    decoded: String,
+    request: Option<CurrentFragment>,
+    target: Option<mdtui3::AnchorTarget>,
+    refined: Option<RefinedTarget>,
+    cancelled: bool,
+    waiting: bool,
+    _lease: crate::render::objects::LinkLease,
+}
 pub struct FrameRuntime {
     shape: Option<super::shape::SharedShape>,
     document: Utf8Document,
@@ -227,13 +239,11 @@ pub struct FrameRuntime {
     sidebar: Option<Directory>,
     links: Option<LinkTable>,
     link_focus: Option<LinkId>,
-    pending_activation: Option<(
-        LinkId,
-        u64,
-        mdtui3::LinkActivity,
-        crate::render::objects::LinkLease,
-    )>,
-    anchors: Option<HeadingAnchors>,
+    slugs: HeadingSlugSession,
+    anchors_started: bool,
+    fragment: Option<PendingFragment>,
+    fragment_serial: u64,
+    fragment_success: Option<FragmentActivation>,
     anchor_lease: Option<crate::render::objects::LinkLease>,
     notice: Option<&'static str>,
     reading: crate::reading::ReadingTools,
@@ -326,7 +336,7 @@ impl FrameRuntime {
     }
 
     fn from_indexed_document(
-        document: Utf8Document,
+        mut document: Utf8Document,
         shape: Option<super::shape::SharedShape>,
         geometry: FrameGeometry,
         link_mode: LinkMode,
@@ -351,6 +361,7 @@ impl FrameRuntime {
                 allow_osc8: true,
             },
         )?;
+        let slugs = document.heading_slug_session();
         Ok(Self {
             shape,
             document,
@@ -370,8 +381,11 @@ impl FrameRuntime {
             sidebar: None,
             links: None,
             link_focus: None,
-            pending_activation: None,
-            anchors: None,
+            slugs,
+            anchors_started: false,
+            fragment: None,
+            fragment_serial: 0,
+            fragment_success: None,
             anchor_lease: None,
             notice: None,
             reading: crate::reading::ReadingTools::default(),
@@ -654,19 +668,17 @@ impl FrameRuntime {
 
     #[must_use]
     pub fn anchor_index_started(&self) -> bool {
-        self.anchors.is_some()
+        self.anchors_started
     }
 
     #[must_use]
     pub fn anchor_indexed_headings(&self) -> Option<usize> {
-        self.anchors.as_ref().map(HeadingAnchors::indexed_headings)
+        self.anchors_started.then(|| self.slugs.indexed_headings())
     }
 
     #[must_use]
     pub fn anchor_index_complete(&self) -> bool {
-        self.anchors.as_ref().is_some_and(|anchors| {
-            anchors.revision() == self.document.document().revision() && anchors.is_complete()
-        })
+        self.anchors_started && self.slugs.is_current(self.document.document())
     }
 
     #[must_use]
@@ -689,6 +701,7 @@ impl FrameRuntime {
 
     pub fn has_pending_jump(&self) -> bool {
         self.pending_jump.is_some()
+            || self.fragment.as_ref().is_some_and(|p| !p.waiting)
             || self.pending_search_target.is_some()
             || self.pending_sidebar_activate
     }
@@ -853,7 +866,7 @@ impl FrameRuntime {
         Ok(moved)
     }
 
-    pub fn append_bytes(&mut self, bytes: &[u8]) -> Result<Option<Update>, FrameError> {
+    pub fn append_bytes(&mut self, bytes: &[u8]) -> Result<Option<Arc<Update>>, FrameError> {
         if !self.viewport.shared_links().shape_ready() {
             return Err(FrameError::InitializationPending);
         }
@@ -864,7 +877,13 @@ impl FrameRuntime {
         if let Some(shape) = &self.shape {
             shape.apply(self.document.document(), &update)?;
         }
-        Ok((update.revision != update.base_revision).then_some(update))
+        if update.revision == update.base_revision {
+            return Ok(None);
+        }
+        let update = Arc::new(update);
+        self.slugs
+            .observe(self.document.document(), update.clone())?;
+        Ok(Some(update))
     }
 
     pub fn apply_update(&mut self, update: &Update) -> Result<(), FrameError> {
@@ -872,20 +891,21 @@ impl FrameRuntime {
             self.pending_jump = None;
             self.refiner = None;
         }
+        if let Some(p) = &mut self.fragment {
+            p.waiting = false;
+        }
         self.body_dirty = true;
         self.reading.changed(self.document.document().revision());
         let document = self.document.document();
         let applied = self.viewport.apply_update(document, update)?;
         if applied.previous_revision != applied.revision {
             self.links = None;
-            self.anchors = None;
-            self.anchor_lease = None;
         }
         self.apply_sidebar_update(update)?;
         Ok(())
     }
 
-    pub fn finish_input(&mut self) -> Result<Option<Update>, FrameError> {
+    pub fn finish_input(&mut self) -> Result<Option<Arc<Update>>, FrameError> {
         if !self.viewport.shared_links().shape_ready() {
             return Err(FrameError::InitializationPending);
         }
@@ -893,7 +913,13 @@ impl FrameRuntime {
         if let Some(shape) = &self.shape {
             shape.apply(self.document.document(), &update)?;
         }
-        Ok((update.revision != update.base_revision).then_some(update))
+        if update.revision == update.base_revision {
+            return Ok(None);
+        }
+        let update = Arc::new(update);
+        self.slugs
+            .observe(self.document.document(), update.clone())?;
+        Ok(Some(update))
     }
 
     pub fn advance_eof_calibration(
@@ -910,9 +936,14 @@ impl FrameRuntime {
         if rows == 0 || cols == 0 {
             return Err(FrameError::InvalidGeometry);
         }
-        let reading_source = (self.reading.selection.active() || !self.reading.query().is_empty())
-            .then(|| self.top_source())
-            .flatten();
+        // A fragment may have reached a new, still-open tail before EOF. Width
+        // reset only has estimated tile heights, so restore the current source
+        // through the same paid refiner used by reading anchors.
+        let restore_source = (self.reading.selection.active()
+            || !self.reading.query().is_empty()
+            || self.fragment_success.is_some())
+        .then(|| self.top_source())
+        .flatten();
         let previous_rows = self.geometry.rows;
         let previous_cols = self.geometry.cols;
         let previous_content_width = self.geometry.content_width;
@@ -951,7 +982,7 @@ impl FrameRuntime {
         self.sidebar_visible = sidebar_visible;
         if (width_changed || height_changed)
             && !self.viewport.following()
-            && let Some(source) = reading_source
+            && let Some(source) = restore_source
         {
             self.pending_jump = Some(source);
             self.refiner = None;
@@ -1146,6 +1177,35 @@ impl FrameRuntime {
                 }
             }
             self.pending_search_target = Some((source, true));
+        }
+        if let Some(id) = self
+            .fragment
+            .as_ref()
+            .filter(|p| !p.waiting || p.cancelled)
+            .map(|p| p.id)
+        {
+            let result = if self.fragment.as_ref().is_some_and(|p| p.cancelled)
+                || self.link_focus != Some(id)
+            {
+                let p = self.fragment.as_mut().unwrap();
+                if p.activity
+                    .as_mut()
+                    .is_none_or(|a| a.retire_continuation(budget) == Completion::Covered)
+                {
+                    self.fragment = None;
+                }
+                None
+            } else {
+                Some(self.continue_fragment(id, budget)?)
+            };
+            if let Some(result) = result {
+                self.set_notice(
+                    result
+                        .status
+                        .shows_notice()
+                        .then(|| result.status.message()),
+                );
+            }
         }
         if let Some(source) = self.pending_jump
             && matches!(
@@ -1558,6 +1618,21 @@ impl FrameRuntime {
         true
     }
 
+    pub fn focus_link_at(&mut self, row: u16, col: u16) -> bool {
+        let Some(id) = self
+            .presenter
+            .screen()
+            .front_cell(row, col)
+            .and_then(|c| c.link_id())
+        else {
+            return false;
+        };
+        if !self.links.as_ref().is_some_and(|t| t.contains(id)) {
+            return false;
+        }
+        self.link_focus = Some(id);
+        true
+    }
     pub fn clear_link_focus(&mut self) -> bool {
         self.link_focus.take().is_some()
     }
@@ -1566,27 +1641,8 @@ impl FrameRuntime {
         &mut self,
         budget: &mut Budget,
     ) -> Result<AnchorBuildStatus, FrameError> {
+        self.anchors_started = true;
         let document = self.document.document();
-        if !document.is_finished() {
-            return Ok(AnchorBuildStatus::PendingDocument);
-        }
-        if self
-            .anchors
-            .as_ref()
-            .is_some_and(|anchors| anchors.revision() != document.revision())
-        {
-            self.anchors = None;
-            self.anchor_lease = None;
-        }
-        if self.anchors.is_none() {
-            self.anchors = Some(HeadingAnchors::new(document));
-        }
-        let Some(anchors) = self.anchors.as_mut() else {
-            return Ok(AnchorBuildStatus::BudgetExhausted);
-        };
-        if anchors.is_complete() {
-            return Ok(AnchorBuildStatus::Complete);
-        }
         let links = self.viewport.shared_links();
         if !links.prepare(document, budget)? {
             return Ok(AnchorBuildStatus::BudgetExhausted);
@@ -1594,21 +1650,67 @@ impl FrameRuntime {
         if self.anchor_lease.is_none() {
             self.anchor_lease = Some(links.hold());
         }
-        let completion = links.with_resolver(|resolver| {
-            anchors.swap_link_resolver(resolver)?;
-            let result = anchors.advance(document, budget);
-            anchors.swap_link_resolver(resolver)?;
-            result
-        })?;
-        match completion {
-            Completion::EndOfDocument => {
+        let result =
+            links.with_resolver(|r| self.slugs.advance_with_resolver(document, r, budget))?;
+        if result == Completion::Covered {
+            if links.with_resolver(|r| r.style_memo_entries() == 0) {
                 self.anchor_lease = None;
-                Ok(AnchorBuildStatus::Complete)
             }
-            _ => Ok(AnchorBuildStatus::BudgetExhausted),
+            Ok(AnchorBuildStatus::Complete)
+        } else {
+            Ok(AnchorBuildStatus::BudgetExhausted)
         }
     }
 
+    pub fn slug_session_stats(&self) -> mdtui3::SlugSessionStats {
+        let mut stats = self.slugs.stats();
+        self.viewport.shared_links().with_resolver(|r| {
+            stats.canonical_style_work = r.style_work();
+            stats.resolver_entries += r.memo_entries();
+            stats.owned_capacity_bytes += r.capacity_bytes();
+        });
+        stats
+    }
+    pub fn fragment_refinement_pending(&self) -> bool {
+        self.fragment.as_ref().is_some_and(|p| p.target.is_some()) && self.refiner.is_some()
+    }
+    /// Request-owned storage only. The shared renderer/resolver and source
+    /// refiner retain their existing window stores, separately owned by runtime.
+    pub fn fragment_capacity_bytes(&self) -> usize {
+        self.fragment.as_ref().map_or(0, |p| {
+            std::mem::size_of::<PendingFragment>()
+                + p.decoded.capacity()
+                + p.request
+                    .as_ref()
+                    .map_or(0, CurrentFragment::capacity_bytes)
+                + p.activity
+                    .as_ref()
+                    .map_or(0, mdtui3::LinkActivity::continuation_capacity)
+        })
+    }
+    pub fn retire_slug_session(&mut self, b: &mut Budget) -> Result<Completion, FrameError> {
+        if let Some(p) = &mut self.fragment
+            && let Some(a) = &mut p.activity
+            && a.retire_continuation(b) != Completion::Covered
+        {
+            return Ok(Completion::BudgetExhausted);
+        }
+        self.fragment = None;
+        self.anchor_lease = None;
+        let result = self.slugs.retire(self.document.document(), b)?;
+        if result != Completion::Covered {
+            return Ok(result);
+        }
+        Ok(self.viewport.shared_links().retire_current(b))
+    }
+    pub fn fragment_completion(&self) -> (u64, Option<FragmentActivation>) {
+        (self.fragment_serial, self.fragment_success)
+    }
+    pub fn cancel_fragment(&mut self) {
+        if let Some(p) = &mut self.fragment {
+            p.cancelled = true;
+        }
+    }
     pub fn activate_focused_link(
         &mut self,
         budget: &mut Budget,
@@ -1616,148 +1718,252 @@ impl FrameRuntime {
         let Some(id) = self.link_focus else {
             return Ok(FragmentActivation::status(FragmentActivationStatus::NoLink));
         };
-        let document = self.document.document();
+        self.continue_fragment(id, budget)
+    }
+    fn continue_fragment(
+        &mut self,
+        id: LinkId,
+        budget: &mut Budget,
+    ) -> Result<FragmentActivation, FrameError> {
+        use FragmentActivationStatus as S;
         let links = self.viewport.shared_links();
+        let document = self.document.document();
         if !links.prepare(document, budget)? {
-            return Ok(FragmentActivation::status(
-                FragmentActivationStatus::BudgetExhausted,
-            ));
+            return Ok(FragmentActivation::status(S::BudgetExhausted));
         }
         if self
-            .pending_activation
+            .fragment
             .as_ref()
-            .is_none_or(|(pending, revision, _, _)| {
-                *pending != id || *revision != document.revision()
-            })
+            .is_some_and(|p| p.id != id || p.cancelled)
         {
+            let p = self.fragment.as_mut().unwrap();
+            if let Some(activity) = &mut p.activity
+                && activity.retire_continuation(budget) != Completion::Covered
+            {
+                return Ok(FragmentActivation::status(S::BudgetExhausted));
+            }
+            self.fragment = None;
+        }
+        if self.fragment.is_none() {
+            if !budget.charge(WorkLimit {
+                objects: 1,
+                queries: 1,
+                ..Default::default()
+            }) {
+                return Ok(FragmentActivation::status(S::BudgetExhausted));
+            }
             let Some(activity) = document.link_activity(id) else {
-                return Ok(FragmentActivation::status(
-                    FragmentActivationStatus::Invalid,
-                ));
+                return Ok(FragmentActivation::status(S::Invalid));
             };
-            self.pending_activation = Some((id, document.revision(), activity, links.hold()));
+            self.fragment = Some(PendingFragment {
+                id,
+                revision: document.revision(),
+                activity: Some(activity),
+                active: false,
+                destination: None,
+                decoded: String::with_capacity(mdtui3::MAX_DESTINATION_BYTES),
+                request: None,
+                target: None,
+                refined: None,
+                cancelled: false,
+                waiting: false,
+                _lease: links.hold(),
+            });
         }
-        let disposition = links.with_resolver(|resolver| {
-            self.pending_activation
-                .as_mut()
-                .unwrap()
-                .2
-                .advance_with(document, resolver, budget)
-        })?;
-        let Some(disposition) = disposition else {
-            return Ok(FragmentActivation::status(
-                FragmentActivationStatus::BudgetExhausted,
-            ));
-        };
-        self.pending_activation = None;
-        if disposition != mdtui3::LinkDisposition::Active {
-            self.link_focus = None;
-            return Ok(FragmentActivation::status(
-                FragmentActivationStatus::Invalid,
-            ));
+        let p = self.fragment.as_mut().unwrap();
+        if p.revision != document.revision() {
+            let retained = links.with_resolver(|r| r.can_rebind(document, p.revision));
+            if let Some(activity) = &mut p.activity {
+                if retained {
+                    links.with_resolver(|r| activity.rebind_with(document, r))?;
+                } else {
+                    if activity.retire_continuation(budget) != Completion::Covered {
+                        return Ok(FragmentActivation::status(S::BudgetExhausted));
+                    }
+                    p.activity = None;
+                }
+            }
+            if !retained {
+                p.active = false;
+            }
+            p.refined = None;
+            p.revision = document.revision();
+            if p.destination
+                .as_ref()
+                .is_some_and(|d| !d.is_current(document, id))
+            {
+                p.destination = None;
+                p.decoded = String::with_capacity(mdtui3::MAX_DESTINATION_BYTES);
+                p.request = None;
+                p.target = None;
+            }
         }
-        let decoded = {
-            let document = self.document.document();
-            let Some(destination) = document.link_destination(id) else {
-                return Ok(FragmentActivation::status(
-                    FragmentActivationStatus::Invalid,
-                ));
+        if !p.active {
+            if p.activity.is_none() {
+                p.activity = document.link_activity(id);
+            }
+            let Some(activity) = &mut p.activity else {
+                self.fragment = None;
+                return Ok(FragmentActivation::status(S::Invalid));
             };
-            if destination.is_empty() {
-                return Ok(FragmentActivation::status(
-                    FragmentActivationStatus::Invalid,
-                ));
-            }
-            match decode_fragment_destination(destination) {
-                Ok(decoded) => decoded.into_owned(),
-                Err(FragmentDecodeError::NotInternal) => {
-                    return Ok(FragmentActivation::status(
-                        FragmentActivationStatus::External,
-                    ));
-                }
-                Err(FragmentDecodeError::TooLong) => {
-                    return Ok(FragmentActivation::status(
-                        FragmentActivationStatus::Invalid,
-                    ));
-                }
-            }
-        };
-        let document = self.document.document();
-        if !document.is_finished() {
-            return Ok(FragmentActivation::status(
-                FragmentActivationStatus::PendingDocument,
-            ));
-        }
-        let Some(anchors) = self.anchors.as_ref() else {
-            return Ok(FragmentActivation::status(
-                FragmentActivationStatus::PendingIndex,
-            ));
-        };
-        if anchors.revision() != document.revision() || !anchors.is_complete() {
-            return Ok(FragmentActivation::status(
-                FragmentActivationStatus::PendingIndex,
-            ));
-        }
-        let step = {
-            let mut lookup = match anchors.fragment(&decoded) {
-                Ok(lookup) => lookup,
-                Err(LayoutError::InvalidRange) => {
-                    return Ok(FragmentActivation::status(
-                        FragmentActivationStatus::Invalid,
-                    ));
-                }
-                Err(error) => return Err(error.into()),
+            let result = links.with_resolver(|r| activity.advance_with(document, r, budget))?;
+            let Some(result) = result else {
+                return Ok(FragmentActivation::status(S::BudgetExhausted));
             };
-            match lookup.advance(document, budget) {
-                Ok(step) => step,
-                Err(LayoutError::InvalidRange) => {
-                    return Ok(FragmentActivation::status(
-                        FragmentActivationStatus::Invalid,
-                    ));
+            if activity.retire_continuation(budget) != Completion::Covered {
+                return Ok(FragmentActivation::status(S::BudgetExhausted));
+            }
+            p.activity = None;
+            if result != mdtui3::LinkDisposition::Active {
+                self.fragment = None;
+                return Ok(FragmentActivation::status(S::Invalid));
+            }
+            p.active = true;
+        }
+        if p.destination.is_none() {
+            let Some(raw) = document.link_destination(id) else {
+                self.fragment = None;
+                return Ok(FragmentActivation::status(S::Invalid));
+            };
+            if raw.is_empty() {
+                self.fragment = None;
+                return Ok(FragmentActivation::status(S::Invalid));
+            }
+            if !raw.starts_with('#') {
+                self.fragment = None;
+                return Ok(FragmentActivation::status(S::External));
+            }
+            if raw.len() > mdtui3::MAX_DESTINATION_BYTES {
+                self.fragment = None;
+                return Ok(FragmentActivation::status(S::Invalid));
+            }
+            p.destination = document.link_destination_task(id);
+        }
+        if p.request.is_none() {
+            loop {
+                match p.destination.as_mut().unwrap().advance(document, budget)? {
+                    Err(_) => return Ok(FragmentActivation::status(S::BudgetExhausted)),
+                    Ok(Some(chunk)) => p.decoded.push_str(chunk.text),
+                    Ok(None) => break,
                 }
-                Err(error) => return Err(error.into()),
             }
+            let decoded = Arc::new(std::mem::take(&mut p.decoded));
+            p.request = Some(self.slugs.fragment_owned(decoded)?);
+        }
+        self.anchors_started = true;
+        let result = links.with_resolver(|r| {
+            self.slugs
+                .fragment_with_resolver(document, r, p.request.as_mut().unwrap(), budget)
+        });
+        let result = match result {
+            Ok(v) => v,
+            Err(LayoutError::InvalidRange) => {
+                self.fragment = None;
+                return Ok(FragmentActivation::status(S::Invalid));
+            }
+            Err(e) => return Err(e.into()),
         };
-        let target = match step {
-            FragmentStep::Resolved(target) => target,
-            FragmentStep::BudgetExhausted => {
+        let target = match result {
+            FragmentStep::Resolved(t) => t,
+            FragmentStep::BudgetExhausted | FragmentStep::IndexIncomplete => {
                 return Ok(FragmentActivation::status(
-                    FragmentActivationStatus::BudgetExhausted,
-                ));
-            }
-            FragmentStep::IndexIncomplete => {
-                return Ok(FragmentActivation::status(
-                    FragmentActivationStatus::PendingIndex,
+                    if self.slugs.is_current(document) {
+                        S::BudgetExhausted
+                    } else {
+                        S::PendingIndex
+                    },
                 ));
             }
             FragmentStep::Unresolved => {
-                return Ok(FragmentActivation::status(
-                    FragmentActivationStatus::PendingDocument,
-                ));
+                p.waiting = true;
+                return Ok(FragmentActivation::status(S::PendingDocument));
             }
             FragmentStep::NotFound => {
-                return Ok(FragmentActivation::status(
-                    FragmentActivationStatus::NotFound,
-                ));
+                self.fragment = None;
+                return Ok(FragmentActivation::status(S::NotFound));
             }
         };
-        let moved = match self.refine_source_to_top(target.source, budget)? {
-            RefineJump::Ready(moved) => moved,
-            RefineJump::Pending => {
-                return Ok(FragmentActivation::status(
-                    FragmentActivationStatus::BudgetExhausted,
-                ));
+        if p.target != Some(target) {
+            p.refined = None;
+            p.target = Some(target);
+        }
+        let refined = p.refined.take();
+        let refined = if let Some(target) = refined {
+            RefineTarget::Ready(target)
+        } else {
+            self.refine_target(target.source, budget)?
+        };
+        let moved = match refined {
+            RefineTarget::Pending => return Ok(FragmentActivation::status(S::BudgetExhausted)),
+            RefineTarget::NotFound => {
+                self.fragment = None;
+                return Ok(FragmentActivation::status(S::NotFound));
             }
-            RefineJump::NotFound => {
-                return Ok(FragmentActivation::status(
-                    FragmentActivationStatus::NotFound,
-                ));
+            RefineTarget::Failed => {
+                self.fragment = None;
+                return Ok(FragmentActivation::status(S::Failed));
             }
-            RefineJump::Failed => {
-                return Ok(FragmentActivation::status(FragmentActivationStatus::Failed));
+            RefineTarget::Empty => false,
+            RefineTarget::Ready(refined) => {
+                let p = self.fragment.as_mut().unwrap();
+                // The successful refiner may have consumed this frame's last
+                // unit. Keep its answer, then revalidate the current owner on
+                // the next frame before committing any navigation/history.
+                let current = links.with_resolver(|r| {
+                    self.slugs.fragment_with_resolver(
+                        self.document.document(),
+                        r,
+                        p.request.as_mut().unwrap(),
+                        budget,
+                    )
+                })?;
+                if current != FragmentStep::Resolved(target) {
+                    p.refined = Some(refined);
+                    return Ok(FragmentActivation::status(S::BudgetExhausted));
+                }
+                self.commit_refined_source(refined)?
             }
         };
-        Ok(FragmentActivation::moved(target, moved))
+        self.fragment = None;
+        if links.enable_fragment_titles() {
+            self.viewport.refresh_fragment_titles();
+            self.cached_body = None;
+        }
+        if self.anchor_lease.is_none() && links.with_resolver(|r| r.style_memo_entries() != 0) {
+            self.anchor_lease = Some(links.hold());
+        }
+        let result = FragmentActivation::moved(target, moved);
+        self.fragment_serial += 1;
+        self.fragment_success = Some(result);
+        self.body_dirty = true;
+        Ok(result)
+    }
+    fn commit_refined_source(&mut self, target: RefinedTarget) -> Result<bool, FrameError> {
+        self.pending_jump = None;
+        self.pending_sidebar_activate = false;
+        self.navigator.navigate(
+            self.document.document(),
+            self.viewport.heights(),
+            NavAction::Source(target.source),
+            u64::from(self.geometry.rows),
+        );
+        self.navigator.reconcile(
+            self.viewport.heights(),
+            target.row,
+            u64::from(self.geometry.rows),
+        );
+        self.reconcile_scrolled_source = false;
+        let moved = self.viewport.set_top_from_refinement(
+            self.document.document(),
+            target.anchor,
+            target.line_start,
+            target.line_start,
+            target.status != RefineStatus::Approximate,
+        )?;
+        if moved {
+            self.links = None;
+        }
+        Ok(moved)
     }
 
     fn refine_source_to_top(

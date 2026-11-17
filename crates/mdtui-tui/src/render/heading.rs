@@ -43,12 +43,19 @@ impl From<ScreenError> for HeadingError {
 /// Preserve source and object identity while applying the inherited style's
 /// base-then-emphasis order. Images remain visible and clickable in every block.
 pub(crate) fn compose_inline_input(input: &DisplayInput) -> DisplayInput {
+    compose_input(input, false)
+}
+fn compose_input(input: &DisplayInput, keep_links: bool) -> DisplayInput {
     let mut base = Vec::new();
     let mut emphasis = Vec::new();
     let mut current: Option<(u8, Vec<crate::render::input::InputToken>)> = None;
     for token in input.tokens() {
         let image = token.style.contains(StyleRole::IMAGE);
-        if token.link.is_some() && !image && !token.style.contains(StyleRole::LITERAL_LINK) {
+        if !keep_links
+            && token.link.is_some()
+            && !image
+            && !token.style.contains(StyleRole::LITERAL_LINK)
+        {
             if let Some((_, group)) = current.take() {
                 emphasis.push(group);
             }
@@ -118,7 +125,34 @@ pub(crate) fn render_heading_input(
     screen: &mut Screen,
     row: u16,
 ) -> Result<u16, HeadingError> {
-    let input = compose_inline_input(input);
+    render_composed_heading(heading, &compose_inline_input(input), screen, row)
+}
+/// Live destinations must remain readable when the inherited presentation
+/// would omit every non-whitespace label. Keep the old formatter contract for
+/// mixed headings; the fallback preserves visible label source and LinkId.
+pub(crate) fn render_live_heading_input(
+    heading: &Heading,
+    input: &DisplayInput,
+    screen: &mut Screen,
+    row: u16,
+) -> Result<u16, HeadingError> {
+    let mut composed = compose_inline_input(input);
+    if composed.tokens().iter().all(|t| t.text.is_whitespace())
+        && input
+            .tokens()
+            .iter()
+            .any(|t| t.link.is_some() && !t.text.is_whitespace())
+    {
+        composed = compose_input(input, true);
+    }
+    render_composed_heading(heading, &composed, screen, row)
+}
+fn render_composed_heading(
+    heading: &Heading,
+    input: &DisplayInput,
+    screen: &mut Screen,
+    row: u16,
+) -> Result<u16, HeadingError> {
     let content = screen.content_area();
     let style = StyleRole::heading(heading.level);
     let mut cursor = TextCursor::new(content.x);

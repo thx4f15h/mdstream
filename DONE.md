@@ -3161,3 +3161,12 @@ TextPayload 使用固定 inline 或共享 source/property descriptor，front/bac
 取消按UTF8标量而非replacement atom收尾：一个实体可同时产生两个标量，旧路径会在q后多发第二个标量。`&NotEqualTilde;`的真实红例现在只补齐U2242的两字节尾部，不发送后续U0338。OSC8控制串也按完整UTF8边界暂存至多8字节，实际write继续受当前byte credit限制；8种chunk对齐、单字节短写/EAGAIN与q回归验证最多3个当前标量尾字节。固定cleanup的实际长度为NoOsc8模式15字节、允许OSC8模式22字节，与终端最后的session恢复操作分账。
 
 共享源码范围的 replacement 可能产生多个可见字素，y 快捷复制现在只采用首尾均完整覆盖 source atom 的 payload，其余走原预算化显示投影；图片占位、双字符实体、tab 与附加 combining 的真实 y/Y 回归通过。最终 debug 新跑2752项，另3个源码和调用路径未受影响的大规模用例继承此前完整通过记录；完整 release2751项、doc83项和九项门槛均通过，根另验严格 rustdoc 与真实内核背压下 q/resize/同时按键三个PTY场景。冻结输入、继承关系和实际日志分开保留。
+
+
+## 2026-11-18 跨 revision 标题 slug/fragment 维护与 preEOF 激活
+
+原 TODO67/202 的当前结果维护现由 `HeadingSlugSession`、`CurrentFragment` 和分页 source/rope/radix/数值 AVL 路线接入生产；每个结果等于最新独立 cold build，保留全局 greedy 全名称碰撞、原 Unicode/percent 合同、provisional 与 first-win，不使用 sticky 编号或历史 alias。旧显式 stale APIs 和 HeadingId/source 身份保持。Typed effects 的发现、当前 metadata/共享 resolver、真正 changed-base 精确比较、全局消歧级联、请求取消与 graph/map 退役均纳入 Budget，正文/BodyKey 局部标题不进入根依赖。
+
+真实 TUI 已在 EOF 前执行 Enter 和左键 fragment 激活，同请求跨帧解码及 SourceRefiner 续跑；提交前重新核对 owner，只有成功写一次源码 history。实际 held-FIFO PTY、vt100 网格、晚定义在 refiner 中改名、返回/前进与 resize 已覆盖；正文折叠 Reveal、目录名称/显示搜索跨 revision 维护仍是独立原待办。
+
+独立 batch oracle、全部字节切点/前缀与 finish、merged/queued/late subscription、容器/同 tile/迟 Setext/header rollback/代码规范化、Unicode/百分号错误尾、owner/顺序/zero/微预算、lease/cancel/retire 均在新增测试中。原生独立 competitor 百万增长精确比较 1,000,000 字节，真实 Document 百万增长同样线性比较；20,000 历史标题无旧 slug 改名、40,000 重复标题晚绑定得到 40,001 次付费改名，百万 Setext 仅 normalize 新的 5 字节。原始模型红/绿及官方数据/HTML/generator/SHA/golden 均保留。生产算法、容量口径、命令与复杂度限制见 [维护说明](docs/slug-maintenance.md)。最终常规 debug 的 2782 项通过证据由同输入实测及最终 history 专项组成；最终 release 2778 项通过，6 项原手工测试默认忽略，fmt、debug/release check、严格 clippy、doc 和严格 rustdoc 通过。根代理另验真实 FIFO 的晚绑定目标切换、标题可见性、resize 和 EOF 前 q 退出。扩展 debug 原跑 2785 项通过、2 项失败：旧 EOF-only history 预期已保留原样例并按本次 preEOF 行为分别补验；额外 64 MiB 小选区复制断言在精确已接受基线同样失败，作为独立修复待办保留，未修改其断言，不宣称扩展跑全绿。

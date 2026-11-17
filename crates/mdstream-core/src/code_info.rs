@@ -273,3 +273,54 @@ impl<'a> CodeInfo<'a> {
         }))
     }
 }
+
+/// Owned fixed decoder continuation used by revision-spanning destination tasks.
+pub(crate) struct DetachedCodeInfo {
+    remaining: Span,
+    probe: Probe,
+    decoded: [u8; 8],
+    literal: bool,
+}
+impl DetachedCodeInfo {
+    pub(crate) fn new(source: Span, literal: bool) -> Self {
+        Self {
+            remaining: source,
+            probe: Probe::Start,
+            decoded: [0; 8],
+            literal,
+        }
+    }
+    pub(crate) fn advance<'a>(
+        &'a mut self,
+        source: &str,
+        b: &mut Budget,
+    ) -> Result<Option<CodeInfoChunk<'a>>, Completion> {
+        let mut cursor = CodeInfo::new(source, self.remaining);
+        cursor.probe = self.probe;
+        cursor.decoded = self.decoded;
+        cursor.literal = self.literal;
+        let result = match cursor.advance(b) {
+            Ok(Some(chunk)) => {
+                let mut bytes = [0; 8];
+                bytes[..chunk.text.len()].copy_from_slice(chunk.text.as_bytes());
+                Ok(Some((chunk.source, bytes, chunk.text.len())))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(e),
+        };
+        self.remaining = cursor.remaining;
+        self.probe = cursor.probe;
+        self.decoded = cursor.decoded;
+        match result {
+            Ok(Some((source, bytes, len))) => {
+                self.decoded = bytes;
+                Ok(Some(CodeInfoChunk {
+                    source,
+                    text: std::str::from_utf8(&self.decoded[..len]).unwrap(),
+                }))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+}

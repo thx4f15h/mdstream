@@ -61,7 +61,7 @@ Left/Right 按绝对列一列移动，Ctrl-Left/Right 八列；目标为最上�
 
 ## 嵌套对象选择与 memo 生命周期
 
-交互准备先用可恢复 `LinkWindow` 枚举当前窗口对象，再保留 pending `LinkActivity`，通过同一 `LinkResolver`、同一 Budget 得到 Active/Unresolved/Suppressed。原始 destination/title 不再作为激活证明。`SharedLinks` 只共享一个 memo；scanner 的 `next_with_resolver`、LayoutPass、目录 excerpt、EOF anchors、表宽测量和激活复核均复用它，核心任务中的自有 memo 保持为空。`LayoutSink` 回调不解析父链或远端 guard。
+交互准备先用可恢复 `LinkWindow` 枚举当前窗口对象，再保留 pending `LinkActivity`，通过同一 `LinkResolver`、同一 Budget 得到 Active/Unresolved/Suppressed。原始 destination/title 不再作为激活证明。`SharedLinks` 只共享一个 memo；scanner 的 `next_with_resolver`、LayoutPass、目录 excerpt、当前 slug session、表宽测量和激活复核均复用它，核心任务中的自有 memo 保持为空。`LayoutSink` 回调不解析父链或远端 guard。
 
 父链按预算构建 presentation 摘要并 memo。外层图片 alt 平铺内部的图片/链接文本；内部对象不多生成控件，内部空图片不多生成 `[image]`。整体图片处于有效外层链接时使用该链接目标；父 Unresolved/Suppressed 不覆盖真实子图片目标。完整 alt 已在当前窗口内读完且显示为空时，只生成外层一个占位；未读完整的长标签不为判断“空”扫描屏外正文。未解析对象只恢复自己开闭边界的原始语法，不重解析 label，也不生成假图片控件；未解析子对象的字面边界仍属于外层 alt，继承外层点击归属，已解析子对象的隐藏标记保持隐藏。列表保留图片及未解析语法的原始间距，避免把占位变成 `[ image ]`。
 
@@ -78,3 +78,16 @@ Left/Right 按绝对列一列移动，Ctrl-Left/Right 八列；目标为最上�
 ## 验证命令
 
 运行命令与支持矩阵见 [crate README](../crates/mdtui-tui/README.md)。验收包含全 workspace debug/release nextest、doc、fmt、生产 clippy、TUI 全目标 clippy、64 MiB 手动计数用例及隔离 tmux 的真实 CLI。最终数量与限制记录在 [DONE](../DONE.md#2026-11-13-终端阅读器-workspace-集成)。
+
+
+## 025 当前 slug 与 preEOF fragment
+
+`FrameRuntime` 持有一个 `HeadingSlugSession`，输入 Update 用 Arc 与实际消费者共享，不复制事件数组。锚点维护不再等待 EOF，也不随 revision/resize 重建。背景维护、激活和当前 lookup 使用同一个帧 Budget 与唯一 SharedLinks resolver；目录 current/selection 继续按真实 HeadingId/source 导航，显示名称查询的显式 stale 行为保持。
+
+Tab/Enter 与发布 front cell 上的左键命中走同一激活状态。固定大小 `LinkDestinationTask` 复用核心解码器，按预算保存实体探测；至多 MAX_DESTINATION_BYTES 的原始目标对应一次预分配平面输出，移动进 Arc<String> 不再复制。当前 fragment 的 percent/UTF-8 游标和 endpoint lease 保留到结束。晚到 binding、失效 active LinkId 或 refiner 期间 owner 变化时，重新验证当前目标后才能提交。poll 成功和 Enter 成功共享完成序号，history 只写一次，前进/后退不重新解释 slug。
+
+已有当前目标时，未 EOF 不再单独构成 PendingDocument；原 history 的 `# B` / `[go](#b)` 样例现在明确验收 preEOF 成功。真正尚未出现的标题保留等待状态，已有 history 不提前变化，metadata 到达后只提交一次成功事件。fragment 成功后的 resize 按当前视口源码位置重新付费细化，不沿用重置后的估计 tile 行，也不重新解释旧 slug。
+
+`fragments_pty` 保持 FIFO 写端开启，真实按键和 SGR 左键均在没有 EOF 的情况下从等待状态自动跳到晚到标题；`fragments` 另验收 refiner 暂停后晚定义改变全局 owner、源码 history、resize 和侧栏 current。终端退出先恢复 tty/mouse，再在有限 Budget 批次中退役新 slug graph、request 和共享 memo；总析构仍有线性工作，不承诺外部 allocator/OS 操作的硬延迟。完整正文折叠的 Reveal UI 继续保留接缝。
+
+普通标题增长只投影新范围与真实 delimiter 变更；条件样式同一个 Recovery 保留上次事件与 forest，append-only 时只处理新事件/端点并更新实际覆盖 pair 的计数。当前 marker 的 revision/source 索引是当前状态，不存 revision 快照。原严格 resolver rebind API 保持，内部采用明确的 memo 保留/旧 continuation 失效接口；条件标题 lease 由 slug owner 保有，实际失效及退出付费回收。成功使用内部 fragment 后，live 窗口若按原格式只剩空白，会显示链接标签作为可读目的标题；静态 --once/原混合格式化与未启用该交互的 Reading 省略规则保持。

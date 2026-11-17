@@ -22,6 +22,9 @@ impl Utf8Document {
     pub fn enable_display_shape_effects(&mut self) -> Result<(), crate::LayoutError> {
         self.document.enable_display_shape_effects()
     }
+    pub fn heading_slug_session(&mut self) -> crate::HeadingSlugSession {
+        crate::HeadingSlugSession::new(&mut self.document)
+    }
     pub fn document(&self) -> &Document {
         &self.document
     }

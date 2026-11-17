@@ -129,6 +129,8 @@ pub struct AppState {
     last_fragment_activation: Option<FragmentActivation>,
     last_external_open: Option<ExternalOpenOutcome>,
     pending_jump_from: Option<HistoryPosition>,
+    pending_fragment_from: Option<HistoryPosition>,
+    fragment_serial: u64,
 }
 
 impl AppState {
@@ -261,6 +263,10 @@ impl AppState {
         let end_cancelled = cancel && engine.pause_following();
         if cancel {
             self.pending_jump_from = None;
+            if action != KeyAction::Activate {
+                engine.runtime_mut().cancel_fragment();
+                self.pending_fragment_from = None;
+            }
         }
         match action {
             KeyAction::Quit => outcome.quit = true,
@@ -344,17 +350,17 @@ impl AppState {
                         let from = engine.navigation_position();
                         let activation = engine.activate_focused_link()?;
                         let external = engine.last_external_open();
-                        if engine.runtime().has_pending_jump() {
-                            self.pending_jump_from = from;
+                        if self.pending_fragment_from.is_none() {
+                            self.pending_fragment_from = from;
                         }
-                        if activation.status.is_success() {
-                            let to = activation.target.map(|target| HistoryPosition {
-                                source: target.source,
-                                row_offset: engine
-                                    .navigation_position()
-                                    .map_or(0, |position| position.row_offset),
-                            });
-                            self.record_history_jump(from, to);
+                        self.commit_fragment(engine);
+                        if !matches!(
+                            activation.status,
+                            crate::fragment::FragmentActivationStatus::BudgetExhausted
+                                | crate::fragment::FragmentActivationStatus::PendingIndex
+                                | crate::fragment::FragmentActivationStatus::PendingDocument
+                        ) {
+                            self.pending_fragment_from = None;
                         }
                         outcome.redraw = activation.moved
                             || activation.status.shows_notice()
@@ -420,7 +426,40 @@ impl AppState {
         })
     }
 
+    fn commit_fragment(&mut self, engine: &StreamEngine) {
+        let (serial, result) = engine.runtime().fragment_completion();
+        if serial == self.fragment_serial {
+            return;
+        }
+        self.fragment_serial = serial;
+        if let Some(result) = result {
+            self.last_fragment_activation = Some(result);
+            let from = self.pending_fragment_from.take();
+            let to = result.target.map(|t| HistoryPosition {
+                source: t.source,
+                row_offset: engine.navigation_position().map_or(0, |p| p.row_offset),
+            });
+            self.record_history_jump(from, to);
+        }
+    }
+    pub fn click_link(
+        &mut self,
+        engine: &mut StreamEngine,
+        row: u16,
+        col: u16,
+    ) -> Result<AppOutcome, StreamError> {
+        if !engine.runtime_mut().focus_link_at(row, col) {
+            return Ok(AppOutcome::default());
+        }
+        self.focus = FocusTarget::Link;
+        self.handle_key(
+            engine,
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        )
+    }
     pub fn frame_committed(&mut self, engine: &StreamEngine) {
+        self.commit_fragment(engine);
         if !engine.runtime().has_pending_jump()
             && let Some(from) = self.pending_jump_from.take()
         {

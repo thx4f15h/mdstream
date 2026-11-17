@@ -423,7 +423,7 @@ fn external_activation_does_not_change_an_existing_history_entry() {
 
 #[test]
 fn pending_fragment_does_not_change_an_existing_history_entry() {
-    let source = "# A\n\na\n\n# B\n\n[go](#b)\n\nb\n";
+    let source = "# A\n\na\n\n# B\n\n[go](#missing)\n\nb\n";
     let mut writer = Vt100Writer::new(HEIGHT, WIDTH);
     let mut engine = started_engine(source, &mut writer);
     let mut app = AppState::default();
@@ -442,6 +442,27 @@ fn pending_fragment_does_not_change_an_existing_history_entry() {
     );
     assert_eq!(app.history().current(), history);
     assert_eq!(engine.runtime().top_source(), top);
+    let pending_history = app.history().clone();
+    settle(&mut engine, &mut writer, Duration::from_secs(1));
+    app.frame_committed(&engine);
+    assert_eq!(app.history(), &pending_history);
+    engine
+        .ingest_data(b"\n# Missing\n\nlate target\n", Duration::from_secs(2))
+        .unwrap();
+    for i in 0..10 {
+        settle(
+            &mut engine,
+            &mut writer,
+            Duration::from_secs(3) + Duration::from_millis(i * 40),
+        );
+        app.frame_committed(&engine);
+    }
+    let target = engine.document().headings().entries()[2].source.start;
+    assert_eq!(app.history().last_source(), Some(target));
+    assert_eq!(app.history().len(), pending_history.len() + 1);
+    app.frame_committed(&engine);
+    assert_eq!(app.history().len(), pending_history.len() + 1);
+    assert!(!engine.document().is_finished());
 }
 
 #[test]
@@ -465,4 +486,33 @@ fn not_found_fragment_does_not_change_an_existing_history_entry() {
     );
     assert_eq!(app.history().current(), history);
     assert_eq!(engine.runtime().top_source(), top);
+}
+
+#[test]
+fn current_pre_eof_fragment_uses_the_original_existing_heading_sample() {
+    // This original history fixture used to wait solely for EOF. It now has a
+    // current target before EOF; keep the sample and verify one successful event.
+    let source = "# A\n\na\n\n# B\n\n[go](#b)\n\nb\n";
+    let mut writer = Vt100Writer::new(HEIGHT, WIDTH);
+    let mut engine = started_engine(source, &mut writer);
+    let mut app = AppState::default();
+    jump_to_second_heading(&mut app, &mut engine, &mut writer);
+    focus_link_from_sidebar(&mut app, &mut engine, &mut writer);
+    let target = engine.document().headings().entries()[1].source.start;
+    let before = app.history().len();
+    let activation = app
+        .handle_key(&mut engine, KeyCode::Enter, KeyModifiers::NONE)
+        .expect("current preEOF activation")
+        .fragment_activation
+        .unwrap();
+    assert!(activation.status.is_success());
+    assert_eq!(activation.target.unwrap().source, target);
+    assert!(activation.target.unwrap().provisional);
+    assert_eq!(app.history().last_source(), Some(target));
+    assert!(app.history().len() <= before + 1);
+    let recorded = app.history().clone();
+    settle(&mut engine, &mut writer, Duration::ZERO);
+    app.frame_committed(&engine);
+    assert_eq!(app.history(), &recorded);
+    assert!(!engine.document().is_finished());
 }

@@ -1285,13 +1285,44 @@ loop {
 
 `fragment` 只接收以 `#` 开头的 URI fragment，O(1) 借用输入和索引；完整 URL 的拆分由调用方完成；Markdown destination 的实体/反斜杠可先用 `decoded_link_destination` 按预算解码。解析百分号转义一次，校验解码后的 UTF-8，然后按字节精确匹配；`+` 保持字面值，大小写敏感，不再对 fragment 生成 slug。非法转义、非法 UTF-8 或缺少开头 `#` 返回 `InvalidRange`；即使已知名称不存在，也继续按预算校验剩余编码。`#` 表示源码 0，`heading: None`；空标题通过 `#section` 等名字寻址。未完成索引返回 `IndexIncomplete`，调用方释放 lookup、推进索引后重新查询；完整索引中的缺失目标在流式文档返回 `Unresolved`，在 finish 后返回 `NotFound`。完成的查询可免费重复读取。
 
-标题 slug 和目标在首次 `finish` 前一律标为 `provisional`，包括已经局部封口的标题：长 ATX 继续增长、行内晚闭合、晚到引用定义和 Setext 转换都可能改变显示文本及消歧结果。索引、lookup 和输出绑定文档身份/revision，追加或首次 finish 后须丢弃并显式重建；错误文档/过期任务在扣费前返回 `WrongDocument` / `StaleContinuation`，空追加和重复 finish 不失效。finish 后结果固定。库不自动维护跨 revision 的 slug；反复显式重建的总成本由调用方调度，不能当作跨追加增量索引。稳定的 `HeadingId` 与源码目标可继续用于现有导航/书签，但旧 slug 到该目标的对应关系不能沿用。
+标题 slug 和目标在首次 `finish` 前一律标为 `provisional`，包括已经局部封口的标题：长 ATX 继续增长、行内晚闭合、晚到引用定义和 Setext 转换都可能改变显示文本及消歧结果。索引、lookup 和输出绑定文档身份/revision，追加或首次 finish 后须丢弃并显式重建；错误文档/过期任务在扣费前返回 `WrongDocument` / `StaleContinuation`，空追加和重复 finish 不失效。finish 后结果固定。`HeadingAnchors` 不自动维护跨 revision 的 slug；需要当前结果时使用下方 `HeadingSlugSession`。反复显式重建的总成本由调用方调度，不能当作跨追加增量索引。稳定的 `HeadingId` 与源码目标可继续用于现有导航/书签，但旧 slug 到该目标的对应关系不能沿用。
 
 标题初始化和消歧候选检查各消费 1 query / 1 object；显示读取沿用 `DisplayCursor` 计费（包含隐藏语法和重复前瞻），每个规范化标量另消费输入 UTF-8 字节数与 1 object，每个输出 trie 字节消费 1 byte / 1 object。fragment 每个原始字节或 `%HH` 分别消费 1 或 3 bytes、1 object，最终查询消费 1 query / 1 object；非法编码也计费。两类任务每帧 6 bytes、1 query、1 object 均可持续推进，长标题不会截断或退化成摘要哈希。目标包含精确标题起点，可交给 `FoldNavigation::Reveal` 展开必要路径；索引和查询自身不改变折叠、高度或布局。
 
 索引以字节 trie 保存名字，每个节点至多 256 条有序边，避免长字符串比较和哈希碰撞；重复 base 的后缀计数单调推进，后缀候选从 base 节点开始，不重复遍历长前缀。设 S 为标题内容源码总字节、H 为标题数，单 revision 构建为 O((S + 1) log(n + 1) + H log(H + 1))，空间 O(S + H)。失败的数字候选已属于旧标题，且由唯一的 base 产生，因此总失败探测 O(H)；连续数字的 trie 前缀共享，后缀总节点 O(H)。`AnchorSlug` 只保存借用的 base 和整数后缀；显式 `Display`/`to_string()` 由调用方承担 O(slug 长度) 的格式化成本。借用结果 O(1)，长度 m 的 fragment 查询总计 O(m)、任务空间 O(1)。String/Vec/树节点的分配成本按摊还计，不承诺 allocator 的硬时延。
 
-`cargo run -p mdstream-core -r --example anchors` 演示小预算索引、碰撞、晚到中文目标、百分号 fragment 和折叠导航。测试覆盖所有 UTF-8 单切点、长 ATX 逐前缀、显示语义、Unicode、错误身份/过期与各预算维度，包含固定种子模型、百万字 Setext/长 fragment 和 4 万标题消歧的工作量与存储检查。链接点击和目录 UI 继续留待接入阶段。
+`cargo run -p mdstream-core -r --example anchors` 演示小预算索引、碰撞、晚到中文目标、百分号 fragment 和折叠导航。测试覆盖所有 UTF-8 单切点、长 ATX 逐前缀、显示语义、Unicode、错误身份/过期与各预算维度，包含固定种子模型、百万字 Setext/长 fragment 和 4 万标题消歧的工作量与存储检查。原示例只展示核心冷索引；当前 TUI 的维护与激活见下节。
+
+## 跨 revision 的当前 slug 与 fragment
+
+`HeadingSlugSession` 是当前结果的长期 owner，旧 `HeadingAnchors` / `FragmentLookup` 的显式 stale 合同保持。新增能力沿用上节的原始逻辑显示文本、Unicode 小写、每个空白一个 `-`、全局源序贪心消歧和严格 percent/UTF-8 合同。每个可返回结果都等于同一最新 revision 的独立 cold build；不保留历史别名或 sticky 后缀。根与容器标题共同消歧，BodyKey 局部标题不进入根索引。
+
+```rust
+use std::sync::Arc;
+use mdstream::{Budget, Completion, Document, FragmentStep, HeadingSlugSession, WorkLimit};
+let mut doc=Document::new();
+let mut slugs=HeadingSlugSession::new(&mut doc);
+let mut request=slugs.fragment(Arc::from("#guide"))?;
+let update=Arc::new(doc.append("# Guide\n")?);
+slugs.observe(&doc,update)?;
+// 实际 UI 每帧使用自己的有限共享 Budget；此处用无限预算展示完整结果。
+let mut budget=Budget::new(WorkLimit::unlimited());
+assert_eq!(slugs.advance(&doc,&mut budget)?,Completion::Covered);
+let FragmentStep::Resolved(target)=slugs.advance_fragment(&doc,&mut request,&mut budget)? else {panic!()};
+assert_eq!(target.source,0);
+assert!(target.provisional); // 尚未 finish，已局部封口的标题也保持 provisional。
+drop(request); // 只排队固定大小取消；advance/retire 支付 lease 与图退役。
+assert_eq!(slugs.retire(&doc,&mut budget)?,Completion::Covered);
+# Ok::<(),Box<dyn std::error::Error>>(())
+```
+
+`new` 可在已有文档上 O(1) 订阅；之后每个连续宿主 `Arc<Update>` 必须按顺序 `observe`，也接受正确合并的 Update。observe 不遍历事件、标题或历史引用。`advance` 在 Budget 内处理 typed effects、当前 canonical annotation/style/link 事实、新源字符、实际受影响标题及重复消歧级联。既有源码只 normalize 一次；分页的 raw/code 摘要支持迟 Setext、代码闭合和 CRLF，实体生成值缓存一次。正文引用不建立标题依赖。未变化标题不重新读取文字；一般 changed-base 的必要精确比较 X、真正 D/P 级联及退休均如实计费。输入 parser 仍为累计 O(n log n)、空间 O(n)，定义发布不枚举旧 use；维护任务的实际 rope/trie/数值树/比较步数与标准有序容器查询另计，不能宣称任意 revision 更新都是 O(1) 或普遍 D/P-only。
+
+`advance_fragment` 保存 percent/UTF-8 进度和一个不占名称的 trie endpoint lease，每次读取它的当前 owner，不保存旧 target。维护未齐返回 `BudgetExhausted`；当前缺失为 `Unresolved`，finish 后为 `NotFound`。微预算 1 query / 1 object / 6 bytes 可前进，错误 owner/顺序先拒绝。`get` 只借用当前 base rope 与数字后缀，使用 `CurrentSlug::next_byte` 分帧读取完整 UTF-8 字节，不复制长 slug。暂停维护期间 get 明确拒绝读取；resize 不重建索引。`stats` 是诊断操作，包含暂停 lane、固定页、逻辑 map payload、队列与 resolver；私有 BTreeMap slack/header、allocator 开销及调用方共享原始 Arc 输入另计，request 提供自身容量。不是 allocator 硬时延承诺。
+
+TUI 的 Tab/Enter 与左键命中已使用该 session；同一请求跨帧继续 destination 的实体/escape 解码与一次 percent 解码。SourceRefiner 完成后复核当前 owner，晚定义或改名不能提交旧目标。成功启用内部 fragment 导航后，若目的标题按既有排版规则只剩空白，则 live 窗口保留链接标签及来源；静态格式化器和未启用该交互的原 Reading 省略规则保持。只有成功跳转通过一个完成序号写 history；poll 与 Enter 共用提交，返回/前进按存储源码恢复。缺失目标等待更多输入，pending/invalid/missing 不移动。源码目标保留 `FoldNavigation::Reveal` 接缝，完整正文折叠 UI 与显示名称搜索跨 revision 维护继续按原 TODO 独立验收。
+
+实现说明见 [slug maintenance](docs/slug-maintenance.md)，可运行 `cargo run -r -p mdstream-core --example slug_maintenance -- growth 1000000`；还提供 history/cascade/setext/queries 模式。核心 oracle、全切点/前缀、生命周期与预算在 `tests/slug_session.rs`，原生反例与随机全局消歧在模块测试；真实 held-FIFO preEOF Enter/鼠标在 `fragments_pty`，改名、refiner 中途复核、history/resize 和目录 current 在 `fragments`。
 
 ## 共享预算与增量缓存
 

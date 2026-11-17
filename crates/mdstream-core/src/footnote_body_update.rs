@@ -9,6 +9,10 @@ pub struct BodyUpdate {
     pub(super) local: Box<Update>,
 }
 impl BodyUpdate {
+    pub(crate) fn into_local(self) -> Update {
+        *self.local
+    }
+
     pub fn body(&self) -> BodyKey {
         self.body
     }

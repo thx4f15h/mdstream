@@ -203,7 +203,7 @@ fn charge(budget: &mut Budget, recovery: usize, dependencies: usize) -> bool {
 }
 struct Evaluation {
     root: Option<usize>,
-    stack: Vec<(usize, u8)>,
+    stack: crate::inline_styles::Pages<(usize, u8)>,
     result: Option<bool>,
 }
 impl Evaluation {
@@ -213,7 +213,7 @@ impl Evaluation {
                 Guard::Node(i) => Some(i),
                 _ => None,
             },
-            stack: Vec::new(),
+            stack: Default::default(),
             result: match root {
                 Guard::Never => Some(false),
                 Guard::Always => Some(true),
@@ -229,12 +229,7 @@ impl Evaluation {
         recovery: usize,
     ) -> bool {
         while self.result.is_none() {
-            let (id, phase) = self
-                .stack
-                .last()
-                .copied()
-                .or(self.root.map(|i| (i, 0)))
-                .unwrap();
+            let (id, phase) = self.stack.last().or(self.root.map(|i| (i, 0))).unwrap();
             let node = document.link_guards.nodes[id];
             let symbol = match node {
                 Node::Target(link) => match document.links[link.0] {
@@ -313,6 +308,25 @@ pub struct LinkActivity {
     memo: Option<usize>,
 }
 impl LinkActivity {
+    /// Pay removal of a paused guard stack before abandoning this activity.
+    pub fn retire_continuation(&mut self, b: &mut Budget) -> crate::Completion {
+        while !self.evaluation.stack.is_empty() {
+            if !charge(b, 0, 0) {
+                return crate::Completion::BudgetExhausted;
+            }
+            self.evaluation.stack.pop();
+        }
+        crate::Completion::Covered
+    }
+    pub fn continuation_capacity(&self) -> usize {
+        self.evaluation.stack.capacity_bytes()
+    }
+    pub(crate) fn continuation_entries(&self) -> usize {
+        self.evaluation.stack.len()
+    }
+    pub(crate) fn retire_one(&mut self) {
+        self.evaluation.stack.pop();
+    }
     pub fn rebind_with(
         &mut self,
         document: &Document,
@@ -353,6 +367,10 @@ impl LinkActivity {
         self.resolution.memo_entries()
     }
     pub fn retire(&mut self, budget: &mut Budget) -> crate::Completion {
+        self.resolution.retiring = true;
+        if self.retire_continuation(budget) != crate::Completion::Covered {
+            return crate::Completion::BudgetExhausted;
+        }
         self.evaluation = Evaluation::new(Guard::Never);
         self.result = None;
         self.stage = 0;
@@ -448,7 +466,7 @@ impl LinkActivity {
 
 struct OwnerTask {
     current: Option<LinkId>,
-    path: Vec<(LinkId, bool)>,
+    path: crate::inline_styles::Pages<(LinkId, bool)>,
     activity: Option<LinkActivity>,
     stage: u8,
     base: Owner,
@@ -458,7 +476,7 @@ impl OwnerTask {
     fn new(id: LinkId) -> Self {
         Self {
             current: Some(id),
-            path: Vec::new(),
+            path: Default::default(),
             activity: None,
             stage: 0,
             base: Owner::default(),
@@ -556,6 +574,66 @@ pub(crate) struct MarkTask {
     memo: Option<usize>,
 }
 impl MarkTask {
+    pub(crate) fn valid_memo(&self, r: &Resolution) -> bool {
+        self.memo.is_none_or(|t| t == r.token)
+    }
+    pub(crate) fn retain_revision(&mut self, doc: &Document) {
+        if let Some(a) = &mut self.activity {
+            a.rebind_shared_revision(doc);
+        }
+        if let Some(o) = &mut self.owner
+            && let Some(a) = &mut o.activity
+        {
+            a.rebind_shared_revision(doc);
+        }
+    }
+    pub(crate) fn retire_continuation(&mut self, budget: &mut Budget) -> bool {
+        loop {
+            let a = self
+                .activity
+                .as_mut()
+                .filter(|a| !a.evaluation.stack.is_empty());
+            if let Some(a) = a {
+                if !charge(budget, 0, 0) {
+                    return false;
+                }
+                a.evaluation.stack.pop();
+                continue;
+            }
+            if let Some(owner) = &mut self.owner {
+                if !owner.path.is_empty() {
+                    if !charge(budget, 0, 0) {
+                        return false;
+                    }
+                    owner.path.pop();
+                    continue;
+                }
+                if let Some(a) = owner
+                    .activity
+                    .as_mut()
+                    .filter(|a| !a.evaluation.stack.is_empty())
+                {
+                    if !charge(budget, 0, 0) {
+                        return false;
+                    }
+                    a.evaluation.stack.pop();
+                    continue;
+                }
+            }
+            return true;
+        }
+    }
+    pub(crate) fn continuation_capacity(&self) -> usize {
+        self.activity
+            .as_ref()
+            .map_or(0, |a| a.evaluation.stack.capacity_bytes())
+            + self.owner.as_ref().map_or(0, |o| {
+                o.path.capacity_bytes()
+                    + o.activity
+                        .as_ref()
+                        .map_or(0, |a| a.evaluation.stack.capacity_bytes())
+            })
+    }
     pub(crate) fn new(mark: crate::annotations::Mark) -> Self {
         Self {
             marker: [mark.hide_owner(), mark.alternative_owner()],
@@ -672,6 +750,101 @@ pub struct LinkResolver {
     pub(crate) resolution: Resolution,
 }
 impl LinkResolver {
+    pub(crate) fn slug_binding(&self) -> (u64, usize, usize) {
+        (self.revision, self.source_len, self.link_count)
+    }
+    /// The caller has visited every intervening typed effect under Budget.
+    pub(crate) fn slug_rebind(
+        &mut self,
+        doc: &Document,
+        base: u64,
+        preserved: bool,
+    ) -> Result<bool, LayoutError> {
+        if self.document != doc.id() {
+            return Err(LayoutError::WrongDocument);
+        }
+        if self.revision != base {
+            return Err(LayoutError::StaleContinuation);
+        }
+        if !preserved || self.resolution.retiring {
+            return Ok(false);
+        }
+        self.revision = doc.revision();
+        self.source_len = doc.source().len();
+        self.link_count = doc.links().len();
+        Ok(true)
+    }
+    pub(crate) fn slug_invalidate_continuations(&mut self, doc: &Document) {
+        self.retained_revision = doc.revision();
+    }
+    pub(crate) fn slug_append_style(
+        &mut self,
+        doc: &Document,
+        scope: usize,
+        event: crate::DisplayShapeStyleEvent,
+    ) -> bool {
+        self.retained_revision = doc.revision();
+        self.resolution.styles.append_style(doc, scope, event)
+    }
+    /// Retain memo values and append-only canonical style recovery, while
+    /// invalidating older prepared display continuations. The legacy stricter
+    /// rebind_display_shape contract remains unchanged.
+    pub fn rebind_current_slugs(
+        &mut self,
+        document: &Document,
+        update: &crate::Update,
+    ) -> Result<bool, LayoutError> {
+        use crate::DisplayShapeEffectKind as E;
+        if self.document != document.id() || update.document != Some(self.document) {
+            return Err(LayoutError::WrongDocument);
+        }
+        if self.revision != update.base_revision || document.revision() != update.revision {
+            return Err(LayoutError::StaleContinuation);
+        }
+        if self.resolution.retiring || !update.display_shape.enabled() {
+            return Ok(false);
+        }
+        for effect in update.display_shape.events() {
+            let changed = match effect.kind {
+                E::ScopeEvent { scope, event, .. } => {
+                    !self.slug_append_style(document, scope, event)
+                }
+                E::Mark { source, mark } => {
+                    if source.start < self.source_len {
+                        self.retained_revision = document.revision();
+                    }
+                    source.start < self.source_len
+                        && (mark.base_hidden
+                            || mark.link.is_some()
+                            || mark.hide_owner.is_some()
+                            || mark.hide_alternative.is_some())
+                }
+                E::Replacement { source, .. } => source.start < self.source_len,
+                E::TruncateReplacements { .. }
+                | E::Rollback(_)
+                | E::Math { .. }
+                | E::Footnote { .. }
+                | E::FootnoteReference { .. } => true,
+                E::Link { id, .. }
+                | E::LinkGate { id, .. }
+                | E::LinkParent { id, .. }
+                | E::LinkActive { id, .. }
+                | E::LinkState { id, .. } => id.0 < self.link_count,
+                E::Reference { id, .. } => document
+                    .references()
+                    .get(id.0)
+                    .is_some_and(|r| r.first_use.is_some_and(|at| at < self.source_len)),
+                _ => false,
+            };
+            if changed {
+                return Ok(false);
+            }
+        }
+        self.revision = update.revision;
+        self.source_len = document.source().len();
+        self.link_count = document.links().len();
+        Ok(true)
+    }
     /// Retain the current memo only when typed effects prove all previous
     /// bindings and classified scopes unchanged. Does not replay source text.
     pub fn rebind_display_shape(
@@ -768,6 +941,13 @@ impl LinkResolver {
             revision: self.revision,
             resolution: Resolution::default(),
         }
+    }
+    /// Diagnostic payload capacity; excludes private BTreeMap slack/headers.
+    pub fn capacity_bytes(&self) -> usize {
+        self.resolution.values.len() * std::mem::size_of::<(usize, bool)>()
+            + self.resolution.dispositions.len() * std::mem::size_of::<(LinkId, LinkDisposition)>()
+            + self.resolution.owners.len() * std::mem::size_of::<(LinkId, Owner)>()
+            + self.resolution.styles.capacity_bytes()
     }
     pub fn memo_entries(&self) -> usize {
         self.resolution.memo_entries()

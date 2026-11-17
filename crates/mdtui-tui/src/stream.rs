@@ -802,7 +802,7 @@ impl StreamEngine {
 
     #[must_use]
     pub fn anchor_build_pending(&self) -> bool {
-        self.runtime.document().is_finished() && !self.runtime.anchor_index_complete()
+        !self.runtime.anchor_index_complete()
     }
 
     pub fn ingest_data(

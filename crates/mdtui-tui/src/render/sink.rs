@@ -10,7 +10,7 @@ use crate::render::checkpoint::{
 use crate::render::code::{code_lines_from_input, render_code_lines};
 use crate::render::context::ContainerContext;
 use crate::render::display::{DisplayScanner, DisplaySegment};
-use crate::render::heading::render_heading_input;
+use crate::render::heading::{render_heading_input, render_live_heading_input};
 use crate::render::input::{DisplayInput, GlyphInput, InputToken, TokenKind, display_glyphs};
 use crate::render::list::ListVisual;
 use crate::render::plan::{BlockPlan, PlanEvent, PlanEventKind};
@@ -148,6 +148,7 @@ struct PrepareContext<'a> {
     containers: &'a HashMap<mdtui3::ContainerId, ContainerContext>,
     display_bytes: &'a std::cell::Cell<usize>,
     scratch_cells: &'a std::cell::Cell<usize>,
+    fragment_titles: bool,
 }
 
 impl PrepareContext<'_> {
@@ -329,6 +330,7 @@ impl TileLayoutSink {
                 containers,
                 display_bytes: &display_bytes,
                 scratch_cells: &scratch_cells,
+                fragment_titles: scanner.shared_links().fragment_titles(),
             };
             let mut glyphs = block_glyphs(
                 document,
@@ -1052,7 +1054,12 @@ fn prepare_block(
             );
             let mut screen = scratch_screen_rows(1, context.width)?;
             context.scratch(&screen);
-            let rows = render_heading_input(heading, &input, &mut screen, 0)
+            let render = if context.fragment_titles {
+                render_live_heading_input
+            } else {
+                render_heading_input
+            };
+            let rows = render(heading, &input, &mut screen, 0)
                 .map_err(|error| SinkError::Render(error.to_string()))?;
             let owner_source = if heading.source.len() > 4096 {
                 Span::new(heading.source.start, heading.source.start + 1)

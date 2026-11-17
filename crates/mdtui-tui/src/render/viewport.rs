@@ -1677,6 +1677,11 @@ impl ViewportState {
         self.set_top_row(document, target)
     }
 
+    pub(crate) fn refresh_fragment_titles(&mut self) {
+        self.render = None;
+        self.calibration = None;
+    }
+
     pub fn set_top_from_refinement(
         &mut self,
         document: &Document,

@@ -39,6 +39,7 @@ pub struct LinkState {
     revision: u64,
     retirement_requested: bool,
     active_tasks: usize,
+    fragment_titles: bool,
     presentations: BTreeMap<LinkId, Presentation>,
     literals: BTreeMap<usize, LiteralSyntax>,
     steps: u64,
@@ -63,6 +64,7 @@ impl SharedLinks {
             revision: document.revision(),
             retirement_requested: false,
             active_tasks: 0,
+            fragment_titles: false,
             presentations: BTreeMap::new(),
             literals: BTreeMap::new(),
             steps: 0,
@@ -150,7 +152,7 @@ impl SharedLinks {
         }
         if state.revision == update.base_revision
             && state.revision != update.revision
-            && state.resolver.rebind_display_shape(document, update)?
+            && state.resolver.rebind_current_slugs(document, update)?
         {
             state.revision = update.revision;
         }
@@ -208,6 +210,31 @@ impl SharedLinks {
         Ok(true)
     }
 
+    pub(crate) fn enable_fragment_titles(&self) -> bool {
+        let mut state = self.0.borrow_mut();
+        let changed = !state.fragment_titles;
+        state.fragment_titles = true;
+        changed
+    }
+    pub(crate) fn fragment_titles(&self) -> bool {
+        self.0.borrow().fragment_titles
+    }
+    pub(crate) fn retire_current(&self, b: &mut Budget) -> Completion {
+        let mut state = self.0.borrow_mut();
+        if state.resolver.retire(b) != Completion::Covered {
+            return Completion::BudgetExhausted;
+        }
+        while !state.presentations.is_empty() || !state.literals.is_empty() {
+            if !charge(b) {
+                return Completion::BudgetExhausted;
+            }
+            if state.presentations.pop_first().is_none() {
+                state.literals.pop_first();
+            }
+            state.retired += 1;
+        }
+        Completion::Covered
+    }
     pub fn hold(&self) -> LinkLease {
         self.0.borrow_mut().active_tasks += 1;
         LinkLease(self.clone())

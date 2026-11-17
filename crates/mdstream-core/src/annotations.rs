@@ -460,8 +460,14 @@ impl Annotations {
 
     #[cfg(test)]
     pub fn at(&self, offset: usize) -> Mark {
+        self.current_leaf(offset, usize::MAX).1
+    }
+
+    /// One root-to-leaf query, without the public Runs iterator's unbounded
+    /// adjacent-run coalescing. Consumers pay each returned metadata fragment.
+    pub(crate) fn current_leaf(&self, offset: usize, end: usize) -> (Span, Mark) {
         if offset >= self.capacity {
-            return Mark::default();
+            return (Span::new(offset, end), Mark::default());
         }
         let (mut id, mut lo, mut hi) = (self.root, 0, self.capacity);
         let mut mark = Mark::default();
@@ -470,6 +476,9 @@ impl Annotations {
             mark = mark.merge(node.tag);
             let mid = lo + (hi - lo) / 2;
             let side = usize::from(offset >= mid);
+            if node.children == [None; 2] {
+                return (Span::new(offset, end.min(hi)), mark);
+            }
             match node.child(side) {
                 Some(child) => {
                     id = child;
@@ -479,7 +488,12 @@ impl Annotations {
                         lo = mid;
                     }
                 }
-                None => return mark,
+                None => {
+                    return (
+                        Span::new(offset, end.min(if side == 0 { mid } else { hi })),
+                        mark,
+                    );
+                }
             }
         }
     }

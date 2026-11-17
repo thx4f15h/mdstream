@@ -223,6 +223,18 @@ impl PartialEq for DisplayShapeEffects {
 }
 impl Eq for DisplayShapeEffects {}
 impl DisplayShapeEffects {
+    pub(crate) fn subscription(&self) -> Self {
+        Self {
+            clock: self.clock.clone(),
+            events: Vec::new(),
+        }
+    }
+    pub(crate) fn same_subscription(&self, other: &Self) -> bool {
+        match (&self.clock, &other.clock) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
     pub fn enabled(&self) -> bool {
         self.clock.is_some()
     }

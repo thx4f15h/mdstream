@@ -604,6 +604,12 @@ impl Styles {
             .next_back()
             .and_then(|(&key, scope)| (at < scope.source.end).then_some((key, scope)))
     }
+    pub(crate) fn slug_scope(&self, at: usize) -> Option<(usize, Span)> {
+        self.scope(at).map(|(key, scope)| (key, scope.source))
+    }
+    pub(crate) fn slug_scope_extent(&self, key: usize) -> Option<Span> {
+        self.scopes.get(&key).map(|scope| scope.source)
+    }
     pub(crate) fn conditional(&self, at: usize) -> Option<usize> {
         self.scope(at)
             .and_then(|(key, scope)| (scope.conditional != 0 && scope.runs != 0).then_some(key))
@@ -714,7 +720,7 @@ impl Window<'_> {
 
 // Fixed pages avoid a frame-sized reallocation/copy of a deep query stack.
 const PAGE: usize = 64;
-struct Pages<T: Copy> {
+pub(crate) struct Pages<T: Copy> {
     pages: BTreeMap<usize, Box<[Option<T>; PAGE]>>,
     len: usize,
 }
@@ -727,7 +733,7 @@ impl<T: Copy> Default for Pages<T> {
     }
 }
 impl<T: Copy> Pages<T> {
-    fn push(&mut self, value: T) {
+    pub(crate) fn push(&mut self, value: T) {
         self.pages
             .entry(self.len / PAGE)
             .or_insert_with(|| Box::new([None; PAGE]))[self.len % PAGE] = Some(value);
@@ -739,7 +745,7 @@ impl<T: Copy> Pages<T> {
     fn set(&mut self, at: usize, value: T) {
         self.pages.get_mut(&(at / PAGE)).unwrap()[at % PAGE] = Some(value);
     }
-    fn pop(&mut self) -> Option<T> {
+    pub(crate) fn pop(&mut self) -> Option<T> {
         if self.len == 0 {
             return None;
         }
@@ -749,6 +755,18 @@ impl<T: Copy> Pages<T> {
             self.pages.remove(&(self.len / PAGE));
         }
         result
+    }
+    pub(crate) fn len(&self) -> usize {
+        self.len
+    }
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+    pub(crate) fn last(&self) -> Option<T> {
+        self.len.checked_sub(1).map(|i| self.get(i))
+    }
+    pub(crate) fn capacity_bytes(&self) -> usize {
+        self.pages.len() * std::mem::size_of::<[Option<T>; PAGE]>()
     }
 }
 
@@ -804,6 +822,12 @@ struct Recovery {
     floor: usize,
     forest: Forest,
     phase: Phase,
+    aggregate_first: Option<StylePairId>,
+    aggregate_end: usize,
+    more: bool,
+    revision: u64,
+    changes: BTreeMap<(u64, usize), Span>,
+    marker_revision: BTreeMap<usize, u64>,
 }
 impl Default for Recovery {
     fn default() -> Self {
@@ -815,6 +839,12 @@ impl Default for Recovery {
             floor: 0,
             forest: Forest::default(),
             phase: Phase::Event,
+            aggregate_first: None,
+            aggregate_end: 0,
+            more: false,
+            revision: 0,
+            changes: BTreeMap::new(),
+            marker_revision: BTreeMap::new(),
         }
     }
 }
@@ -913,6 +943,7 @@ impl Recovery {
                             }
                         }
                     } else {
+                        self.more = false;
                         self.phase = Phase::Aggregate(None);
                     }
                 }
@@ -1010,6 +1041,20 @@ impl Recovery {
                 Phase::Insert { mut insert, next } => {
                     work.index_steps += 1;
                     self.phase = if self.forest.insert_step(&mut insert) {
+                        if insert.started {
+                            let pair = insert.pair;
+                            self.aggregate_first =
+                                Some(self.aggregate_first.map_or(pair, |old| old.min(pair)));
+                            self.aggregate_end = self.aggregate_end.max(pair.close.end);
+                            for span in [pair.open, pair.close] {
+                                if let Some(old) =
+                                    self.marker_revision.insert(span.start, doc.revision())
+                                {
+                                    self.changes.remove(&(old, span.start));
+                                }
+                                self.changes.insert((doc.revision(), span.start), span);
+                            }
+                        }
                         next.map_or(Phase::Event, Phase::Run)
                     } else {
                         Phase::Insert { insert, next }
@@ -1019,9 +1064,12 @@ impl Recovery {
                     let next = if let Some(last) = last {
                         self.forest.pairs.range((Excluded(last), Unbounded)).next()
                     } else {
-                        self.forest.pairs.first_key_value()
+                        self.aggregate_first
+                            .and_then(|first| self.forest.pairs.range(first..).next())
                     };
-                    if let Some((&id, &node)) = next {
+                    if let Some((&id, &node)) = next
+                        && id.open.start < self.aggregate_end
+                    {
                         let counts = node
                             .parent
                             .map_or(Counts::default(), |p| self.forest.pairs[&p].counts)
@@ -1030,7 +1078,15 @@ impl Recovery {
                         self.phase = Phase::Aggregate(Some(id));
                         work.index_steps += 1;
                     } else {
-                        self.phase = Phase::Complete;
+                        self.aggregate_first = None;
+                        self.aggregate_end = 0;
+                        if self.more {
+                            self.more = false;
+                            self.phase = Phase::Event;
+                        } else {
+                            self.revision = doc.revision();
+                            self.phase = Phase::Complete;
+                        }
                     }
                 }
                 Phase::Complete | Phase::Guard { .. } => unreachable!(),
@@ -1038,10 +1094,43 @@ impl Recovery {
         }
     }
     fn entries(&self) -> usize {
-        1 + self.stack.len + self.floors.len + self.forest.entries()
+        1 + self.stack.len
+            + self.floors.len
+            + self.forest.entries()
+            + self.changes.len()
+            + self.marker_revision.len()
+            + match &self.phase {
+                Phase::Guard { task, .. } => task.continuation_entries(),
+                _ => 0,
+            }
+    }
+    fn capacity_bytes(&self) -> usize {
+        self.stack.capacity_bytes()
+            + self.floors.capacity_bytes()
+            + self.changes.len() * std::mem::size_of::<((u64, usize), Span)>()
+            + self.marker_revision.len() * std::mem::size_of::<(usize, u64)>()
+            + self.forest.pairs.len() * std::mem::size_of::<(StylePairId, Pair)>()
+            + self.forest.roots.len() * std::mem::size_of::<(usize, StylePairId)>()
+            + self.forest.boundaries.len() * std::mem::size_of::<(usize, Option<StylePairId>)>()
+            + self.forest.markers.len() * std::mem::size_of::<(usize, usize)>()
+            + match &self.phase {
+                Phase::Guard { task, .. } => {
+                    std::mem::size_of_val(&**task) + task.continuation_capacity()
+                }
+                _ => 0,
+            }
     }
     fn retire_one(&mut self) -> bool {
+        if let Phase::Guard { task, .. } = &mut self.phase
+            && task.continuation_entries() != 0
+        {
+            task.retire_one();
+            return false;
+        }
         if self.stack.pop().is_some() || self.floors.pop().is_some() {
+            return false;
+        }
+        if self.changes.pop_first().is_some() || self.marker_revision.pop_first().is_some() {
             return false;
         }
         self.forest.retire_one()
@@ -1075,6 +1164,67 @@ fn charge(budget: &mut Budget) -> bool {
     })
 }
 impl Resolver {
+    pub(crate) fn capacity_bytes(&self) -> usize {
+        self.scopes
+            .values()
+            .map(|s| std::mem::size_of::<(usize, Recovery)>() + s.capacity_bytes())
+            .sum()
+    }
+    pub(crate) fn append_style(
+        &mut self,
+        doc: &Document,
+        key: usize,
+        event: crate::DisplayShapeStyleEvent,
+    ) -> bool {
+        let Some(state) = self.scopes.get_mut(&key) else {
+            return true;
+        };
+        if state.revision == doc.revision() && matches!(state.phase, Phase::Complete) {
+            return true;
+        }
+        use crate::DisplayShapeStyleEvent as S;
+        let at = match event {
+            S::Run { source, .. } => (source.start, 1, 0),
+            S::Enter { at } => (at, 0, 0),
+            S::Leave { open, end } => (end, 2, usize::MAX - open),
+            S::Bind { .. } => return false,
+            S::Pair(pair) => {
+                if !matches!(
+                    doc.inline_styles
+                        .scopes
+                        .get(&key)
+                        .and_then(|s| s.events.get(&(pair.open.start, 1, 0))),
+                    Some(Event::Pair(_))
+                ) {
+                    return true;
+                }
+                (pair.open.start, 1, 0)
+            }
+        };
+        if state.last.is_some_and(|last| at <= last) {
+            return false;
+        }
+        if matches!(state.phase, Phase::Complete) {
+            state.phase = Phase::Event;
+        } else {
+            state.more = true;
+        }
+        true
+    }
+    pub(crate) fn changed_marker(
+        &self,
+        key: usize,
+        since: u64,
+        last: Option<(u64, usize)>,
+    ) -> Option<((u64, usize), Span)> {
+        let state = self.scopes.get(&key)?;
+        let low = last.unwrap_or((since, usize::MAX));
+        state
+            .changes
+            .range((Excluded(low), Unbounded))
+            .next()
+            .map(|(&k, &v)| (k, v))
+    }
     pub(crate) fn entries(&self) -> usize {
         self.live
     }

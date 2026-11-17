@@ -7,7 +7,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crossterm::cursor::{Hide, MoveTo, Show};
-use crossterm::event::{self, Event};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, MouseButton, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     Clear, ClearType, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
@@ -52,7 +54,7 @@ pub fn run_with_table_policy(
     install_panic_hook(restore.clone());
     enable_raw_mode()?;
     restore.activate();
-    if let Err(error) = execute!(io::stdout(), EnterAlternateScreen, Hide) {
+    if let Err(error) = execute!(io::stdout(), EnterAlternateScreen, Hide, EnableMouseCapture) {
         restore.restore();
         return Err(error);
     }
@@ -87,7 +89,17 @@ pub fn run_with_table_policy(
     abort_output(&mut engine, &mut output);
     drop(session);
     let closed = reader.close().map_err(stream_error);
-    result.and(closed)
+    // Restore the terminal before draining the owned slug graph. Each batch
+    // still uses the cooperative Budget; total destruction is linear work.
+    let retired = loop {
+        let mut b = Budget::new(ANCHOR_WORK);
+        match engine.runtime_mut().retire_slug_session(&mut b) {
+            Ok(mdtui3::Completion::Covered) => break Ok(()),
+            Ok(_) => (),
+            Err(e) => break Err(frame_error(e)),
+        }
+    };
+    result.and(closed).and(retired)
 }
 
 fn run_engine_loop(
@@ -171,6 +183,10 @@ fn run_engine_loop(
             match event::read()? {
                 Event::Resize(cols, rows) => {
                     app.resize(engine, rows, cols).map_err(stream_error)?;
+                }
+                Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
+                    app.click_link(engine, mouse.row, mouse.column)
+                        .map_err(stream_error)?;
                 }
                 Event::Key(key) if key.is_press() || key.is_repeat() => {
                     let outcome = app
@@ -363,7 +379,7 @@ fn restore_terminal(links: bool) {
     ));
     let _ = execute!(stdout, EndSynchronizedUpdate);
     let _ = execute!(stdout, Show);
-    let _ = execute!(stdout, LeaveAlternateScreen);
+    let _ = execute!(stdout, DisableMouseCapture, LeaveAlternateScreen);
     let _ = disable_raw_mode();
 }
 

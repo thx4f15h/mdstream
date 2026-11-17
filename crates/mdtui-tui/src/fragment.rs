@@ -138,7 +138,7 @@ impl FragmentActivationStatus {
         match self {
             Self::Moved => "已跳转",
             Self::NoLink => "无选中链接",
-            Self::PendingDocument => "待文档完成",
+            Self::PendingDocument => "等待标题出现",
             Self::PendingIndex => "正在建立锚点索引",
             Self::BudgetExhausted => "待锚点索引完成",
             Self::NotFound => "未找到标题锚点",

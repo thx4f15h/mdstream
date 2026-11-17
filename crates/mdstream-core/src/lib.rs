@@ -68,6 +68,10 @@ mod navigation;
 mod paragraph_folds;
 mod references;
 mod search;
+mod slug_session;
+pub use slug_session::{
+    CurrentFragment, CurrentSlug, HeadingSlugSession, SlugByte, SlugSessionStats, SlugWork,
+};
 mod source_fold_restore;
 mod source_folds;
 mod structural_prefix;
@@ -128,7 +132,7 @@ pub use layout::{
     Anchor, HeightIndex, HeightState, LayoutError, Measurement, ViewportCursor, ViewportPage,
     VisibleTile, ZeroHeightMeasurement,
 };
-pub use link_destination::{LinkDestination, LinkDestinationChunk};
+pub use link_destination::{LinkDestination, LinkDestinationChunk, LinkDestinationTask};
 pub use link_index::{LinkObjects, LinkStep, LinkWindow, LinkWindowWork};
 pub use link_semantics::{LinkActivity, LinkDisposition, LinkResolutionWork, LinkResolver};
 pub use link_title::{LinkTitle, LinkTitleChunk};

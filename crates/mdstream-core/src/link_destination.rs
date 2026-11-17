@@ -83,3 +83,54 @@ impl LinkDestination<'_> {
             }))
     }
 }
+
+/// Fixed-size destination decoder that survives revisions when the exact raw
+/// source target is unchanged. It uses the same scalar/entity decoder as the
+/// borrowed API. A changed winning definition is explicitly stale.
+pub struct LinkDestinationTask {
+    document: crate::DocumentId,
+    id: LinkId,
+    source: Span,
+    inner: crate::code_info::DetachedCodeInfo,
+}
+impl Document {
+    pub fn link_destination_task(&self, id: LinkId) -> Option<LinkDestinationTask> {
+        let source = self.link_destination_span(id)?;
+        let literal = match self.links.get(id.0)? {
+            LinkTarget::Email(_) | LinkTarget::Www(_) => true,
+            LinkTarget::Direct(_) => self.link_info(id)?.label == source,
+            LinkTarget::Reference(_) => false,
+        };
+        Some(LinkDestinationTask {
+            document: self.id(),
+            id,
+            source,
+            inner: crate::code_info::DetachedCodeInfo::new(source, literal),
+        })
+    }
+}
+impl LinkDestinationTask {
+    pub fn is_current(&self, doc: &Document, id: LinkId) -> bool {
+        self.document == doc.id()
+            && self.id == id
+            && doc.link_destination_span(id) == Some(self.source)
+    }
+    pub fn advance<'a>(
+        &'a mut self,
+        doc: &Document,
+        b: &mut Budget,
+    ) -> Result<Result<Option<LinkDestinationChunk<'a>>, Completion>, crate::LayoutError> {
+        if doc.id() != self.document {
+            return Err(crate::LayoutError::WrongDocument);
+        }
+        if !self.is_current(doc, self.id) {
+            return Err(crate::LayoutError::StaleContinuation);
+        }
+        Ok(self.inner.advance(doc.source(), b).map(|v| {
+            v.map(|chunk| LinkDestinationChunk {
+                source: chunk.source,
+                text: chunk.text,
+            })
+        }))
+    }
+}
