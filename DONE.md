@@ -3301,3 +3301,14 @@ resize后显式目录跳转再折叠的独立037缺陷已新增未勾待办，�
 原始命令、失败、手写合同/oracle、冻结清单、成本/内存和终端捕获位于 `/tmp/mdtui3-codex-todo/028-prototypes`；机器结果为 `/tmp/mdtui3-codex-todo/028-result.json`。仅 own branch WIP 检查点，正式验收及单独 main 提交交 root，未 push。
 
 根独立验收：已审查安全切口、共享 flow/word 放置、追加/宽度失效与单 FoldView 注册机制，并组合正式 037 导航修复。组合的 611 个 Rust 输入冻结后，相关 debug/release 各 80 项、fmt 与 workspace all-targets 严格 Clippy 实际通过；原 028 完整 release 845、相关 debug 214+24、核心两档各 244 与文档 84 的范围保持如上，不称组合后新执行整库。根固定二进制 6652acb7… 在四个独立私有 tmux 流程中验证普通长行、完整组合字符、跨行图片整体退回和三行分数整体隐藏，另验证 40→20→40 重算仍为同 Source ID、Tab/Enter 展开及全部 q 退出 0。第一次终端 oracle 错把 inline 占位要求为独占行，原失败与更正保留；未改生产实现或输入迎合检查。证据归档至 `/home/ajen/.local/state/codex/mdtui3/2026-11-17-resumed/028-accepted-evidence.tar.gz`。
+
+
+## 2026-11-19 首批输入前折叠菜单恢复
+
+正式 49cd23f 的 held FIFO 在首批输入前按 z/Esc，会保留到期的 force_render，却不推进首帧；主循环因此停止读取生成首帧所需的数据。根独立对照确认 READY 加 LF 的六字节输入及 EOF 仍空白，无键或仅 Home 正常。修复让既有 FrameRuntime 按共享预算处理首帧前的强制重绘，发布后清除此请求，并允许空文档打开同一折叠菜单；未增加 renderer、Reader 或 FoldView。
+
+无目标操作显示明确的 Esc 恢复提示，20 列使用短提示；菜单导航只清除这条空目标反馈，使当前选项重新可见。根实际发现并保留了长提示被 40 列裁掉、优先提示遮住后续菜单的两个失败，再用固定 release 二进制 742968d2… 独立复验 40×12 与最小 20×3：无目标提示、Up/Down/切页、Esc 后首批 READY、EOF 与 q 退出 0 全部通过。原快速 z/Esc 的六字节案、5001 字节案及无键/Home 对照也有实际记录。
+
+最终源码上的 11 项短测试在 debug/release 均通过，严格 all-targets check/Clippy、fmt、rustdoc 与 84 个文档测试通过。调度机制冻结 e025333 的 debug 115+88、release 115 项实际通过；后续只改空目标反馈的 status/key 消息分支及新增测试，其余 764 个文件逐字节不变，非空 036/037/028、End/FOLLOW 等路径的复用证明逐项保留。这些记录不是最终版新执行整库的声明。原 14 个真实场景、最终 7 个 FIFO 场景、原失败、ENOSPC 中断及恢复、CPU 空等与预算/输入/输出分账均保留；缺少退出结果的旧门禁没有计为通过。
+
+612 个 Rust 输入与验收冻结逐字节相同；原官方数据、HTML、goldens、核心源码与零运行时依赖、hook、rustfmt 及既有断言保持。菜单原有 h1/h2 默认动作窄屏文字相同的问题已另登记未勾待办，本项不宣称解决。完整证据归档至 `/home/ajen/.local/state/codex/mdtui3/2026-11-17-resumed/039-accepted-evidence.tar.gz`。

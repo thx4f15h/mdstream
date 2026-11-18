@@ -1093,7 +1093,10 @@ impl StreamEngine {
         }
 
         if !self.first_frame_done {
-            if !self.first_frame_pending || self.calibration_pending {
+            // Keyboard/resize work can precede the first input bytes. Advance
+            // the normal runtime even then: leaving force_render due without
+            // servicing it prevents the event loop from consuming the reader.
+            if (!self.first_frame_pending && !self.force_render) || self.calibration_pending {
                 return Ok(None);
             }
             let commit = if self.scratch_frame_requested {
@@ -1133,6 +1136,7 @@ impl StreamEngine {
                 self.first_frame_done = true;
                 self.empty_frame_requested = false;
                 self.scratch_frame_requested = false;
+                self.force_render = false;
                 self.pending.reset();
                 self.drain_pre_read_after_first_frame(now)?;
                 self.record_commit(&commit);

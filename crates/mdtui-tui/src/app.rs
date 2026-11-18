@@ -167,9 +167,6 @@ impl AppState {
         code: KeyCode,
         modifiers: KeyModifiers,
     ) -> Result<AppOutcome, StreamError> {
-        if code == KeyCode::Char('z') && !engine.first_frame_done() {
-            return Ok(AppOutcome::default());
-        }
         if engine.runtime_mut().fold_menu_key(code) {
             engine.request_render();
             return Ok(AppOutcome {

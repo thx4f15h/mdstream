@@ -8,6 +8,7 @@ use mdtui3::{
 };
 
 type View = FoldView<RenderCheckpoint>;
+const EMPTY_TARGET_MESSAGE: &str = "No fold target yet; Esc to resume input";
 
 #[derive(Clone, Copy)]
 enum Command {
@@ -115,6 +116,13 @@ impl FoldUi {
         if self.operation.is_some() {
             return Some(format!("Esc cancel | {}", self.message));
         }
+        if self.menu && self.message == EMPTY_TARGET_MESSAGE {
+            return Some(if usize::from(width) < EMPTY_TARGET_MESSAGE.len() {
+                "No target Esc=resume".into()
+            } else {
+                self.message.clone()
+            });
+        }
         if let Some((label, _)) = self.menu.then(|| self.entries.get(self.index)).flatten() {
             if width < 32 {
                 let fit = super::render::text::fit_prefix(
@@ -165,6 +173,20 @@ impl FoldUi {
         }
         if self.operation.is_some() && !matches!(code, KeyCode::Esc | KeyCode::Char('q' | 'c')) {
             return true;
+        }
+        if self.menu
+            && self.message == EMPTY_TARGET_MESSAGE
+            && matches!(
+                code,
+                KeyCode::Up
+                    | KeyCode::Down
+                    | KeyCode::Left
+                    | KeyCode::Right
+                    | KeyCode::Home
+                    | KeyCode::End
+            )
+        {
+            self.message = "reader paused".into();
         }
         match code {
             KeyCode::Esc => {
@@ -288,7 +310,14 @@ impl FoldUi {
             Ok(false) => self.operation = Some(operation),
             Ok(true) => {}
             Err(error) => {
-                self.message = error.to_string();
+                self.message = if error == LayoutError::InvalidRange
+                    && doc.source().is_empty()
+                    && self.target.is_none()
+                {
+                    EMPTY_TARGET_MESSAGE.into()
+                } else {
+                    error.to_string()
+                };
                 self.range_next = None;
             }
         }

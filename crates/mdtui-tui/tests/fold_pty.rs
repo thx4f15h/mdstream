@@ -34,6 +34,107 @@ mod unix {
     }
 
     #[test]
+    fn empty_fifo_menu_escape_resumes_six_byte_first_input_and_later_batches() {
+        for keys in [b"".as_slice(), b"\x1b[H", b"z\x1b"] {
+            let workspace = TempWorkspace::new().unwrap();
+            let fifo = workspace.path().join("empty.fifo");
+            assert!(
+                std::process::Command::new("mkfifo")
+                    .arg(&fifo)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            // Holding both ends avoids EOF before the first keyboard event.
+            let mut writer = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&fifo)
+                .unwrap();
+            let mut command = pty::current_binary_command();
+            command.arg(&fifo);
+            let size = pty::PTY_80X24;
+            let mut session = pty::spawn(command, size).unwrap();
+            session
+                .read_until(b"\x1b[?1006h", Duration::from_secs(15))
+                .unwrap();
+            if keys == b"z\x1b" {
+                session.send(b"z").unwrap();
+                wait(&mut session, size, |s| s.contains("Enter Esc"));
+                session.send(b"\x1b").unwrap();
+                wait(&mut session, size, |s| !s.contains("Enter Esc"));
+            } else {
+                session.send(keys).unwrap();
+            }
+            writer.write_all(b"READY\n").unwrap();
+            let text = wait(&mut session, size, |s| s.contains("READY"));
+            assert!(!text.contains("Enter Esc"));
+            writer.write_all(b"NEXT\n").unwrap();
+            wait(&mut session, size, |s| {
+                s.contains("READY") && s.contains("NEXT")
+            });
+            drop(writer);
+            // q must remain independent of the Reader, including after EOF.
+            session.send(b"q").unwrap();
+            assert!(session.wait(Duration::from_secs(15)).unwrap().success());
+        }
+    }
+
+    #[test]
+    fn empty_fifo_menu_pauses_then_resumes_and_q_does_not_wait_for_first_bytes() {
+        for quit_in_menu in [false, true] {
+            let workspace = TempWorkspace::new().unwrap();
+            let fifo = workspace.path().join("held.fifo");
+            assert!(
+                std::process::Command::new("mkfifo")
+                    .arg(&fifo)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            let mut writer = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&fifo)
+                .unwrap();
+            let mut command = pty::current_binary_command();
+            command.arg(&fifo);
+            let size = pty::PTY_80X24;
+            let mut session = pty::spawn(command, size).unwrap();
+            session
+                .read_until(b"\x1b[?1006h", Duration::from_secs(15))
+                .unwrap();
+            session.send(b"z").unwrap();
+            wait(&mut session, size, |s| s.contains("Enter Esc"));
+            if !quit_in_menu {
+                writer.write_all(b"READY\n").unwrap();
+                for page in [
+                    "document:",
+                    "range:",
+                    "level:",
+                    "container:",
+                    "new defaults:",
+                ] {
+                    session.send(b"\x1b[C").unwrap();
+                    let text = wait(&mut session, size, |s| s.contains(page));
+                    assert!(
+                        !text.contains("READY"),
+                        "reader consumed while menu open: {text}"
+                    );
+                }
+                session.send(b"\x1b").unwrap();
+                wait(&mut session, size, |s| {
+                    s.contains("READY") && !s.contains("Enter Esc")
+                });
+            }
+            session.send(b"q").unwrap();
+            assert!(session.wait(Duration::from_secs(15)).unwrap().success());
+            // Keep the writer alive until q has completed, with no EOF to help it.
+            drop(writer);
+        }
+    }
+
+    #[test]
     fn real_fifo_fold_menu_deep_batch_stream_backpressure_resize_hit_activation_and_q() {
         let workspace = TempWorkspace::new().unwrap();
         let fifo = workspace.path().join("fold.fifo");
