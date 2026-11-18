@@ -267,7 +267,7 @@ fn empty_hidden_tail_noops_and_zero_budget() {
                     .redraw
             );
             assert!(
-                !app.handle_key(&mut engine, KeyCode::Char('z'), KeyModifiers::NONE)
+                !app.handle_key(&mut engine, KeyCode::Char('w'), KeyModifiers::NONE)
                     .unwrap()
                     .redraw
             );

@@ -254,11 +254,15 @@ impl From<TableWidthError> for ViewportError {
 }
 
 pub struct ViewportState {
+    summary: Option<super::fold_summary::FoldSummary>,
+    pub(crate) shown_folds: Vec<mdtui3::FoldPlaceholder>,
+    fold_anchor: Option<usize>,
+    fold_reanchor: bool,
+    anchor_refiner: Option<Box<super::refine::SourceRefiner>>,
     links: crate::render::objects::SharedLinks,
     document: DocumentId,
     revision: u64,
     config: ViewportConfig,
-    heights: HeightIndex,
     checkpoints: RenderCheckpointStore,
     table_widths: TableWidthCache,
     pub(crate) shown_tables: Vec<super::table::TableWindowStatus>,
@@ -286,6 +290,8 @@ pub struct EndWork {
 }
 
 struct EndPosition {
+    projected_tail: bool,
+    window_cut: usize,
     limit: usize,
     before: usize,
     next_before: usize,
@@ -304,6 +310,8 @@ struct EndPosition {
 impl EndPosition {
     fn new(limit: usize) -> Self {
         Self {
+            projected_tail: false,
+            window_cut: limit,
             limit,
             before: limit,
             next_before: limit,
@@ -325,7 +333,6 @@ impl EndPosition {
 // independently resumable. In particular a one-query frame can make progress.
 struct EndSelection {
     zero_progress: super::first_frame::ZeroRangeProgress,
-    suppressed: usize,
     segment: usize,
     row: usize,
     owners: Vec<(TileId, usize, u64)>,
@@ -343,8 +350,6 @@ struct EofCalibrationState {
 impl ViewportState {
     pub fn new(document: &Document, config: ViewportConfig) -> Result<Self, ViewportError> {
         validate_config(config)?;
-        let mut heights = HeightIndex::default();
-        heights.rebuild(document)?;
         let checkpoints = RenderCheckpointStore::new(document);
         let links = crate::render::objects::SharedLinks::new(document);
         let mut table_widths = TableWidthCache::new(document);
@@ -362,11 +367,15 @@ impl ViewportState {
             TopPosition::Empty
         };
         Ok(Self {
+            summary: None,
+            shown_folds: Vec::new(),
+            fold_anchor: None,
+            fold_reanchor: false,
+            anchor_refiner: None,
             links,
             document: document.id(),
             revision: document.revision(),
             config,
-            heights,
             checkpoints,
             table_widths,
             shown_tables: Vec::new(),
@@ -393,10 +402,10 @@ impl ViewportState {
             return Err(ViewportError::Stale);
         }
         let links = first.shared_links();
-        let (heights, checkpoints) = first.into_layout_parts();
+        let checkpoints = first.into_layout_parts();
         let mut table_widths = TableWidthCache::new(document);
         table_widths.set_links(links.clone());
-        if heights.len() != document.tile_count() {
+        if checkpoints.heights().len() != document.tile_count() {
             return Err(ViewportError::InvalidConfig);
         }
         let top = (document.tile_count() > 0).then_some(Anchor {
@@ -408,11 +417,15 @@ impl ViewportState {
             None => TopPosition::Empty,
         };
         Ok(Self {
+            summary: None,
+            shown_folds: Vec::new(),
+            fold_anchor: None,
+            fold_reanchor: false,
+            anchor_refiner: None,
             links,
             document: document.id(),
             revision: document.revision(),
             config,
-            heights,
             checkpoints,
             table_widths,
             shown_tables: Vec::new(),
@@ -427,6 +440,51 @@ impl ViewportState {
             following: false,
             end_position: None,
         })
+    }
+
+    pub fn folds(&self) -> &mdtui3::FoldView<super::checkpoint::RenderCheckpoint> {
+        self.checkpoints.view()
+    }
+    pub fn folds_mut(&mut self) -> &mut mdtui3::FoldView<super::checkpoint::RenderCheckpoint> {
+        self.checkpoints
+            .view_mut()
+            .expect("finish checkpoint maintenance before fold operations")
+    }
+    pub(crate) fn set_fold_summary(
+        &mut self,
+        document: &Document,
+        summary: super::fold_summary::FoldSummary,
+    ) -> Result<(), ViewportError> {
+        summary.check_binding(document, self.folds())?;
+        let candidate = self
+            .folds()
+            .fold_candidate(document, summary.id)?
+            .ok_or(ViewportError::InvalidTop)?;
+        let start = document
+            .block_at(candidate.hidden.start)
+            .and_then(|id| document.block(id))
+            .map_or(candidate.hidden.start, |b| b.source.start);
+        let tile = document.tile_at(start).map_or(0, |t| t.0);
+        let end = document.tile_count();
+        self.checkpoints.heights_mut(document)?.expire(tile..end)?;
+        self.checkpoints.invalidate(document, tile..end)?;
+        self.summary = Some(summary);
+        self.render = None;
+        self.restart_end(document);
+        Ok(())
+    }
+    pub fn fold_changed(&mut self, document: &Document) {
+        self.summary = None;
+        if self.fold_anchor.is_none() {
+            self.fold_anchor = self.top_source(document);
+        }
+        self.fold_reanchor = true;
+        self.anchor_refiner = None;
+        self.render = None;
+        self.pending_table_snapshots.clear();
+        self.preparing_tables = false;
+        self.calibration = None;
+        self.restart_end(document);
     }
 
     #[must_use]
@@ -505,6 +563,27 @@ impl ViewportState {
         }
         loop {
             if end.first.is_none() {
+                if !end.projected_tail && end.before > 0 {
+                    end.window_cut = end.before;
+                    let mut source = end.before - 1;
+                    while !document.source().is_char_boundary(source) {
+                        source -= 1;
+                    }
+                    let anchor = mdtui3::FoldAnchor::new(document, source)?;
+                    let Some(target) = anchor.resolve(
+                        document,
+                        self.checkpoints.view(),
+                        u64::from(self.config.rows),
+                        budget,
+                    )?
+                    else {
+                        return Ok(self.end_pending(budget));
+                    };
+                    if target.hidden_by.is_some() {
+                        end.before = target.target.source.unwrap_or(source).saturating_add(1);
+                    }
+                    end.projected_tail = true;
+                }
                 let block = match document.previous_content_block(end.before, budget) {
                     Ok(block) => block.and_then(|id| document.block(id)),
                     Err(_) => return Ok(self.end_pending(budget)),
@@ -518,12 +597,14 @@ impl ViewportState {
                     .ok_or(ViewportError::InvalidTop)?;
                 let want = usize::from(self.config.rows).saturating_sub(end.lines.len());
                 let estimate = self
-                    .heights
+                    .checkpoints
+                    .heights()
                     .prefix_rows(last.0 + 1)
                     .unwrap_or(0)
                     .saturating_sub(want as u128 + u128::from(self.config.overscan_rows));
                 let estimated = self
-                    .heights
+                    .checkpoints
+                    .heights()
                     .locate(estimate)
                     .map_or(last.0, |anchor| anchor.tile.0);
                 // A small suffix bounds local recovery and scratch even at width 1.
@@ -580,7 +661,7 @@ impl ViewportState {
                 }) {
                     return Ok(self.end_pending(budget));
                 }
-                let mut first = FirstFrame::new(
+                let mut first = FirstFrame::new_for_view(
                     document,
                     FirstFrameConfig {
                         top_tile: TileId(start),
@@ -588,7 +669,13 @@ impl ViewportState {
                         width: self.config.width,
                         row_limit: (8 * (TILE_BYTES + 4) + self.config.row_slack as usize) as u64,
                     },
+                    &self.checkpoints,
                 )?;
+                first.set_projection_range(Span::new(
+                    document.tile(TileId(start)).map_or(0, |s| s.start),
+                    end.window_cut,
+                ));
+                first.set_fold_summary(self.summary.clone());
                 end.table_ids = first
                     .plan()
                     .blocks
@@ -601,7 +688,8 @@ impl ViewportState {
                         }
                     })
                     .collect();
-                if let mdtui3::BlockKind::Table { id } = block.kind
+                if !self.checkpoints.view().has_collapsed()
+                    && let mdtui3::BlockKind::Table { id } = block.kind
                     && !end.table_ids.contains(&id)
                 {
                     end.table_ids.push(id);
@@ -627,7 +715,7 @@ impl ViewportState {
                     rows: usize::from(self.config.rows)
                         .saturating_add(self.config.overscan_rows as usize * 2)
                         .saturating_add(4),
-                    tail: Some(end.before),
+                    tail: Some(end.window_cut),
                 });
                 first.set_links(self.links.clone());
                 end.first = Some(first);
@@ -656,7 +744,7 @@ impl ViewportState {
             }
             if end.selection.is_none() {
                 let first = end.first.as_mut().ok_or(ViewportError::InvalidTop)?;
-                let step = first.advance(document, budget)?;
+                let step = first.advance_using(document, &mut self.checkpoints, budget)?;
                 if matches!(
                     step.status,
                     FirstFrameStatus::PendingScan | FirstFrameStatus::BudgetExhausted
@@ -682,7 +770,6 @@ impl ViewportState {
                 }
                 end.selection = Some(EndSelection {
                     zero_progress: Default::default(),
-                    suppressed: 0,
                     segment: 0,
                     row: 0,
                     owners: Vec::new(),
@@ -717,23 +804,11 @@ impl ViewportState {
         let selection = end.selection.as_mut().ok_or(ViewportError::InvalidTop)?;
         if !super::first_frame::measure_zero_ranges(
             first.zero_ranges(),
-            &mut self.heights,
+            self.checkpoints.heights_mut(document)?,
             &mut selection.zero_progress,
             budget,
         )? {
             return Ok(false);
-        }
-        while let Some(range) = first.suppressed_heading_tiles().get(selection.suppressed) {
-            if !budget.charge(WorkLimit {
-                queries: 1,
-                objects: 1,
-                recovery: 1,
-                ..WorkLimit::default()
-            }) {
-                return Ok(false);
-            }
-            self.heights.suppress(range.clone())?;
-            selection.suppressed += 1;
         }
         while let Some(segment) = first.plan().segments.get(selection.segment) {
             if !budget.charge(WorkLimit {
@@ -746,7 +821,7 @@ impl ViewportState {
             }
             // Same height publication as sync_layout_parts, one tile at a time.
             // Tail recovery checkpoints stay local, avoiding old-tail retention.
-            sync_tile_height(first, &mut self.heights, segment.tile)?;
+
             let rows = first
                 .sink()
                 .ok_or(ViewportError::MissingLineSource)?
@@ -832,13 +907,14 @@ impl ViewportState {
             }
         }
         end.before = end.next_before;
+        end.projected_tail = false;
         end.work.windows += 1;
         end.work.planned_tiles += first.plan().segments.len();
-        end.work.checkpoint_entries = end.work.checkpoint_entries.max(first.checkpoints().len());
+        end.work.checkpoint_entries = end.work.checkpoint_entries.max(self.checkpoints.len());
         end.work.checkpoint_nodes = end
             .work
             .checkpoint_nodes
-            .max(first.checkpoints().arena_stats().nodes);
+            .max(self.checkpoints.arena_stats().nodes);
         let scan = first.scanner().stats();
         end.work.source_bytes += scan.scanned_bytes
             + scan.edge_source_bytes
@@ -913,7 +989,7 @@ impl ViewportState {
         self.top_position = match (top, source) {
             (Some(anchor), Some(source)) => {
                 if matches!(
-                    self.heights.height_state(anchor.tile),
+                    self.checkpoints.heights().height_state(anchor.tile),
                     Some(mdtui3::HeightState::Measured)
                 ) {
                     TopPosition::Exact {
@@ -981,7 +1057,8 @@ impl ViewportState {
 
     #[must_use]
     pub fn top_row(&self) -> Option<u128> {
-        self.top.and_then(|anchor| self.heights.row_of(anchor))
+        self.top
+            .and_then(|anchor| self.checkpoints.heights().row_of(anchor))
     }
 
     #[must_use]
@@ -996,15 +1073,22 @@ impl ViewportState {
 
     #[must_use]
     pub fn heights(&self) -> &HeightIndex {
-        &self.heights
+        self.checkpoints.heights()
     }
 
-    pub fn heights_mut(&mut self) -> &mut HeightIndex {
-        &mut self.heights
+    pub fn heights_mut(&mut self) -> &mut mdtui3::FoldView<super::checkpoint::RenderCheckpoint> {
+        self.checkpoints
+            .view_mut()
+            .expect("layout maintenance must finish before measurement")
     }
 
-    pub fn layout_parts_mut(&mut self) -> (&mut HeightIndex, &mut RenderCheckpointStore) {
-        (&mut self.heights, &mut self.checkpoints)
+    pub(crate) fn reading_parts_mut(
+        &mut self,
+    ) -> (&mut RenderCheckpointStore, &mut TableWidthCache) {
+        (&mut self.checkpoints, &mut self.table_widths)
+    }
+    pub fn layout_owner_mut(&mut self) -> &mut RenderCheckpointStore {
+        &mut self.checkpoints
     }
 
     #[must_use]
@@ -1059,8 +1143,10 @@ impl ViewportState {
     fn invalidate_table(&mut self, document: &Document, id: TableId) -> Result<(), ViewportError> {
         if let Some(table) = document.table(id) {
             let tiles = document.tiles_overlapping(table.source);
-            self.heights.expire(tiles.clone())?;
-            self.checkpoints.invalidate(tiles)?;
+            self.checkpoints
+                .heights_mut(document)?
+                .expire(tiles.clone())?;
+            self.checkpoints.invalidate(document, tiles)?;
         }
         self.restart_end(document);
         self.render = None;
@@ -1101,7 +1187,7 @@ impl ViewportState {
     /// Retention covers two screens before and after the current viewport.
     #[must_use]
     pub fn checkpoint_window(&self, document: &Document) -> CheckpointRetentionWindow {
-        let tile_count = document.tile_count().min(self.heights.len());
+        let tile_count = document.tile_count().min(self.checkpoints.heights().len());
         if tile_count == 0 {
             return CheckpointRetentionWindow {
                 lo: TileId(0),
@@ -1113,10 +1199,11 @@ impl ViewportState {
         let start = top.saturating_sub(page.saturating_mul(2));
         let end = top
             .saturating_add(page.saturating_mul(3))
-            .min(self.heights.total_rows());
-        let visible = self
-            .heights
-            .viewport(start..end, 0, self.config.max_tiles.max(1));
+            .min(self.checkpoints.heights().total_rows());
+        let visible =
+            self.checkpoints
+                .heights()
+                .viewport(start..end, 0, self.config.max_tiles.max(1));
         let (lo, hi) = if let (Some(first), Some(last)) = (visible.first(), visible.last()) {
             (first.tile.0, last.tile.0.saturating_add(1))
         } else {
@@ -1138,12 +1225,14 @@ impl ViewportState {
         if !self.checkpoints.maintenance_in_progress() {
             let window = self.checkpoint_window(document);
             self.checkpoints
-                .start_maintenance(window.range(), document.tile_count())?;
+                .start_maintenance(document, window.range(), document.tile_count())?;
         }
-        Ok(self.checkpoints.advance_maintenance(budget)?)
+        Ok(self.checkpoints.advance_maintenance(document, budget)?)
     }
 
     pub fn checkpoints_mut(&mut self) -> &mut RenderCheckpointStore {
+        self.refined_top = false;
+        self.render = None;
         &mut self.checkpoints
     }
 
@@ -1191,6 +1280,8 @@ impl ViewportState {
             return Err(ViewportError::OutOfOrderUpdate);
         }
         self.links.apply_shape_update(document, update)?;
+        self.anchor_refiner = None;
+        self.summary = None;
         self.refined_top = false;
         self.restart_end(document);
 
@@ -1211,7 +1302,6 @@ impl ViewportState {
             (Some(top), Some(changed)) => changed <= top.tile,
         };
 
-        self.heights.apply(document, update)?;
         self.checkpoints.apply(document, update)?;
         self.table_widths.apply_update(document, update)?;
         self.document = document.id();
@@ -1248,7 +1338,7 @@ impl ViewportState {
                     earliest_changed_tile,
                 });
             };
-            let height = self.heights.height(target_tile).unwrap_or(0);
+            let height = self.checkpoints.heights().height(target_tile).unwrap_or(0);
             let offset = if target_tile == old_top.tile {
                 old_top.offset.min(height.saturating_sub(1))
             } else {
@@ -1270,15 +1360,17 @@ impl ViewportState {
                 });
             }
             let row = self
-                .heights
+                .checkpoints
+                .heights()
                 .prefix_rows(target_tile.0)
                 .unwrap_or(0)
                 .saturating_add(u128::from(offset));
-            let anchor = self.heights.locate(row).or_else(|| {
-                self.heights
+            let anchor = self.checkpoints.heights().locate(row).or_else(|| {
+                self.checkpoints
+                    .heights()
                     .total_rows()
                     .checked_sub(1)
-                    .and_then(|last| self.heights.locate(last))
+                    .and_then(|last| self.checkpoints.heights().locate(last))
             });
             if let Some(anchor) = anchor {
                 self.top = Some(anchor);
@@ -1436,8 +1528,10 @@ impl ViewportState {
             {
                 if let Some(table) = document.table(table_id) {
                     let range = document.tiles_overlapping(table.source);
-                    self.heights.expire(range.clone())?;
-                    self.checkpoints.invalidate(range)?;
+                    self.checkpoints
+                        .heights_mut(document)?
+                        .expire(range.clone())?;
+                    self.checkpoints.invalidate(document, range)?;
                 }
                 self.render = None;
                 self.pending_table_snapshots.clear();
@@ -1456,6 +1550,17 @@ impl ViewportState {
         }
 
         let frame = self.frame(document, budget)?;
+        if self.calibration.is_none() {
+            // Automatic source reconciliation can move within a tile after a
+            // width reset. Calibrate the resulting visible window once more.
+            self.calibration = Some(self.new_calibration(document)?);
+            return Ok(self.calibration_progress(
+                EofCalibrationStatus::BudgetExhausted,
+                None,
+                false,
+                document,
+            ));
+        }
         match frame.status {
             ViewportFrameStatus::BudgetExhausted => Ok(self.calibration_progress(
                 EofCalibrationStatus::BudgetExhausted,
@@ -1567,15 +1672,9 @@ impl ViewportState {
         self.restart_end(document);
         let old_top = self.top;
         self.table_widths.resize_window(usize::from(width));
-        self.heights.reset(CONTENT_WIDTH_RESET_ESTIMATE)?;
-        if self.checkpoints.maintenance_in_progress() {
-            // Width changes supersede any in-flight retention pass. Replacing
-            // the index drops stale payloads even when `clear` cannot mutate a
-            // draining/compacting store.
-            self.checkpoints.rebuild(document);
-        } else {
-            self.checkpoints.clear();
-        }
+        self.summary = None;
+        self.checkpoints
+            .reset_width(document, CONTENT_WIDTH_RESET_ESTIMATE)?;
         self.render = None;
         self.pending_table_snapshots.clear();
         self.preparing_tables = false;
@@ -1583,6 +1682,11 @@ impl ViewportState {
         self.refined_top = top_source.is_some();
         self.frame_source = None;
         self.config.width = width;
+        if self.end_position.is_none() {
+            self.fold_anchor = top_source;
+            self.fold_reanchor = top_source.is_some();
+            self.anchor_refiner = None;
+        }
 
         if document.tile_count() == 0 {
             self.top = None;
@@ -1636,7 +1740,7 @@ impl ViewportState {
 
     pub fn home(&mut self, document: &Document) -> Result<bool, ViewportError> {
         self.check_document(document)?;
-        if self.heights.total_rows() == 0 {
+        if self.checkpoints.heights().total_rows() == 0 {
             self.top = None;
             self.top_position = TopPosition::Empty;
             self.render = None;
@@ -1650,7 +1754,7 @@ impl ViewportState {
     pub fn end(&mut self, document: &Document) -> Result<bool, ViewportError> {
         self.check_document(document)?;
         let target = self.max_top_row();
-        if self.heights.total_rows() == 0 {
+        if self.checkpoints.heights().total_rows() == 0 {
             self.top = None;
             self.top_position = TopPosition::Empty;
             self.render = None;
@@ -1662,6 +1766,7 @@ impl ViewportState {
     }
 
     pub fn scroll_down(&mut self, document: &Document, rows: u64) -> Result<bool, ViewportError> {
+        self.fold_anchor = None;
         self.check_document(document)?;
         let current = self.top_row().unwrap_or(0);
         let target = current
@@ -1671,6 +1776,7 @@ impl ViewportState {
     }
 
     pub fn scroll_up(&mut self, document: &Document, rows: u64) -> Result<bool, ViewportError> {
+        self.fold_anchor = None;
         self.check_document(document)?;
         let current = self.top_row().unwrap_or(0);
         let target = current.saturating_sub(u128::from(rows));
@@ -1691,6 +1797,8 @@ impl ViewportState {
         exact: bool,
     ) -> Result<bool, ViewportError> {
         self.check_document(document)?;
+        self.fold_reanchor = false;
+        self.anchor_refiner = None;
         if self.top == Some(anchor) && self.top_source(document) == Some(line_start) {
             return Ok(false);
         }
@@ -1721,10 +1829,70 @@ impl ViewportState {
         if self.checkpoints.maintenance_in_progress() {
             return Err(ViewportError::CheckpointMaintenanceInProgress);
         }
+        if self.fold_reanchor && self.end_position.is_none() {
+            if let Some(source) = self.fold_anchor {
+                if self.anchor_refiner.is_none() {
+                    let anchor = mdtui3::FoldAnchor::new(document, source)?;
+                    let Some(target) = anchor.resolve(
+                        document,
+                        self.checkpoints.view(),
+                        u64::from(self.config.rows),
+                        budget,
+                    )?
+                    else {
+                        return Ok(self.end_pending(budget));
+                    };
+                    if let Some(source) = target.target.source
+                        && !(self.top.is_some_and(|a| {
+                            a.offset == 0
+                                && document.tile(a.tile).is_some_and(|t| t.start == source)
+                        }) && source == self.fold_anchor.unwrap_or(source))
+                    {
+                        let config = super::refine::RefineConfig {
+                            width: self.config.width,
+                            max_tiles: self.config.max_tiles,
+                            max_replay_bytes: self.config.max_replay_bytes,
+                            row_slack: self.config.row_slack,
+                        };
+                        if let Ok(mut refiner) = super::refine::SourceRefiner::new(
+                            document,
+                            self.checkpoints.heights(),
+                            &self.checkpoints,
+                            source,
+                            config,
+                        ) {
+                            refiner.set_links(self.links.clone());
+                            self.anchor_refiner = Some(Box::new(refiner));
+                        }
+                    }
+                }
+                if let Some(refiner) = &mut self.anchor_refiner {
+                    match refiner.advance_owned(document, &mut self.checkpoints, budget) {
+                        Ok(super::refine::RefineProgress::Ready(target)) => {
+                            self.fold_reanchor = false;
+                            self.set_top_from_refinement(
+                                document,
+                                target.anchor,
+                                target.line_start,
+                                target.source,
+                                target.status != super::refine::RefineStatus::Approximate,
+                            )?;
+                        }
+                        Ok(
+                            super::refine::RefineProgress::PendingScan
+                            | super::refine::RefineProgress::BudgetExhausted,
+                        ) => return Ok(self.end_pending(budget)),
+                        Ok(super::refine::RefineProgress::NotFound) | Err(_) => {}
+                    }
+                }
+            }
+            self.anchor_refiner = None;
+            self.fold_reanchor = false;
+        }
         if self.end_position.is_some() {
             return self.end_frame(document, budget);
         }
-        if self.heights.total_rows() == 0 {
+        if self.checkpoints.heights().total_rows() == 0 {
             return Ok(self.empty_frame());
         }
         let anchor = self.top.ok_or(ViewportError::InvalidTop)?;
@@ -1766,7 +1934,7 @@ impl ViewportState {
             self.refined_top = false;
             self.render = Some(ViewportRender::new(
                 document,
-                &self.heights,
+                self.checkpoints.heights(),
                 &self.checkpoints,
                 anchor,
                 position,
@@ -1774,13 +1942,15 @@ impl ViewportState {
                 self.config,
                 table_widths,
                 self.table_widths.policy(),
+                &self.table_widths.column_positions(),
+                self.summary.as_ref(),
                 self.links.clone(),
             )?);
         }
 
         let completed = {
             let render = self.render.as_mut().ok_or(ViewportError::InvalidTop)?;
-            render.advance(document, budget)?
+            render.advance(document, &mut self.checkpoints, budget)?
         };
         let Some(mut frame) = completed else {
             let render = self.render.as_ref().ok_or(ViewportError::InvalidTop)?;
@@ -1800,7 +1970,7 @@ impl ViewportState {
         let render = self.render.as_mut().ok_or(ViewportError::InvalidTop)?;
         if !super::first_frame::measure_zero_ranges(
             render.first.zero_ranges(),
-            &mut self.heights,
+            self.checkpoints.heights_mut(document)?,
             &mut render.zero_progress,
             budget,
         )? {
@@ -1835,8 +2005,9 @@ impl ViewportState {
                 })
                 .collect()
         });
+        self.shown_folds = render.first.placeholders().to_vec();
         let preserve_source = render.preserve_refined_source;
-        render.sync_layout_parts(&mut self.heights, &mut self.checkpoints)?;
+
         self.top = Some(frame.top.anchor().unwrap_or(anchor));
         self.top_position = frame.top;
         if !preserve_source {
@@ -1854,7 +2025,7 @@ impl ViewportState {
     }
 
     fn set_top_row(&mut self, document: &Document, row: u128) -> Result<bool, ViewportError> {
-        let Some(anchor) = self.heights.locate(row) else {
+        let Some(anchor) = self.checkpoints.heights().locate(row) else {
             return Ok(false);
         };
         if self.top == Some(anchor) {
@@ -1872,7 +2043,7 @@ impl ViewportState {
     }
 
     fn max_top_row(&self) -> u128 {
-        let total = self.heights.total_rows();
+        let total = self.checkpoints.heights().total_rows();
         total.saturating_sub(u128::from(self.config.rows))
     }
 
@@ -1882,19 +2053,24 @@ impl ViewportState {
         };
         let previous_top = self.top;
         let previous_position = self.top_position;
-        let Some(height) = self.heights.height(anchor.tile) else {
+        let Some(height) = self.checkpoints.heights().height(anchor.tile) else {
             return Err(ViewportError::InvalidTop);
         };
         if height == 0 {
-            let row = self.heights.prefix_rows(anchor.tile.0).unwrap_or(0);
-            self.top = self.heights.locate(row);
+            let row = self
+                .checkpoints
+                .heights()
+                .prefix_rows(anchor.tile.0)
+                .unwrap_or(0);
+            self.top = self.checkpoints.heights().locate(row);
         } else if anchor.offset >= height {
             let row = self
-                .heights
+                .checkpoints
+                .heights()
                 .prefix_rows(anchor.tile.0)
                 .unwrap_or(0)
                 .saturating_add(u128::from(height - 1));
-            self.top = self.heights.locate(row);
+            self.top = self.checkpoints.heights().locate(row);
         }
         if let Some(anchor) = self.top {
             self.top_position =
@@ -1924,6 +2100,9 @@ impl ViewportState {
         position: TopPosition,
         budget: &mut Budget,
     ) -> Result<Option<HashMap<TableId, TableWidthSnapshot>>, ViewportError> {
+        if self.checkpoints.view().has_collapsed() {
+            return Ok(Some(HashMap::new()));
+        }
         let ids = self.visible_table_ids(document, anchor, position);
         self.table_widths.retain_tables(&ids);
         self.pending_table_snapshots
@@ -1952,10 +2131,10 @@ impl ViewportState {
         anchor: Anchor,
         position: TopPosition,
     ) -> Vec<TableId> {
-        let Some(start_row) = self.heights.row_of(anchor) else {
+        let Some(start_row) = self.checkpoints.heights().row_of(anchor) else {
             return Vec::new();
         };
-        let visible = self.heights.viewport(
+        let visible = self.checkpoints.heights().viewport(
             start_row..start_row.saturating_add(u128::from(self.config.rows)),
             self.config.overscan_rows,
             self.config.max_tiles,
@@ -2070,7 +2249,6 @@ struct ViewportRender {
     config: ViewportConfig,
     first: FirstFrame,
     visible_tiles: usize,
-    planned_tiles: usize,
     replay_tiles: usize,
     replay_seen: bool,
     replay_enabled: bool,
@@ -2088,6 +2266,8 @@ impl ViewportRender {
         config: ViewportConfig,
         table_widths: HashMap<TableId, TableWidthSnapshot>,
         policy: super::table_widths::TableWidthPolicy,
+        positions: &[(TableId, usize)],
+        summary: Option<&super::fold_summary::FoldSummary>,
         links: crate::render::objects::SharedLinks,
     ) -> Result<Self, ViewportError> {
         let start_row = heights.row_of(anchor).ok_or(ViewportError::InvalidTop)?;
@@ -2098,21 +2278,46 @@ impl ViewportRender {
         }
         let (start, end) = render_tile_range(document, anchor, top, &visible, config);
         let planned_tiles = end.0.saturating_sub(start.0);
-        let row_limit = u64::try_from(planned_tiles)
-            .unwrap_or(u64::MAX)
-            .saturating_mul(TILE_BYTES as u64 + 4)
-            .saturating_add(config.row_slack)
-            .max(1);
-        let mut first = FirstFrame::new(
+        let row_limit = if checkpoints.view().has_collapsed() {
+            u64::from(config.rows)
+                .saturating_add(config.overscan_rows.saturating_mul(2))
+                .saturating_add(config.row_slack)
+                .max(1)
+        } else {
+            u64::try_from(planned_tiles)
+                .unwrap_or(u64::MAX)
+                .saturating_mul(TILE_BYTES as u64 + 4)
+                .saturating_add(config.row_slack)
+                .max(1)
+        };
+        let mut first = FirstFrame::new_for_view(
             document,
             FirstFrameConfig {
                 top_tile: start,
-                tile_limit: planned_tiles.max(1),
+                tile_limit: if checkpoints.view().has_collapsed() {
+                    visible
+                        .len()
+                        .saturating_add(2)
+                        .max(
+                            usize::from(config.rows)
+                                .saturating_add(config.overscan_rows as usize * 2)
+                                .saturating_mul(usize::from(config.width))
+                                .saturating_mul(4)
+                                .div_ceil(TILE_BYTES),
+                        )
+                        .max(anchor.tile.0.saturating_sub(start.0).saturating_add(1))
+                        .min(config.max_tiles)
+                        .max(1)
+                } else {
+                    planned_tiles.max(1)
+                },
                 width: config.width,
                 row_limit,
             },
+            checkpoints,
         )?;
-        first.set_table_options(document, policy, &[])?;
+        first.set_table_options(document, policy, positions)?;
+        first.set_fold_summary(summary.cloned());
         first.set_table_view(super::table_window::TableView {
             anchor,
             tail: None,
@@ -2188,7 +2393,6 @@ impl ViewportRender {
             config,
             first,
             visible_tiles: visible.len(),
-            planned_tiles,
             replay_tiles,
             replay_seen: false,
             replay_enabled,
@@ -2202,12 +2406,13 @@ impl ViewportRender {
     fn advance(
         &mut self,
         document: &Document,
+        owner: &mut RenderCheckpointStore,
         budget: &mut Budget,
     ) -> Result<Option<ViewportFrame>, ViewportError> {
         if self.document != document.id() || self.revision != document.revision() {
             return Err(ViewportError::Stale);
         }
-        let step = self.first.advance(document, budget)?;
+        let step = self.first.advance_using(document, owner, budget)?;
         if self.replay_enabled && self.first.replay_used() {
             self.replay_seen = true;
         }
@@ -2312,7 +2517,7 @@ impl ViewportRender {
                 plan_start: Some(self.first.plan().tile_start),
                 plan_end: Some(self.first.plan().tile_end),
                 visible_tiles: self.visible_tiles,
-                planned_tiles: self.planned_tiles,
+                planned_tiles: self.first.plan().segments.len(),
                 rendered_tiles: self.first.processed_tiles(),
                 replay_tiles: if self.replay_seen {
                     self.replay_tiles
@@ -2324,15 +2529,6 @@ impl ViewportRender {
                 layout: self.first.sink_stats().unwrap_or_default(),
             },
         }))
-    }
-
-    fn sync_layout_parts(
-        &self,
-        heights: &mut HeightIndex,
-        checkpoints: &mut RenderCheckpointStore,
-    ) -> Result<(), ViewportError> {
-        sync_layout_parts(&self.first, heights, checkpoints)?;
-        Ok(())
     }
 
     fn pending_status(&self) -> ViewportFrameStatus {
@@ -2348,7 +2544,7 @@ impl ViewportRender {
             plan_start: Some(self.first.plan().tile_start),
             plan_end: Some(self.first.plan().tile_end),
             visible_tiles: self.visible_tiles,
-            planned_tiles: self.planned_tiles,
+            planned_tiles: self.first.plan().segments.len(),
             rendered_tiles: self.first.processed_tiles(),
             replay_tiles: if self.replay_seen {
                 self.replay_tiles
@@ -2449,7 +2645,10 @@ fn resolve_target_tile(
     {
         return Some((owner.tile, rows));
     }
-    let start = target.0.saturating_sub(plan.tile_start.0).min(end);
+    let start = plan
+        .segments
+        .partition_point(|segment| segment.tile < target)
+        .min(end);
     if let Some((segment, rows)) = plan.segments.get(start..end)?.iter().find_map(|segment| {
         sink.tile_rows(segment.tile)
             .filter(|rows| *rows > 0)
@@ -2565,50 +2764,4 @@ pub(crate) fn expand_block_end(document: &Document, start: TileId, end: &mut usi
             .tile(TileId(end.saturating_sub(1)))
             .map_or(source_end, |span| span.end);
     }
-}
-
-pub(crate) fn sync_layout_parts(
-    first: &FirstFrame,
-    heights: &mut HeightIndex,
-    checkpoints: &mut RenderCheckpointStore,
-) -> Result<(), LayoutError> {
-    sync_height_parts(first, heights)?;
-    for segment in &first.plan().segments {
-        if let Some(checkpoint) = first.checkpoints().exact(segment.tile) {
-            checkpoints.insert(segment.tile, *checkpoint)?;
-        }
-    }
-    Ok(())
-}
-
-fn sync_height_parts(first: &FirstFrame, heights: &mut HeightIndex) -> Result<(), LayoutError> {
-    for range in first.suppressed_heading_tiles() {
-        heights.suppress(range.clone())?;
-    }
-    for segment in &first.plan().segments {
-        sync_tile_height(first, heights, segment.tile)?;
-    }
-    Ok(())
-}
-
-fn sync_tile_height(
-    first: &FirstFrame,
-    heights: &mut HeightIndex,
-    tile: TileId,
-) -> Result<(), LayoutError> {
-    let source_heights = first.heights();
-    if let Some(rows) = source_heights.height(tile)
-        && matches!(
-            source_heights.height_state(tile),
-            Some(mdtui3::HeightState::Measured | mdtui3::HeightState::Local)
-        )
-        && let Some(ticket) = heights.ticket(tile)
-    {
-        if source_heights.height_state(tile) == Some(mdtui3::HeightState::Local) {
-            heights.measure_local(ticket, rows)?;
-        } else {
-            heights.measure(ticket, rows)?;
-        }
-    }
-    Ok(())
 }

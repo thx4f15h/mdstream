@@ -446,6 +446,10 @@ impl ReadingTools {
         self.searching = self.search.is_some();
         self.message = "searching";
     }
+    pub(crate) fn cancel_navigation(&mut self) {
+        self.search = None;
+        self.searching = false;
+    }
     pub fn cancel(&mut self, links: &SharedLinks) {
         self.search = None;
         self.searching = false;
@@ -544,12 +548,22 @@ impl ReadingTools {
             self.message = "select text first (v)";
             return;
         };
-        if selection.source.len() > MAX_CLIPBOARD_BYTES {
+        if kind == CopyKind::Source && selection.source.len() > MAX_CLIPBOARD_BYTES {
             self.message = "copy too large (64 KiB limit)";
             return;
         }
         self.copy = Some(CopyTask::new(document, selection.source, kind, width));
         self.message = "copy preparing; Esc cancels";
+    }
+    pub(crate) fn bind_copy_view(&mut self, version: u64, folded: bool) {
+        if let Some(copy) = &mut self.copy
+            && copy.kind == CopyKind::Visible
+        {
+            copy.fold_version = Some(version);
+            if folded {
+                copy.direct = None;
+            }
+        }
     }
     /// All source, resolver, layout, projection and encoding work borrows the
     /// frame's existing Budget. Only one hit and a bounded clipboard are held.
@@ -560,6 +574,18 @@ impl ReadingTools {
         budget: &mut Budget,
         writer: &mut W,
         tables: &mut TableWidthCache,
+    ) -> Option<usize> {
+        self.advance_with_view(document, links, budget, writer, tables, None)
+    }
+
+    pub(crate) fn advance_with_view<W: Write + ?Sized>(
+        &mut self,
+        document: &Document,
+        links: &SharedLinks,
+        budget: &mut Budget,
+        writer: &mut W,
+        tables: &mut TableWidthCache,
+        owner: Option<&mut crate::render::checkpoint::RenderCheckpointStore>,
     ) -> Option<usize> {
         self.changed(document.revision());
         let mut target = None;
@@ -663,7 +689,7 @@ impl ReadingTools {
         }
         if let Some(copy) = self.copy.as_mut() {
             let before = copy.packet_written;
-            let result = copy.advance(document, links, budget, writer, tables);
+            let result = copy.advance_with_view(document, links, budget, writer, tables, owner);
             self.clipboard_bytes += copy.packet_written - before;
             match result {
                 Ok(false) => {}
@@ -682,6 +708,9 @@ impl ReadingTools {
 }
 
 struct CopyTask {
+    copied_placeholders: std::collections::BTreeSet<usize>,
+    fold_version: Option<u64>,
+    projection_start: Option<usize>,
     direct: Option<crate::render::payload::TextPayload>,
     direct_at: usize,
     packet_written: usize,
@@ -722,6 +751,9 @@ struct CopyTask {
 impl CopyTask {
     fn new(document: &Document, source: Span, kind: CopyKind, width: u16) -> Self {
         Self {
+            copied_placeholders: Default::default(),
+            fold_version: None,
+            projection_start: None,
             direct: None,
             direct_at: 0,
             packet_written: 0,
@@ -760,6 +792,7 @@ impl CopyTask {
             gap_checked: false,
         }
     }
+    #[cfg(test)]
     fn advance<W: Write + ?Sized>(
         &mut self,
         document: &Document,
@@ -768,6 +801,24 @@ impl CopyTask {
         writer: &mut W,
         tables: &mut TableWidthCache,
     ) -> Result<bool, &'static str> {
+        self.advance_with_view(document, links, budget, writer, tables, None)
+    }
+    fn advance_with_view<W: Write + ?Sized>(
+        &mut self,
+        document: &Document,
+        links: &SharedLinks,
+        budget: &mut Budget,
+        writer: &mut W,
+        tables: &mut TableWidthCache,
+        mut owner: Option<&mut crate::render::checkpoint::RenderCheckpointStore>,
+    ) -> Result<bool, &'static str> {
+        if let Some(version) = self.fold_version
+            && owner
+                .as_ref()
+                .is_none_or(|owner| owner.view().version() != version)
+        {
+            return Err("copy cancelled: view changed");
+        }
         if self.kind == CopyKind::Source {
             while self.position < self.source.end {
                 // Charge before even looking at the next UTF-8 scalar.
@@ -813,6 +864,21 @@ impl CopyTask {
                 self.direct_at += 1;
             }
         } else {
+            if self.layout.is_none() && self.projection_start.is_none() {
+                if let Some(owner) = owner.as_ref().filter(|owner| owner.view().has_collapsed()) {
+                    let anchor = mdtui3::FoldAnchor::new(document, self.source.start)
+                        .map_err(|_| "copy source changed")?;
+                    let Some(target) = anchor
+                        .resolve(document, owner.view(), 1, budget)
+                        .map_err(|_| "copy source changed")?
+                    else {
+                        return Ok(false);
+                    };
+                    self.projection_start = Some(target.target.source.unwrap_or(self.source.start));
+                } else {
+                    self.projection_start = Some(self.source.start);
+                }
+            }
             if self.layout.is_none() {
                 if !budget.charge(WorkLimit {
                     queries: 1,
@@ -835,16 +901,21 @@ impl CopyTask {
                     .and_then(|block| document.tile_at(block.source.start))
                     .unwrap_or(start);
                 let top = TileId(block_start.0.max(start.0.saturating_sub(8)));
-                let mut first = FirstFrame::new(
-                    document,
-                    FirstFrameConfig {
-                        top_tile: top,
-                        tile_limit: end.0 - top.0 + 1,
-                        width: self.width,
-                        row_limit: u64::MAX,
-                    },
-                )
+                let projection_start = self.projection_start.unwrap();
+                let config = FirstFrameConfig {
+                    top_tile: top,
+                    tile_limit: end.0 - top.0 + 1,
+                    width: self.width,
+                    row_limit: u64::MAX,
+                };
+                let mut first = if let Some(owner) = owner.as_ref() {
+                    FirstFrame::new_for_view(document, config, owner)
+                } else {
+                    FirstFrame::new(document, config)
+                }
                 .map_err(|_| "copy layout failed")?;
+                first.set_projection_range(Span::new(projection_start, self.source.end));
+                first.prepare_only();
                 first.set_links(links.clone());
                 first
                     .set_table_options(document, tables.policy(), &tables.column_positions())
@@ -852,6 +923,12 @@ impl CopyTask {
                 self.layout = Some(first);
             }
             let layout = self.layout.as_mut().unwrap();
+            if owner
+                .as_ref()
+                .is_some_and(|owner| owner.view().has_collapsed())
+            {
+                self.snapshots_ready = true;
+            }
             if !self.snapshots_ready {
                 if self.tables.is_none() {
                     if !budget.charge(WorkLimit {
@@ -892,9 +969,12 @@ impl CopyTask {
                 self.snapshots_ready = true;
             }
             if !self.layout_ready {
-                let step = layout
-                    .advance(document, budget)
-                    .map_err(|_| "copy layout failed")?;
+                let step = if let Some(owner) = owner.as_mut() {
+                    layout.advance_using(document, owner, budget)
+                } else {
+                    layout.advance(document, budget)
+                }
+                .map_err(|_| "copy layout failed")?;
                 if !matches!(
                     step.status,
                     FirstFrameStatus::Covered | FirstFrameStatus::EndOfDocument
@@ -1006,6 +1086,32 @@ impl CopyTask {
                     self.word_space = false;
                     continue;
                 };
+                let placeholder = cell.source.and_then(|source| {
+                    let at = layout
+                        .placeholders()
+                        .partition_point(|p| p.candidate.hidden.start < source.start);
+                    layout
+                        .placeholders()
+                        .get(at)
+                        .filter(|p| p.candidate.hidden == source)
+                        .copied()
+                });
+                if let Some(placeholder) = placeholder
+                    && self
+                        .copied_placeholders
+                        .contains(&placeholder.candidate.hidden.start)
+                {
+                    self.column += usize::from(cell.width);
+                    self.cell += 1;
+                    continue;
+                }
+                let replacement = placeholder.map(|placeholder| {
+                    let mut replacement = cell.clone();
+                    replacement.text =
+                        crate::render::plan::placeholder_label(placeholder.candidate).into();
+                    replacement
+                });
+                let cell = replacement.as_ref().unwrap_or(cell);
                 if self.column + usize::from(cell.width) <= usize::from(self.width)
                     && cell
                         .source
@@ -1026,11 +1132,12 @@ impl CopyTask {
                                     });
                             if separate {
                                 self.bytes.push(b'\n');
-                            } else if block
-                                .and_then(|id| document.block(id))
-                                .is_some_and(|block| {
-                                    matches!(block.kind, mdtui3::BlockKind::ListItem { .. })
-                                })
+                            } else if self.fold_version.is_none()
+                                && block
+                                    .and_then(|id| document.block(id))
+                                    .is_some_and(|block| {
+                                        matches!(block.kind, mdtui3::BlockKind::ListItem { .. })
+                                    })
                             {
                                 // List word wrapping does not draw its normalized
                                 // separator at either edge. Recover one logical
@@ -1133,6 +1240,10 @@ impl CopyTask {
                     self.cell_pending_end = 0;
                     self.position = self.source.start;
                     self.last_source_end = cell.source.map(|source| source.end);
+                    if let Some(placeholder) = placeholder {
+                        self.copied_placeholders
+                            .insert(placeholder.candidate.hidden.start);
+                    }
                 }
                 if cell.source.is_none()
                     && cell.text == " "

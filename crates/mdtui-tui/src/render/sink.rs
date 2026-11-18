@@ -125,6 +125,7 @@ enum WorkKind {
     Event(usize),
     FinishStream(BlockId),
     FinishPending,
+    PendingRow(usize),
     Row(BlockId, usize),
     SkippedRows(u64),
 }
@@ -144,6 +145,9 @@ struct PrepareContext<'a> {
     plan_source: Span,
     table_widths: &'a HashMap<TableId, TableWidthSnapshot>,
     table_rows: Option<std::ops::Range<usize>>,
+    source_cut: Option<usize>,
+    table_row_ranges: Option<Vec<std::ops::Range<usize>>>,
+    table_fold_tail: Option<Span>,
     table_windows: &'a std::cell::RefCell<Vec<super::table::TableWindowStatus>>,
     containers: &'a HashMap<mdtui3::ContainerId, ContainerContext>,
     display_bytes: &'a std::cell::Cell<usize>,
@@ -172,6 +176,7 @@ pub struct TileLayoutSink {
     work: Vec<Vec<WorkItem>>,
     blocks: HashMap<BlockId, PreparedBlock>,
     pending: Option<Vec<OwnedGlyph>>,
+    pending_rows: Vec<PreparedRow>,
     tile_rows: Vec<u64>,
     boundary_checkpoints: Vec<RenderCheckpoint>,
     lines: Vec<SinkLine>,
@@ -182,6 +187,7 @@ pub struct TileLayoutSink {
     current: Option<TileId>,
     tile_start: TileId,
     tile_end: TileId,
+    tiles: Vec<TileId>,
     checkpoint: RenderCheckpoint,
     stats: LayoutSinkStats,
 }
@@ -230,7 +236,7 @@ impl TileLayoutSink {
         if !plan.matches(document) || !scanner.matches(document) || !scanner.is_complete() {
             return Err(SinkError::InvalidRevision);
         }
-        if plan.tile_start.0 < plan.tile_end.0 {
+        if !plan.projected && plan.tile_start.0 < plan.tile_end.0 {
             let source_start = document
                 .tile(plan.tile_start)
                 .ok_or(SinkError::IncompleteScan)?
@@ -297,6 +303,11 @@ impl TileLayoutSink {
             segments_by_block.entry(owner).or_default().push(segment);
         }
 
+        let fold_owners = scanner
+            .inline_placeholders()
+            .iter()
+            .map(|p| ((p.candidate.hidden.start, p.candidate.hidden.end), p.owner))
+            .collect::<std::collections::BTreeMap<_, _>>();
         let mut blocks = HashMap::new();
         let table_windows = std::cell::RefCell::new(Vec::new());
         let mut table_rows_prepared = 0_usize;
@@ -310,10 +321,12 @@ impl TileLayoutSink {
                 continue;
             };
             let has_label = plan.events.iter().any(|event| {
-                event.block == planned.id && matches!(event.kind, PlanEventKind::CodeLabel { .. })
+                event.block == Some(planned.id)
+                    && matches!(event.kind, PlanEventKind::CodeLabel { .. })
             });
             let has_rule = plan.events.iter().any(|event| {
-                event.block == planned.id && matches!(event.kind, PlanEventKind::ThematicBreak)
+                event.block == Some(planned.id)
+                    && matches!(event.kind, PlanEventKind::ThematicBreak)
             });
             let context = PrepareContext {
                 document,
@@ -321,6 +334,26 @@ impl TileLayoutSink {
                 fallback_tile: plan.tile_start,
                 plan_source,
                 table_widths,
+                source_cut: scanner.source_cut(),
+                table_fold_tail: if let BlockKind::Table { id } = block.kind {
+                    document
+                        .table(id)
+                        .and_then(|t| t.rows().last())
+                        .and_then(|last| {
+                            plan.events
+                                .iter()
+                                .filter(|e| matches!(e.kind, PlanEventKind::FoldLabel { .. }))
+                                .filter_map(|e| e.display_source)
+                                .find(|s| s.start <= last.source.start && s.end >= last.source.end)
+                        })
+                } else {
+                    None
+                },
+                table_row_ranges: if let BlockKind::Table { id } = block.kind {
+                    scanner.selected_row_ranges(id)
+                } else {
+                    None
+                },
                 table_windows: &table_windows,
                 table_rows: if let BlockKind::Table { id } = block.kind {
                     scanner.selected_rows(id)
@@ -417,21 +450,23 @@ impl TileLayoutSink {
                 continue;
             };
             if let PreparedContent::Streamed { quote, glyphs } = &content
-                && glyphs.iter().any(|g| g.text.is_indexed())
+                && (plan.projected || glyphs.iter().any(|g| g.text.is_indexed()))
             {
-                let rows = stream_lines(glyphs, *quote, width)
-                    .into_iter()
-                    .map(|line| {
-                        let start = line.source.map_or(block.source.start, |s| s.source.start);
-                        let owner = document.tile_at(start).unwrap_or(plan.tile_start);
-                        PreparedRow {
-                            line,
-                            owner_tile: owner,
-                            source_start: start,
-                        }
-                    })
-                    .collect();
-                content = PreparedContent::Rows(rows);
+                content = PreparedContent::Rows(source_owned_rows(
+                    document,
+                    stream_lines(glyphs, *quote, width),
+                    plan.tile_start,
+                    &fold_owners,
+                ));
+            }
+            if !matches!(block.kind, BlockKind::Table { .. })
+                && let PreparedContent::Rows(rows) = &mut content
+            {
+                for row in rows {
+                    if let Some(owner) = fold_row_owner(&row.line, &fold_owners) {
+                        row.owner_tile = owner;
+                    }
+                }
             }
             if matches!(block.kind, BlockKind::Table { .. })
                 && let PreparedContent::Rows(rows) = &content
@@ -459,6 +494,7 @@ impl TileLayoutSink {
                             plan.tile_start,
                         )
                     };
+                    let owner = projected_owner(plan, owner);
                     if let Some(index) = tile_index(plan, owner) {
                         work[index].push(WorkItem {
                             source_start: block.source.end.saturating_sub(1),
@@ -471,7 +507,8 @@ impl TileLayoutSink {
                 }
                 PreparedContent::Rows(rows) => {
                     for (row_index, row) in rows.iter().enumerate() {
-                        let Some(index) = tile_index(plan, row.owner_tile) else {
+                        let Some(index) = tile_index(plan, projected_owner(plan, row.owner_tile))
+                        else {
                             continue;
                         };
                         work[index].push(WorkItem {
@@ -506,7 +543,27 @@ impl TileLayoutSink {
         }
 
         let pending_glyphs = segments_glyphs(pending_segments, None);
-        let pending = if pending_glyphs.is_empty() {
+        let mut pending_rows = Vec::new();
+        let pending = if plan.projected && !pending_glyphs.is_empty() {
+            pending_rows = source_owned_rows(
+                document,
+                stream_lines(&pending_glyphs, false, width),
+                plan.tile_start,
+                &fold_owners,
+            );
+            for (row, prepared) in pending_rows.iter().enumerate() {
+                if let Some(index) = tile_index(plan, projected_owner(plan, prepared.owner_tile)) {
+                    work[index].push(WorkItem {
+                        source_start: prepared.source_start,
+                        rank: 3,
+                        order,
+                        kind: WorkKind::PendingRow(row),
+                    });
+                    order += 1;
+                }
+            }
+            None
+        } else if pending_glyphs.is_empty() {
             None
         } else {
             let source_owner = if pending_glyphs.len() == 1 && pending_glyphs[0].text.is_indexed() {
@@ -570,6 +627,7 @@ impl TileLayoutSink {
             work,
             blocks,
             pending,
+            pending_rows,
             tile_rows,
             boundary_checkpoints,
             lines: Vec::new(),
@@ -580,6 +638,7 @@ impl TileLayoutSink {
             current: None,
             tile_start: plan.tile_start,
             tile_end: plan.tile_end,
+            tiles: plan.segments.iter().map(|s| s.tile).collect(),
             checkpoint: RenderCheckpoint::line_start(),
             stats: LayoutSinkStats {
                 segments_consumed,
@@ -634,7 +693,7 @@ impl TileLayoutSink {
                 .rows()
                 .partition_point(|row| super::table_window::row_owner(row) < span.start);
             let row = table.rows().get(first)?;
-            let index = view.anchor.tile.0.checked_sub(self.tile_start.0)?;
+            let index = self.tiles.binary_search(&view.anchor.tile).ok()?;
             let prefix: Vec<_> = self
                 .work
                 .get(index)?
@@ -700,15 +759,16 @@ impl TileLayoutSink {
 
     #[must_use]
     pub(crate) fn tile_rendered(&self, tile: TileId) -> bool {
-        tile.0
-            .checked_sub(self.tile_start.0)
+        self.tiles
+            .binary_search(&tile)
+            .ok()
             .and_then(|at| self.rendered_tiles.get(at))
             .copied()
             .unwrap_or(false)
     }
 
     pub fn tile_rows(&self, tile: TileId) -> Option<u64> {
-        let index = tile.0.checked_sub(self.tile_start.0)?;
+        let index = self.tiles.binary_search(&tile).ok()?;
         if tile >= self.tile_end {
             return None;
         }
@@ -747,7 +807,7 @@ impl TileLayoutSink {
     }
 
     fn render_tile(&mut self, tile: TileId) -> u64 {
-        let Some(index) = tile.0.checked_sub(self.tile_start.0) else {
+        let Ok(index) = self.tiles.binary_search(&tile) else {
             return 0;
         };
         if index >= self.work.len() || self.rendered_tiles[index] || tile >= self.tile_end {
@@ -762,6 +822,7 @@ impl TileLayoutSink {
                 WorkKind::Event(event) => self.render_event(event),
                 WorkKind::FinishStream(block) => self.render_stream_finish(block),
                 WorkKind::FinishPending => self.render_finish_pending(),
+                WorkKind::PendingRow(row) => self.lines.push(self.pending_rows[row].line.clone()),
                 WorkKind::Row(block, row) => self.render_row(block, row),
                 WorkKind::SkippedRows(count) => self.logical_rows += count,
             }
@@ -797,6 +858,18 @@ impl TileLayoutSink {
                     event.block,
                     self.width,
                 ));
+            }
+            PlanEventKind::FoldLabel { label, summary } => {
+                let label = if self.width < 3 { "+" } else { label.as_str() };
+                for text in std::iter::once(label).chain(summary.iter().map(String::as_str)) {
+                    let source = event.display_source.unwrap_or(event.source);
+                    let mut line =
+                        text_line(text, StyleRole::META, None, source, event.block, self.width);
+                    for cell in &mut line.cells {
+                        cell.source = Some(source);
+                    }
+                    self.lines.push(line);
+                }
             }
             PlanEventKind::ThematicBreak => {
                 self.lines
@@ -866,9 +939,23 @@ impl mdtui3::LayoutSink for TileLayoutSink {
     }
 }
 
+fn projected_owner(plan: &BlockPlan, owner: TileId) -> TileId {
+    if !plan.projected || plan.segment(owner).is_some() {
+        return owner;
+    }
+    plan.segments
+        .get(
+            plan.segments
+                .partition_point(|s| s.tile <= owner)
+                .saturating_sub(1),
+        )
+        .map_or(plan.tile_start, |s| s.tile)
+}
+
 fn tile_index(plan: &BlockPlan, tile: TileId) -> Option<usize> {
-    let index = tile.0.checked_sub(plan.tile_start.0)?;
-    (tile < plan.tile_end && index < plan.segments.len()).then_some(index)
+    plan.segments
+        .binary_search_by_key(&tile, |segment| segment.tile)
+        .ok()
 }
 
 fn calculate_tile_rows(
@@ -877,15 +964,11 @@ fn calculate_tile_rows(
     blocks: &HashMap<BlockId, PreparedBlock>,
     pending: Option<&[OwnedGlyph]>,
     width: u16,
-    tile_start: TileId,
-    tile_end: TileId,
+    _tile_start: TileId,
+    _tile_end: TileId,
 ) -> Result<Vec<u64>, SinkError> {
     let mut rows = vec![0_u64; work.len()];
     for (index, items) in work.iter().enumerate() {
-        let tile = TileId(tile_start.0.saturating_add(index));
-        if tile >= tile_end {
-            break;
-        }
         for item in items {
             let added = match item.kind {
                 WorkKind::Event(event) => match &events
@@ -897,8 +980,9 @@ fn calculate_tile_rows(
                 {
                     PlanEventKind::Spacing { blank_lines } => u64::from(*blank_lines),
                     PlanEventKind::CodeLabel { .. } | PlanEventKind::ThematicBreak => 1,
+                    PlanEventKind::FoldLabel { summary, .. } => 1 + summary.len() as u64,
                 },
-                WorkKind::Row(_, _) => 1,
+                WorkKind::Row(_, _) | WorkKind::PendingRow(_) => 1,
                 WorkKind::SkippedRows(count) => count,
                 WorkKind::FinishStream(block) => {
                     let prepared = blocks.get(&block).ok_or_else(|| {
@@ -924,6 +1008,39 @@ fn calculate_tile_rows(
         }
     }
     Ok(rows)
+}
+
+fn source_owned_rows(
+    document: &Document,
+    lines: Vec<SinkLine>,
+    fallback: TileId,
+    folds: &std::collections::BTreeMap<(usize, usize), TileId>,
+) -> Vec<PreparedRow> {
+    lines
+        .into_iter()
+        .map(|line| {
+            let start = line.source.map_or(0, |s| s.source.start);
+            let owner = fold_row_owner(&line, folds)
+                .or_else(|| document.tile_at(start))
+                .unwrap_or(fallback);
+            PreparedRow {
+                line,
+                owner_tile: owner,
+                source_start: start,
+            }
+        })
+        .collect()
+}
+
+fn fold_row_owner(
+    line: &SinkLine,
+    folds: &std::collections::BTreeMap<(usize, usize), TileId>,
+) -> Option<TileId> {
+    line.cells
+        .iter()
+        .filter_map(|cell| cell.source)
+        .find_map(|source| folds.get(&(source.start, source.end)))
+        .copied()
 }
 
 fn owner_tile(document: &Document, source: Span, fallback: TileId) -> TileId {
@@ -1158,10 +1275,15 @@ fn prepare_block(
             let table = document
                 .table(id)
                 .ok_or_else(|| SinkError::Render("missing table".to_owned()))?;
-            let row_window = context
-                .table_rows
-                .clone()
-                .unwrap_or_else(|| table_row_window(table, context.plan_source));
+            let row_windows = context.table_row_ranges.clone().unwrap_or_else(|| {
+                vec![
+                    context
+                        .table_rows
+                        .clone()
+                        .unwrap_or_else(|| table_row_window(table, context.plan_source)),
+                ]
+            });
+            let row_window = row_windows.first().cloned().unwrap_or(0..0);
             // Table tokens have already passed the paid per-cell visibility
             // preparation. This callback cannot consult remote source/guards.
             let input = DisplayInput::from_tokens(
@@ -1182,7 +1304,8 @@ fn prepare_block(
             let mut widths = context.table_widths.get(&id).cloned().unwrap_or_else(|| {
                 TableWidthCache::hint_snapshot_prefix(id, table, usize::from(context.width))
             });
-            if row_window.start == 0
+            if context.table_row_ranges.is_none()
+                && row_window.start == 0
                 && row_window.end == table.rows().len()
                 && table.rows().iter().all(|row| {
                     row.cells
@@ -1209,57 +1332,89 @@ fn prepare_block(
                 widths.provisional =
                     widths.first_column > 0 || widths.widths.len() < table.columns.len();
             }
-            let geometry = table_geometry_window(
-                document,
-                block_id,
-                block,
-                usize::from(context.width),
-                &widths.widths,
-                row_window,
-                widths.provisional,
-                None,
-                Some(&input),
-                widths.first_column,
-            )
-            .map_err(|error| SinkError::Render(error.to_string()))?;
-            context
-                .table_windows
-                .borrow_mut()
-                .push(super::table::TableWindowStatus {
-                    table_id: id,
-                    first: geometry.first_column,
-                    visible: geometry.visible_columns,
-                    total: geometry.total_columns,
-                    provisional: geometry.widths_provisional,
-                });
-            let mut screen = scratch_screen_rows(
-                u16::try_from(geometry.rows.len().saturating_add(3))
-                    .map_err(|_| SinkError::RowOverflow)?,
-                context.width,
-            )?;
-            context.scratch(&screen);
-            let rows = render_table_with_geometry(&geometry, &mut screen, 0)
+            let mut prepared = Vec::new();
+            let needs_fold_bottom = table.rows().len() > 1
+                && row_windows
+                    .last()
+                    .is_some_and(|r| r.end < table.rows().len());
+            let mut fold_bottom = None;
+            for row_window in row_windows {
+                let mut geometry = table_geometry_window(
+                    document,
+                    block_id,
+                    block,
+                    usize::from(context.width),
+                    &widths.widths,
+                    row_window,
+                    widths.provisional,
+                    None,
+                    Some(&input),
+                    widths.first_column,
+                )
                 .map_err(|error| SinkError::Render(error.to_string()))?;
-            let rows = extract_rows(&screen, 0, Some(rows))?
-                .into_iter()
-                .map(|line| {
-                    let source = line.source.map_or(block.source, |source| source.source);
-                    PreparedRow {
-                        line,
-                        owner_tile: owner_tile(
-                            document,
-                            if source.len() > 4096 {
-                                Span::new(source.start, source.start + 1)
-                            } else {
-                                source
-                            },
-                            context.fallback_tile,
-                        ),
-                        source_start: source.start,
+                if let Some(cut) = context.source_cut {
+                    for row in &mut geometry.rows {
+                        let original_end = row.source.end;
+                        row.source.end = row.source.end.min(cut).max(row.source.start);
+                        row.complete &= row.source.end == original_end;
                     }
-                })
-                .collect();
-            Ok(Some(PreparedContent::Rows(rows)))
+                }
+                context
+                    .table_windows
+                    .borrow_mut()
+                    .push(super::table::TableWindowStatus {
+                        table_id: id,
+                        first: geometry.first_column,
+                        visible: geometry.visible_columns,
+                        total: geometry.total_columns,
+                        provisional: geometry.widths_provisional,
+                    });
+                let mut screen = scratch_screen_rows(
+                    u16::try_from(geometry.rows.len().saturating_add(3))
+                        .map_err(|_| SinkError::RowOverflow)?,
+                    context.width,
+                )?;
+                context.scratch(&screen);
+                let rows = render_table_with_geometry(&geometry, &mut screen, 0)
+                    .map_err(|error| SinkError::Render(error.to_string()))?;
+                let rows: Vec<_> = extract_rows(&screen, 0, Some(rows))?
+                    .into_iter()
+                    .map(|line| {
+                        let source = line.source.map_or(block.source, |source| source.source);
+                        PreparedRow {
+                            line,
+                            owner_tile: owner_tile(
+                                document,
+                                if source.len() > 4096 {
+                                    Span::new(source.start, source.start + 1)
+                                } else {
+                                    source
+                                },
+                                context.fallback_tile,
+                            ),
+                            source_start: source.start,
+                        }
+                    })
+                    .collect();
+                prepared.extend(rows);
+                if needs_fold_bottom && let Some(source) = context.table_fold_tail {
+                    let mut screen = scratch_screen_rows(1, context.width)?;
+                    super::table::render_folded_bottom(&geometry, source, &mut screen)
+                        .map_err(|error| SinkError::Render(error.to_string()))?;
+                    let mut rows = extract_rows(&screen, 0, Some(1))?;
+                    fold_bottom = rows.pop().map(|line| PreparedRow {
+                        line,
+                        owner_tile: document
+                            .tile_at(source.start)
+                            .unwrap_or(context.fallback_tile),
+                        source_start: source.end.saturating_sub(1),
+                    });
+                }
+            }
+            if let Some(bottom) = fold_bottom {
+                prepared.push(bottom);
+            }
+            Ok(Some(PreparedContent::Rows(prepared)))
         }
         _ => Ok(None),
     }
@@ -1334,6 +1489,9 @@ fn scratch_screen_rows(rows: u16, width: u16) -> Result<Screen, SinkError> {
 }
 
 fn planned_source(document: &Document, plan: &BlockPlan) -> Result<Span, SinkError> {
+    if plan.projected {
+        return Ok(plan.visible);
+    }
     if plan.tile_start.0 == plan.tile_end.0 {
         return Ok(Span::new(0, 0));
     }
@@ -1510,7 +1668,7 @@ fn text_line(
     style: StyleRole,
     link: Option<LinkId>,
     source: Span,
-    block: BlockId,
+    block: Option<BlockId>,
     width: u16,
 ) -> SinkLine {
     let mut cells = Vec::new();
@@ -1531,11 +1689,14 @@ fn text_line(
     }
     SinkLine {
         cells,
-        source: Some(LineSource::new(source, block)),
+        source: Some(block.map_or_else(
+            || LineSource::pending(source),
+            |block| LineSource::new(source, block),
+        )),
     }
 }
 
-fn rule_line(source: Span, block: BlockId, width: u16) -> SinkLine {
+fn rule_line(source: Span, block: Option<BlockId>, width: u16) -> SinkLine {
     SinkLine {
         cells: (0..width)
             .map(|_| SinkCell {
@@ -1546,7 +1707,10 @@ fn rule_line(source: Span, block: BlockId, width: u16) -> SinkLine {
                 source: None,
             })
             .collect(),
-        source: Some(LineSource::new(source, block)),
+        source: Some(block.map_or_else(
+            || LineSource::pending(source),
+            |block| LineSource::new(source, block),
+        )),
     }
 }
 
@@ -1649,8 +1813,8 @@ fn boundary_checkpoints(
                 |block| block.checkpoint,
             );
             // A code checkpoint restores the physical source line crossing the
-            // boundary, not the block opener. Its row owner remains the tile
-            // containing that line's newline (including blank lines).
+            // boundary, not the block opener. Unfolded rows belong to the
+            // newline tile; an inline PH below keeps its global-start owner.
             if matches!(block.kind, BlockKind::Code { .. })
                 && let Some(PreparedBlock {
                     content: PreparedContent::Rows(rows),
@@ -1665,6 +1829,19 @@ fn boundary_checkpoints(
                 }
             }
         }
+        if plan.projected
+            && let Some(row) = blocks
+                .values()
+                .filter_map(|block| match &block.content {
+                    PreparedContent::Rows(rows) => Some(rows),
+                    _ => None,
+                })
+                .flatten()
+                .filter(|row| row.owner_tile == segment.tile)
+                .max_by_key(|row| row.source_start)
+        {
+            checkpoint.line_source_start = Some(row.source_start);
+        }
         if let Some(next) = plan.segments.get(index + 1) {
             let mut pending = PendingBlockEvents::default();
             for event in events {
@@ -1675,6 +1852,7 @@ fn boundary_checkpoints(
                                 pending.spacing_rows.saturating_add(blank_lines as u8);
                         }
                         PlanEventKind::CodeLabel { .. } => pending.code_label = true,
+                        PlanEventKind::FoldLabel { .. } => {}
                         PlanEventKind::ThematicBreak => pending.thematic_break = true,
                     }
                 }

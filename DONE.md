@@ -3170,3 +3170,19 @@ TextPayload 使用固定 inline 或共享 source/property descriptor，front/bac
 真实 TUI 已在 EOF 前执行 Enter 和左键 fragment 激活，同请求跨帧解码及 SourceRefiner 续跑；提交前重新核对 owner，只有成功写一次源码 history。实际 held-FIFO PTY、vt100 网格、晚定义在 refiner 中改名、返回/前进与 resize 已覆盖；正文折叠 Reveal、目录名称/显示搜索跨 revision 维护仍是独立原待办。
 
 独立 batch oracle、全部字节切点/前缀与 finish、merged/queued/late subscription、容器/同 tile/迟 Setext/header rollback/代码规范化、Unicode/百分号错误尾、owner/顺序/zero/微预算、lease/cancel/retire 均在新增测试中。原生独立 competitor 百万增长精确比较 1,000,000 字节，真实 Document 百万增长同样线性比较；20,000 历史标题无旧 slug 改名、40,000 重复标题晚绑定得到 40,001 次付费改名，百万 Setext 仅 normalize 新的 5 字节。原始模型红/绿及官方数据/HTML/generator/SHA/golden 均保留。生产算法、容量口径、命令与复杂度限制见 [维护说明](docs/slug-maintenance.md)。最终常规 debug 的 2782 项通过证据由同输入实测及最终 history 专项组成；最终 release 2778 项通过，6 项原手工测试默认忽略，fmt、debug/release check、严格 clippy、doc 和严格 rustdoc 通过。根代理另验真实 FIFO 的晚绑定目标切换、标题可见性、resize 和 EOF 前 q 退出。扩展 debug 原跑 2785 项通过、2 项失败：旧 EOF-only history 预期已保留原样例并按本次 preEOF 行为分别补验；额外 64 MiB 小选区复制断言在精确已接受基线同样失败，作为独立修复待办保留，未修改其断言，不宣称扩展跑全绿。
+
+## 2026-11-18 终端折叠 UI 与单一视图布局交付
+
+终端 `z` 六页菜单接入 Heading/Code/Math/Container/Table/TableRows/Source 七族、单点/父节点、子树/兄弟/文档、严格 h1…h6、当前路径、容器/任务状态筛选、只初始化新节点的默认值、临时展开及恢复。从真实源码选区创建 fixed strict/overlay/live EOF、同 ID seal、固定表格行范围；注册范围按相交/全文枚举后准确操作。Esc 取消保留已生效意愿，主动操作期间暂停 Reader batch 消费，保持背压、按键和 Reader.close；自动段落任务合并旧 remaining_range 与新更新。具体使用见 `crates/mdtui-tui/README.md`。
+
+Viewport、FirstFrame、Reading、End 和局部 refiner 借用同一个 FoldView，height/CP 不另存树。检查点维护移动完整 owner，resize 保留选择并按原源锚点付费细化；基础零高与折叠 mask 分离，使用批量零高票据且不穿透子 fold。FoldProjection 在 context/table/scanner 预扫描前输出稀疏可见片段；表格按索引选可见行/绝对列，跳过 raw row gap，保留 Alignment、min/max、真实行 owner 和一次边框。相交隐藏区仅 global start 一个 PH，段中/段尾、多 PH、父隐藏子入口、源映射和提交后 FoldHit 接通。显式 fragment 阻断跨界 EGC/实体负载；不恢复旧巨型字素窗口上限。
+
+最小 PH 只用类型/ID/range，可聚焦/点击激活；显式摘要限源码 256B、显示 128B、LF 2 行、终端 2 行，可 pending。CodeInfoCursor 与已验收 025 的 DetachedCodeInfo 共用原解码器，TablePreview 借用唯一 resolver。y 使用同一逻辑可见投影，只复制一次最小 PH，不复制摘要或隐藏正文；Y 保留真实 Span/CRLF 及 64KiB 拒绝。搜索查逻辑全文，n/N、目录、当前 fragment 与历史先付费 Reveal 必要路径，再局部 refiner/reconcile；微预算保存阶段，不重复查询饿死后续工作，提交前仍复核当前 owner。取消/无目标不提交历史，历史预算不足保存原目标逐帧继续。End/FOLLOW 可落在大尾 PH，Ctrl+End 的 source cut 跨 append/resize/fold 保持。
+
+生产验证入口为 `tests/fold_ui.rs`、`fold_pty.rs`、`history.rs` 和核心 prefix/共享 TablePreview 测试，覆盖独立 byte-mask/并集/grid/source/height oracle、七族、人工字素/实体/对象切口、同文档双视图、默认/预览、各注册模式、Setext、600 层零/微预算取消重启、持续 FIFO、极窄菜单、OSC52、同 tile resize、巨型 hidden tail、十万列横移及当前 slug/fragment/目录/历史组合。完整冻结输入与 workspace check、debug/release、doc/docbuild、fmt、all-targets clippy、真实 PTY、64MiB source/counter/CPU/RSS/wire 结果保存在仓外 `026-prototypes` 与 `026-result.json`，由根实际审查后单独提交。原官方输入、HTML、生成器、SHA、golden 数组及 --once ANSI 不改；核心零运行时依赖和 forbid unsafe、hook/.rustfmt.toml 保持。
+
+本项完成原 150/152/168/170/178/200 及目录正文折叠 UI 联动的已定义范围；166 的逻辑/显示行正文安全前缀与媒体详情、155 可操作任务框/聚合统计、158/159 自动首 N/live 尾部/嵌套交叉 TableRows、数学/脚注实际排版、图片协议、显示搜索跨 revision 与其余语法回退保持独立待办。人工 UTF-8 范围允许拆开原 cluster/实体/对象，摘要 2 行限额不替代 166。根记录的原忽略 64MiB 小选区复制限制由独立 035 处理，不据此声称全部 TODO 清空。
+
+根独立验收（2026-11-18）：冻结 724 个输入（571 个 Rust 文件）逐文件哈希一致；当前 nextest 清单与实际唯一 PASS 一一对应，debug **2822/2822**、release **2818/2818**，各保留原 6 项 ignored。84 个 doctest、workspace all-targets check、fmt、严格 all-targets Clippy/rustdoc、显示形状生成器校验均通过。根用同一冻结源码的固定 release 二进制实际操作 80×24 与 20×3 的菜单、展开/收起、翻页、Esc、resize 和菜单内 q，退出 0；最终 PTY 检查保留 termios/stdout flags 恢复、UTF-8 wire 及 held-FIFO 深层操作证据。
+
+64MiB 测量实际源码 67,108,869 字节，折叠阶段一帧、一个规划 tile，约 1.22ms，wire 1952B，已有 shape 的源码解码、标量分类与输入节点访问增量均为 0；包括解析和准备的整例约 20.62s，进程 VmHWM 10,619,952KiB，不能把局部折叠时间或保守 capacity 口径当作整次耗时/进程总内存。原 F1/F2 的失败/中断记录保留为诊断，不冒充最终全套通过；原 ignored 大段落小选区复制失败保留为独立 035 待办。完整日志、输入清单、源码快照、根复核及终端证据归档至 `/home/ajen/.local/state/codex/mdtui3/2026-11-17-resumed/026-accepted-evidence.tar.gz`。

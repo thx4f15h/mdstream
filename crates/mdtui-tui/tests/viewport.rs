@@ -124,7 +124,7 @@ fn long_line_top_position_distinguishes_exact_replay_and_approximate() {
 
     state
         .checkpoints_mut()
-        .invalidate(anchor.tile.0..anchor.tile.0 + 1)
+        .invalidate(&document, anchor.tile.0..anchor.tile.0 + 1)
         .unwrap();
     let replay = frame_until_ready(&mut state, &document);
     let TopPosition::ReplayFrom { from, target, .. } = replay.top else {
@@ -134,7 +134,7 @@ fn long_line_top_position_distinguishes_exact_replay_and_approximate() {
     assert_eq!(replay.stats.replay_tiles, target.0 - from.0 + 1);
     assert_lines_start_before_owner(&replay, &document, anchor.tile);
 
-    state.checkpoints_mut().clear();
+    state.checkpoints_mut().clear(&document).unwrap();
     let approximate = frame_until_ready(&mut state, &document);
     assert!(matches!(
         approximate.top,
@@ -307,7 +307,7 @@ fn tiny_budget_resumes_checkpoint_replay_with_recovery_units() {
     let anchor = state.top_anchor().unwrap();
     state
         .checkpoints_mut()
-        .invalidate(anchor.tile.0..anchor.tile.0 + 1)
+        .invalidate(&document, anchor.tile.0..anchor.tile.0 + 1)
         .unwrap();
 
     let mut frame = None;

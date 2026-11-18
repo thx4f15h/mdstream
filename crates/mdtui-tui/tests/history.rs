@@ -516,3 +516,147 @@ fn current_pre_eof_fragment_uses_the_original_existing_heading_sample() {
     assert_eq!(app.history(), &recorded);
     assert!(!engine.document().is_finished());
 }
+
+#[test]
+fn folded_fragment_sidebar_history_and_directory_choices_use_the_same_view() {
+    use mdtui3::{FoldId, HeadingId};
+    let source = "[jump](#target)\n\n# Outer\nouter\n\n## Target\nHIT_ONE\n\n## Later\nHIT_TWO\n\n# Unrelated\nNOPE\n";
+    let mut writer = Vt100Writer::new(HEIGHT, WIDTH);
+    let mut engine = finished_engine(source, &mut writer);
+    let mut app = AppState::default();
+    app.handle_key(&mut engine, KeyCode::Char('z'), KeyModifiers::NONE)
+        .unwrap();
+    settle_folds(&mut engine, &mut writer);
+    for key in [KeyCode::Right, KeyCode::Down, KeyCode::Down, KeyCode::Enter] {
+        app.handle_key(&mut engine, key, KeyModifiers::NONE)
+            .unwrap();
+    }
+    settle_folds(&mut engine, &mut writer);
+    app.handle_key(&mut engine, KeyCode::Esc, KeyModifiers::NONE)
+        .unwrap();
+    settle_folds(&mut engine, &mut writer);
+    assert!(
+        engine
+            .runtime()
+            .viewport()
+            .folds()
+            .is_collapsed(FoldId::Heading(HeadingId(0)))
+    );
+    build_anchors(&mut engine);
+    app.handle_key(&mut engine, KeyCode::Tab, KeyModifiers::NONE)
+        .unwrap();
+    assert_eq!(app.focus(), FocusTarget::Link);
+    let activated = app
+        .handle_key(&mut engine, KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    assert!(activated.fragment_activation.unwrap().status.is_success());
+    settle_folds(&mut engine, &mut writer);
+    assert_eq!(
+        engine.runtime().top_source(),
+        Some(source.find("## Target").unwrap())
+    );
+    assert!(
+        !engine
+            .runtime()
+            .viewport()
+            .folds()
+            .is_collapsed(FoldId::Heading(HeadingId(0)))
+    );
+    assert!(
+        engine
+            .runtime()
+            .viewport()
+            .folds()
+            .is_collapsed(FoldId::Heading(HeadingId(1)))
+    );
+    assert!(
+        engine
+            .runtime()
+            .viewport()
+            .folds()
+            .is_collapsed(FoldId::Heading(HeadingId(3)))
+    );
+    let history = app.history().len();
+    assert_eq!(history, 1);
+    // No visible link remains at this top; normalize to Body before opening tree.
+    app.handle_key(&mut engine, KeyCode::Esc, KeyModifiers::NONE)
+        .unwrap();
+    assert_eq!(app.focus(), FocusTarget::Body);
+    open_sidebar(&mut app, &mut engine, &mut writer);
+    app.handle_key(&mut engine, KeyCode::Home, KeyModifiers::NONE)
+        .unwrap();
+    settle_folds(&mut engine, &mut writer);
+    app.handle_key(&mut engine, KeyCode::Left, KeyModifiers::NONE)
+        .unwrap();
+    settle_folds(&mut engine, &mut writer);
+    assert!(
+        engine
+            .runtime()
+            .directory()
+            .unwrap()
+            .collapsed(HeadingId(0))
+    );
+    assert!(
+        !engine
+            .runtime()
+            .viewport()
+            .folds()
+            .is_collapsed(FoldId::Heading(HeadingId(0)))
+    );
+    app.handle_key(&mut engine, KeyCode::End, KeyModifiers::NONE)
+        .unwrap();
+    activate_sidebar(&mut app, &mut engine);
+    settle_folds(&mut engine, &mut writer);
+    assert_eq!(
+        engine.runtime().top_source(),
+        Some(source.find("# Unrelated").unwrap())
+    );
+    assert_eq!(app.history().len(), history + 1);
+    assert!(
+        engine
+            .runtime()
+            .directory()
+            .unwrap()
+            .collapsed(HeadingId(0))
+    );
+    app.handle_action(&mut engine, KeyAction::HistoryBack)
+        .unwrap();
+    settle_folds(&mut engine, &mut writer);
+    app.frame_committed(&engine);
+    assert_eq!(
+        engine.runtime().top_source(),
+        Some(source.find("## Target").unwrap())
+    );
+    app.handle_action(&mut engine, KeyAction::HistoryForward)
+        .unwrap();
+    settle_folds(&mut engine, &mut writer);
+    app.frame_committed(&engine);
+    assert_eq!(
+        engine.runtime().top_source(),
+        Some(source.find("# Unrelated").unwrap())
+    );
+    assert!(
+        engine
+            .runtime()
+            .directory()
+            .unwrap()
+            .collapsed(HeadingId(0))
+    );
+    // Re-activating the current exact target cannot append another history entry.
+    let before = app.history().clone();
+    app.handle_key(&mut engine, KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    settle_folds(&mut engine, &mut writer);
+    app.frame_committed(&engine);
+    assert_eq!(app.history(), &before);
+}
+
+fn settle_folds(engine: &mut StreamEngine, writer: &mut Vt100Writer) {
+    for _ in 0..10000 {
+        settle(engine, writer, Duration::ZERO);
+        if !engine.runtime().fold_pending() && !engine.runtime().has_pending_jump() {
+            return;
+        }
+    }
+    panic!("folded navigation did not settle");
+}

@@ -3,6 +3,7 @@
 pub mod app;
 pub mod cli;
 pub mod external;
+pub mod fold_ui;
 pub mod fragment;
 pub mod history;
 pub mod links;

@@ -409,6 +409,16 @@ pub fn render_table_with_geometry(
     Ok(total)
 }
 
+/// A partial table whose final rows are folded still closes after its PH.
+pub(crate) fn render_folded_bottom(
+    geometry: &TableGeometry,
+    source: Span,
+    screen: &mut Screen,
+) -> Result<(), TableError> {
+    let bottom = horizontal_border('└', '┴', '┘', '─', &geometry.columns)?;
+    write_line(screen, 0, geometry.block_id, source, bottom)
+}
+
 /// Source-bounded table row window. Header row zero may be included when the
 /// requested source overlaps it; otherwise only intersecting body rows survive.
 #[must_use]

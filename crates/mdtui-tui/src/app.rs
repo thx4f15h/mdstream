@@ -1,3 +1,4 @@
+use crate::render::frame::HistoryRestoreStatus;
 use crossterm::event::{KeyCode, KeyModifiers};
 use mdtui3::LinkId;
 
@@ -131,6 +132,7 @@ pub struct AppState {
     pending_jump_from: Option<HistoryPosition>,
     pending_fragment_from: Option<HistoryPosition>,
     fragment_serial: u64,
+    pending_history: Option<(bool, HistoryPosition)>,
 }
 
 impl AppState {
@@ -165,6 +167,16 @@ impl AppState {
         code: KeyCode,
         modifiers: KeyModifiers,
     ) -> Result<AppOutcome, StreamError> {
+        if code == KeyCode::Char('z') && !engine.first_frame_done() {
+            return Ok(AppOutcome::default());
+        }
+        if engine.runtime_mut().fold_menu_key(code) {
+            engine.request_render();
+            return Ok(AppOutcome {
+                redraw: true,
+                ..AppOutcome::default()
+            });
+        }
         if self.focus == FocusTarget::Sidebar {
             let editing = engine
                 .runtime()
@@ -223,6 +235,23 @@ impl AppState {
                 });
             }
         }
+        if self.focus == FocusTarget::Sidebar && code == KeyCode::Char('z') {
+            self.pending_jump_from = None;
+            self.pending_fragment_from = None;
+            engine.runtime_mut().open_fold_menu(true);
+            engine.request_render();
+            return Ok(AppOutcome {
+                redraw: true,
+                ..AppOutcome::default()
+            });
+        }
+        if code == KeyCode::Esc
+            && self.focus == FocusTarget::Link
+            && engine.runtime().reading().input().is_none()
+        {
+            self.focus = FocusTarget::Body;
+            engine.clear_link_focus();
+        }
         if self.focus != FocusTarget::Sidebar
             && !(matches!(code, KeyCode::Left | KeyCode::Right)
                 && modifiers.contains(KeyModifiers::ALT))
@@ -230,6 +259,10 @@ impl AppState {
                 .runtime_mut()
                 .reading_key(code, modifiers, self.focus == FocusTarget::Body)?
         {
+            if matches!(code, KeyCode::Char('z') | KeyCode::Esc) {
+                self.pending_jump_from = None;
+                self.pending_fragment_from = None;
+            }
             engine.runtime_mut().cancel_sidebar_activation();
             engine.request_render();
             return Ok(AppOutcome {
@@ -267,6 +300,7 @@ impl AppState {
                 engine.runtime_mut().cancel_fragment();
                 self.pending_fragment_from = None;
             }
+            self.pending_history = None;
         }
         match action {
             KeyAction::Quit => outcome.quit = true,
@@ -345,7 +379,12 @@ impl AppState {
                     outcome.redraw = moved;
                 } else {
                     outcome.activated = Some(self.focus);
-                    if self.focus == FocusTarget::Link {
+                    if self.focus == FocusTarget::Link
+                        && engine.runtime_mut().activate_focused_fold()
+                    {
+                        engine.request_render();
+                        outcome.redraw = true;
+                    } else if self.focus == FocusTarget::Link {
                         outcome.activated_link = engine.link_focus();
                         let from = engine.navigation_position();
                         let activation = engine.activate_focused_link()?;
@@ -375,18 +414,26 @@ impl AppState {
             KeyAction::HistoryBack => {
                 if let Some(target) = self.history.peek_back() {
                     let restored = engine.restore_navigation_position(target)?;
-                    if restored.is_ready() {
+                    if restored.is_ready() && restored.moved() {
                         self.history.commit_back();
                         outcome.redraw = restored.moved();
+                    } else if restored == HistoryRestoreStatus::BudgetExhausted {
+                        self.pending_history = Some((false, target));
+                        engine.request_render();
+                        outcome.redraw = true;
                     }
                 }
             }
             KeyAction::HistoryForward => {
                 if let Some(target) = self.history.peek_forward() {
                     let restored = engine.restore_navigation_position(target)?;
-                    if restored.is_ready() {
+                    if restored.is_ready() && restored.moved() {
                         self.history.commit_forward();
                         outcome.redraw = restored.moved();
+                    } else if restored == HistoryRestoreStatus::BudgetExhausted {
+                        self.pending_history = Some((true, target));
+                        engine.request_render();
+                        outcome.redraw = true;
                     }
                 }
             }
@@ -448,7 +495,9 @@ impl AppState {
         row: u16,
         col: u16,
     ) -> Result<AppOutcome, StreamError> {
-        if !engine.runtime_mut().focus_link_at(row, col) {
+        if !engine.runtime_mut().focus_fold_at(row, col)
+            && !engine.runtime_mut().focus_link_at(row, col)
+        {
             return Ok(AppOutcome::default());
         }
         self.focus = FocusTarget::Link;
@@ -460,6 +509,21 @@ impl AppState {
     }
     pub fn frame_committed(&mut self, engine: &StreamEngine) {
         self.commit_fragment(engine);
+        if !engine.runtime().has_pending_jump()
+            && let Some((forward, target)) = self.pending_history.take()
+            && engine
+                .runtime()
+                .history_restore_result()
+                .is_some_and(|(requested, status)| {
+                    requested == target && status.is_ready() && status.moved()
+                })
+        {
+            if forward {
+                self.history.commit_forward();
+            } else {
+                self.history.commit_back();
+            }
+        }
         if !engine.runtime().has_pending_jump()
             && let Some(from) = self.pending_jump_from.take()
         {
@@ -526,7 +590,7 @@ impl AppState {
             self.focus = FocusTarget::Body;
             redraw = true;
         }
-        if self.focus == FocusTarget::Link && engine.has_visible_links() == Some(false) {
+        if self.focus == FocusTarget::Link && engine.has_visible_objects() == Some(false) {
             engine.clear_link_focus();
             self.focus = FocusTarget::Body;
             redraw = true;
@@ -540,11 +604,11 @@ impl AppState {
         forward: bool,
     ) -> Result<bool, StreamError> {
         let redraw = self.normalize_focus(engine);
-        let links = engine.has_visible_links();
+        let links = engine.has_visible_objects();
         if self.focus == FocusTarget::Link {
             return Ok(redraw
                 || match links {
-                    Some(true) => engine.cycle_link_focus(forward),
+                    Some(true) => engine.cycle_object_focus(forward),
                     Some(false) => false,
                     None => false,
                 });
@@ -571,7 +635,7 @@ impl AppState {
                 continue;
             }
             if next == FocusTarget::Link {
-                if engine.enter_link_focus(forward).is_some() {
+                if engine.enter_object_focus(forward) {
                     self.focus = FocusTarget::Link;
                     return Ok(true);
                 }

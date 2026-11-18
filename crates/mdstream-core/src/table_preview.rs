@@ -91,11 +91,33 @@ impl TablePreview {
         document: &'a Document,
         budget: &mut Budget,
     ) -> Result<TablePreviewStep<'a>, LayoutError> {
+        self.next_inner(document, budget, None)
+    }
+
+    /// Use the host's single revision-bound resolver for all preview rows.
+    pub fn next_with_resolver<'a>(
+        &mut self,
+        document: &'a Document,
+        resolver: &mut crate::LinkResolver,
+        budget: &mut Budget,
+    ) -> Result<TablePreviewStep<'a>, LayoutError> {
+        self.next_inner(document, budget, Some(resolver))
+    }
+
+    fn next_inner<'a>(
+        &mut self,
+        document: &'a Document,
+        budget: &mut Budget,
+        mut resolver: Option<&mut crate::LinkResolver>,
+    ) -> Result<TablePreviewStep<'a>, LayoutError> {
         if document.id() != self.document {
             return Err(LayoutError::WrongDocument);
         }
         if document.revision() != self.revision {
             return Err(LayoutError::StaleContinuation);
+        }
+        if let Some(resolver) = resolver.as_ref() {
+            resolver.check(document)?;
         }
         loop {
             if let Some(end) = self.complete {
@@ -136,7 +158,15 @@ impl TablePreview {
                 )?);
                 self.limits.source_bytes -= source.len().min(self.limits.source_bytes);
             }
-            match self.excerpt.as_mut().unwrap().next(document, budget)? {
+            let excerpt = self.excerpt.as_mut().unwrap();
+            if let Some(resolver) = resolver.as_deref_mut() {
+                excerpt.swap_link_resolver(resolver)?;
+            }
+            let result = excerpt.next(document, budget);
+            if let Some(resolver) = resolver.as_deref_mut() {
+                excerpt.swap_link_resolver(resolver)?;
+            }
+            match result? {
                 ExcerptStep::Run(run) => {
                     self.limits.display_bytes -= run.text.len();
                     return Ok(TablePreviewStep::Run { row: self.row, run });

@@ -368,6 +368,16 @@ fn height_only_resize_preserves_width_tokens_and_remeasures_screen() {
         .checkpoints_mut()
         .insert(tile, RenderCheckpoint::line_start())
         .unwrap();
+    // With one FoldView owner, replacing an input checkpoint expires the
+    // old dependent height ticket. Capture the resize token after that change.
+    assert!(
+        runtime
+            .viewport_mut()
+            .heights_mut()
+            .measure(height_ticket, 1)
+            .is_err()
+    );
+    let height_ticket = runtime.viewport().heights().ticket(tile).unwrap();
     let checkpoint_token = runtime
         .viewport()
         .checkpoints()

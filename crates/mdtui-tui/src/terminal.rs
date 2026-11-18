@@ -114,6 +114,9 @@ fn run_engine_loop(
     loop {
         let now = start.elapsed();
         loop {
+            if engine.runtime().fold_busy() {
+                break;
+            }
             let wire_pending = engine.wire_pending();
             if engine.due(now) && !wire_pending {
                 break;

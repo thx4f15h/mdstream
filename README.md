@@ -1697,6 +1697,12 @@ assert_eq!(view.heights().height_state(TileId(0)), Some(HeightState::Local));
 
 `fold_projection` / `fold_layout_owner` 验收独立排序并集、随机操作、源码切口、七族对象、逐 UTF-8 前缀/EOF/迟确认、恢复绑定与预算、交叉链和600层路径，并与真实 LayoutPass 对照；还验证基础高度/父子 mask 数组模型、Local/失效、有效与过期 ticket、真实析构及压缩容量。64 MiB 隐藏正文的投影仅4个事件、13字节可见片段，任务272字节，高度树节点/容量/测量未变；计数是元数据查询及实际片段/回调路径，不是 CPU load 插桩。终端的占位、字素/表格布局、选区复制、搜索、目录及 End 联动仍属于原 UI 待办，本接口不代表终端交付。
 
+### 终端折叠消费
+
+`mdtui-tui` 的 `z` 菜单实际消费上述七族与已注册源码范围，提供 node/document/range/level/container/new defaults 六页；键位、选区建范围、预览和摘要见[终端说明](crates/mdtui-tui/README.md#键位)。生产 Viewport、FirstFrame、Reading、End 和局部 refiner 借用同一个 FoldView；FoldProjection 在 context/table/scanner 预扫描前裁剪，可见连续 fragment 通过显示索引取得完整 EGC，显式折叠切口限制 payload。隐藏并集只画一个有源、可聚焦的 PH，基础零高与折叠 mask 独立。`visible_fragment(document, source, budget)` 返回已知可见字节所属的连续几何上下文，付 1 query/1 object；任务可用 `FoldProjection::check_binding` 在不推进时验证 owner/revision/version。
+
+最小 PH 只依赖已有类型/ID/范围；显式摘要复用 DisplayExcerpt、TablePreview 及 CodeInfoCursor，限制源码 256B、显示 128B、LF 2 行和终端 2 行，工作共用帧预算。`Document::code_info_prefix` 返回有文档/revision 绑定、固定缓冲的 owned cursor，解码规则与借用式 `code_info` 一致；`TablePreview::next_with_resolver` 借用宿主唯一 resolver。摘要行数不完成 TODO 166 的正文前缀/媒体详情合同。
+
 ## 折叠导航与源码锚点
 
 `FoldNavigation::new` 从当前 `Navigator` 快照创建任务，接受全部 `NavAction`。目录选择用 `Heading(id)`，搜索命中或已解析链接用 `Source(offset)`；普通滚动后的起点由 `Navigator::reconcile_source` 提供。创建任务只检查身份及参数，实际索引查询在 `advance` 中计入共享 Budget。

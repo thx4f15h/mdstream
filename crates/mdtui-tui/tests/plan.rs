@@ -253,11 +253,9 @@ fn spacing_events_match_p25_oracle_and_static_blank_rows() {
 fn thematic_break_event_is_shared_with_static_rendering() {
     let document = parse("---\n");
     let plan = plan_all(&document);
-    assert!(
-        plan.events.iter().any(|event| {
-            event.kind == PlanEventKind::ThematicBreak && event.block == BlockId(0)
-        })
-    );
+    assert!(plan.events.iter().any(|event| {
+        event.kind == PlanEventKind::ThematicBreak && event.block == Some(BlockId(0))
+    }));
     let lines = static_lines(&document, 10, 2);
     assert_eq!(lines, ["──────────"]);
 }

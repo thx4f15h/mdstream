@@ -267,6 +267,13 @@ impl Intervals {
             .prefix(offset, &self.visits)
             .filter(|s| s.end > offset)
     }
+
+    pub fn preceding_end(&self, offset: usize) -> usize {
+        self.root
+            .as_ref()
+            .and_then(|root| root.prefix(offset, &self.visits))
+            .map_or(0, |summary| summary.end)
+    }
     /// Closest preceding envelope containing the whole key, including ties.
     /// Rightmost start, then smallest containing end and newest earlier ID.
     pub fn parent(&self, key: Key) -> Option<Key> {

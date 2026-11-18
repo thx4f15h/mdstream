@@ -2911,6 +2911,8 @@ pub struct ShapeGlyph {
 }
 /// Publication of one selected cluster. The complete payload is never copied.
 pub struct ShapeCluster {
+    fragment_barrier: bool,
+    outside_fragment: bool,
     owner: SharedShape,
     revision: u64,
     fragment: Span,
@@ -2937,6 +2939,8 @@ pub struct ShapeCluster {
 impl ShapeCluster {
     pub fn new(shape: &SharedShape, fragment: Span, rank: usize) -> Self {
         Self {
+            fragment_barrier: false,
+            outside_fragment: false,
             owner: shape.clone(),
             revision: shape.applied_revision(),
             fragment,
@@ -2961,6 +2965,10 @@ impl ShapeCluster {
             result: None,
         }
     }
+    fn with_fragment_barrier(mut self) -> Self {
+        self.fragment_barrier = true;
+        self
+    }
     pub fn advance(
         &mut self,
         shape: &SharedShape,
@@ -2977,6 +2985,9 @@ impl ShapeCluster {
         }
         if shape.applied_revision() != self.revision {
             return Err(LayoutError::StaleContinuation);
+        }
+        if self.outside_fragment {
+            return Ok(None);
         }
         if let Some(result) = &self.result {
             return Ok(Some(result.clone()));
@@ -3023,6 +3034,15 @@ impl ShapeCluster {
             };
             self.metrics = Some(answer);
             self.query = None;
+        }
+        if self.fragment_barrier
+            && self.metrics.as_ref().is_some_and(|metrics| {
+                metrics.first.is_some_and(|s| s.start < self.fragment.start)
+                    || metrics.last.is_some_and(|s| s.end > self.fragment.end)
+            })
+        {
+            self.outside_fragment = true;
+            return Ok(None);
         }
         if self.raw_width.is_none() {
             let query = self.query.get_or_insert_with(|| {
@@ -3311,9 +3331,17 @@ impl ShapeWindow {
                 return Ok(ShapeWindowStep::Complete);
             }
             let cluster = self.cluster.get_or_insert_with(|| {
-                Box::new(ShapeCluster::new(shape, self.fragment, self.rank.unwrap()))
+                Box::new(
+                    ShapeCluster::new(shape, self.fragment, self.rank.unwrap())
+                        .with_fragment_barrier(),
+                )
             });
             let Some(glyph) = cluster.advance(shape, document, links, budget)? else {
+                if cluster.outside_fragment && paid(budget) {
+                    self.cluster = None;
+                    self.rank = Some(self.rank.unwrap() + 1);
+                    continue;
+                }
                 return Ok(ShapeWindowStep::BudgetExhausted);
             };
             if !paid(budget) {

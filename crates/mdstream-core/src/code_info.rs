@@ -324,3 +324,81 @@ impl DetachedCodeInfo {
         }
     }
 }
+
+/// Owned continuation for a bounded code-info prefix in a frame-driven UI.
+/// Shares the original borrowed decoder with revision-spanning destinations.
+pub struct CodeInfoCursor {
+    document: crate::DocumentId,
+    revision: u64,
+    block: BlockId,
+    original: Span,
+    reader: DetachedCodeInfo,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CodeInfoStep {
+    Atom {
+        utf8: [u8; 8],
+        len: u8,
+        source: Span,
+    },
+    Complete,
+    BudgetExhausted,
+}
+impl Document {
+    /// O(1) UTF-8-aligned metadata prefix; next() pays all decoder/source work.
+    pub fn code_info_prefix(
+        &self,
+        block: BlockId,
+        max_source_bytes: usize,
+    ) -> Option<CodeInfoCursor> {
+        let BlockKind::Code { info: Some(info) } = self.block(block)?.kind else {
+            return None;
+        };
+        let mut end = info.end.min(info.start.saturating_add(max_source_bytes));
+        while !self.source().is_char_boundary(end) {
+            end -= 1;
+        }
+        Some(CodeInfoCursor {
+            document: self.id(),
+            revision: self.revision(),
+            block,
+            original: info,
+            reader: DetachedCodeInfo::new(Span::new(info.start, end), false),
+        })
+    }
+}
+impl CodeInfoCursor {
+    pub fn source_position(&self) -> usize {
+        self.reader.remaining.start
+    }
+    pub fn next(
+        &mut self,
+        document: &Document,
+        budget: &mut Budget,
+    ) -> Result<CodeInfoStep, crate::LayoutError> {
+        if self.document != document.id() {
+            return Err(crate::LayoutError::WrongDocument);
+        }
+        if self.revision != document.revision() {
+            return Err(crate::LayoutError::StaleContinuation);
+        }
+        if !matches!(document.block(self.block).map(|b| &b.kind), Some(BlockKind::Code { info: Some(info) }) if *info == self.original)
+        {
+            return Err(crate::LayoutError::StaleContinuation);
+        }
+        Ok(match self.reader.advance(document.source(), budget) {
+            Ok(Some(atom)) => {
+                let mut utf8 = [0; 8];
+                let len = atom.text.len();
+                utf8[..len].copy_from_slice(atom.text.as_bytes());
+                CodeInfoStep::Atom {
+                    utf8,
+                    len: len as u8,
+                    source: atom.source,
+                }
+            }
+            Ok(None) => CodeInfoStep::Complete,
+            Err(_) => CodeInfoStep::BudgetExhausted,
+        })
+    }
+}

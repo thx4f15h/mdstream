@@ -154,7 +154,30 @@ pub(crate) fn measure_zero_ranges(
 }
 
 pub struct FirstFrame {
-    zero_progress: ZeroRangeProgress,
+    binding: Option<mdtui3::FoldProjection>,
+    projection_cut: Option<usize>,
+    summary: Option<super::fold_summary::FoldSummary>,
+    projected: bool,
+    measurements: bool,
+    projection: Option<mdtui3::FoldProjection>,
+    projection_done: bool,
+    projection_geometry_done: bool,
+    fragment_contexts: HashMap<usize, Span>,
+    fragment_context_cursor: usize,
+    projected_tiles: usize,
+    projected_last_tile: Option<TileId>,
+    projected_end: usize,
+    projection_edge: Option<ProjectionEdge>,
+    code_jump: Option<(mdtui3::BlockId, usize, Option<usize>)>,
+    last_code_jump: Option<mdtui3::BlockId>,
+    block_jump: Option<(mdtui3::BlockId, usize)>,
+    fragments: Vec<Span>,
+    placeholders: Vec<mdtui3::FoldPlaceholder>,
+    final_zero_progress: ZeroRangeProgress,
+    final_zero_ranges: Vec<std::ops::Range<usize>>,
+    final_zero_ready: bool,
+    nonwrap_ready: bool,
+    placeholders_inserted: bool,
     relocated: bool,
     width_cache: TableWidthCache,
     code_prefix_metadata_reads: usize,
@@ -175,7 +198,6 @@ pub struct FirstFrame {
     scan_complete: bool,
     sink: Option<TileLayoutSink>,
     pass: Option<LayoutPass>,
-    heights: HeightIndex,
     checkpoints: RenderCheckpointStore,
     cursor: usize,
     rows: u64,
@@ -189,6 +211,13 @@ pub struct FirstFrame {
     suppressed_heading_tiles: Vec<std::ops::Range<usize>>,
 }
 
+struct ProjectionEdge {
+    source: Span,
+    key: usize,
+    context: Option<Span>,
+    window: Option<Box<super::shape::ShapeWindow>>,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ReplayRequest {
     from: TileId,
@@ -199,6 +228,21 @@ struct ReplayRequest {
 
 impl FirstFrame {
     pub fn new(document: &Document, config: FirstFrameConfig) -> Result<Self, FirstFrameError> {
+        Self::new_with_owner(document, config, true)
+    }
+
+    pub(crate) fn new_borrowed(
+        document: &Document,
+        config: FirstFrameConfig,
+    ) -> Result<Self, FirstFrameError> {
+        Self::new_with_owner(document, config, false)
+    }
+
+    fn new_with_owner(
+        document: &Document,
+        config: FirstFrameConfig,
+        owned: bool,
+    ) -> Result<Self, FirstFrameError> {
         if config.tile_limit == 0 || config.width == 0 || config.row_limit == 0 {
             return Err(FirstFrameError::InvalidConfig);
         }
@@ -262,15 +306,32 @@ impl FirstFrame {
             crate::render::plan::empty_plan(document, source, start, end)
         };
         let scanner = DisplayScanner::new(document, source).ok_or(FirstFrameError::InvalidTop)?;
-        let mut heights = HeightIndex::default();
-        heights.rebuild(document)?;
-        let mut suppressed_heading_tiles = suppress_nonwrapping(document, &plan, &mut heights)?;
-        if let Some(range) = &skipped_code_prefix {
-            heights.suppress(range.clone())?;
-            suppressed_heading_tiles.push(range.clone());
-        }
+        let suppressed_heading_tiles = Vec::new();
         Ok(Self {
-            zero_progress: Default::default(),
+            binding: None,
+            projection_cut: None,
+            summary: None,
+            projected: false,
+            measurements: true,
+            projection: None,
+            projection_done: true,
+            projection_geometry_done: true,
+            fragment_contexts: HashMap::new(),
+            fragment_context_cursor: 0,
+            projected_tiles: 0,
+            projected_last_tile: None,
+            projected_end: 0,
+            projection_edge: None,
+            code_jump: None,
+            last_code_jump: None,
+            block_jump: None,
+            fragments: Vec::new(),
+            placeholders: Vec::new(),
+            final_zero_progress: Default::default(),
+            final_zero_ranges: Vec::new(),
+            final_zero_ready: false,
+            nonwrap_ready: false,
+            placeholders_inserted: false,
             relocated: false,
             width_cache: TableWidthCache::new(document),
             code_prefix_metadata_reads,
@@ -291,8 +352,11 @@ impl FirstFrame {
             scan_complete: false,
             sink: None,
             pass: None,
-            heights,
-            checkpoints: RenderCheckpointStore::new(document),
+            checkpoints: if owned {
+                RenderCheckpointStore::new(document)
+            } else {
+                RenderCheckpointStore::borrowed()
+            },
             cursor: 0,
             rows: 0,
             layout_attempts: 0,
@@ -304,6 +368,429 @@ impl FirstFrame {
             table_widths: HashMap::new(),
             suppressed_heading_tiles,
         })
+    }
+
+    pub(crate) fn new_for_view(
+        document: &Document,
+        config: FirstFrameConfig,
+        owner: &RenderCheckpointStore,
+    ) -> Result<Self, FirstFrameError> {
+        if owner.maintenance_in_progress() {
+            return Err(FirstFrameError::Layout(LayoutError::OutOfOrderUpdate));
+        }
+        let mut result = if owner.view().has_collapsed() {
+            Self::deferred(document, config)?
+        } else {
+            Self::new_borrowed(document, config)?
+        };
+        result.binding = Some(mdtui3::FoldProjection::new(
+            document,
+            owner.view(),
+            Span::new(0, 0),
+        )?);
+        Ok(result)
+    }
+
+    fn deferred(document: &Document, config: FirstFrameConfig) -> Result<Self, FirstFrameError> {
+        if config.tile_limit == 0 || config.width == 0 || config.row_limit == 0 {
+            return Err(FirstFrameError::InvalidConfig);
+        }
+        let start = document
+            .tile(config.top_tile)
+            .map_or(document.source().len(), |s| s.start);
+        let source = Span::new(start, document.source().len());
+        let empty = Span::new(start, start);
+        Ok(Self {
+            binding: None,
+            projection_cut: None,
+            summary: None,
+            projected: true,
+            measurements: true,
+            projection: None,
+            projection_done: false,
+            projection_geometry_done: false,
+            fragment_contexts: HashMap::new(),
+            fragment_context_cursor: 0,
+            projected_tiles: 0,
+            projected_last_tile: None,
+            projected_end: 0,
+            projection_edge: None,
+            code_jump: None,
+            last_code_jump: None,
+            block_jump: None,
+            fragments: Vec::new(),
+            placeholders: Vec::new(),
+            final_zero_progress: Default::default(),
+            final_zero_ranges: Vec::new(),
+            final_zero_ready: false,
+            nonwrap_ready: false,
+            placeholders_inserted: false,
+            relocated: true,
+            width_cache: TableWidthCache::new(document),
+            code_prefix_metadata_reads: 0,
+            code_prefix_resolution: Default::default(),
+            document: document.id(),
+            revision: document.revision(),
+            config,
+            plan: crate::render::plan::empty_plan(document, source, 0, 0),
+            plan_ready: false,
+            promoted_code: None,
+            skipped_code_prefix: None,
+            contexts: WindowContexts::new(document, empty),
+            scanner: DisplayScanner::exact(
+                document,
+                empty,
+                crate::render::objects::SharedLinks::new(document),
+            )
+            .ok_or(FirstFrameError::InvalidTop)?,
+            table_window: None,
+            table_view: None,
+            selection_ready: false,
+            table_view_checked: false,
+            scan_complete: false,
+            sink: None,
+            pass: None,
+            checkpoints: RenderCheckpointStore::borrowed(),
+            cursor: 0,
+            rows: 0,
+            layout_attempts: 0,
+            direct_tiles: 0,
+            processed_tiles: 0,
+            replay: None,
+            replay_pass: None,
+            replay_used: false,
+            table_widths: HashMap::new(),
+            suppressed_heading_tiles: Vec::new(),
+        })
+    }
+
+    pub(crate) fn set_fold_summary(&mut self, summary: Option<super::fold_summary::FoldSummary>) {
+        self.summary = summary;
+    }
+    pub(crate) fn prepare_only(&mut self) {
+        self.measurements = false;
+    }
+    pub(crate) fn set_projection_range(&mut self, source: Span) {
+        if self.projected && self.projection.is_none() {
+            self.plan.visible = source;
+            self.projection_cut = Some(source.end);
+        }
+    }
+    pub fn placeholders(&self) -> &[mdtui3::FoldPlaceholder] {
+        &self.placeholders
+    }
+
+    fn accept_projected_tile(&mut self, tile: TileId) -> bool {
+        if self.projected_last_tile != Some(tile) {
+            if self.projected_tiles >= self.config.tile_limit {
+                return false;
+            }
+            self.projected_tiles += 1;
+            self.projected_last_tile = Some(tile);
+        }
+        true
+    }
+    fn advance_projection_edge(
+        &mut self,
+        document: &Document,
+        edge: &mut ProjectionEdge,
+        budget: &mut Budget,
+    ) -> Result<bool, FirstFrameError> {
+        let links = self.scanner.shared_links();
+        if edge.context.is_none() {
+            if let Some(context) = self.fragment_contexts.get(&edge.key) {
+                edge.context = Some(*context);
+            } else {
+                let Some(context) = self.checkpoints.view().visible_fragment(
+                    document,
+                    edge.source.start,
+                    budget,
+                )?
+                else {
+                    return Ok(false);
+                };
+                self.fragment_contexts.insert(edge.key, context);
+                edge.context = Some(context);
+            }
+        }
+        let context = edge.context.unwrap();
+        if context.end <= edge.source.end {
+            return Ok(true);
+        }
+        if !links.prepare_shape(document, budget)? || !links.prepare(document, budget)? {
+            return Ok(false);
+        }
+        let shape = links.shape().ok_or(FirstFrameError::InvalidTop)?;
+        if edge.window.is_none() {
+            if !budget.charge(WorkLimit {
+                queries: 1,
+                objects: 1,
+                bytes: 4,
+                ..Default::default()
+            }) {
+                return Ok(false);
+            }
+            let mut probe = edge.source.end - 1;
+            while !document.source().is_char_boundary(probe) {
+                probe -= 1;
+            }
+            let block = document
+                .block_at(probe)
+                .and_then(|id| document.block(id).map(|block| (id, block)));
+            if let Some((id, block)) = block {
+                if matches!(
+                    block.kind,
+                    mdtui3::BlockKind::Table { .. }
+                        | mdtui3::BlockKind::Math { .. }
+                        | mdtui3::BlockKind::Definition { .. }
+                        | mdtui3::BlockKind::FootnoteDefinition { .. }
+                ) {
+                    self.block_jump = Some((id, probe));
+                    return Ok(true);
+                }
+                if matches!(block.kind, mdtui3::BlockKind::Code { .. })
+                    && self.last_code_jump != Some(id)
+                {
+                    self.last_code_jump = Some(id);
+                    self.code_jump = Some((id, probe, None));
+                    return Ok(true);
+                }
+            }
+            let block = block.map_or(document.pending(), |(_, block)| block.source);
+            let fragment = Span::new(
+                context.start.max(block.start),
+                context
+                    .end
+                    .min(block.end)
+                    .min(self.projection_cut.unwrap_or(usize::MAX)),
+            );
+            if fragment.end <= edge.source.end || !shape.requires_shape(fragment) {
+                return Ok(true);
+            }
+            edge.window = Some(Box::new(super::shape::ShapeWindow::new(
+                &shape,
+                Span::new(probe, edge.source.end),
+                fragment,
+            )?));
+        }
+        match edge
+            .window
+            .as_mut()
+            .unwrap()
+            .advance(&shape, document, &links, budget)?
+        {
+            super::shape::ShapeWindowStep::BudgetExhausted => Ok(false),
+            super::shape::ShapeWindowStep::Complete => Ok(true),
+            super::shape::ShapeWindowStep::Glyph(glyph) => {
+                let end = self.projection.as_ref().unwrap().requested().end;
+                let target = glyph.source.end.min(context.end).min(end);
+                if target > self.projection.as_ref().unwrap().source_position() {
+                    self.projection = Some(mdtui3::FoldProjection::new(
+                        document,
+                        self.checkpoints.view(),
+                        Span::new(target, end),
+                    )?);
+                    self.projected_end = target;
+                }
+                Ok(true)
+            }
+        }
+    }
+
+    fn project(
+        &mut self,
+        document: &Document,
+        budget: &mut Budget,
+    ) -> Result<bool, FirstFrameError> {
+        use mdtui3::FoldProjectionStep;
+        if self.projection_done {
+            return Ok(true);
+        }
+        if self.projection.is_none() {
+            self.projected_end = self.plan.visible.start;
+            self.projection = Some(mdtui3::FoldProjection::new(
+                document,
+                self.checkpoints.view(),
+                self.plan.visible,
+            )?);
+        }
+        while !self.projection_geometry_done {
+            if let Some(mut edge) = self.projection_edge.take()
+                && !self.advance_projection_edge(document, &mut edge, budget)?
+            {
+                self.projection_edge = Some(edge);
+                return Ok(false);
+            }
+            if let Some((block_id, source)) = self.block_jump {
+                let Some(context) = self
+                    .checkpoints
+                    .view()
+                    .visible_fragment(document, source, budget)?
+                else {
+                    return Ok(false);
+                };
+                let end = self.projection.as_ref().unwrap().requested().end;
+                let target = context
+                    .end
+                    .min(
+                        document
+                            .block(block_id)
+                            .ok_or(FirstFrameError::InvalidTop)?
+                            .source
+                            .end,
+                    )
+                    .min(end);
+                if target > self.projection.as_ref().unwrap().source_position() {
+                    self.projection = Some(mdtui3::FoldProjection::new(
+                        document,
+                        self.checkpoints.view(),
+                        Span::new(target, end),
+                    )?);
+                    self.projected_end = target;
+                }
+                self.block_jump = None;
+            }
+            if let Some((block_id, source, mut drawable)) = self.code_jump {
+                if drawable.is_none() {
+                    if !budget.charge(WorkLimit {
+                        queries: 1,
+                        objects: 1,
+                        ..Default::default()
+                    }) {
+                        return Ok(false);
+                    }
+                    let block = document
+                        .block(block_id)
+                        .ok_or(FirstFrameError::InvalidTop)?;
+                    let mut runs = document
+                        .runs_in(block.source)
+                        .ok_or(FirstFrameError::InvalidTop)?;
+                    let mut at = None;
+                    for run in runs.by_ref().take(3) {
+                        self.code_prefix_metadata_reads += 1;
+                        if !run.style.contains(mdtui3::Style::HIDDEN) {
+                            at = Some(run.source.start);
+                            break;
+                        }
+                    }
+                    self.code_prefix_resolution = runs.link_resolution_work();
+                    drawable = Some(at.unwrap_or(block.source.end));
+                    self.code_jump = Some((block_id, source, drawable));
+                }
+                let Some(context) = self
+                    .checkpoints
+                    .view()
+                    .visible_fragment(document, source, budget)?
+                else {
+                    return Ok(false);
+                };
+                let end = self.projection.as_ref().unwrap().requested().end;
+                let target = drawable.unwrap().min(context.end).min(end);
+                if target > self.projection.as_ref().unwrap().source_position() {
+                    self.projection = Some(mdtui3::FoldProjection::new(
+                        document,
+                        self.checkpoints.view(),
+                        Span::new(target, end),
+                    )?);
+                    self.projected_end = target;
+                }
+                self.code_jump = None;
+            }
+            match self.projection.as_mut().unwrap().next(
+                document,
+                self.checkpoints.view(),
+                budget,
+            )? {
+                FoldProjectionStep::Text { source, tile } => {
+                    if !self.accept_projected_tile(tile) {
+                        self.projected_end = source.start;
+                        self.projection_geometry_done = true;
+                        break;
+                    }
+                    if let Some(last) = self.fragments.last_mut().filter(|s| s.end == source.start)
+                    {
+                        last.end = source.end;
+                    } else {
+                        self.fragments.push(source);
+                    }
+                    if let Some(block_id) = document.block_at(source.start)
+                        && document.block(block_id).is_some_and(|block| {
+                            matches!(block.kind, mdtui3::BlockKind::Table { .. })
+                        })
+                    {
+                        self.block_jump = Some((block_id, source.start));
+                    }
+                    if let Some(block_id) = document.block_at(source.start)
+                        && let Some(block) = document.block(block_id)
+                        && matches!(block.kind, mdtui3::BlockKind::Code { .. })
+                        && self.last_code_jump != Some(block_id)
+                    {
+                        self.code_jump = Some((block_id, source.start, None));
+                        self.last_code_jump = Some(block_id);
+                    }
+                    if self.block_jump.is_none() && self.code_jump.is_none() {
+                        self.projection_edge = Some(ProjectionEdge {
+                            source,
+                            key: self.fragments.last().unwrap().start,
+                            context: None,
+                            window: None,
+                        });
+                    }
+                }
+                FoldProjectionStep::Placeholder(placeholder) => {
+                    if !self.accept_projected_tile(placeholder.owner) {
+                        self.projected_end = placeholder.candidate.hidden.start;
+                        self.projection_geometry_done = true;
+                        break;
+                    }
+                    self.placeholders.push(placeholder);
+                }
+                FoldProjectionStep::Hidden { source, .. } => {
+                    if let Some(last) = self.placeholders.last_mut() {
+                        last.candidate.hidden.end = last.candidate.hidden.end.max(source.end);
+                    }
+                }
+                FoldProjectionStep::ParagraphEnd(_) => {}
+                FoldProjectionStep::Complete => {
+                    self.projected_end = self.projection.as_ref().unwrap().source_position();
+                    self.projection_geometry_done = true;
+                    break;
+                }
+                FoldProjectionStep::BudgetExhausted => return Ok(false),
+            }
+            self.projected_end = self.projection.as_ref().unwrap().source_position();
+        }
+        while let Some(source) = self.fragments.get(self.fragment_context_cursor) {
+            if self.fragment_contexts.contains_key(&source.start) {
+                self.fragment_context_cursor += 1;
+                continue;
+            }
+            let Some(context) =
+                self.checkpoints
+                    .view()
+                    .visible_fragment(document, source.start, budget)?
+            else {
+                return Ok(false);
+            };
+            self.fragment_contexts.insert(source.start, context);
+            self.fragment_context_cursor += 1;
+        }
+        self.plan.visible.end = self.projected_end;
+        self.contexts = WindowContexts::fragments(document, &self.fragments);
+        self.scanner = DisplayScanner::projected(
+            document,
+            self.plan.visible,
+            &self.fragments,
+            &self.fragment_contexts,
+            self.scanner.shared_links(),
+        )
+        .ok_or(FirstFrameError::InvalidTop)?;
+        self.scanner.set_source_cut(
+            self.projection_cut
+                .or_else(|| self.table_view.and_then(|view| view.tail)),
+        );
+        self.projection_done = true;
+        Ok(true)
     }
 
     pub(crate) fn set_cluster_floor(&mut self, source: usize) {
@@ -333,6 +820,31 @@ impl FirstFrame {
     }
 
     #[must_use]
+    pub(crate) fn matches_view(
+        &self,
+        document: &Document,
+        owner: &RenderCheckpointStore,
+        width: u16,
+        rows: u16,
+    ) -> bool {
+        self.matches(document)
+            && self.config.width == width
+            && self.config.row_limit == u64::from(rows)
+            && self
+                .binding
+                .as_ref()
+                .is_some_and(|binding| binding.check_binding(document, owner.view()).is_ok())
+    }
+    pub(crate) fn check_owner(
+        &self,
+        document: &Document,
+        owner: &RenderCheckpointStore,
+    ) -> Result<(), mdtui3::LayoutError> {
+        if let Some(binding) = &self.binding {
+            binding.check_binding(document, owner.view())?;
+        }
+        Ok(())
+    }
     pub fn matches(&self, document: &Document) -> bool {
         self.document == document.id() && self.revision == document.revision()
     }
@@ -413,7 +925,7 @@ impl FirstFrame {
 
     #[must_use]
     pub fn heights(&self) -> &HeightIndex {
-        &self.heights
+        self.checkpoints.heights()
     }
 
     #[must_use]
@@ -422,8 +934,8 @@ impl FirstFrame {
     }
 
     #[must_use]
-    pub fn into_layout_parts(self) -> (HeightIndex, RenderCheckpointStore) {
-        (self.heights, self.checkpoints)
+    pub fn into_layout_parts(self) -> RenderCheckpointStore {
+        self.checkpoints
     }
 
     pub fn suppressed_heading_tiles(&self) -> &[std::ops::Range<usize>] {
@@ -437,6 +949,10 @@ impl FirstFrame {
         checkpoint: RenderCheckpoint,
         max_bytes: usize,
     ) -> Result<(), FirstFrameError> {
+        if self.projected {
+            return Err(FirstFrameError::InvalidReplay);
+        }
+
         if from.0 < self.plan.tile_start.0
             || target < from
             || target.0 >= self.plan.tile_end.0
@@ -502,6 +1018,24 @@ impl FirstFrame {
         Ok(())
     }
 
+    pub(crate) fn advance_using(
+        &mut self,
+        document: &Document,
+        owner: &mut RenderCheckpointStore,
+        budget: &mut Budget,
+    ) -> Result<FirstFrameStep, FirstFrameError> {
+        if owner.maintenance_in_progress() {
+            return Err(FirstFrameError::Layout(LayoutError::OutOfOrderUpdate));
+        }
+        if let Some(binding) = &self.binding {
+            binding.check_binding(document, owner.view())?;
+        }
+        std::mem::swap(&mut self.checkpoints, owner);
+        let result = self.advance(document, budget);
+        std::mem::swap(&mut self.checkpoints, owner);
+        result
+    }
+
     pub fn advance(
         &mut self,
         document: &Document,
@@ -509,6 +1043,12 @@ impl FirstFrame {
     ) -> Result<FirstFrameStep, FirstFrameError> {
         if !self.matches(document) {
             return Err(FirstFrameError::Stale);
+        }
+        if let Some(binding) = &self.binding {
+            binding.check_binding(document, self.checkpoints.view())?;
+        }
+        if !self.project(document, budget)? {
+            return Ok(self.step(FirstFrameStatus::BudgetExhausted));
         }
         if let Some(status) = self.ensure_ready(document, budget)? {
             return Ok(self.step(status));
@@ -521,7 +1061,7 @@ impl FirstFrame {
         }
         loop {
             if self.rows >= self.config.row_limit {
-                return Ok(self.step(FirstFrameStatus::Covered));
+                return self.finish_measurements(document, budget, FirstFrameStatus::Covered);
             }
             let Some(segment) = self.plan.segments.get(self.cursor) else {
                 let status = if self.plan.tile_end.0 >= document.tile_count() {
@@ -529,19 +1069,23 @@ impl FirstFrame {
                 } else {
                     FirstFrameStatus::Covered
                 };
-                return Ok(self.step(status));
+                return self.finish_measurements(document, budget, status);
             };
             let tile = segment.tile;
             let sink = self.sink.as_ref().ok_or(FirstFrameError::MissingSink)?;
             let expected = sink.tile_rows(tile).ok_or(FirstFrameError::MissingSink)?;
 
-            if segment.kind == TileSegmentKind::Drawable && expected > 0 {
+            if self.measurements
+                && !self.projected
+                && segment.kind == TileSegmentKind::Drawable
+                && expected > 0
+            {
                 if self.pass.is_none() {
                     self.layout_attempts = self.layout_attempts.saturating_add(1);
                     let restored = tile.0 == 0 || self.checkpoints.exact(tile).is_some();
                     self.pass = Some(LayoutPass::new(
                         document,
-                        &self.heights,
+                        self.checkpoints.heights(),
                         tile,
                         expected,
                         restored,
@@ -552,7 +1096,12 @@ impl FirstFrame {
                     let sink = self.sink.as_mut().ok_or(FirstFrameError::MissingSink)?;
                     self.scanner.shared_links().with_resolver(|resolver| {
                         pass.swap_link_resolver(resolver)?;
-                        let result = pass.advance(document, &mut self.heights, budget, sink);
+                        let result = pass.advance(
+                            document,
+                            self.checkpoints.heights_mut(document)?,
+                            budget,
+                            sink,
+                        );
                         pass.swap_link_resolver(resolver)?;
                         result
                     })?
@@ -573,7 +1122,7 @@ impl FirstFrame {
                         return Err(FirstFrameError::UnexpectedCompletion(completion));
                     }
                 }
-                let actual = self.heights.height(tile).unwrap_or(0);
+                let actual = self.checkpoints.heights().height(tile).unwrap_or(0);
                 if actual != expected {
                     return Err(FirstFrameError::TileRowsMismatch {
                         tile,
@@ -599,41 +1148,120 @@ impl FirstFrame {
                         actual,
                     });
                 }
-                let ticket = self
-                    .heights
-                    .ticket(tile)
-                    .ok_or(FirstFrameError::InvalidTop)?;
-                self.heights.measure(ticket, actual)?;
+                if self.measurements {
+                    let ticket = self
+                        .checkpoints
+                        .heights()
+                        .ticket(tile)
+                        .ok_or(FirstFrameError::InvalidTop)?;
+                    self.checkpoints
+                        .heights_mut(document)?
+                        .measure(ticket, actual)?;
+                }
                 self.direct_tiles = self.direct_tiles.saturating_add(1);
             }
 
-            if self
-                .sink
-                .as_ref()
-                .is_some_and(|sink| sink.stats().edge_placeholders > 0)
-                && let Some(ticket) = self.heights.ticket(tile)
+            if self.measurements
+                && self
+                    .sink
+                    .as_ref()
+                    .is_some_and(|sink| sink.stats().edge_placeholders > 0)
+                && let Some(ticket) = self.checkpoints.heights().ticket(tile)
             {
-                self.heights.measure_local(ticket, expected)?;
+                self.checkpoints
+                    .heights_mut(document)?
+                    .measure_local(ticket, expected)?;
             }
-            if self.scanner.cluster_floor().is_some_and(|floor| {
-                document
-                    .tile(tile)
-                    .is_some_and(|s| s.start < floor && floor < s.end)
-            }) && let Some(ticket) = self.heights.ticket(tile)
+            if self.measurements
+                && self.scanner.cluster_floor().is_some_and(|floor| {
+                    document
+                        .tile(tile)
+                        .is_some_and(|s| s.start < floor && floor < s.end)
+                })
+                && let Some(ticket) = self.checkpoints.heights().ticket(tile)
             {
-                self.heights.measure_local(ticket, expected)?;
+                self.checkpoints
+                    .heights_mut(document)?
+                    .measure_local(ticket, expected)?;
             }
             let checkpoint = self
                 .sink
                 .as_ref()
                 .ok_or(FirstFrameError::MissingSink)?
                 .checkpoint();
-            self.checkpoints
-                .checkpoint_after_tile(tile, checkpoint, document)?;
+            if self.measurements {
+                self.checkpoints
+                    .checkpoint_after_tile(tile, checkpoint, document)?;
+            }
             self.rows = self.rows.saturating_add(expected);
             self.processed_tiles = self.processed_tiles.saturating_add(1);
             self.cursor += 1;
         }
+    }
+
+    fn finish_measurements(
+        &mut self,
+        document: &Document,
+        budget: &mut Budget,
+        status: FirstFrameStatus,
+    ) -> Result<FirstFrameStep, FirstFrameError> {
+        if !self.measurements {
+            return Ok(self.step(status));
+        }
+        if !self.final_zero_ready {
+            if !budget.charge(WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            }) {
+                return Ok(self.step(FirstFrameStatus::BudgetExhausted));
+            }
+            let sink = self.sink.as_ref().ok_or(FirstFrameError::MissingSink)?;
+            let positive = self
+                .plan
+                .segments
+                .iter()
+                .filter(|s| sink.tile_rows(s.tile).is_some_and(|rows| rows > 0))
+                .map(|s| s.tile.0)
+                .collect::<Vec<_>>();
+            let mut ranges = self.scanner.zero_ranges().to_vec();
+            ranges.extend(self.suppressed_heading_tiles.iter().cloned());
+            ranges.sort_by_key(|r| r.start);
+            let mut merged: Vec<std::ops::Range<usize>> = Vec::new();
+            for range in ranges {
+                if let Some(last) = merged.last_mut().filter(|last| range.start <= last.end) {
+                    last.end = last.end.max(range.end);
+                } else {
+                    merged.push(range);
+                }
+            }
+            for range in merged {
+                let mut start = range.start;
+                for &owner in positive
+                    .iter()
+                    .skip_while(|&&owner| owner < range.start)
+                    .take_while(|&&owner| owner < range.end)
+                {
+                    if start < owner {
+                        self.final_zero_ranges.push(start..owner);
+                    }
+                    start = owner + 1;
+                }
+                if start < range.end {
+                    self.final_zero_ranges.push(start..range.end);
+                }
+            }
+            self.final_zero_ready = true;
+        }
+        if !measure_zero_ranges(
+            &self.final_zero_ranges,
+            self.checkpoints.heights_mut(document)?,
+            &mut self.final_zero_progress,
+            budget,
+        )? {
+            return Ok(self.step(FirstFrameStatus::BudgetExhausted));
+        }
+        Ok(self.step(status))
     }
 
     fn ensure_ready(
@@ -645,18 +1273,49 @@ impl FirstFrame {
             if !self.contexts.advance(document, budget) {
                 return Ok(Some(FirstFrameStatus::BudgetExhausted));
             }
-            self.plan = crate::render::plan::plan_with_contexts(
-                document,
-                self.scanner.requested(),
-                &self.contexts.entries,
-                self.promoted_code,
-            )?;
-            self.suppressed_heading_tiles =
-                suppress_nonwrapping(document, &self.plan, &mut self.heights)?;
+            self.plan = if self.projected {
+                crate::render::plan::projected_plan(
+                    document,
+                    self.plan.visible,
+                    &self.fragments,
+                    &self.placeholders,
+                    &self.contexts.entries,
+                )?
+            } else {
+                crate::render::plan::plan_with_contexts(
+                    document,
+                    self.scanner.requested(),
+                    &self.contexts.entries,
+                    self.promoted_code,
+                )?
+            };
+            if self.projected {
+                self.plan.clip_info_prefixes(&self.fragment_contexts);
+            }
+            if let Some(summary) = &self.summary {
+                for placeholder in &self.placeholders {
+                    if placeholder.candidate.id == summary.id {
+                        for event in &mut self.plan.events {
+                            if event.display_source == Some(placeholder.candidate.hidden)
+                                && let crate::render::plan::PlanEventKind::FoldLabel {
+                                    summary: lines,
+                                    ..
+                                } = &mut event.kind
+                            {
+                                *lines = summary.lines.clone();
+                            }
+                        }
+                    }
+                }
+            }
+            self.plan_ready = true;
+        }
+        if !self.nonwrap_ready {
+            self.suppressed_heading_tiles = suppress_nonwrapping(document, &self.plan)?;
             if let Some(range) = &self.skipped_code_prefix {
                 self.suppressed_heading_tiles.push(range.clone());
             }
-            self.plan_ready = true;
+            self.nonwrap_ready = true;
         }
         if !self.plan.advance_info(document, budget) {
             return Ok(Some(FirstFrameStatus::BudgetExhausted));
@@ -685,7 +1344,17 @@ impl FirstFrame {
                 .any(|b| matches!(b.kind, mdtui3::BlockKind::Table { .. }))
             {
                 let window = self.table_window.get_or_insert_with(|| {
-                    super::table_window::TableWindow::new(self.scanner.requested())
+                    if self.projected {
+                        super::table_window::TableWindow::projected(
+                            self.scanner.requested(),
+                            &self.fragments,
+                            &self.fragment_contexts,
+                            self.projection_cut
+                                .or_else(|| self.table_view.and_then(|view| view.tail)),
+                        )
+                    } else {
+                        super::table_window::TableWindow::new(self.scanner.requested())
+                    }
                 });
                 if !window.advance(
                     document,
@@ -694,11 +1363,45 @@ impl FirstFrame {
                     usize::from(self.config.width),
                     usize::try_from(self.config.row_limit).unwrap_or(usize::MAX),
                     self.table_view,
+                    self.projected.then(|| self.checkpoints.view()),
                     budget,
-                ) {
+                )? {
                     return Ok(Some(FirstFrameStatus::BudgetExhausted));
                 }
-                self.scanner.select(self.table_window.take().unwrap());
+                if self.projected {
+                    let mut window = self.table_window.take().unwrap();
+                    for owner in &window.owners {
+                        if self
+                            .plan
+                            .segments
+                            .binary_search_by_key(owner, |s| s.tile)
+                            .is_err()
+                        {
+                            self.plan.segments.push(super::plan::TileSegment {
+                                tile: *owner,
+                                source: document.tile(*owner).ok_or(FirstFrameError::InvalidTop)?,
+                                kind: super::plan::TileSegmentKind::TuiOwned,
+                                drawable_at: None,
+                                blocks: Vec::new(),
+                            });
+                            self.plan.segments.sort_by_key(|s| s.tile);
+                        }
+                    }
+                    if let Some(last) = self.plan.segments.last() {
+                        self.plan.tile_end = TileId(last.tile.0 + 1);
+                    }
+                    for placeholder in window.placeholders.drain(..) {
+                        if !self.placeholders.iter().any(|old| {
+                            old.candidate.hidden.start == placeholder.candidate.hidden.start
+                        }) {
+                            self.placeholders.push(placeholder);
+                        }
+                    }
+                    self.placeholders.sort_by_key(|p| p.candidate.hidden.start);
+                    self.scanner.select_projected(window);
+                } else {
+                    self.scanner.select(self.table_window.take().unwrap());
+                }
             }
             self.selection_ready = true;
         }
@@ -707,6 +1410,37 @@ impl FirstFrame {
                 ScanStatus::BudgetExhausted => return Ok(Some(FirstFrameStatus::PendingScan)),
                 ScanStatus::Complete => self.scan_complete = true,
             }
+        }
+        if self.projected && !self.placeholders_inserted {
+            let blocks = self.plan.blocks.iter().map(|b| b.id).collect::<Vec<_>>();
+            for placeholder in &self.placeholders {
+                if crate::render::plan::inline_placeholder(document, placeholder, &blocks) {
+                    let label = crate::render::plan::placeholder_label(placeholder.candidate);
+                    let fit =
+                        crate::render::text::fit_prefix(&label, usize::from(self.config.width));
+                    let mut label = if self.config.width < 3 {
+                        "+".to_owned()
+                    } else {
+                        label[..fit.end].to_owned()
+                    };
+                    if let Some(summary) = self
+                        .summary
+                        .as_ref()
+                        .filter(|summary| summary.id == placeholder.candidate.id)
+                    {
+                        let preview = summary.lines.join(" / ");
+                        let fit = crate::render::text::fit_prefix(
+                            &preview,
+                            usize::from(self.config.width),
+                        );
+                        label.push(' ');
+                        label.push_str(&preview[..fit.end]);
+                    }
+                    self.scanner
+                        .insert_placeholder(document, *placeholder, label);
+                }
+            }
+            self.placeholders_inserted = true;
         }
         if !self.relocated
             && let Some(first) = self
@@ -728,7 +1462,7 @@ impl FirstFrame {
             let links = self.scanner.shared_links();
             let widths = self.table_widths.clone();
             let view = self.table_view;
-            let mut replacement = Self::new(document, config)?;
+            let mut replacement = Self::new_borrowed(document, config)?;
             replacement.set_links(links);
             replacement.set_table_widths(widths)?;
             replacement.table_view = view;
@@ -738,29 +1472,22 @@ impl FirstFrame {
             replacement.scanner.set_cluster_floor(floor);
             let mut checkpoint = RenderCheckpoint::line_start();
             checkpoint.line_source_start = Some(floor);
+            replacement.binding = self.binding.take();
+            std::mem::swap(&mut replacement.checkpoints, &mut self.checkpoints);
             replacement.checkpoints.insert(owner, checkpoint)?;
             replacement.relocated = true;
             *self = replacement;
             return Ok(Some(FirstFrameStatus::PendingScan));
-        }
-        if !measure_zero_ranges(
-            self.scanner.zero_ranges(),
-            &mut self.heights,
-            &mut self.zero_progress,
-            budget,
-        )? {
-            return Ok(Some(FirstFrameStatus::BudgetExhausted));
         }
         if self.sink.is_none() {
             // Dynamic selection is now prepared. Classify from that window,
             // rather than evaluating unbudgeted next_drawable predicates.
             let mut drawable = vec![None; self.plan.segments.len()];
             for segment in self.scanner.segments() {
-                if let Some(index) = segment
-                    .tile
-                    .0
-                    .checked_sub(self.plan.tile_start.0)
-                    .filter(|&index| index < drawable.len())
+                if let Ok(index) = self
+                    .plan
+                    .segments
+                    .binary_search_by_key(&segment.tile, |s| s.tile)
                 {
                     drawable[index].get_or_insert(segment.source.start);
                 }
@@ -768,10 +1495,7 @@ impl FirstFrame {
             let mut events = vec![false; self.plan.segments.len()];
             for event in &self.plan.events {
                 if let Some(tile) = document.tile_at(event.source.start)
-                    && let Some(index) = tile
-                        .0
-                        .checked_sub(self.plan.tile_start.0)
-                        .filter(|&index| index < events.len())
+                    && let Ok(index) = self.plan.segments.binary_search_by_key(&tile, |s| s.tile)
                 {
                     events[index] = true;
                 }
@@ -816,7 +1540,8 @@ impl FirstFrame {
                     .restore_checkpoint(replay.checkpoint);
             }
         }
-        if !self.table_view_checked
+        if !self.projected
+            && !self.table_view_checked
             && let Some(view) = self.table_view
             && view.tail.is_none()
         {
@@ -871,7 +1596,7 @@ impl FirstFrame {
         if self.replay_pass.is_none() {
             let Some(pass) = LayoutPass::from_checkpoint(
                 document,
-                &self.heights,
+                self.checkpoints.heights(),
                 replay.from,
                 replay.target,
                 1,
@@ -890,7 +1615,12 @@ impl FirstFrame {
             let sink = self.sink.as_mut().ok_or(FirstFrameError::MissingSink)?;
             self.scanner.shared_links().with_resolver(|resolver| {
                 pass.swap_link_resolver(resolver)?;
-                let result = pass.advance(document, &mut self.heights, budget, sink);
+                let result = pass.advance(
+                    document,
+                    self.checkpoints.heights_mut(document)?,
+                    budget,
+                    sink,
+                );
                 pass.swap_link_resolver(resolver)?;
                 result
             })?
@@ -948,7 +1678,6 @@ impl FirstFrame {
 fn suppress_nonwrapping(
     document: &Document,
     plan: &BlockPlan,
-    heights: &mut HeightIndex,
 ) -> Result<Vec<std::ops::Range<usize>>, FirstFrameError> {
     let mut ranges = Vec::new();
     for block in &plan.blocks {
@@ -985,7 +1714,6 @@ fn suppress_nonwrapping(
             let end = last.0 + usize::from(last_span.end <= source.end);
             let range = first.0 + 1..end;
             if !range.is_empty() {
-                heights.suppress(range.clone())?;
                 ranges.push(range);
             }
         }

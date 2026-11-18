@@ -46,11 +46,13 @@ struct Selection {
     contexts: std::collections::HashMap<usize, Span>,
     cuts: Vec<usize>,
     rows: std::collections::HashMap<mdtui3::TableId, std::ops::Range<usize>>,
+    row_ranges: std::collections::HashMap<mdtui3::TableId, Vec<std::ops::Range<usize>>>,
     next: usize,
     child: Option<Box<DisplayScanner>>,
     source_work: usize,
     skipped: Vec<(TileId, usize, u64)>,
     index_work: mdtui3::LinkWindowWork,
+    folded: bool,
 }
 
 struct IndexedScan {
@@ -60,6 +62,10 @@ struct IndexedScan {
 }
 
 pub struct DisplayScanner {
+    // A fold cut is a semantic boundary, unlike an ordinary tile/window cut.
+    // Both the GCB query and payload reader must use this same fragment.
+    fold_fragment: Option<Span>,
+    placeholders: Vec<mdtui3::FoldPlaceholder>,
     indexed: Option<Box<IndexedScan>>,
     zero_ranges: Vec<std::ops::Range<usize>>,
     tail: Option<Box<super::shape::ShapeWindow>>,
@@ -108,16 +114,32 @@ pub struct DisplayScanner {
 
 impl DisplayScanner {
     pub fn new(document: &Document, requested: Span) -> Option<Self> {
+        Self::new_inner(document, requested, None, false)
+    }
+    fn new_inner(
+        document: &Document,
+        requested: Span,
+        links: Option<crate::render::objects::SharedLinks>,
+        exact: bool,
+    ) -> Option<Self> {
         let cursor = document.display_cursor(requested)?;
         let tile_range = document.tiles_overlapping(requested);
-        let mut context_start = requested.start.saturating_sub(MAX_EDGE_OVERSCAN);
+        let mut context_start = if exact {
+            requested.start
+        } else {
+            requested.start.saturating_sub(MAX_EDGE_OVERSCAN)
+        };
         while !document.source().is_char_boundary(context_start) {
             context_start += 1;
         }
-        let mut context_end = requested
-            .end
-            .saturating_add(MAX_EDGE_OVERSCAN)
-            .min(document.source().len());
+        let mut context_end = if exact {
+            requested.end
+        } else {
+            requested
+                .end
+                .saturating_add(MAX_EDGE_OVERSCAN)
+                .min(document.source().len())
+        };
         while !document.source().is_char_boundary(context_end) {
             context_end -= 1;
         }
@@ -126,6 +148,8 @@ impl DisplayScanner {
             context_end = requested.end;
         }
         Some(Self {
+            fold_fragment: None,
+            placeholders: Vec::new(),
             indexed: None,
             zero_ranges: Vec::new(),
             tail: None,
@@ -139,7 +163,7 @@ impl DisplayScanner {
             table_context: None,
             footnote_index: None,
             hidden_footnotes: Vec::new(),
-            links: crate::render::objects::SharedLinks::new(document),
+            links: links.unwrap_or_else(|| crate::render::objects::SharedLinks::new(document)),
             lease: None,
             objects: None,
             document: document.id(),
@@ -179,13 +203,24 @@ impl DisplayScanner {
         source: Span,
         links: crate::render::objects::SharedLinks,
     ) -> Option<Self> {
-        let mut scanner = Self::new(document, source)?;
-        scanner.links = links;
+        let mut scanner = Self::new_inner(document, source, Some(links), true)?;
         scanner.start_probe = None;
         scanner.resolved_start = Some(source.start);
         scanner.resolved_end = Some(source.end);
         scanner.context_end = source.end;
         scanner.cursor_initialized = true;
+        Some(scanner)
+    }
+
+    pub(crate) fn fold_fragment(
+        document: &Document,
+        source: Span,
+        fragment: Span,
+        links: crate::render::objects::SharedLinks,
+    ) -> Option<Self> {
+        let mut scanner = Self::exact(document, source, links)?;
+        scanner.fold_fragment = Some(fragment);
+        scanner.source_cut = Some(fragment.end);
         Some(scanner)
     }
 
@@ -196,14 +231,113 @@ impl DisplayScanner {
             contexts: window.contexts,
             cuts: window.cuts,
             rows: window.rows,
+            row_ranges: window.row_ranges,
             next: 0,
             child: None,
             source_work: 0,
             skipped: window.skipped,
             index_work: mdtui3::LinkWindowWork::default(),
+            folded: false,
         });
     }
 
+    pub(crate) fn projected(
+        document: &Document,
+        requested: Span,
+        ranges: &[Span],
+        contexts: &std::collections::HashMap<usize, Span>,
+        links: crate::render::objects::SharedLinks,
+    ) -> Option<Self> {
+        let mut result = Self::exact(document, requested, links)?;
+        result.selection = Some(Selection {
+            ranges: ranges.iter().map(|s| (*s, false)).collect(),
+            contexts: contexts.clone(),
+            cuts: Vec::new(),
+            rows: Default::default(),
+            row_ranges: Default::default(),
+            next: 0,
+            child: None,
+            source_work: 0,
+            skipped: Vec::new(),
+            index_work: Default::default(),
+            folded: true,
+        });
+        Some(result)
+    }
+
+    pub(crate) fn inline_placeholders(&self) -> &[mdtui3::FoldPlaceholder] {
+        &self.placeholders
+    }
+    pub(crate) fn insert_placeholder(
+        &mut self,
+        document: &Document,
+        placeholder: mdtui3::FoldPlaceholder,
+        label: String,
+    ) {
+        self.placeholders.push(placeholder);
+        let source = placeholder.candidate.hidden;
+        let segment = DisplaySegment {
+            tile: placeholder.owner,
+            source,
+            replacement: Some(source),
+            text: label.into(),
+            block: document.block_at(source.start),
+            link: None,
+            style: StyleRole::META,
+            kind: TokenKind::Text,
+        };
+        let at = self
+            .segments
+            .partition_point(|s| s.source.start < source.start);
+        self.segments.insert(at, segment.clone());
+        let at = self
+            .layout_segments
+            .partition_point(|s| s.source.start < source.start);
+        self.layout_segments.insert(at, segment);
+    }
+
+    pub(crate) fn select_projected(&mut self, mut window: super::table_window::TableWindow) {
+        let selection = self.selection.as_mut().expect("projected scanner");
+        // Ordinary ranges still use the visible fold context; cell ranges use
+        // their already intersected cell/fold context, never a raw row envelope.
+        for (source, _) in &window.ranges {
+            if let std::collections::hash_map::Entry::Vacant(entry) =
+                window.contexts.entry(source.start)
+                && let Some((_, context)) = selection
+                    .contexts
+                    .iter()
+                    .find(|(_, context)| context.start <= source.start && source.end <= context.end)
+            {
+                entry.insert(*context);
+            }
+        }
+        selection.ranges = window.ranges;
+        selection.contexts = window.contexts;
+        selection.rows = window.rows;
+        selection.row_ranges = window.row_ranges;
+        selection.cuts = window.cuts;
+        selection.skipped = window.skipped;
+    }
+    pub(crate) fn selected_row_ranges(
+        &self,
+        id: mdtui3::TableId,
+    ) -> Option<Vec<std::ops::Range<usize>>> {
+        let selection = self.selection.as_ref()?;
+        if !selection.folded {
+            return None;
+        }
+        let mut ranges = selection.row_ranges.get(&id)?.clone();
+        ranges.sort_by_key(|r| r.start);
+        let mut result: Vec<std::ops::Range<usize>> = Vec::new();
+        for range in ranges {
+            if let Some(last) = result.last_mut().filter(|last| range.start <= last.end) {
+                last.end = last.end.max(range.end);
+            } else {
+                result.push(range);
+            }
+        }
+        Some(result)
+    }
     pub(crate) fn selected_rows(&self, id: mdtui3::TableId) -> Option<std::ops::Range<usize>> {
         self.selection.as_ref()?.rows.get(&id).cloned()
     }
@@ -229,7 +363,18 @@ impl DisplayScanner {
                 let Some(&(source, table)) = selection.ranges.get(selection.next) else {
                     break;
                 };
-                let mut child = if table {
+                let mut child = if selection.folded {
+                    Self::fold_fragment(
+                        document,
+                        source,
+                        selection
+                            .contexts
+                            .get(&source.start)
+                            .copied()
+                            .unwrap_or(source),
+                        self.links.clone(),
+                    )
+                } else if table {
                     Self::exact(document, source, self.links.clone())
                 } else {
                     Self::new(document, source)
@@ -287,6 +432,9 @@ impl DisplayScanner {
             })
     }
 
+    pub(crate) fn source_cut(&self) -> Option<usize> {
+        self.source_cut
+    }
     pub(crate) fn set_source_cut(&mut self, cut: Option<usize>) {
         self.source_cut = cut;
     }
@@ -435,7 +583,9 @@ impl DisplayScanner {
         if self.lease.is_none() {
             self.lease = Some(self.links.hold());
         }
-        let shape_context = if self.table_mode {
+        let shape_context = if let Some(fragment) = self.fold_fragment {
+            fragment
+        } else if self.table_mode {
             self.table_context.unwrap_or(self.requested)
         } else {
             Span::new(
@@ -579,7 +729,13 @@ impl DisplayScanner {
                 }
                 // Block and selected table-cell boundaries are explicit GCB
                 // barriers. Source windows inside a block retain its context.
-                let mut fragment = if self.table_mode {
+                let mut fragment = if let Some(fragment) = self.fold_fragment {
+                    let block = document
+                        .block_at(scan.next)
+                        .and_then(|id| document.block(id))
+                        .map_or(fragment, |b| b.source);
+                    Span::new(fragment.start.max(block.start), fragment.end.min(block.end))
+                } else if self.table_mode {
                     self.table_context.unwrap_or(self.requested)
                 } else if let Some(block) = document
                     .block_at(scan.next)
@@ -617,6 +773,14 @@ impl DisplayScanner {
                     scan.window = None;
                 }
                 super::shape::ShapeWindowStep::Glyph(glyph) => {
+                    // A decoded atom (entity/object fallback) can map a wider
+                    // raw span than the requested fragment. A manual fold cut
+                    // must not publish that cross-boundary payload.
+                    if self.fold_fragment.is_some_and(|fragment| {
+                        glyph.source.start < fragment.start || glyph.source.end > fragment.end
+                    }) {
+                        continue;
+                    }
                     let first = document
                         .tile_at(glyph.source.start)
                         .ok_or(LayoutError::InvalidRange)?;
@@ -674,7 +838,16 @@ impl DisplayScanner {
         if self.tail_ready {
             return Ok(true);
         }
-        if document.is_finished() || self.table_mode || document.source().ends_with(['\r', '\n']) {
+        if self
+            .fold_fragment
+            .is_some_and(|s| s.end < document.source().len())
+            || self
+                .source_cut
+                .is_some_and(|cut| cut < document.source().len())
+            || document.is_finished()
+            || self.table_mode
+            || document.source().ends_with(['\r', '\n'])
+        {
             self.tail_ready = true;
             return Ok(true);
         }
@@ -684,10 +857,12 @@ impl DisplayScanner {
                 self.tail_ready = true;
                 return Ok(true);
             };
-            let fragment = last.block.and_then(|id| document.block(id)).map_or(
-                Span::new(document.pending().start, document.source().len()),
-                |block| block.source,
-            );
+            let fragment = self.fold_fragment.unwrap_or_else(|| {
+                last.block.and_then(|id| document.block(id)).map_or(
+                    Span::new(document.pending().start, document.source().len()),
+                    |block| block.source,
+                )
+            });
             if fragment.end != document.source().len() {
                 self.tail_ready = true;
                 return Ok(true);

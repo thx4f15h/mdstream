@@ -927,6 +927,33 @@ pub struct FoldViewCompaction<S> {
 }
 
 impl<S> FoldViewCompaction<S> {
+    /// Read-only geometry remains owned by this same paused view. It is safe
+    /// for a host to retain source/scroll anchors while queuing a width change.
+    pub fn heights(&self) -> &HeightIndex {
+        self.view.heights()
+    }
+
+    /// Read the retained checkpoint while its owner is in maintenance.
+    pub fn checkpoint(&self, tile: TileId) -> Option<&S> {
+        self.task.get(tile)
+    }
+
+    pub fn previous_checkpoint(&self, tile: TileId) -> Option<(TileId, &S)> {
+        self.task.previous(tile)
+    }
+
+    pub fn checkpoint_token(&self, tile: TileId) -> Option<crate::CheckpointToken> {
+        self.task.token(tile)
+    }
+
+    pub fn validates_checkpoint(&self, token: crate::CheckpointToken) -> bool {
+        self.task.validates(token)
+    }
+
+    pub fn checkpoint_len(&self) -> usize {
+        self.task.len()
+    }
+
     pub fn stats(&self) -> crate::CheckpointCompactionStats {
         self.task.stats()
     }
@@ -1030,6 +1057,42 @@ impl<S> FoldView<S> {
     }
     pub fn version(&self) -> u64 {
         self.version
+    }
+
+    /// Whether any local collapsed choice can affect projection. Preview may
+    /// temporarily expose one of these choices without deleting it.
+    pub fn has_collapsed(&self) -> bool {
+        !self.state.collapsed.is_empty()
+    }
+
+    /// The contiguous unfolded context containing a known visible source byte.
+    /// Unlike a projection's tile/window cuts these are actual fold boundaries.
+    /// Display/shaping consumers intersect this context with their block/cell
+    /// boundary; they must not use a viewport cut as a grapheme boundary.
+    pub fn visible_fragment(
+        &self,
+        document: &Document,
+        source: usize,
+        budget: &mut Budget,
+    ) -> Result<Option<Span>, LayoutError> {
+        self.check(document)?;
+        if source >= document.source().len() {
+            return Err(LayoutError::InvalidRange);
+        }
+        if !budget.charge(crate::WorkLimit {
+            queries: 1,
+            objects: 1,
+            ..Default::default()
+        }) {
+            return Ok(None);
+        }
+        match self.state.segment(document, source) {
+            FoldSegment::Hidden(_) => Err(LayoutError::InvalidRange),
+            FoldSegment::Text { end } => Ok(Some(Span::new(
+                self.state.hidden_ranges.preceding_end(source),
+                end,
+            ))),
+        }
     }
 
     /// Query a candidate in this synchronized view, including registered source
@@ -1400,6 +1463,17 @@ impl<S> FoldView<S> {
     /// Storage is bounded by the number of indexed body rows, not toggle count.
     pub fn table_row_range_count(&self) -> usize {
         self.state.row_ranges.len()
+    }
+
+    /// Registered fixed row range containing this byte, including an expanded
+    /// range. O(log R) metadata only; a UI can select the exact ID for removal.
+    pub fn table_row_fold_at(
+        &self,
+        document: &Document,
+        source: usize,
+    ) -> Result<Option<FoldCandidate>, LayoutError> {
+        self.check(document)?;
+        Ok(self.row_candidate_at(document, source))
     }
 
     pub(crate) fn has_table_rows(&self, document: &Document, range: TableRowRange) -> bool {

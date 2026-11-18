@@ -133,12 +133,13 @@ pub struct PlannedGroup {
 pub enum PlanEventKind {
     Spacing { blank_lines: u16 },
     CodeLabel { label: String },
+    FoldLabel { label: String, summary: Vec<String> },
     ThematicBreak,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanEvent {
-    pub block: BlockId,
+    pub block: Option<BlockId>,
     pub source: Span,
     pub display_source: Option<Span>,
     pub kind: PlanEventKind,
@@ -174,6 +175,7 @@ pub struct BlockPlan {
     pub unbudgeted_drawable_queries: usize,
     info_prefixes: Vec<InfoPrefix>,
     pub segments: Vec<TileSegment>,
+    pub(crate) projected: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,6 +188,28 @@ struct InfoPrefix {
 }
 
 impl BlockPlan {
+    pub(crate) fn clip_info_prefixes(&mut self, contexts: &HashMap<usize, Span>) {
+        for prefix in &mut self.info_prefixes {
+            let end = contexts
+                .values()
+                .find(|context| {
+                    context.start <= prefix.source.start && prefix.source.start < context.end
+                })
+                .map_or(prefix.source.start, |context| {
+                    prefix.source.end.min(context.end)
+                });
+            if end < prefix.source.end {
+                prefix.truncated = true;
+                prefix.source.end = end;
+            }
+            if prefix.source.is_empty() {
+                self.events[prefix.event].kind = PlanEventKind::CodeLabel {
+                    label: "[code]".to_owned(),
+                };
+            }
+        }
+    }
+
     pub(crate) fn advance_info(&mut self, document: &Document, budget: &mut Budget) -> bool {
         for prefix in &mut self.info_prefixes {
             while prefix.position < prefix.source.end {
@@ -231,8 +255,9 @@ impl BlockPlan {
     #[must_use]
     pub fn segment(&self, tile: TileId) -> Option<&TileSegment> {
         self.segments
-            .get(tile.0.checked_sub(self.tile_start.0)?)
-            .filter(|segment| segment.tile == tile)
+            .binary_search_by_key(&tile, |segment| segment.tile)
+            .ok()
+            .and_then(|index| self.segments.get(index))
     }
 
     pub fn events_for_tile(&self, tile: TileId) -> impl Iterator<Item = &PlanEvent> + '_ {
@@ -270,7 +295,7 @@ pub fn plan_visible(
         .end
         .saturating_add(overscan_tiles)
         .min(document.tile_count());
-    plan_tiles(document, visible, start, end, None, false, None)
+    plan_tiles(document, visible, start..end, None, false, None, false)
 }
 
 pub(crate) fn plan_with_contexts(
@@ -283,11 +308,11 @@ pub(crate) fn plan_with_contexts(
     plan_tiles(
         document,
         visible,
-        tiles.start,
-        tiles.end,
+        tiles.start..tiles.end,
         Some(contexts),
         true,
         promoted_code,
+        false,
     )
 }
 
@@ -311,6 +336,7 @@ pub(crate) fn empty_plan(
         code_info_source_bytes: 0,
         unbudgeted_drawable_queries: 0,
         info_prefixes: Vec::new(),
+        projected: false,
         segments: (tile_start.0..tile_end.0)
             .map(|index| {
                 let tile = TileId(index);
@@ -331,14 +357,14 @@ pub(crate) fn empty_plan(
 fn plan_tiles(
     document: &Document,
     visible: Span,
-    tile_start: usize,
-    tile_end: usize,
+    tiles: std::ops::Range<usize>,
     contexts: Option<&HashMap<ContainerId, ContainerContext>>,
     defer_info: bool,
     promoted_code: Option<BlockId>,
+    precise: bool,
 ) -> Result<BlockPlan, PlanError> {
-    let tile_start = TileId(tile_start);
-    let tile_end = TileId(tile_end);
+    let tile_start = TileId(tiles.start);
+    let tile_end = TileId(tiles.end);
     let mut plan = empty_plan(document, visible, tile_start.0, tile_end.0);
     if !defer_info {
         for segment in &mut plan.segments {
@@ -353,11 +379,13 @@ fn plan_tiles(
     let source_start = document
         .tile(tile_start)
         .ok_or(PlanError::InvalidRange)?
-        .start;
+        .start
+        .max(if precise { visible.start } else { 0 });
     let source_end = document
         .tile(TileId(tile_end.0 - 1))
         .ok_or(PlanError::InvalidRange)?
-        .end;
+        .end
+        .min(if precise { visible.end } else { usize::MAX });
     let blocks = document.blocks();
     let block_start = blocks.partition_point(|block| block.source.end <= source_start);
     let block_end = blocks.partition_point(|block| block.source.start < source_end);
@@ -429,7 +457,7 @@ fn plan_tiles(
             let spacing = plan.groups[group].spacing_before;
             if spacing > 0 {
                 plan.events.push(PlanEvent {
-                    block: block_id,
+                    block: Some(block_id),
                     source: Span::new(block.source.start, block.source.start),
                     display_source: None,
                     kind: PlanEventKind::Spacing {
@@ -454,7 +482,7 @@ fn plan_tiles(
                     if end > info.start {
                         let event = plan.events.len();
                         plan.events.push(PlanEvent {
-                            block: block_id,
+                            block: Some(block_id),
                             source: if promoted_code == Some(block_id) {
                                 Span::new(source_start, source_start)
                             } else {
@@ -479,7 +507,7 @@ fn plan_tiles(
                 plan.code_info_source_bytes = plan.code_info_source_bytes.saturating_add(bytes);
                 if let Some(label) = label {
                     plan.events.push(PlanEvent {
-                        block: block_id,
+                        block: Some(block_id),
                         source: block.source,
                         display_source: None,
                         kind: PlanEventKind::CodeLabel { label },
@@ -491,7 +519,7 @@ fn plan_tiles(
             || (!defer_info && is_thematic_break_block(document, block)?)
         {
             plan.events.push(PlanEvent {
-                block: block_id,
+                block: Some(block_id),
                 source: block.source,
                 display_source: None,
                 kind: PlanEventKind::ThematicBreak,
@@ -541,4 +569,139 @@ fn group_starts_in_range(document: &Document, key: GroupKey, source_start: usize
             .container(container)
             .is_some_and(|container| container.source.start >= source_start),
     }
+}
+
+/// Plan only projected text. The envelope is identity metadata, never a request
+/// to visit the tiles or blocks between disconnected visible fragments.
+pub(crate) fn projected_plan(
+    document: &Document,
+    visible: Span,
+    sources: &[Span],
+    placeholders: &[mdtui3::FoldPlaceholder],
+    contexts: &HashMap<ContainerId, ContainerContext>,
+) -> Result<BlockPlan, PlanError> {
+    let mut result = empty_plan(document, visible, 0, 0);
+    result.projected = true;
+    let mut tiles = std::collections::BTreeMap::new();
+    let mut blocks = std::collections::BTreeMap::new();
+    for source in sources {
+        let range = document.tiles_overlapping(*source);
+        let mut part = plan_tiles(
+            document,
+            *source,
+            range.start..range.end,
+            Some(contexts),
+            true,
+            None,
+            true,
+        )?;
+        let event_offset = result.events.len();
+        for prefix in &mut part.info_prefixes {
+            prefix.event += event_offset;
+        }
+        result.info_prefixes.extend(part.info_prefixes);
+        result.events.extend(part.events);
+        for block in part.blocks {
+            blocks.entry(block.id).or_insert(block);
+        }
+        for segment in part.segments {
+            tiles.entry(segment.tile).or_insert(segment);
+        }
+    }
+    for placeholder in placeholders {
+        let tile = placeholder.owner;
+        tiles.entry(tile).or_insert_with(|| TileSegment {
+            tile,
+            source: document.tile(tile).expect("projection owner"),
+            kind: TileSegmentKind::TuiOwned,
+            drawable_at: None,
+            blocks: Vec::new(),
+        });
+        let source = placeholder.candidate.hidden;
+        if inline_placeholder(
+            document,
+            placeholder,
+            &blocks.keys().copied().collect::<Vec<_>>(),
+        ) {
+            continue;
+        }
+        result.events.push(PlanEvent {
+            block: document.block_at(source.start),
+            source: Span::new(source.start, source.start),
+            display_source: Some(source),
+            kind: PlanEventKind::FoldLabel {
+                label: placeholder_label(placeholder.candidate),
+                summary: Vec::new(),
+            },
+        });
+    }
+
+    result.blocks = blocks.into_values().collect();
+    result.segments = tiles.into_values().collect();
+    result.tile_start = result.segments.first().map_or(TileId(0), |s| s.tile);
+    result.tile_end = result
+        .segments
+        .last()
+        .map_or(result.tile_start, |s| TileId(s.tile.0 + 1));
+    Ok(result)
+}
+
+pub(crate) fn inline_placeholder(
+    document: &Document,
+    placeholder: &mdtui3::FoldPlaceholder,
+    blocks: &[BlockId],
+) -> bool {
+    matches!(placeholder.candidate.id, mdtui3::FoldId::Source(_))
+        && (document
+            .block_at(placeholder.candidate.hidden.start)
+            .is_none()
+            && document.pending().start <= placeholder.candidate.hidden.start
+            && placeholder.candidate.hidden.start < document.pending().end
+            || document
+                .block_at(placeholder.candidate.hidden.start)
+                .is_some_and(|id| {
+                    blocks.contains(&id)
+                        && document.block(id).is_some_and(|b| {
+                            matches!(
+                                b.kind,
+                                BlockKind::Paragraph
+                                    | BlockKind::Quote { .. }
+                                    | BlockKind::Code { .. }
+                                    | BlockKind::ListItem { .. }
+                            ) || match b.kind {
+                                BlockKind::Table { id } => {
+                                    document.table(id).is_some_and(|table| {
+                                        table
+                                            .row_at(placeholder.candidate.hidden.start)
+                                            .and_then(|row| table.row(row))
+                                            .is_some_and(|row| {
+                                                row.cells.iter().any(|cell| {
+                                                    cell.source.start
+                                                        <= placeholder.candidate.hidden.start
+                                                        && placeholder.candidate.hidden.start
+                                                            < cell.source.end
+                                                })
+                                            })
+                                    })
+                                }
+                                _ => false,
+                            }
+                        })
+                }))
+}
+
+pub(crate) fn placeholder_label(candidate: mdtui3::FoldCandidate) -> String {
+    let (kind, id) = match candidate.id {
+        mdtui3::FoldId::Heading(id) => ("heading", id.0),
+        mdtui3::FoldId::Code(id) => ("code", id.0),
+        mdtui3::FoldId::Math(id) => ("math", id.0),
+        mdtui3::FoldId::Container(id) => ("container", id.0),
+        mdtui3::FoldId::Table(id) => ("table", id.0),
+        mdtui3::FoldId::TableRows(range) => ("rows", range.start),
+        mdtui3::FoldId::Source(id) => ("source", id.index()),
+    };
+    format!(
+        "[+ {kind} {id} {}..{}]",
+        candidate.source.start, candidate.source.end
+    )
 }

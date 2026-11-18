@@ -181,49 +181,101 @@ pub struct CheckpointMaintenanceProgress {
     pub compaction: Option<mdtui3::CheckpointCompactionStats>,
 }
 
+// The complete FoldView moves into maintenance. No renderer owns a second
+// height tree or extracts/replaces the checkpoint index.
 enum CheckpointStoreState {
-    Ready(CheckpointIndex<RenderCheckpoint>),
+    Ready(mdtui3::FoldView<RenderCheckpoint>),
     Draining {
-        index: CheckpointIndex<RenderCheckpoint>,
+        view: mdtui3::FoldView<RenderCheckpoint>,
         before: TileId,
         cursor: usize,
-        out: Vec<RenderCheckpoint>,
         drained: usize,
     },
     Compacting {
-        task: mdtui3::CheckpointCompaction<RenderCheckpoint>,
-        retired: Vec<RenderCheckpoint>,
-        retired_total: usize,
+        task: Box<mdtui3::FoldViewCompaction<RenderCheckpoint>>,
         drained: usize,
+        retired_total: usize,
     },
+    Moving,
 }
 
 pub struct RenderCheckpointStore {
     state: CheckpointStoreState,
+    pending_reset: Option<u64>,
 }
 
 impl RenderCheckpointStore {
-    pub fn new(document: &Document) -> Self {
-        let mut index = CheckpointIndex::new();
-        index.rebuild(document);
+    pub(crate) fn borrowed() -> Self {
         Self {
-            state: CheckpointStoreState::Ready(index),
+            state: CheckpointStoreState::Moving,
+            pending_reset: None,
         }
     }
 
-    pub fn rebuild(&mut self, document: &Document) {
-        let mut index = CheckpointIndex::new();
-        index.rebuild(document);
-        self.state = CheckpointStoreState::Ready(index);
+    pub fn new(document: &Document) -> Self {
+        Self {
+            pending_reset: None,
+            state: CheckpointStoreState::Ready(
+                mdtui3::FoldView::with_state(document, 1).expect("valid initial estimate"),
+            ),
+        }
     }
 
-    fn ready_mut(&mut self) -> Result<&mut CheckpointIndex<RenderCheckpoint>, LayoutError> {
+    pub fn view(&self) -> &mdtui3::FoldView<RenderCheckpoint> {
+        match &self.state {
+            CheckpointStoreState::Ready(view) | CheckpointStoreState::Draining { view, .. } => view,
+            _ => panic!("layout owner is in checkpoint compaction"),
+        }
+    }
+
+    pub fn view_mut(&mut self) -> Result<&mut mdtui3::FoldView<RenderCheckpoint>, LayoutError> {
         match &mut self.state {
-            CheckpointStoreState::Ready(index) => Ok(index),
-            CheckpointStoreState::Draining { .. } | CheckpointStoreState::Compacting { .. } => {
-                Err(LayoutError::OutOfOrderUpdate)
-            }
+            CheckpointStoreState::Ready(view) => Ok(view),
+            _ => Err(LayoutError::OutOfOrderUpdate),
         }
+    }
+
+    pub fn heights(&self) -> &mdtui3::HeightIndex {
+        match &self.state {
+            CheckpointStoreState::Compacting { task, .. } => task.heights(),
+            _ => self.view().heights(),
+        }
+    }
+    pub fn reset_width(&mut self, document: &Document, estimate: u64) -> Result<(), LayoutError> {
+        match &mut self.state {
+            CheckpointStoreState::Ready(view) => view.reset(estimate),
+            CheckpointStoreState::Draining { view, .. } => {
+                // Invalidating payloads is O(1); retain their arena for later
+                // paid drain/compaction instead of destroying the owner.
+                view.layout_parts_mut(document)?;
+                view.reset(estimate)?;
+                let state = std::mem::replace(&mut self.state, CheckpointStoreState::Moving);
+                let CheckpointStoreState::Draining { view, .. } = state else {
+                    unreachable!()
+                };
+                self.state = CheckpointStoreState::Ready(view);
+                Ok(())
+            }
+            CheckpointStoreState::Compacting { .. } => {
+                self.pending_reset = Some(estimate);
+                Ok(())
+            }
+            CheckpointStoreState::Moving => Err(LayoutError::OutOfOrderUpdate),
+        }
+    }
+
+    pub fn heights_mut(
+        &mut self,
+        document: &Document,
+    ) -> Result<&mut mdtui3::HeightIndex, LayoutError> {
+        Ok(self.view_mut()?.layout_parts_mut(document)?.0)
+    }
+
+    fn ready_mut(
+        &mut self,
+        document: &Document,
+    ) -> Result<&mut CheckpointIndex<RenderCheckpoint>, LayoutError> {
+        Ok(self.view_mut()?.layout_parts_mut(document)?.1)
     }
 
     pub fn insert(
@@ -231,43 +283,54 @@ impl RenderCheckpointStore {
         tile: TileId,
         checkpoint: RenderCheckpoint,
     ) -> Result<Option<RenderCheckpoint>, LayoutError> {
-        self.ready_mut()?.insert(tile, checkpoint)
+        if self.exact(tile) == Some(&checkpoint) {
+            return Ok(None);
+        }
+        self.view_mut()?.insert_checkpoint(tile, checkpoint)
     }
 
-    /// Save the state after `tile` only when a following tile exists.
     pub fn checkpoint_after_tile(
         &mut self,
         tile: TileId,
         checkpoint: RenderCheckpoint,
         document: &Document,
     ) -> Result<Option<RenderCheckpoint>, LayoutError> {
-        let Some(next) = tile.0.checked_add(1) else {
+        let Some(next) = tile
+            .0
+            .checked_add(1)
+            .map(TileId)
+            .filter(|next| document.tile(*next).is_some())
+        else {
             return Ok(None);
         };
-        let next = TileId(next);
-        if document.tile(next).is_none() {
-            return Ok(None);
-        }
         self.insert(next, checkpoint)
     }
 
     #[must_use]
     pub fn exact(&self, tile: TileId) -> Option<&RenderCheckpoint> {
+        if self.pending_reset.is_some() {
+            return None;
+        }
         match &self.state {
-            CheckpointStoreState::Ready(index) | CheckpointStoreState::Draining { index, .. } => {
-                index.get(tile)
+            CheckpointStoreState::Ready(view) | CheckpointStoreState::Draining { view, .. } => {
+                view.checkpoints().get(tile)
             }
-            CheckpointStoreState::Compacting { task, .. } => task.get(tile),
+            CheckpointStoreState::Compacting { task, .. } => task.checkpoint(tile),
+            CheckpointStoreState::Moving => None,
         }
     }
 
     #[must_use]
     pub fn previous(&self, tile: TileId) -> Option<(TileId, &RenderCheckpoint)> {
+        if self.pending_reset.is_some() {
+            return None;
+        }
         match &self.state {
-            CheckpointStoreState::Ready(index) | CheckpointStoreState::Draining { index, .. } => {
-                index.previous(tile)
+            CheckpointStoreState::Ready(view) | CheckpointStoreState::Draining { view, .. } => {
+                view.checkpoints().previous(tile)
             }
-            CheckpointStoreState::Compacting { task, .. } => task.previous(tile),
+            CheckpointStoreState::Compacting { task, .. } => task.previous_checkpoint(tile),
+            CheckpointStoreState::Moving => None,
         }
     }
 
@@ -284,94 +347,85 @@ impl RenderCheckpointStore {
 
     #[must_use]
     pub fn token(&self, tile: TileId) -> Option<CheckpointToken> {
+        if self.pending_reset.is_some() {
+            return None;
+        }
         match &self.state {
-            CheckpointStoreState::Ready(index) | CheckpointStoreState::Draining { index, .. } => {
-                index.token(tile)
+            CheckpointStoreState::Ready(view) | CheckpointStoreState::Draining { view, .. } => {
+                view.checkpoints().token(tile)
             }
-            CheckpointStoreState::Compacting { task, .. } => task.token(tile),
+            CheckpointStoreState::Compacting { task, .. } => task.checkpoint_token(tile),
+            CheckpointStoreState::Moving => None,
         }
     }
 
     #[must_use]
     pub fn validates(&self, token: CheckpointToken) -> bool {
+        if self.pending_reset.is_some() {
+            return false;
+        }
         match &self.state {
-            CheckpointStoreState::Ready(index) | CheckpointStoreState::Draining { index, .. } => {
-                index.validates(token)
+            CheckpointStoreState::Ready(view) | CheckpointStoreState::Draining { view, .. } => {
+                view.checkpoints().validates(token)
             }
-            CheckpointStoreState::Compacting { task, .. } => task.validates(token),
+            CheckpointStoreState::Compacting { task, .. } => task.validates_checkpoint(token),
+            CheckpointStoreState::Moving => false,
         }
     }
 
-    pub fn invalidate(&mut self, range: Range<usize>) -> Result<(), LayoutError> {
-        self.ready_mut()?.invalidate(range)
+    pub fn invalidate(
+        &mut self,
+        document: &Document,
+        range: Range<usize>,
+    ) -> Result<(), LayoutError> {
+        self.ready_mut(document)?.invalidate(range)
     }
-
-    pub fn clear(&mut self) {
-        if let CheckpointStoreState::Ready(index) = &mut self.state {
-            index.clear();
-        }
+    pub fn clear(&mut self, document: &Document) -> Result<(), LayoutError> {
+        self.ready_mut(document)?.clear();
+        Ok(())
     }
-
     pub fn apply(&mut self, document: &Document, update: &Update) -> Result<(), LayoutError> {
-        self.ready_mut()?.apply(document, update)
+        self.view_mut()?.apply(document, update)
     }
-
     #[must_use]
     pub fn len(&self) -> usize {
         match &self.state {
-            CheckpointStoreState::Ready(index) | CheckpointStoreState::Draining { index, .. } => {
-                index.len()
+            CheckpointStoreState::Ready(view) | CheckpointStoreState::Draining { view, .. } => {
+                view.checkpoints().len()
             }
-            CheckpointStoreState::Compacting { task, .. } => task.len(),
+            CheckpointStoreState::Compacting { task, .. } => task.checkpoint_len(),
+            CheckpointStoreState::Moving => 0,
         }
     }
-
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-
     #[must_use]
     pub fn arena_stats(&self) -> ArenaStats {
         match &self.state {
-            CheckpointStoreState::Ready(index) | CheckpointStoreState::Draining { index, .. } => {
-                index.arena_stats()
+            CheckpointStoreState::Ready(view) | CheckpointStoreState::Draining { view, .. } => {
+                view.checkpoints().arena_stats()
             }
-            CheckpointStoreState::Compacting { task, .. } => {
-                let stats = task.stats();
-                ArenaStats {
-                    nodes: stats.source.nodes + stats.destination.nodes + stats.scratch.nodes,
-                    capacity_bytes: stats.source.capacity_bytes
-                        + stats.destination.capacity_bytes
-                        + stats.scratch.capacity_bytes,
-                    allocation_calls: stats.source.allocation_calls
-                        + stats.destination.allocation_calls
-                        + stats.scratch.allocation_calls,
-                }
-            }
+            CheckpointStoreState::Compacting { task, .. } => arena_from_compaction(task.stats()),
+            CheckpointStoreState::Moving => ArenaStats::default(),
         }
     }
-
     #[must_use]
     pub const fn maintenance_in_progress(&self) -> bool {
-        !matches!(&self.state, CheckpointStoreState::Ready(_))
+        !matches!(self.state, CheckpointStoreState::Ready(_))
     }
-
     #[must_use]
     pub fn maintenance_phase(&self) -> Option<CheckpointMaintenancePhase> {
-        match &self.state {
+        match self.state {
             CheckpointStoreState::Ready(_) => None,
             CheckpointStoreState::Draining { .. } => Some(CheckpointMaintenancePhase::Drain),
-            CheckpointStoreState::Compacting { .. } => Some(CheckpointMaintenancePhase::Compact),
+            _ => Some(CheckpointMaintenancePhase::Compact),
         }
     }
-
-    /// Invalidate checks outside `keep`, then begin the budgeted drain and
-    /// compaction pipeline. The upper range intentionally spans the index arena,
-    /// not only `document.tile_count()`, so stale payloads beyond the current EOF
-    /// are not hidden from compaction.
     pub fn start_maintenance(
         &mut self,
+        document: &Document,
         keep: Range<usize>,
         tile_count: usize,
     ) -> Result<(), LayoutError> {
@@ -381,225 +435,135 @@ impl RenderCheckpointStore {
         if keep.start > keep.end || keep.end > tile_count {
             return Err(LayoutError::InvalidRange);
         }
-        let state = std::mem::replace(
-            &mut self.state,
-            CheckpointStoreState::Ready(CheckpointIndex::new()),
-        );
-        let CheckpointStoreState::Ready(mut index) = state else {
-            unreachable!("checked ready maintenance state");
-        };
+        let index = self.ready_mut(document)?;
         index.invalidate(0..keep.start)?;
         index.invalidate(keep.end..usize::MAX)?;
+        let state = std::mem::replace(&mut self.state, CheckpointStoreState::Moving);
+        let CheckpointStoreState::Ready(view) = state else {
+            unreachable!()
+        };
         self.state = CheckpointStoreState::Draining {
-            index,
+            view,
             before: TileId(keep.start),
             cursor: 0,
-            out: Vec::new(),
             drained: 0,
         };
         Ok(())
     }
-
     pub fn advance_maintenance(
         &mut self,
+        document: &Document,
         budget: &mut mdtui3::Budget,
     ) -> Result<CheckpointMaintenanceProgress, LayoutError> {
-        use mdtui3::{Completion, WorkLimit};
-
-        match &mut self.state {
-            CheckpointStoreState::Ready(_) => Ok(self.completed_progress(None)),
-            CheckpointStoreState::Draining { .. } => {
-                let CheckpointStoreState::Draining {
-                    index,
+        use mdtui3::Completion;
+        let mut compact_stats = None;
+        loop {
+            let completion = match &mut self.state {
+                CheckpointStoreState::Ready(_) => Completion::Covered,
+                CheckpointStoreState::Draining {
+                    view,
                     before,
                     cursor,
-                    out,
                     drained,
-                } = &mut self.state
-                else {
-                    unreachable!()
-                };
-                let completion = index.drain_before(*before, cursor, budget, out);
-                let released_now = out.len();
-                *drained = drained.saturating_add(released_now);
-                out.clear();
-                if completion == Completion::BudgetExhausted {
-                    return Ok(CheckpointMaintenanceProgress {
-                        completion,
-                        phase: Some(CheckpointMaintenancePhase::Drain),
-                        drained_payloads: *drained,
-                        retired_payloads: 0,
-                        released_payloads: *drained,
-                        drain_cursor: *cursor,
-                        len: index.len(),
-                        arena: index.arena_stats(),
-                        compaction: None,
-                    });
+                } => {
+                    let mut retired = Vec::new();
+                    let completion = view.layout_parts_mut(document)?.1.drain_before(
+                        *before,
+                        cursor,
+                        budget,
+                        &mut retired,
+                    );
+                    *drained += retired.len();
+                    if completion == Completion::BudgetExhausted {
+                        completion
+                    } else {
+                        let state =
+                            std::mem::replace(&mut self.state, CheckpointStoreState::Moving);
+                        let CheckpointStoreState::Draining { view, drained, .. } = state else {
+                            unreachable!()
+                        };
+                        self.state = CheckpointStoreState::Compacting {
+                            task: Box::new(view.into_checkpoint_compaction()),
+                            drained,
+                            retired_total: 0,
+                        };
+                        continue;
+                    }
                 }
-                *cursor = 0;
-                let state = std::mem::replace(
-                    &mut self.state,
-                    CheckpointStoreState::Ready(CheckpointIndex::new()),
-                );
-                let CheckpointStoreState::Draining {
-                    index,
+                CheckpointStoreState::Compacting {
+                    task,
+                    drained: _,
+                    retired_total,
+                } => {
+                    let mut retired = Vec::new();
+                    let completion = task.advance(document, budget, &mut retired)?;
+                    *retired_total += retired.len();
+                    compact_stats = Some(task.stats());
+                    if completion == Completion::Covered {
+                        let state =
+                            std::mem::replace(&mut self.state, CheckpointStoreState::Moving);
+                        let CheckpointStoreState::Compacting {
+                            task,
+                            drained,
+                            retired_total,
+                        } = state
+                        else {
+                            unreachable!()
+                        };
+                        match (*task).finish(document) {
+                            Ok(mut view) => {
+                                if let Some(estimate) = self.pending_reset.take() {
+                                    view.reset(estimate)?;
+                                }
+                                self.state = CheckpointStoreState::Ready(view);
+                                return Ok(CheckpointMaintenanceProgress {
+                                    completion,
+                                    phase: None,
+                                    drained_payloads: drained,
+                                    retired_payloads: retired_total,
+                                    released_payloads: drained + retired_total,
+                                    drain_cursor: 0,
+                                    len: self.len(),
+                                    arena: self.arena_stats(),
+                                    compaction: compact_stats,
+                                });
+                            }
+                            Err(task) => {
+                                self.state = CheckpointStoreState::Compacting {
+                                    task: Box::new(task),
+                                    drained,
+                                    retired_total,
+                                };
+                                return Err(LayoutError::OutOfOrderUpdate);
+                            }
+                        }
+                    }
+                    completion
+                }
+                CheckpointStoreState::Moving => unreachable!(),
+            };
+            let (drained, retired, cursor) = match &self.state {
+                CheckpointStoreState::Draining {
+                    drained, cursor, ..
+                } => (*drained, 0, *cursor),
+                CheckpointStoreState::Compacting {
                     drained,
-                    cursor,
+                    retired_total,
                     ..
-                } = state
-                else {
-                    unreachable!()
-                };
-                debug_assert_eq!(cursor, 0);
-                self.state = CheckpointStoreState::Compacting {
-                    task: index.into_compaction(),
-                    retired: Vec::new(),
-                    retired_total: 0,
-                    drained,
-                };
-                if !budget.charge(WorkLimit {
-                    queries: 1,
-                    ..WorkLimit::default()
-                }) {
-                    return Ok(self.in_progress_progress());
-                }
-                self.advance_compaction(budget)
-            }
-            CheckpointStoreState::Compacting { .. } => self.advance_compaction(budget),
-        }
-    }
-
-    fn advance_compaction(
-        &mut self,
-        budget: &mut mdtui3::Budget,
-    ) -> Result<CheckpointMaintenanceProgress, LayoutError> {
-        use mdtui3::Completion;
-
-        let CheckpointStoreState::Compacting {
-            task,
-            retired,
-            retired_total,
-            drained,
-        } = &mut self.state
-        else {
-            unreachable!("compaction state")
-        };
-        let before_retired = retired.len();
-        let completion = task.advance(budget, retired);
-        let released_now = retired.len().saturating_sub(before_retired);
-        *retired_total = retired_total.saturating_add(released_now);
-        retired.clear();
-        if completion == Completion::BudgetExhausted {
-            let task_stats = task.stats();
+                } => (*drained, *retired_total, 0),
+                _ => (0, 0, 0),
+            };
             return Ok(CheckpointMaintenanceProgress {
                 completion,
-                phase: Some(CheckpointMaintenancePhase::Compact),
-                drained_payloads: *drained,
-                retired_payloads: *retired_total,
-                released_payloads: drained.saturating_add(*retired_total),
-                drain_cursor: 0,
-                len: task.len(),
-                arena: arena_from_compaction(task_stats),
-                compaction: Some(task_stats),
-            });
-        }
-        let stats = task.stats();
-        let state = std::mem::replace(
-            &mut self.state,
-            CheckpointStoreState::Ready(CheckpointIndex::new()),
-        );
-        let CheckpointStoreState::Compacting {
-            task,
-            drained,
-            retired_total,
-            ..
-        } = state
-        else {
-            unreachable!()
-        };
-        match task.finish() {
-            Ok(index) => {
-                let len = index.len();
-                let arena = index.arena_stats();
-                self.state = CheckpointStoreState::Ready(index);
-                Ok(CheckpointMaintenanceProgress {
-                    completion: Completion::Covered,
-                    phase: None,
-                    drained_payloads: drained,
-                    retired_payloads: retired_total,
-                    released_payloads: drained.saturating_add(retired_total),
-                    drain_cursor: 0,
-                    len,
-                    arena,
-                    compaction: Some(stats),
-                })
-            }
-            Err(task) => {
-                self.state = CheckpointStoreState::Compacting {
-                    task,
-                    retired: Vec::new(),
-                    retired_total,
-                    drained,
-                };
-                Err(LayoutError::OutOfOrderUpdate)
-            }
-        }
-    }
-
-    fn in_progress_progress(&self) -> CheckpointMaintenanceProgress {
-        use mdtui3::Completion;
-        match &self.state {
-            CheckpointStoreState::Ready(_) => self.completed_progress(None),
-            CheckpointStoreState::Draining {
-                index,
-                cursor,
-                drained,
-                ..
-            } => CheckpointMaintenanceProgress {
-                completion: Completion::BudgetExhausted,
-                phase: Some(CheckpointMaintenancePhase::Drain),
-                drained_payloads: *drained,
-                retired_payloads: 0,
-                released_payloads: 0,
-                drain_cursor: *cursor,
-                len: index.len(),
-                arena: index.arena_stats(),
-                compaction: None,
-            },
-            CheckpointStoreState::Compacting {
-                task,
-                drained,
-                retired_total,
-                ..
-            } => CheckpointMaintenanceProgress {
-                completion: Completion::BudgetExhausted,
-                phase: Some(CheckpointMaintenancePhase::Compact),
-                drained_payloads: *drained,
-                retired_payloads: *retired_total,
-                released_payloads: 0,
-                drain_cursor: 0,
-                len: task.len(),
+                phase: self.maintenance_phase(),
+                drained_payloads: drained,
+                retired_payloads: retired,
+                released_payloads: drained + retired,
+                drain_cursor: cursor,
+                len: self.len(),
                 arena: self.arena_stats(),
-                compaction: Some(task.stats()),
-            },
-        }
-    }
-
-    fn completed_progress(
-        &self,
-        stats: Option<mdtui3::CheckpointCompactionStats>,
-    ) -> CheckpointMaintenanceProgress {
-        use mdtui3::Completion;
-        CheckpointMaintenanceProgress {
-            completion: Completion::Covered,
-            phase: None,
-            drained_payloads: 0,
-            retired_payloads: 0,
-            released_payloads: 0,
-            drain_cursor: 0,
-            len: self.len(),
-            arena: self.arena_stats(),
-            compaction: stats,
+                compaction: compact_stats,
+            });
         }
     }
 }

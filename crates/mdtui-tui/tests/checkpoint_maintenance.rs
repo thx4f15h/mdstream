@@ -11,6 +11,12 @@ use mdtui3::{
     Budget, CheckpointIndex, Completion, Document, LayoutError, TILE_BYTES, TileId, WorkLimit,
 };
 
+fn indexed_document(tiles: usize) -> Document {
+    let mut document = Document::new();
+    document.append(&"x".repeat(tiles * TILE_BYTES)).unwrap();
+    document.finish();
+    document
+}
 fn config(width: u16, rows: u16) -> ViewportConfig {
     ViewportConfig {
         width,
@@ -38,10 +44,13 @@ fn checkpoint(value: usize) -> RenderCheckpoint {
     RenderCheckpoint::line_mid(value, 0)
 }
 
-fn run_maintenance(store: &mut RenderCheckpointStore) -> Vec<mdtui3::Completion> {
+fn run_maintenance(
+    store: &mut RenderCheckpointStore,
+    document: &Document,
+) -> Vec<mdtui3::Completion> {
     let mut completions = Vec::new();
     for _ in 0..20_000 {
-        let progress = store.advance_maintenance(&mut tiny()).unwrap();
+        let progress = store.advance_maintenance(document, &mut tiny()).unwrap();
         completions.push(progress.completion);
         if progress.completion == Completion::Covered {
             return completions;
@@ -65,14 +74,16 @@ fn ready_frame(state: &mut ViewportState, document: &Document) -> bool {
 
 #[test]
 fn store_window_invalidates_both_sides_and_compacts_payloads() {
-    let document = Document::new();
+    let document = indexed_document(30);
     let mut store = RenderCheckpointStore::new(&document);
     for tile in 0..30 {
         store.insert(TileId(tile), checkpoint(tile)).unwrap();
     }
     let before_arena = store.arena_stats();
-    store.start_maintenance(10..20, 30).unwrap();
-    let progress = store.advance_maintenance(&mut unlimited()).unwrap();
+    store.start_maintenance(&document, 10..20, 30).unwrap();
+    let progress = store
+        .advance_maintenance(&document, &mut unlimited())
+        .unwrap();
 
     assert_eq!(progress.completion, Completion::Covered);
     assert_eq!(progress.phase, None);
@@ -98,12 +109,12 @@ fn store_window_invalidates_both_sides_and_compacts_payloads() {
 
 #[test]
 fn tiny_budget_pauses_both_phases_blocks_writes_and_resumes() {
-    let document = Document::new();
+    let document = indexed_document(100);
     let mut store = RenderCheckpointStore::new(&document);
     for tile in 0..100 {
         store.insert(TileId(tile), checkpoint(tile)).unwrap();
     }
-    store.start_maintenance(40..60, 100).unwrap();
+    store.start_maintenance(&document, 40..60, 100).unwrap();
     assert_eq!(
         store.insert(TileId(50), checkpoint(999)),
         Err(LayoutError::OutOfOrderUpdate)
@@ -117,7 +128,7 @@ fn tiny_budget_pauses_both_phases_blocks_writes_and_resumes() {
     let mut saw_compact = false;
     let mut cursor_seen = false;
     for _ in 0..20_000 {
-        let progress = store.advance_maintenance(&mut tiny()).unwrap();
+        let progress = store.advance_maintenance(&document, &mut tiny()).unwrap();
         match progress.phase {
             Some(CheckpointMaintenancePhase::Drain) => {
                 saw_drain = true;
@@ -143,20 +154,22 @@ fn tiny_budget_pauses_both_phases_blocks_writes_and_resumes() {
 
 #[test]
 fn repeated_maintenance_is_idempotent_and_budget_exhaustion_keeps_window() {
-    let document = Document::new();
+    let document = indexed_document(40);
     let mut store = RenderCheckpointStore::new(&document);
     for tile in 0..40 {
         store.insert(TileId(tile), checkpoint(tile)).unwrap();
     }
-    store.start_maintenance(15..25, 40).unwrap();
-    let _ = run_maintenance(&mut store);
+    store.start_maintenance(&document, 15..25, 40).unwrap();
+    let _ = run_maintenance(&mut store, &document);
     let valid = (15..25)
         .map(|tile| store.exact(TileId(tile)).copied())
         .collect::<Vec<_>>();
     assert!(valid.iter().all(Option::is_some));
 
-    store.start_maintenance(15..25, 40).unwrap();
-    let progress = store.advance_maintenance(&mut unlimited()).unwrap();
+    store.start_maintenance(&document, 15..25, 40).unwrap();
+    let progress = store
+        .advance_maintenance(&document, &mut unlimited())
+        .unwrap();
     assert_eq!(progress.completion, Completion::Covered);
     assert_eq!(progress.drained_payloads, 0);
     assert_eq!(progress.retired_payloads, 0);
@@ -171,10 +184,12 @@ fn repeated_maintenance_is_idempotent_and_budget_exhaustion_keeps_window() {
 
 #[test]
 fn zero_full_empty_and_narrow_windows_are_safe() {
-    let document = Document::new();
+    let document = indexed_document(20);
     let mut empty = RenderCheckpointStore::new(&document);
-    empty.start_maintenance(0..0, 0).unwrap();
-    let progress = empty.advance_maintenance(&mut unlimited()).unwrap();
+    empty.start_maintenance(&document, 0..0, 0).unwrap();
+    let progress = empty
+        .advance_maintenance(&document, &mut unlimited())
+        .unwrap();
     assert_eq!(progress.completion, Completion::Covered);
     assert_eq!(progress.len, 0);
 
@@ -182,8 +197,10 @@ fn zero_full_empty_and_narrow_windows_are_safe() {
     for tile in 0..20 {
         full.insert(TileId(tile), checkpoint(tile)).unwrap();
     }
-    full.start_maintenance(0..20, 20).unwrap();
-    let progress = full.advance_maintenance(&mut unlimited()).unwrap();
+    full.start_maintenance(&document, 0..20, 20).unwrap();
+    let progress = full
+        .advance_maintenance(&document, &mut unlimited())
+        .unwrap();
     assert_eq!(progress.released_payloads, 0);
     assert_eq!(progress.len, 20);
 
@@ -191,8 +208,10 @@ fn zero_full_empty_and_narrow_windows_are_safe() {
     for tile in 0..20 {
         narrow.insert(TileId(tile), checkpoint(tile)).unwrap();
     }
-    narrow.start_maintenance(9..10, 20).unwrap();
-    let progress = narrow.advance_maintenance(&mut unlimited()).unwrap();
+    narrow.start_maintenance(&document, 9..10, 20).unwrap();
+    let progress = narrow
+        .advance_maintenance(&document, &mut unlimited())
+        .unwrap();
     assert_eq!(progress.len, 1);
     assert!(narrow.exact(TileId(9)).is_some());
     assert!(narrow.exact(TileId(8)).is_none());
@@ -299,7 +318,7 @@ fn checkpoint_window_clips_at_document_boundaries_and_empty_document() {
 
 #[test]
 fn representative_100k_tile_scroll_keeps_valid_payloads_window_bounded() {
-    let document = Document::new();
+    let document = indexed_document(100_000);
     let mut store = RenderCheckpointStore::new(&document);
     let window = 512_usize;
     let mut max_len = 0;
@@ -311,8 +330,10 @@ fn representative_100k_tile_scroll_keeps_valid_payloads_window_bounded() {
         }
         let lo = position.saturating_sub(window / 2);
         let hi = (position + window / 2).min(100_000);
-        store.start_maintenance(lo..hi, 100_000).unwrap();
-        let progress = store.advance_maintenance(&mut unlimited()).unwrap();
+        store.start_maintenance(&document, lo..hi, 100_000).unwrap();
+        let progress = store
+            .advance_maintenance(&document, &mut unlimited())
+            .unwrap();
         assert_eq!(progress.completion, Completion::Covered);
         assert_eq!(progress.drain_cursor, 0);
         assert!(store.len() <= hi - lo);
@@ -327,7 +348,7 @@ fn representative_100k_tile_scroll_keeps_valid_payloads_window_bounded() {
 #[test]
 #[ignore = "manual 64 MiB rolling-window model"]
 fn manual_64_mib_rolling_window_keeps_payloads_bounded() {
-    let document = Document::new();
+    let document = indexed_document(262_144);
     let mut store = RenderCheckpointStore::new(&document);
     let tiles = (64 * 1024 * 1024) / TILE_BYTES;
     let window = 1_024_usize;
@@ -338,8 +359,10 @@ fn manual_64_mib_rolling_window_keeps_payloads_bounded() {
         }
         let lo = position.saturating_sub(window / 2);
         let hi = (position + 4_096 + window / 2).min(tiles);
-        store.start_maintenance(lo..hi, tiles).unwrap();
-        let progress = store.advance_maintenance(&mut unlimited()).unwrap();
+        store.start_maintenance(&document, lo..hi, tiles).unwrap();
+        let progress = store
+            .advance_maintenance(&document, &mut unlimited())
+            .unwrap();
         assert_eq!(progress.completion, Completion::Covered);
         assert!(store.len() <= hi - lo);
     }

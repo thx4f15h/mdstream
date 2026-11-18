@@ -95,7 +95,7 @@ pub use cache::{
 pub use checkpoints::{
     CheckpointCompaction, CheckpointCompactionStats, CheckpointIndex, CheckpointToken,
 };
-pub use code_info::{CodeInfo, CodeInfoChunk};
+pub use code_info::{CodeInfo, CodeInfoChunk, CodeInfoCursor, CodeInfoStep};
 pub use containers::{
     Container, ContainerAncestors, ContainerId, ContainerKind, ListMarker, ListTightness,
 };

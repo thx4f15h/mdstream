@@ -6,6 +6,7 @@ pub mod display;
 pub mod document;
 pub(crate) mod edges;
 pub mod first_frame;
+pub(crate) mod fold_summary;
 pub mod frame;
 pub mod heading;
 pub mod input;

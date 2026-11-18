@@ -7,7 +7,7 @@ use mdtui3::{
 
 use crate::render::checkpoint::{RecoveryPlan, RenderCheckpointStore};
 use crate::render::first_frame::{FirstFrame, FirstFrameConfig, FirstFrameError, FirstFrameStatus};
-use crate::render::viewport::{block_start_tile, expand_block_end, sync_layout_parts};
+use crate::render::viewport::{block_start_tile, expand_block_end};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RefineConfig {
@@ -122,7 +122,7 @@ pub struct SourceRefiner {
     revision: u64,
     source: usize,
     lookup_source: usize,
-    block: BlockId,
+    block: Option<BlockId>,
     config: RefineConfig,
     status: RefineStatus,
     first: FirstFrame,
@@ -188,20 +188,25 @@ impl SourceRefiner {
             .tile_at(lookup_source)
             .ok_or(RefineError::InvalidSource)?;
         let heading = heading_source_for(document, lookup_source);
+        let pending = document.pending();
+        let in_pending = pending.start <= lookup_source && lookup_source < pending.end;
         let block = heading
             .map(|(block, _)| block)
             .or_else(|| document.block_at(lookup_source))
-            .or_else(|| document.block_at(document.tile(target_tile)?.start))
+            .or_else(|| {
+                (!in_pending)
+                    .then(|| {
+                        document
+                            .tile(target_tile)
+                            .and_then(|tile| document.block_at(tile.start))
+                    })
+                    .flatten()
+            });
+        let block_source = heading
+            .map(|(_, source)| source)
+            .or_else(|| block.and_then(|id| document.block(id)).map(|b| b.source))
+            .or_else(|| in_pending.then_some(pending))
             .ok_or(RefineError::InvalidSource)?;
-        let block_source = heading.map_or_else(
-            || {
-                document
-                    .block(block)
-                    .ok_or(RefineError::InvalidSource)
-                    .map(|block| block.source)
-            },
-            |(_, source)| Ok(source),
-        )?;
 
         let (mut status, recovery_start) = match checkpoints.plan_recovery(target_tile) {
             RecoveryPlan::Exact(tile) => {
@@ -228,14 +233,39 @@ impl SourceRefiner {
         let earliest = target_tile
             .0
             .saturating_sub(config.max_tiles.saturating_sub(1));
-        let start = TileId(desired_start.0.max(earliest));
+        // A measured zero-height suffix can share a row with a distant PH.
+        // Reuse the same view's checkpoint source instead of replaying the raw
+        // hidden gap. The projection still limits actual visible tiles.
+        let sparse_start = (checkpoints.view().has_collapsed()
+            && heights.height(target_tile) == Some(0))
+        .then(|| {
+            checkpoints
+                .previous(target_tile)
+                .and_then(|(_, cp)| cp.line_source_start)
+                .and_then(|source| document.tile_at(source))
+        })
+        .flatten()
+        .filter(|start| *start >= block_start && start.0 < earliest)
+        .filter(|start| {
+            heights
+                .prefix_rows(target_tile.0)
+                .zip(heights.prefix_rows(start.0))
+                .is_some_and(|(end, begin)| {
+                    end.saturating_sub(begin) <= u128::from(config.row_slack)
+                })
+        });
+        let start = sparse_start.unwrap_or(TileId(desired_start.0.max(earliest)));
         if start > desired_start {
             status = RefineStatus::Approximate;
         }
-        let limit = start
-            .0
-            .saturating_add(config.max_tiles)
-            .min(document.tile_count());
+        let limit = if sparse_start.is_some() {
+            document.tile_count()
+        } else {
+            start
+                .0
+                .saturating_add(config.max_tiles)
+                .min(document.tile_count())
+        };
         let mut end = target_tile.0.saturating_add(1).min(document.tile_count());
         expand_block_end(document, start, &mut end, limit);
         if let Some((_, heading_source)) = heading
@@ -243,13 +273,17 @@ impl SourceRefiner {
         {
             end = end.max(tile.0.saturating_add(1).min(limit));
         }
-        let planned_tiles = end.saturating_sub(start.0);
+        let planned_tiles = if sparse_start.is_some() {
+            config.max_tiles
+        } else {
+            end.saturating_sub(start.0)
+        };
         let row_limit = u64::try_from(planned_tiles)
             .unwrap_or(u64::MAX)
             .saturating_mul(TILE_BYTES as u64 + 4)
             .saturating_add(config.row_slack)
             .max(1);
-        let mut first = FirstFrame::new(
+        let mut first = FirstFrame::new_for_view(
             document,
             FirstFrameConfig {
                 top_tile: start,
@@ -257,6 +291,7 @@ impl SourceRefiner {
                 width: config.width,
                 row_limit,
             },
+            checkpoints,
         )?;
 
         if let RefineStatus::ReplayFrom { from, target } = status {
@@ -324,20 +359,48 @@ impl SourceRefiner {
         checkpoints: &mut RenderCheckpointStore,
         budget: &mut Budget,
     ) -> Result<RefineProgress, RefineError> {
+        let result = self.advance_owned(document, checkpoints, budget);
+        // Compatibility for callers maintaining a separate test/client index.
+        // The production viewport passes only the owned view via advance_owned.
+        if matches!(result, Ok(RefineProgress::Ready(_))) {
+            for segment in &self.first.plan().segments {
+                if let Some(ticket) = heights.ticket(segment.tile)
+                    && let Some(rows) = checkpoints.heights().height(segment.tile)
+                {
+                    if checkpoints.heights().height_state(segment.tile)
+                        == Some(mdtui3::HeightState::Local)
+                    {
+                        heights.measure_local(ticket, rows)?;
+                    } else {
+                        heights.measure(ticket, rows)?;
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    pub fn advance_owned(
+        &mut self,
+        document: &Document,
+        checkpoints: &mut RenderCheckpointStore,
+        budget: &mut Budget,
+    ) -> Result<RefineProgress, RefineError> {
         if !self.matches(document) {
             return Err(RefineError::Stale);
         }
+        self.first.check_owner(document, checkpoints)?;
         if let Some(result) = &self.result {
             return Ok(result.as_ref().map_or(RefineProgress::NotFound, |target| {
                 RefineProgress::Ready(*target)
             }));
         }
-        let step = self.first.advance(document, budget)?;
+        let step = self.first.advance_using(document, checkpoints, budget)?;
         match step.status {
             FirstFrameStatus::PendingScan => Ok(RefineProgress::PendingScan),
             FirstFrameStatus::BudgetExhausted => Ok(RefineProgress::BudgetExhausted),
             FirstFrameStatus::Covered | FirstFrameStatus::EndOfDocument => {
-                self.finish(heights, checkpoints, budget)
+                self.finish(checkpoints.heights_mut(document)?, budget)
             }
         }
     }
@@ -345,7 +408,6 @@ impl SourceRefiner {
     fn finish(
         &mut self,
         heights: &mut HeightIndex,
-        checkpoints: &mut RenderCheckpointStore,
         budget: &mut Budget,
     ) -> Result<RefineProgress, RefineError> {
         if matches!(self.status, RefineStatus::ReplayFrom { .. }) && !self.first.replay_used() {
@@ -365,20 +427,14 @@ impl SourceRefiner {
                     return Ok(RefineProgress::BudgetExhausted);
                 }
                 self.finish_started = true;
-                if let Some(source) = line
-                    .source
-                    .filter(|source| source.block == Some(self.block))
-                {
+                if let Some(source) = line.source.filter(|source| source.block == self.block) {
                     self.finish_first.get_or_insert((self.finish_line, source));
                     if source.source.start <= self.lookup_source {
                         self.finish_candidate = Some((self.finish_line, source));
                     }
                 }
             }
-            if let Some(source) = line
-                .source
-                .filter(|source| source.block == Some(self.block))
-            {
+            if let Some(source) = line.source.filter(|source| source.block == self.block) {
                 while let Some(cell) = line.cells.get(self.finish_cell) {
                     if !budget.charge(mdtui3::WorkLimit {
                         queries: 1,
@@ -432,7 +488,6 @@ impl SourceRefiner {
         )? {
             return Ok(RefineProgress::BudgetExhausted);
         }
-        sync_layout_parts(&self.first, heights, checkpoints)?;
         let render_start = match (self.status, self.first.replay_used()) {
             (RefineStatus::ReplayFrom { from, .. }, true) => from,
             _ => self.first.plan().tile_start,
@@ -484,7 +539,9 @@ fn row_for_line(
     line_index: usize,
 ) -> Option<u128> {
     let plan = first.plan();
-    let start = render_start.0.checked_sub(plan.tile_start.0)?;
+    let start = plan
+        .segments
+        .partition_point(|segment| segment.tile < render_start);
     let mut remaining = line_index;
     for segment in plan.segments.get(start..)? {
         let rows = usize::try_from(sink.tile_rows(segment.tile)?).ok()?;

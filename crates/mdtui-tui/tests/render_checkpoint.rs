@@ -71,12 +71,12 @@ fn tile_keys_support_insert_get_invalidate_and_clear() {
     assert!(store.exact(TileId(2)).is_some());
     assert!(store.exact(TileId(4)).is_some());
 
-    store.invalidate(2..5).unwrap();
+    store.invalidate(&document, 2..5).unwrap();
     assert!(store.exact(TileId(0)).is_some());
     assert!(store.exact(TileId(2)).is_none());
     assert!(store.exact(TileId(4)).is_none());
 
-    store.clear();
+    store.clear(&document).unwrap();
     assert!(store.is_empty());
     assert!(store.exact(TileId(0)).is_none());
 }

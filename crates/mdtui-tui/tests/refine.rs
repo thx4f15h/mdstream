@@ -47,7 +47,16 @@ fn measured_layout(
     HeightIndex,
     mdtui_tui::render::checkpoint::RenderCheckpointStore,
 ) {
-    full_first_frame(document, width).into_layout_parts()
+    let first = full_first_frame(document, width);
+    let mut heights = HeightIndex::default();
+    heights.rebuild(document).unwrap();
+    for segment in &first.plan().segments {
+        let ticket = heights.ticket(segment.tile).unwrap();
+        heights
+            .measure(ticket, first.heights().height(segment.tile).unwrap())
+            .unwrap();
+    }
+    (heights, first.into_layout_parts())
 }
 
 fn config(width: u16) -> RefineConfig {
@@ -239,7 +248,7 @@ fn exact_replay_and_approximate_recovery_converge_on_the_same_row() {
     assert_eq!(exact.status, RefineStatus::Exact);
 
     checkpoints
-        .invalidate(target_tile.0..target_tile.0 + 1)
+        .invalidate(&document, target_tile.0..target_tile.0 + 1)
         .unwrap();
     let replay = ready(refine(
         &document,
@@ -250,7 +259,7 @@ fn exact_replay_and_approximate_recovery_converge_on_the_same_row() {
     ));
     assert!(matches!(replay.status, RefineStatus::ReplayFrom { .. }));
 
-    checkpoints.clear();
+    checkpoints.clear(&document).unwrap();
     let approximate = ready(refine(
         &document,
         &mut heights,

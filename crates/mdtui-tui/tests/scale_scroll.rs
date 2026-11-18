@@ -278,9 +278,7 @@ fn cross_tile_long_line_replay_reports_tiles_and_keeps_line_start_source() {
     assert!(line_start <= target_source);
     assert!(line_start < runtime.document().tile(anchor.tile).unwrap().start);
     runtime
-        .viewport_mut()
-        .checkpoints_mut()
-        .invalidate(anchor.tile.0..anchor.tile.0 + 1)
+        .invalidate_checkpoints(anchor.tile.0..anchor.tile.0 + 1)
         .expect("invalidate target checkpoint");
 
     println!(

@@ -14,6 +14,10 @@ pub(crate) struct ContainerContext {
 /// Shared ancestors are visited once. No source or ancestor path is copied per
 /// leaf block, and every node read/unwind consumes the caller's frame budget.
 pub(crate) struct WindowContexts {
+    sources: Vec<Span>,
+    source_index: usize,
+    block_window: Option<(usize, usize)>,
+    seen_targets: std::collections::BTreeSet<ContainerId>,
     targets: Vec<ContainerId>,
     next: usize,
     active: Option<ContainerId>,
@@ -26,6 +30,12 @@ pub(crate) struct WindowContexts {
 }
 
 impl WindowContexts {
+    pub fn fragments(document: &Document, sources: &[Span]) -> Self {
+        let mut result = Self::new(document, Span::new(0, 0));
+        result.sources = sources.to_vec();
+        result
+    }
+
     pub fn new(document: &Document, source: Span) -> Self {
         let blocks = document.blocks();
         let start = blocks.partition_point(|block| block.source.end <= source.start);
@@ -37,6 +47,10 @@ impl WindowContexts {
         targets.sort_unstable();
         targets.dedup();
         Self {
+            sources: Vec::new(),
+            source_index: 0,
+            block_window: None,
+            seen_targets: Default::default(),
             targets,
             next: 0,
             active: None,
@@ -50,11 +64,47 @@ impl WindowContexts {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.targets.is_empty()
+        self.targets.is_empty() && self.sources.is_empty()
     }
 
     pub fn advance(&mut self, document: &Document, budget: &mut Budget) -> bool {
         loop {
+            if let Some(source) = self.sources.get(self.source_index).copied() {
+                if self.block_window.is_none() {
+                    if !budget.charge(WorkLimit {
+                        queries: 1,
+                        objects: 1,
+                        ..Default::default()
+                    }) {
+                        return false;
+                    }
+                    let blocks = document.blocks();
+                    self.block_window = Some((
+                        blocks.partition_point(|b| b.source.end <= source.start),
+                        blocks.partition_point(|b| b.source.start < source.end),
+                    ));
+                }
+                let (at, end) = self.block_window.unwrap();
+                if at < end {
+                    if !budget.charge(WorkLimit {
+                        queries: 1,
+                        objects: 1,
+                        ..Default::default()
+                    }) {
+                        return false;
+                    }
+                    if let Some(container) = document.blocks()[at].container
+                        && self.seen_targets.insert(container)
+                    {
+                        self.targets.push(container);
+                    }
+                    self.block_window = Some((at + 1, end));
+                    continue;
+                }
+                self.source_index += 1;
+                self.block_window = None;
+                continue;
+            }
             if self.unwinding {
                 let Some(&(id, node)) = self.path.last() else {
                     self.unwinding = false;

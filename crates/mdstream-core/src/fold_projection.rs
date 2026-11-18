@@ -120,6 +120,25 @@ impl FoldProjection {
         self.cursor
     }
 
+    /// Validate an owned preparation continuation without advancing geometry.
+    /// This also lets a host reject changes after it has collected its window.
+    pub fn check_binding<S>(
+        &self,
+        document: &Document,
+        view: &FoldView<S>,
+    ) -> Result<(), LayoutError> {
+        if self.document != document.id() {
+            return Err(LayoutError::WrongDocument);
+        }
+        if self.view != view.heights().version().0 {
+            return Err(LayoutError::WrongView);
+        }
+        if self.revision != document.revision() || self.version != view.version() {
+            return Err(LayoutError::StaleContinuation);
+        }
+        view.check(document)
+    }
+
     /// Share one frame Budget with queries, display scanning and measurement.
     /// A segment lookup costs 1 query; each event costs 1 query/1 object, and a
     /// Text event also costs 1 tile. Recovery steps additionally cost 1 recovery.
@@ -135,16 +154,7 @@ impl FoldProjection {
         view: &FoldView<S>,
         budget: &mut Budget,
     ) -> Result<FoldProjectionStep, LayoutError> {
-        if self.document != document.id() {
-            return Err(LayoutError::WrongDocument);
-        }
-        if self.view != view.heights().version().0 {
-            return Err(LayoutError::WrongView);
-        }
-        if self.revision != document.revision() || self.version != view.version() {
-            return Err(LayoutError::StaleContinuation);
-        }
-        view.check(document)?;
+        self.check_binding(document, view)?;
         let queries = if let Some(token) = self.checkpoint {
             if !budget.charge(WorkLimit {
                 queries: 1,

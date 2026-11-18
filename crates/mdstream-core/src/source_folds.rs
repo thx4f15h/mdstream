@@ -16,6 +16,11 @@ use crate::{
 pub struct SourceFoldId(pub(crate) usize);
 
 impl SourceFoldId {
+    /// Stable diagnostic/UI identity; this does not construct or rebind an ID.
+    pub fn index(self) -> usize {
+        self.0
+    }
+
     pub(crate) fn new() -> Self {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         Self(

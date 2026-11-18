@@ -236,7 +236,7 @@ pub fn probe_has_drawable_lines(
     width: u16,
     budget: &mut Budget,
 ) -> Result<bool, StreamError> {
-    probe_with_links(document, width, budget, None).map(|source| source.is_some())
+    probe_with_links(document, width, budget, None, None).map(|source| source.is_some())
 }
 
 fn probe_with_links(
@@ -244,6 +244,7 @@ fn probe_with_links(
     width: u16,
     budget: &mut Budget,
     links: Option<crate::render::objects::SharedLinks>,
+    mut owner: Option<&mut crate::render::checkpoint::RenderCheckpointStore>,
 ) -> Result<Option<usize>, StreamError> {
     if width == 0 {
         return Ok(None);
@@ -258,17 +259,24 @@ fn probe_with_links(
         .min(MAX_PRE_READ_BYTES / mdtui3::TILE_BYTES + 1);
     let mut top = 0;
     while top < end {
-        let mut first = FirstFrame::new(
-            document,
-            FirstFrameConfig {
-                top_tile: TileId(top),
-                tile_limit: (end - top).min(64),
-                width,
-                row_limit: 1,
-            },
-        )?;
+        let config = FirstFrameConfig {
+            top_tile: TileId(top),
+            tile_limit: (end - top).min(64),
+            width,
+            row_limit: 1,
+        };
+        let mut first = if let Some(owner) = owner.as_ref() {
+            FirstFrame::new_for_view(document, config, owner)?
+        } else {
+            FirstFrame::new(document, config)?
+        };
+        first.prepare_only();
         first.set_links(links.clone());
-        let step = first.advance(document, budget)?;
+        let step = if let Some(owner) = owner.as_deref_mut() {
+            first.advance_using(document, owner, budget)?
+        } else {
+            first.advance(document, budget)?
+        };
         if let Some(line) = first
             .lines()
             .iter()
@@ -292,46 +300,91 @@ fn probe_with_links(
     Ok(None)
 }
 
-fn scratch_first_frame(
-    document: &Document,
-    width: u16,
-    rows: u16,
-    links: crate::render::objects::SharedLinks,
+fn probe_runtime(
+    runtime: &mut FrameRuntime,
     budget: &mut Budget,
-) -> Result<Option<ViewportFrame>, StreamError> {
-    if rows == 0 || document.tile_count() == 0 {
-        return Ok(None);
-    }
-    let mut first = FirstFrame::new(
+) -> Result<Option<usize>, StreamError> {
+    let width = runtime.geometry().content_width;
+    let links = runtime.viewport().shared_links();
+    let (document, viewport) = runtime.document_and_viewport_mut();
+    probe_with_links(
         document,
-        FirstFrameConfig {
-            top_tile: TileId(0),
-            tile_limit: document.tile_count().min(64),
-            width,
-            row_limit: u64::from(rows),
-        },
-    )?;
-    first.set_links(links);
-    loop {
-        let step = first.advance(document, budget)?;
-        if first.lines().len() >= usize::from(rows)
-            || matches!(
-                step.status,
-                FirstFrameStatus::Covered
-                    | FirstFrameStatus::EndOfDocument
-                    | FirstFrameStatus::BudgetExhausted
-                    | FirstFrameStatus::PendingScan
-            )
-        {
-            break;
+        width,
+        budget,
+        Some(links),
+        Some(viewport.layout_owner_mut()),
+    )
+}
+
+enum ScratchProgress {
+    Pending,
+    Empty,
+    Ready(Box<ViewportFrame>),
+}
+fn scratch_first_frame(
+    runtime: &mut FrameRuntime,
+    scratch: &mut Option<FirstFrame>,
+    budget: &mut Budget,
+) -> Result<ScratchProgress, StreamError> {
+    let width = runtime.geometry().content_width;
+    let rows = runtime.geometry().rows;
+    let links = runtime.viewport().shared_links();
+    let (document, viewport) = runtime.document_and_viewport_mut();
+    let owner = viewport.layout_owner_mut();
+    if rows == 0 || document.tile_count() == 0 {
+        return Ok(ScratchProgress::Empty);
+    }
+    if scratch
+        .as_ref()
+        .is_some_and(|first| !first.matches_view(document, owner, width, rows))
+    {
+        *scratch = None;
+    }
+    if scratch.is_none() {
+        if !budget.charge(WorkLimit {
+            queries: 1,
+            objects: 1,
+            ..Default::default()
+        }) {
+            return Ok(ScratchProgress::Pending);
         }
+        let mut first = FirstFrame::new_for_view(
+            document,
+            FirstFrameConfig {
+                top_tile: TileId(0),
+                tile_limit: document.tile_count().min(64),
+                width,
+                row_limit: u64::from(rows),
+            },
+            owner,
+        )?;
+        first.prepare_only();
+        first.set_links(links);
+        *scratch = Some(first);
+    }
+    let first = scratch.as_mut().unwrap();
+    let step = first.advance_using(document, owner, budget)?;
+    if first.lines().len() < usize::from(rows)
+        && matches!(
+            step.status,
+            FirstFrameStatus::PendingScan | FirstFrameStatus::BudgetExhausted
+        )
+    {
+        return Ok(ScratchProgress::Pending);
+    }
+    if !budget.charge(WorkLimit {
+        queries: 1,
+        objects: 1,
+        ..Default::default()
+    }) {
+        return Ok(ScratchProgress::Pending);
     }
     if first.lines().is_empty() {
-        return Ok(None);
+        return Ok(ScratchProgress::Empty);
     }
     let lines = first.lines().to_vec();
     let rows = u16::try_from(lines.len()).unwrap_or(rows).min(rows);
-    Ok(Some(ViewportFrame {
+    Ok(ScratchProgress::Ready(Box::new(ViewportFrame {
         document: document.id(),
         revision: document.revision(),
         lines,
@@ -342,7 +395,7 @@ fn scratch_first_frame(
             layout_budget: budget.used(),
             ..Default::default()
         },
-    }))
+    })))
 }
 
 #[derive(Debug, Default)]
@@ -432,6 +485,7 @@ pub struct StreamEngine {
     first_frame_done: bool,
     empty_frame_requested: bool,
     scratch_frame_requested: bool,
+    scratch: Option<FirstFrame>,
     force_render: bool,
     input_finished: bool,
     calibration_pending: bool,
@@ -459,6 +513,7 @@ impl StreamEngine {
             first_frame_done: false,
             empty_frame_requested: false,
             scratch_frame_requested: false,
+            scratch: None,
             force_render: false,
             input_finished: false,
             calibration_pending: false,
@@ -689,6 +744,25 @@ impl StreamEngine {
     }
 
     #[must_use]
+    pub fn has_visible_objects(&self) -> Option<bool> {
+        self.runtime
+            .link_table()
+            .map(|_| self.runtime.has_visible_objects())
+    }
+    pub fn enter_object_focus(&mut self, forward: bool) -> bool {
+        let changed = self.runtime.enter_object_focus(forward);
+        if changed {
+            self.request_render();
+        }
+        changed
+    }
+    pub fn cycle_object_focus(&mut self, forward: bool) -> bool {
+        let changed = self.runtime.cycle_object_focus(forward);
+        if changed {
+            self.request_render();
+        }
+        changed
+    }
     pub fn has_visible_links(&self) -> Option<bool> {
         self.runtime.link_table().map(|table| !table.is_empty())
     }
@@ -854,12 +928,7 @@ impl StreamEngine {
             }
             self.pre_read.bytes = self.pre_read.bytes.saturating_add(take);
             let mut probe_budget = Budget::new(PROBE_WORK);
-            if let Some(source) = probe_with_links(
-                self.runtime.document(),
-                self.runtime.geometry().content_width,
-                &mut probe_budget,
-                Some(self.runtime.viewport().shared_links()),
-            )? {
+            if let Some(source) = probe_runtime(&mut self.runtime, &mut probe_budget)? {
                 let tile = self.runtime.document().tile_at(source).unwrap();
                 let (document, viewport) = self.runtime.document_and_viewport_mut();
                 viewport
@@ -927,19 +996,10 @@ impl StreamEngine {
             Ok(progress) => progress,
             Err(FrameError::Viewport(ViewportError::IncompleteFrame)) => {
                 self.calibration_pending = false;
-                let bounded_probe = self.runtime.document().source().len() <= MAX_PRE_READ_BYTES
-                    && probe_with_links(
-                        self.runtime.document(),
-                        self.runtime.geometry().content_width,
-                        &mut Budget::new(PROBE_WORK),
-                        Some(self.runtime.viewport().shared_links()),
-                    )?
-                    .is_some();
-                if bounded_probe {
-                    self.scratch_frame_requested = true;
-                } else {
-                    self.empty_frame_requested = true;
-                }
+                // Continue the bounded scratch preparation with the caller's
+                // next Budget. Never replenish credit or restart a deep path.
+                self.scratch_frame_requested = true;
+                self.empty_frame_requested = false;
                 self.force_render = true;
                 if !self.first_frame_done {
                     self.first_frame_pending = true;
@@ -1037,16 +1097,14 @@ impl StreamEngine {
                 return Ok(None);
             }
             let commit = if self.scratch_frame_requested {
-                if let Some(frame) = scratch_first_frame(
-                    self.runtime.document(),
-                    self.runtime.geometry().content_width,
-                    self.runtime.geometry().rows,
-                    self.runtime.viewport().shared_links(),
-                    budget,
-                )? {
-                    self.runtime.commit_frame_budgeted(writer, &frame, budget)?
-                } else {
-                    self.runtime.commit_empty_frame_budgeted(writer, budget)?
+                match scratch_first_frame(&mut self.runtime, &mut self.scratch, budget)? {
+                    ScratchProgress::Ready(frame) => {
+                        self.runtime.commit_frame_budgeted(writer, &frame, budget)?
+                    }
+                    ScratchProgress::Empty => {
+                        self.runtime.commit_empty_frame_budgeted(writer, budget)?
+                    }
+                    ScratchProgress::Pending => return Ok(None),
                 }
             } else if self.first_frame_empty {
                 self.runtime.commit_empty_frame_budgeted(writer, budget)?
@@ -1054,17 +1112,16 @@ impl StreamEngine {
                 match self.runtime.frame_to(writer, budget) {
                     Ok(commit) => commit,
                     Err(FrameError::Viewport(ViewportError::IncompleteFrame)) => {
-                        if let Some(frame) = scratch_first_frame(
-                            self.runtime.document(),
-                            self.runtime.geometry().content_width,
-                            self.runtime.geometry().rows,
-                            self.runtime.viewport().shared_links(),
-                            budget,
-                        )? {
-                            self.runtime.commit_frame_budgeted(writer, &frame, budget)?
-                        } else {
-                            self.first_frame_empty = true;
-                            self.runtime.commit_empty_frame_budgeted(writer, budget)?
+                        self.scratch_frame_requested = true;
+                        match scratch_first_frame(&mut self.runtime, &mut self.scratch, budget)? {
+                            ScratchProgress::Ready(frame) => {
+                                self.runtime.commit_frame_budgeted(writer, &frame, budget)?
+                            }
+                            ScratchProgress::Empty => {
+                                self.first_frame_empty = true;
+                                self.runtime.commit_empty_frame_budgeted(writer, budget)?
+                            }
+                            ScratchProgress::Pending => return Ok(None),
                         }
                     }
                     Err(error) => return Err(error.into()),
@@ -1095,16 +1152,14 @@ impl StreamEngine {
             return Ok(None);
         }
         let commit = if self.scratch_frame_requested {
-            if let Some(frame) = scratch_first_frame(
-                self.runtime.document(),
-                self.runtime.geometry().content_width,
-                self.runtime.geometry().rows,
-                self.runtime.viewport().shared_links(),
-                budget,
-            )? {
-                self.runtime.commit_frame_budgeted(writer, &frame, budget)?
-            } else {
-                self.runtime.commit_empty_frame_budgeted(writer, budget)?
+            match scratch_first_frame(&mut self.runtime, &mut self.scratch, budget)? {
+                ScratchProgress::Ready(frame) => {
+                    self.runtime.commit_frame_budgeted(writer, &frame, budget)?
+                }
+                ScratchProgress::Empty => {
+                    self.runtime.commit_empty_frame_budgeted(writer, budget)?
+                }
+                ScratchProgress::Pending => return Ok(None),
             }
         } else if self.empty_frame_requested {
             self.runtime.commit_empty_frame_budgeted(writer, budget)?
@@ -1137,6 +1192,7 @@ impl StreamEngine {
         if self.runtime.sidebar_pending()
             || self.runtime.reading().pending()
             || self.runtime.has_pending_jump()
+            || self.runtime.fold_pending()
         {
             self.force_render = true;
         }

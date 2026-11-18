@@ -290,14 +290,20 @@ fn table_width_cache_retains_only_tables_in_the_visible_window() {
 
 #[test]
 fn checkpoint_store_compaction_releases_both_windows_and_reports_arena() {
-    let document = Document::new();
+    let mut document = Document::new();
+    document
+        .append(&"x".repeat(1024 * mdtui3::TILE_BYTES))
+        .unwrap();
+    document.finish();
     let mut store = mdtui_tui::render::checkpoint::RenderCheckpointStore::new(&document);
     for tile in 0..1_024 {
         store.insert(TileId(tile), checkpoint(tile)).unwrap();
     }
     let before = store.arena_stats();
-    store.start_maintenance(300..700, 1_024).unwrap();
-    let progress = store.advance_maintenance(&mut unlimited()).unwrap();
+    store.start_maintenance(&document, 300..700, 1_024).unwrap();
+    let progress = store
+        .advance_maintenance(&document, &mut unlimited())
+        .unwrap();
 
     assert_eq!(progress.completion, Completion::Covered);
     assert_eq!(progress.phase, None);
@@ -318,8 +324,10 @@ fn checkpoint_store_compaction_releases_both_windows_and_reports_arena() {
     assert!(store.exact(TileId(699)).is_some());
     assert!(store.exact(TileId(700)).is_none());
 
-    store.start_maintenance(300..700, 1_024).unwrap();
-    let repeated = store.advance_maintenance(&mut unlimited()).unwrap();
+    store.start_maintenance(&document, 300..700, 1_024).unwrap();
+    let repeated = store
+        .advance_maintenance(&document, &mut unlimited())
+        .unwrap();
     assert_eq!(repeated.completion, Completion::Covered);
     assert_eq!(repeated.drained_payloads, 0);
     assert_eq!(repeated.retired_payloads, 0);

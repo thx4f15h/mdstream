@@ -263,3 +263,42 @@ fn giant_cells_and_omitted_rows_stay_bounded_without_view_mutation() {
         );
     }
 }
+
+#[test]
+fn host_resolver_preview_matches_rows_under_micro_budget_and_rejects_foreign_before_work() {
+    let doc =
+        parse("| ![alt][x] | [label][x] |\n| --- | --- |\n| &ouml; | `code` |\n\n[x]: /target\n");
+    let limits = caps(2, 256, 128);
+    let expected = collect(&doc, limits, 6).0;
+    let mut task = TablePreview::new(&doc, TableId(0), limits).unwrap();
+    let foreign = parse("other\n");
+    let mut wrong = foreign.link_resolver();
+    let mut budget = frame(6);
+    assert_eq!(
+        task.next_with_resolver(&doc, &mut wrong, &mut budget),
+        Err(LayoutError::WrongDocument)
+    );
+    assert_eq!(budget.used(), WorkLimit::default());
+    let mut resolver = doc.link_resolver();
+    let mut rows = Vec::new();
+    let mut done = false;
+    for _ in 0..10000 {
+        let mut budget = frame(6);
+        match task
+            .next_with_resolver(&doc, &mut resolver, &mut budget)
+            .unwrap()
+        {
+            TablePreviewStep::Run { row, run } => {
+                rows.resize_with(row + 1, String::new);
+                rows[row].push_str(run.text);
+            }
+            TablePreviewStep::Complete(_) => {
+                done = true;
+                break;
+            }
+            TablePreviewStep::BudgetExhausted => {}
+        }
+    }
+    assert!(done);
+    assert_eq!(rows, expected);
+}

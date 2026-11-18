@@ -41,7 +41,11 @@ TUI keys:
   Ctrl+End               Jump once to the current tail without following
   Tab/Shift-Tab          Cycle body/sidebar/link focus
   s                      Toggle the sidebar
-  Enter                  Activate the focused target
+  z                      Fold menu: Left/Right pages, Up/Down actions, Enter apply
+  Esc                    Close/cancel fold menu; restore a temporary preview
+  v, Space, y/Y          Source selection, extend, copy visible/source text
+  /, n/N                 Logical full-text search, next/previous match
+  Enter                  Activate the focused link or folded placeholder
   Alt-Left/M-Left        History back (no-op when empty)
   Alt-Right/M-Right      History forward (no-op when no forward entry)
 

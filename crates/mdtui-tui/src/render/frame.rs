@@ -220,13 +220,44 @@ struct PendingFragment {
     waiting: bool,
     _lease: crate::render::objects::LinkLease,
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VisibleObject {
+    Link(LinkId),
+    Fold(mdtui3::FoldId, mdtui3::Span),
+}
+
+/// A committed placeholder run, in terminal coordinates. Its registered range
+/// is distinct from the hidden union represented by this one visible object.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FoldHit {
+    pub id: mdtui3::FoldId,
+    pub owner_tile: mdtui3::TileId,
+    pub component_start: usize,
+    pub registered: mdtui3::Span,
+    pub hidden_envelope: mdtui3::Span,
+    pub epoch: u64,
+    pub row: u16,
+    pub x0: u16,
+    pub x1: u16,
+}
+
 pub struct FrameRuntime {
+    fold_hits: Vec<FoldHit>,
+    objects: Vec<VisibleObject>,
+    object_focus: Option<VisibleObject>,
+    object_version: u64,
+    fold_ui: crate::fold_ui::FoldUi,
+    fold_jump: Option<(usize, mdtui3::FoldNavigation)>,
+    fold_status_rows: bool,
+    revealed: Option<(u64, u64, usize)>,
     shape: Option<super::shape::SharedShape>,
     document: Utf8Document,
     viewport: ViewportState,
     navigator: Navigator,
     refiner: Option<SourceRefiner>,
     pending_jump: Option<usize>,
+    pending_restore: Option<HistoryPosition>,
+    restore_result: Option<(HistoryPosition, HistoryRestoreStatus)>,
     pending_search_target: Option<(usize, bool)>,
     pending_sidebar_activate: bool,
     reconcile_scrolled_source: bool,
@@ -285,6 +316,68 @@ enum RefineTarget {
 }
 
 impl FrameRuntime {
+    pub fn fold_busy(&self) -> bool {
+        self.fold_ui.active()
+            || self.fold_jump.is_some()
+            || self.pending_jump.is_some()
+            || self.pending_restore.is_some()
+            || self
+                .fragment
+                .as_ref()
+                .is_some_and(|p| !p.waiting && !p.cancelled)
+            || self.pending_sidebar_activate
+            || self.viewport.checkpoints().maintenance_in_progress()
+    }
+    pub fn fold_menu_key(&mut self, code: crossterm::event::KeyCode) -> bool {
+        self.fold_ui.key(code)
+    }
+    pub fn fold_pending(&self) -> bool {
+        self.fold_ui.pending() || self.fold_jump.is_some()
+    }
+    pub fn open_fold_menu(&mut self, sidebar: bool) {
+        self.cancel_fragment();
+        self.pending_restore = None;
+        self.restore_result = None;
+        self.pending_jump = None;
+        self.pending_search_target = None;
+        self.pending_sidebar_activate = false;
+        self.refiner = None;
+        self.fold_jump = None;
+        self.revealed = None;
+        self.reading.cancel_navigation();
+        let source = self
+            .reading
+            .selection
+            .cursor()
+            .map(|s| s.start)
+            .or_else(|| self.top_source())
+            .unwrap_or(0);
+        let target = if sidebar {
+            self.sidebar
+                .as_ref()
+                .and_then(|s| s.selection())
+                .map(mdtui3::FoldId::Heading)
+        } else {
+            match self.object_focus {
+                Some(VisibleObject::Fold(id, _)) => Some(id),
+                _ => None,
+            }
+        };
+        self.fold_ui
+            .open(source, self.reading.selection.range(), target);
+    }
+    pub fn invalidate_checkpoints(
+        &mut self,
+        range: std::ops::Range<usize>,
+    ) -> Result<(), mdtui3::LayoutError> {
+        self.body_dirty = true;
+        self.cached_body = None;
+        self.refiner = None;
+        self.viewport
+            .checkpoints_mut()
+            .invalidate(self.document.document(), range)
+    }
+
     pub fn new(geometry: FrameGeometry, link_mode: LinkMode) -> Result<Self, FrameError> {
         Self::from_utf8_document(Utf8Document::new(), geometry, link_mode)
     }
@@ -367,8 +460,18 @@ impl FrameRuntime {
             document,
             viewport,
             navigator: Navigator::new(),
+            fold_hits: Vec::new(),
+            objects: Vec::new(),
+            object_focus: None,
+            object_version: 0,
+            fold_ui: Default::default(),
+            fold_jump: None,
+            fold_status_rows: false,
+            revealed: None,
             refiner: None,
             pending_jump: None,
+            pending_restore: None,
+            restore_result: None,
             pending_search_target: None,
             pending_sidebar_activate: false,
             reconcile_scrolled_source: true,
@@ -428,7 +531,28 @@ impl FrameRuntime {
         if modifiers.contains(KeyModifiers::ALT) {
             return Ok(false);
         }
+        if self.fold_ui.key(code) {
+            return Ok(true);
+        }
+        if code == KeyCode::Char('z') && !modifiers.contains(KeyModifiers::CONTROL) {
+            self.open_fold_menu(false);
+            return Ok(true);
+        }
         if code == KeyCode::Esc {
+            self.cancel_fragment();
+            self.pending_restore = None;
+            self.restore_result = None;
+            self.pending_jump = None;
+            self.refiner = None;
+            self.fold_jump = None;
+            let maintaining = self.viewport.checkpoints().maintenance_in_progress();
+            if !maintaining && self.viewport.folds().preview().is_some() {
+                self.fold_ui.end_preview();
+                return Ok(true);
+            }
+            if maintaining {
+                self.fold_ui.end_preview();
+            }
             self.reading.cancel(&links);
             return Ok(true);
         }
@@ -491,6 +615,12 @@ impl FrameRuntime {
                     self.geometry.content_width,
                     payload,
                 );
+                if code == KeyCode::Char('y') {
+                    self.reading.bind_copy_view(
+                        self.viewport.folds().version(),
+                        self.viewport.folds().has_collapsed(),
+                    );
+                }
             }
             KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
                 if !modifiers.contains(KeyModifiers::CONTROL) =>
@@ -530,13 +660,18 @@ impl FrameRuntime {
             // request must never cancel an otherwise unchanged open glyph.
             return;
         }
+        if self.viewport.checkpoints().maintenance_in_progress() {
+            return;
+        }
         let links = self.viewport.shared_links();
-        if let Some(source) = self.reading.advance(
+        let (owner, tables) = self.viewport.reading_parts_mut();
+        if let Some(source) = self.reading.advance_with_view(
             self.document.document(),
             &links,
             budget,
             writer,
-            self.viewport.table_widths_mut(),
+            tables,
+            Some(owner),
         ) {
             self.viewport.pause_following();
             self.pending_jump = Some(source);
@@ -565,6 +700,9 @@ impl FrameRuntime {
     }
 
     pub fn pan_table(&mut self, delta: isize) -> Result<bool, FrameError> {
+        if self.viewport.checkpoints().maintenance_in_progress() {
+            return Ok(false);
+        }
         let Some(status) = self.viewport.shown_tables.first().copied() else {
             return Ok(false);
         };
@@ -700,7 +838,8 @@ impl FrameRuntime {
     }
 
     pub fn has_pending_jump(&self) -> bool {
-        self.pending_jump.is_some()
+        self.pending_restore.is_some()
+            || self.pending_jump.is_some()
             || self.fragment.as_ref().is_some_and(|p| !p.waiting)
             || self.pending_search_target.is_some()
             || self.pending_sidebar_activate
@@ -734,6 +873,26 @@ impl FrameRuntime {
     }
 
     pub fn restore_navigation_position(
+        &mut self,
+        position: HistoryPosition,
+        budget: &mut Budget,
+    ) -> Result<HistoryRestoreStatus, FrameError> {
+        let result = self.restore_position(position, budget)?;
+        if result == HistoryRestoreStatus::BudgetExhausted {
+            self.pending_restore = Some(position);
+            self.restore_result = None;
+        } else {
+            self.pending_restore = None;
+            self.restore_result = Some((position, result));
+        }
+        Ok(result)
+    }
+
+    pub fn history_restore_result(&self) -> Option<(HistoryPosition, HistoryRestoreStatus)> {
+        self.restore_result
+    }
+
+    fn restore_position(
         &mut self,
         position: HistoryPosition,
         budget: &mut Budget,
@@ -824,6 +983,8 @@ impl FrameRuntime {
     }
 
     pub fn cancel_end(&mut self) -> Result<bool, FrameError> {
+        self.pending_restore = None;
+        self.restore_result = None;
         let changed = self.viewport.cancel_end();
         let rows = if self.reading.status_visible() {
             self.geometry.rows.saturating_sub(1).max(1)
@@ -895,9 +1056,15 @@ impl FrameRuntime {
             p.waiting = false;
         }
         self.body_dirty = true;
+        self.fold_jump = None;
+        self.revealed = None;
+        self.refiner = None;
         self.reading.changed(self.document.document().revision());
         let document = self.document.document();
         let applied = self.viewport.apply_update(document, update)?;
+        self.fold_ui
+            .on_update(document, self.viewport.folds(), update)
+            .map_err(ViewportError::Layout)?;
         if applied.previous_revision != applied.revision {
             self.links = None;
         }
@@ -936,14 +1103,6 @@ impl FrameRuntime {
         if rows == 0 || cols == 0 {
             return Err(FrameError::InvalidGeometry);
         }
-        // A fragment may have reached a new, still-open tail before EOF. Width
-        // reset only has estimated tile heights, so restore the current source
-        // through the same paid refiner used by reading anchors.
-        let restore_source = (self.reading.selection.active()
-            || !self.reading.query().is_empty()
-            || self.fragment_success.is_some())
-        .then(|| self.top_source())
-        .flatten();
         let previous_rows = self.geometry.rows;
         let previous_cols = self.geometry.cols;
         let previous_content_width = self.geometry.content_width;
@@ -957,6 +1116,12 @@ impl FrameRuntime {
         let terminal_changed = rows != previous_rows || cols != previous_cols;
 
         if width_changed {
+            self.fold_jump = None;
+            self.revealed = None;
+            self.refiner = None;
+            if let Some(fragment) = &mut self.fragment {
+                fragment.refined = None;
+            }
             self.reading.width_changed();
             self.viewport
                 .set_content_width(self.document.document(), content_width)?;
@@ -980,13 +1145,6 @@ impl FrameRuntime {
         self.content_x = sidebar_width;
         self.sidebar_width = sidebar_width;
         self.sidebar_visible = sidebar_visible;
-        if (width_changed || height_changed)
-            && !self.viewport.following()
-            && let Some(source) = restore_source
-        {
-            self.pending_jump = Some(source);
-            self.refiner = None;
-        }
         if previous_sidebar_visible
             && !sidebar_visible
             && let Some(sidebar) = self.sidebar.as_mut()
@@ -1017,6 +1175,9 @@ impl FrameRuntime {
 
     pub fn set_content_width(&mut self, width: u16) -> Result<ContentWidthChange, FrameError> {
         if width != self.geometry.content_width {
+            if let Some(fragment) = &mut self.fragment {
+                fragment.refined = None;
+            }
             self.reading.width_changed();
         }
         if width == 0 {
@@ -1070,6 +1231,9 @@ impl FrameRuntime {
         }
         let previous_x = self.content_x;
         if width != self.geometry.content_width {
+            if let Some(fragment) = &mut self.fragment {
+                fragment.refined = None;
+            }
             self.reading.width_changed();
         }
         let change = self
@@ -1092,6 +1256,57 @@ impl FrameRuntime {
         budget: &mut Budget,
     ) -> Result<FrameCommit, FrameError> {
         let started = Instant::now();
+        if self.viewport.checkpoints().maintenance_in_progress() {
+            let progress = self
+                .viewport
+                .maintain_checkpoints(self.document.document(), budget)?;
+            if progress.completion == Completion::BudgetExhausted {
+                return Ok(FrameCommit {
+                    status: Some(ViewportFrameStatus::BudgetExhausted),
+                    metrics: FrameMetrics {
+                        layout_budget: budget.used(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                });
+            }
+        }
+        if self.fold_ui.pending() && !self.viewport.checkpoints().maintenance_in_progress() {
+            let links = self.viewport.shared_links();
+            let mut limit = budget.remaining();
+            limit.queries = limit.queries.div_ceil(2);
+            limit.objects = limit.objects.div_ceil(2);
+            let mut work = Budget::new(limit);
+            self.fold_ui.advance(
+                self.document.document(),
+                self.viewport.folds_mut(),
+                &links,
+                self.geometry.content_width,
+                &mut work,
+            );
+            assert!(budget.charge(work.used()));
+        }
+        if self.fold_ui.take_changed() {
+            if let Some(fragment) = &mut self.fragment {
+                fragment.refined = None;
+            }
+            self.viewport.fold_changed(self.document.document());
+            self.cached_body = None;
+            self.body_dirty = true;
+            self.refiner = None;
+            self.reading.view_changed();
+        }
+        if let Some(summary) = self.fold_ui.take_summary() {
+            if let Some(fragment) = &mut self.fragment {
+                fragment.refined = None;
+            }
+            self.viewport
+                .set_fold_summary(self.document.document(), summary)?;
+            self.cached_body = None;
+            self.body_dirty = true;
+            self.refiner = None;
+            self.reading.view_changed();
+        }
         if self.pending_sidebar_activate {
             self.activate_sidebar_selection(budget)?;
             if self.pending_sidebar_activate {
@@ -1106,14 +1321,18 @@ impl FrameRuntime {
                 });
             }
         }
-        let rows = if self.reading.status_visible() || self.viewport.following() {
+        let folding_status = self.fold_ui.active() || self.viewport.folds().preview().is_some();
+        let rows = if self.reading.status_visible() || folding_status || self.viewport.following() {
             self.geometry.rows.saturating_sub(1).max(1)
         } else {
             self.geometry.rows
         };
-        if self.reading.status_visible() && self.viewport.viewport_rows() != rows {
+        if (self.reading.status_visible() || folding_status || self.fold_status_rows)
+            && self.viewport.viewport_rows() != rows
+        {
             self.viewport.set_viewport_rows(rows)?;
         }
+        self.fold_status_rows = folding_status;
         if self.reading_edge_scroll
             && budget.charge(WorkLimit {
                 queries: 1,
@@ -1206,6 +1425,20 @@ impl FrameRuntime {
                         .then(|| result.status.message()),
                 );
             }
+        }
+        if let Some(position) = self.pending_restore
+            && self.restore_navigation_position(position, budget)?
+                == HistoryRestoreStatus::BudgetExhausted
+        {
+            return Ok(FrameCommit {
+                status: Some(ViewportFrameStatus::BudgetExhausted),
+                metrics: FrameMetrics {
+                    layout_budget: budget.used(),
+                    frame_elapsed: started.elapsed(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
         }
         if let Some(source) = self.pending_jump
             && matches!(
@@ -1390,6 +1623,22 @@ impl FrameRuntime {
         });
         self.reading.set_match_visible(match_visible);
         let reading_status = self.reading.status();
+        let fold_status = self
+            .fold_ui
+            .status(self.geometry.content_width)
+            .or_else(|| {
+                self.viewport
+                    .folds()
+                    .preview()
+                    .and_then(|id| {
+                        self.viewport
+                            .folds()
+                            .fold_candidate(self.document.document(), id)
+                            .ok()
+                            .flatten()
+                    })
+                    .map(|_| "preview | Esc: restore".to_owned())
+            });
         // Publication is distinct from wire acknowledgement. Reuse the finite
         // logical back frame while a micro-budget writer drains its descriptor.
         self.cached_body = Some(frame.clone());
@@ -1404,8 +1653,9 @@ impl FrameRuntime {
                 sidebar_width: self.sidebar_width,
                 sidebar: self.sidebar.as_ref(),
                 focused_link: self.link_focus,
-                notice: reading_status
+                notice: fold_status
                     .as_deref()
+                    .or(reading_status.as_deref())
                     .or(self.notice)
                     .or(table_notice.as_deref()),
                 following: self.viewport.following(),
@@ -1418,7 +1668,11 @@ impl FrameRuntime {
                     .selection
                     .active()
                     .then(|| self.reading.selection.cursor())
-                    .flatten(),
+                    .flatten()
+                    .or(match self.object_focus {
+                        Some(VisibleObject::Fold(_, source)) => Some(source),
+                        _ => None,
+                    }),
                 search: self.reading.current_match().map(|hit| hit.source),
             },
             started,
@@ -1585,12 +1839,77 @@ impl FrameRuntime {
         let Some(heading) = document.headings().get(selection).copied() else {
             return Ok(false);
         };
-        // Body folding UI will insert its budgeted FoldNavigation::Reveal here
-        // before source refinement. Directory collapse wishes never alter it.
+        // Source refinement performs paid Reveal first. Directory collapse
+        // wishes remain independent of body fold choices.
         Ok(matches!(
             self.refine_source_to_top(heading.source.start, budget)?,
             RefineJump::Ready(true)
         ))
+    }
+
+    pub fn fold_hits(&self) -> &[FoldHit] {
+        &self.fold_hits
+    }
+
+    pub fn has_visible_objects(&self) -> bool {
+        !self.objects.is_empty()
+    }
+    pub fn enter_object_focus(&mut self, forward: bool) -> bool {
+        let object = if forward {
+            self.objects.first()
+        } else {
+            self.objects.last()
+        }
+        .copied();
+        if let Some(object) = object {
+            self.object_focus = Some(object);
+            self.link_focus = match object {
+                VisibleObject::Link(id) => Some(id),
+                _ => None,
+            };
+            return true;
+        }
+        false
+    }
+    pub fn cycle_object_focus(&mut self, forward: bool) -> bool {
+        if self.objects.is_empty() {
+            return false;
+        }
+        let Some(index) = self
+            .objects
+            .iter()
+            .position(|o| Some(*o) == self.object_focus)
+        else {
+            return self.enter_object_focus(forward);
+        };
+        let next = if forward {
+            (index + 1) % self.objects.len()
+        } else {
+            (index + self.objects.len() - 1) % self.objects.len()
+        };
+        let object = self.objects[next];
+        if self.object_focus == Some(object) {
+            return false;
+        }
+        self.object_focus = Some(object);
+        self.link_focus = match object {
+            VisibleObject::Link(id) => Some(id),
+            _ => None,
+        };
+        true
+    }
+    pub fn activate_focused_fold(&mut self) -> bool {
+        if self.viewport.checkpoints().maintenance_in_progress() {
+            return false;
+        }
+        let Some(VisibleObject::Fold(id, _)) = self.object_focus else {
+            return false;
+        };
+        if self.object_version != self.viewport.folds().version() {
+            return false;
+        }
+        self.fold_ui.activate(id);
+        true
     }
 
     pub fn enter_link_focus(&mut self, forward: bool) -> Option<LinkId> {
@@ -1631,10 +1950,34 @@ impl FrameRuntime {
             return false;
         }
         self.link_focus = Some(id);
+        self.object_focus = Some(VisibleObject::Link(id));
+        true
+    }
+    pub fn focus_fold_at(&mut self, row: u16, col: u16) -> bool {
+        if self.viewport.checkpoints().maintenance_in_progress() {
+            return false;
+        }
+        let Some(hit) = self
+            .fold_hits
+            .iter()
+            .find(|hit| {
+                hit.row == row
+                    && hit.x0 <= col
+                    && col < hit.x1
+                    && hit.epoch == self.viewport.folds().version()
+            })
+            .copied()
+        else {
+            return false;
+        };
+        self.object_focus = Some(VisibleObject::Fold(hit.id, hit.hidden_envelope));
+        self.link_focus = None;
+        self.cancel_fragment();
         true
     }
     pub fn clear_link_focus(&mut self) -> bool {
-        self.link_focus.take().is_some()
+        let object = self.object_focus.take().is_some();
+        self.link_focus.take().is_some() || object
     }
 
     pub fn advance_anchor_index(
@@ -1787,6 +2130,7 @@ impl FrameRuntime {
                 p.active = false;
             }
             p.refined = None;
+            p.target = None;
             p.revision = document.revision();
             if p.destination
                 .as_ref()
@@ -1851,42 +2195,47 @@ impl FrameRuntime {
             p.request = Some(self.slugs.fragment_owned(decoded)?);
         }
         self.anchors_started = true;
-        let result = links.with_resolver(|r| {
-            self.slugs
-                .fragment_with_resolver(document, r, p.request.as_mut().unwrap(), budget)
-        });
-        let result = match result {
-            Ok(v) => v,
-            Err(LayoutError::InvalidRange) => {
-                self.fragment = None;
-                return Ok(FragmentActivation::status(S::Invalid));
-            }
-            Err(e) => return Err(e.into()),
-        };
-        let target = match result {
-            FragmentStep::Resolved(t) => t,
-            FragmentStep::BudgetExhausted | FragmentStep::IndexIncomplete => {
-                return Ok(FragmentActivation::status(
-                    if self.slugs.is_current(document) {
-                        S::BudgetExhausted
-                    } else {
-                        S::PendingIndex
-                    },
-                ));
-            }
-            FragmentStep::Unresolved => {
-                p.waiting = true;
-                return Ok(FragmentActivation::status(S::PendingDocument));
-            }
-            FragmentStep::NotFound => {
-                self.fragment = None;
-                return Ok(FragmentActivation::status(S::NotFound));
-            }
-        };
-        if p.target != Some(target) {
-            p.refined = None;
+        // Resolve once per revision, then spend later micro-frames on Reveal
+        // and local refinement. The current owner is still revalidated before
+        // committing the prepared answer below.
+        let target = if let Some(target) = p.target {
+            target
+        } else {
+            let result = links.with_resolver(|r| {
+                self.slugs
+                    .fragment_with_resolver(document, r, p.request.as_mut().unwrap(), budget)
+            });
+            let result = match result {
+                Ok(v) => v,
+                Err(LayoutError::InvalidRange) => {
+                    self.fragment = None;
+                    return Ok(FragmentActivation::status(S::Invalid));
+                }
+                Err(e) => return Err(e.into()),
+            };
+            let target = match result {
+                FragmentStep::Resolved(t) => t,
+                FragmentStep::BudgetExhausted | FragmentStep::IndexIncomplete => {
+                    return Ok(FragmentActivation::status(
+                        if self.slugs.is_current(document) {
+                            S::BudgetExhausted
+                        } else {
+                            S::PendingIndex
+                        },
+                    ));
+                }
+                FragmentStep::Unresolved => {
+                    p.waiting = true;
+                    return Ok(FragmentActivation::status(S::PendingDocument));
+                }
+                FragmentStep::NotFound => {
+                    self.fragment = None;
+                    return Ok(FragmentActivation::status(S::NotFound));
+                }
+            };
             p.target = Some(target);
-        }
+            target
+        };
         let refined = p.refined.take();
         let refined = if let Some(target) = refined {
             RefineTarget::Ready(target)
@@ -1975,33 +2324,7 @@ impl FrameRuntime {
         self.cancel_end()?;
         match self.refine_target(source, budget)? {
             RefineTarget::Ready(target) => {
-                self.pending_jump = None;
-                self.pending_sidebar_activate = false;
-                // Set the exact source first; reconcile refines its row while
-                // preserving same-tile heading/fragment identity.
-                self.navigator.navigate(
-                    self.document.document(),
-                    self.viewport.heights(),
-                    NavAction::Source(target.source),
-                    u64::from(self.geometry.rows),
-                );
-                self.navigator.reconcile(
-                    self.viewport.heights(),
-                    target.row,
-                    u64::from(self.geometry.rows),
-                );
-                self.reconcile_scrolled_source = false;
-                let moved = self.viewport.set_top_from_refinement(
-                    self.document.document(),
-                    target.anchor,
-                    target.line_start,
-                    target.line_start,
-                    target.status != RefineStatus::Approximate,
-                )?;
-                if moved {
-                    self.links = None;
-                }
-                Ok(RefineJump::Ready(moved))
+                Ok(RefineJump::Ready(self.commit_refined_source(target)?))
             }
             RefineTarget::Empty => Ok(RefineJump::Ready(false)),
             RefineTarget::Pending => {
@@ -2026,9 +2349,50 @@ impl FrameRuntime {
         source: usize,
         budget: &mut Budget,
     ) -> Result<RefineTarget, FrameError> {
+        if self.viewport.checkpoints().maintenance_in_progress() {
+            return Ok(RefineTarget::Pending);
+        }
         let document = self.document.document();
         if document.tile_count() == 0 {
             return Ok(RefineTarget::Empty);
+        }
+        if self.revealed != Some((document.revision(), self.viewport.folds().version(), source)) {
+            if self
+                .fold_jump
+                .as_ref()
+                .is_none_or(|(old, _)| *old != source)
+            {
+                self.fold_jump = Some((
+                    source,
+                    mdtui3::FoldNavigation::new(
+                        document,
+                        self.viewport.folds(),
+                        &self.navigator,
+                        mdtui3::NavAction::Source(source),
+                        mdtui3::FoldNavigationPolicy::Reveal,
+                        u64::from(self.viewport.viewport_rows()),
+                    )
+                    .map_err(ViewportError::Layout)?,
+                ));
+            }
+            let progress = self
+                .fold_jump
+                .as_mut()
+                .unwrap()
+                .1
+                .advance(document, self.viewport.folds_mut(), budget)
+                .map_err(ViewportError::Layout)?;
+            if progress.change.is_some() {
+                self.viewport.fold_changed(document);
+                self.cached_body = None;
+                self.body_dirty = true;
+                self.reading.view_changed();
+            }
+            if progress.completion == mdtui3::Completion::BudgetExhausted {
+                return Ok(RefineTarget::Pending);
+            }
+            self.fold_jump = None;
+            self.revealed = Some((document.revision(), self.viewport.folds().version(), source));
         }
         let lookup_source = source;
         let viewport_config = self.viewport.config();
@@ -2054,11 +2418,15 @@ impl FrameRuntime {
                 )
             });
         let progress = {
-            let (heights, checkpoints) = self.viewport.layout_parts_mut();
+            let checkpoints = self.viewport.layout_owner_mut();
             if self.refiner.is_none() {
-                let Ok(mut refiner) =
-                    SourceRefiner::new(document, heights, checkpoints, lookup_source, config)
-                else {
+                let Ok(mut refiner) = SourceRefiner::new(
+                    document,
+                    checkpoints.heights(),
+                    checkpoints,
+                    lookup_source,
+                    config,
+                ) else {
                     return Ok(RefineTarget::Failed);
                 };
                 refiner.set_links(shared_links);
@@ -2074,12 +2442,12 @@ impl FrameRuntime {
                 }
                 self.refiner = Some(refiner);
             }
-            let Ok(progress) = self.refiner.as_mut().expect("created refiner").advance(
-                document,
-                heights,
-                checkpoints,
-                budget,
-            ) else {
+            let Ok(progress) = self
+                .refiner
+                .as_mut()
+                .expect("created refiner")
+                .advance_owned(document, checkpoints, budget)
+            else {
                 self.refiner = None;
                 return Ok(RefineTarget::Failed);
             };
@@ -2101,6 +2469,62 @@ impl FrameRuntime {
     }
 
     fn rebuild_link_table(&mut self) {
+        let mut ordered = Vec::new();
+        self.fold_hits.clear();
+        let screen = self.presenter.screen();
+        for row in 0..screen.rows() {
+            for col in self.content_x..self.content_x + self.geometry.content_width {
+                if let Some(cell) = screen.reading_cell(row, col) {
+                    let object = if let Some(id) = cell.link_id() {
+                        Some(VisibleObject::Link(id))
+                    } else {
+                        cell.source().and_then(|source| {
+                            self.viewport
+                                .shown_folds
+                                .iter()
+                                .find(|p| p.candidate.hidden == source)
+                                .map(|p| {
+                                    let epoch = self.viewport.folds().version();
+                                    if let Some(last) = self.fold_hits.last_mut().filter(|hit| {
+                                        hit.row == row
+                                            && hit.x1 == col
+                                            && hit.id == p.candidate.id
+                                            && hit.hidden_envelope == source
+                                    }) {
+                                        last.x1 = col + u16::from(cell.width().max(1));
+                                    } else {
+                                        self.fold_hits.push(FoldHit {
+                                            id: p.candidate.id,
+                                            owner_tile: p.owner,
+                                            component_start: p.candidate.hidden.start,
+                                            registered: p.candidate.source,
+                                            hidden_envelope: source,
+                                            epoch,
+                                            row,
+                                            x0: col,
+                                            x1: col + u16::from(cell.width().max(1)),
+                                        });
+                                    }
+                                    VisibleObject::Fold(p.candidate.id, source)
+                                })
+                        })
+                    };
+                    if let Some(object) = object
+                        && !ordered.contains(&object)
+                    {
+                        ordered.push(object);
+                    }
+                }
+            }
+        }
+        self.objects = ordered;
+        if self
+            .object_focus
+            .is_some_and(|o| !self.objects.contains(&o))
+        {
+            self.object_focus = None;
+        }
+        self.object_version = self.viewport.folds().version();
         let table = LinkTable::from_screen(
             self.presenter.screen(),
             ContentArea::new(self.content_x, self.geometry.content_width),

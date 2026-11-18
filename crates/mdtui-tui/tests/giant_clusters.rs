@@ -118,7 +118,7 @@ fn invalidated_native_fence_checkpoint_restores_the_same_blank_and_text_rows() {
     assert_eq!(before, whole[700..705]);
     let a = v.top_anchor().unwrap();
     v.checkpoints_mut()
-        .invalidate(a.tile.0..a.tile.0 + 1)
+        .invalidate(&d, a.tile.0..a.tile.0 + 1)
         .unwrap();
     assert_eq!(ready(&mut v, &d), before);
 }
@@ -442,9 +442,9 @@ fn actual_middle_source_windows_publish_the_same_complete_cluster_without_prefix
     refiner.set_links(links);
     let mut refined = None;
     for _ in 0..100_000 {
-        let (heights, checkpoints) = viewport.layout_parts_mut();
+        let checkpoints = viewport.layout_owner_mut();
         if let RefineProgress::Ready(target) = refiner
-            .advance(document, heights, checkpoints, &mut micro())
+            .advance_owned(document, checkpoints, &mut micro())
             .unwrap()
         {
             refined = Some(target);
