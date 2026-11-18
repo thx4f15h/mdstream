@@ -5,8 +5,10 @@ use crossterm::event::KeyCode;
 use mdtui3::{
     Budget, Completion, ContainerFoldFilter, Document, FoldBatch, FoldBatchAction, FoldCandidate,
     FoldId, FoldView, LayoutError, SourceFoldCandidates, SourceFoldRegistration, Span,
-    TableRowRange, WorkLimit,
+    TableRowAutoFold, TableRowCandidateStep, TableRowCandidates, TableRowEdit, TableRowExtent,
+    TableRowFoldInfo, TableRowPolicy, TableRowRange, TableRowRegistration, WorkLimit,
 };
+use std::collections::VecDeque;
 
 type View = FoldView<RenderCheckpoint>;
 const EMPTY_TARGET_MESSAGE: &str = "No fold target yet; Esc to resume input";
@@ -39,6 +41,16 @@ enum Command {
     Paragraph,
     ParagraphLines(PrefixLines),
     DefaultLines(PrefixLines),
+    TablePrefix(usize),
+    TablePrefixInput,
+    TableDefault(Option<usize>),
+    TableDefaultInput,
+    TableOverlay,
+    TableLive,
+    TableSeal,
+    TableRetarget,
+    TableRemove,
+    TableNext(bool),
 }
 
 enum Operation {
@@ -50,6 +62,10 @@ enum Operation {
     Ranges(SourceFoldCandidates),
     Summary(Box<super::render::fold_summary::SummaryJob>),
     PublishSummary(super::render::fold_summary::FoldSummary),
+    TableRegister(TableRowRegistration, bool),
+    TableEdit(TableRowEdit, bool),
+    TableRanges(TableRowCandidates),
+    TablePolicy(Option<TableRowPolicy>),
 }
 
 #[derive(Default)]
@@ -71,11 +87,28 @@ pub struct FoldUi {
     failed: bool,
     summary: Option<super::render::fold_summary::FoldSummary>,
     changed: bool,
+    row_auto: VecDeque<TableRowAutoFold>,
+    row_retiring: usize,
+    table_range_next: Option<TableRowCandidates>,
+    table_range_all: Option<bool>,
+    table_identity: Option<String>,
+    number_input: Option<(bool, String)>,
 }
 
 impl FoldUi {
     pub fn end_preview(&mut self) {
         self.operation = Some(Operation::Preview(None));
+    }
+    fn current_table(&self, doc: &Document, view: &View) -> Result<mdtui3::TableId, LayoutError> {
+        match self.target {
+            Some(FoldId::Table(table)) => Ok(table),
+            Some(FoldId::TableRows(rows)) => Ok(rows.table),
+            Some(FoldId::TableRange(id)) => view
+                .table_row_fold_info(doc, id)?
+                .map(|i| i.table)
+                .ok_or(LayoutError::InvalidRange),
+            _ => doc.table_at(self.source).ok_or(LayoutError::InvalidRange),
+        }
     }
     pub fn activate(&mut self, id: FoldId) {
         self.target = Some(id);
@@ -89,6 +122,7 @@ impl FoldUi {
             || self.auto.is_some()
             || self.auto_range.is_some()
             || self.prefixes.pending()
+            || !self.row_auto.is_empty()
     }
     pub fn on_update(
         &mut self,
@@ -97,6 +131,11 @@ impl FoldUi {
         update: &mdtui3::Update,
     ) -> Result<(), LayoutError> {
         self.prefixes.on_update(doc, view, update)?;
+        self.table_range_next = None;
+        if view.table_row_policy().is_some() && !update.new_tables.is_empty() {
+            self.row_auto
+                .push_back(TableRowAutoFold::for_update(doc, view, update)?);
+        }
         if self.prefixes.default.is_some() {
             return Ok(());
         }
@@ -116,7 +155,34 @@ impl FoldUi {
     }
     pub fn status(&self, width: u16) -> Option<String> {
         let width = usize::from(width);
-        let status = if self.operation.is_some() {
+        let status = if let Some((defaults, text)) = &self.number_input {
+            if self.failed {
+                "N 0..1000000 Esc".into()
+            } else {
+                let full = format!(
+                    "{} N={text} Enter Esc",
+                    if *defaults { "New" } else { "Table" }
+                );
+                if display_width(&full) <= width {
+                    full
+                } else {
+                    format!("{} N={text} ↵ Esc", if *defaults { "New" } else { "T" })
+                }
+            }
+        } else if self.page == 6
+            && self.menu
+            && self.operation.is_none()
+            && !self.failed
+            && let Some(identity) = &self.table_identity
+        {
+            let end = fit_prefix(identity, width.saturating_sub(4)).end;
+            if end < identity.len() {
+                let end = fit_prefix(identity, width.saturating_sub(5)).end;
+                format!("{}… Esc", &identity[..end])
+            } else {
+                format!("{identity} Esc")
+            }
+        } else if self.operation.is_some() {
             format!("Esc cancel | {}", self.message)
         } else if self.menu && self.message == EMPTY_TARGET_MESSAGE {
             if width < EMPTY_TARGET_MESSAGE.len() {
@@ -137,7 +203,8 @@ impl FoldUi {
                     "range",
                     "level",
                     "container",
-                    "new defaults"
+                    "new defaults",
+                    "table rows"
                 ][self.page],
                 label,
                 self.index + 1,
@@ -173,6 +240,10 @@ impl FoldUi {
             if display_width(&status) + display_width(&message) <= width {
                 status.push_str(&message);
             }
+            let table_help = " t:rows";
+            if self.page != 6 && display_width(&status) + display_width(table_help) <= width {
+                status.push_str(table_help);
+            }
             status
         } else if self.pending() {
             format!("fold: {} | Esc cancel", self.message)
@@ -193,6 +264,10 @@ impl FoldUi {
         self.failed = false;
         self.range_next = None;
         self.range_all = None;
+        self.table_range_next = None;
+        self.table_range_all = None;
+        self.table_identity = None;
+        self.number_input = None;
         if self.target.is_none() {
             self.operation = Some(Operation::Command(Command::Parent));
         }
@@ -200,6 +275,40 @@ impl FoldUi {
     pub fn key(&mut self, code: KeyCode) -> bool {
         if !self.active() {
             return false;
+        }
+        if let Some((defaults, text)) = &mut self.number_input {
+            match code {
+                KeyCode::Char(c) if c.is_ascii_digit() && text.len() < 7 => {
+                    text.push(c);
+                    self.failed = false;
+                }
+                KeyCode::Backspace => {
+                    text.pop();
+                    self.failed = false;
+                }
+                KeyCode::Esc => {
+                    self.number_input = None;
+                }
+                KeyCode::Enter => {
+                    if let Ok(n) = text.parse::<usize>()
+                        && n <= 1_000_000
+                    {
+                        let command = if *defaults {
+                            Command::TableDefault(Some(n))
+                        } else {
+                            Command::TablePrefix(n)
+                        };
+                        self.number_input = None;
+                        self.operation = Some(Operation::Command(command));
+                    } else {
+                        self.message = "N must be 0..1000000".into();
+                        self.failed = true;
+                    }
+                }
+                KeyCode::Char('q') => return false,
+                _ => {}
+            }
+            return true;
         }
         if self.operation.is_some() && !matches!(code, KeyCode::Esc | KeyCode::Char('q' | 'c')) {
             return true;
@@ -227,6 +336,9 @@ impl FoldUi {
                 self.auto = None;
                 self.auto_range = None;
                 self.prefixes.cancel();
+                self.row_retiring = self.row_auto.len();
+                self.table_range_next = None;
+                self.table_identity = None;
                 self.message = if self.prefixes.validation_pending() {
                     "menu closed; current prefix validation continues; q exits".into()
                 } else {
@@ -234,22 +346,45 @@ impl FoldUi {
                 };
             }
             KeyCode::Up if self.menu => {
+                self.table_identity = None;
                 self.index = self.index.saturating_sub(1);
             }
             KeyCode::Down if self.menu => {
+                self.table_identity = None;
                 self.index = (self.index + 1).min(self.entries.len().saturating_sub(1));
             }
             KeyCode::Left | KeyCode::Right if self.menu => {
+                self.table_identity = None;
                 self.page = if code == KeyCode::Right {
-                    (self.page + 1) % 6
+                    if self.page == 6 {
+                        0
+                    } else {
+                        (self.page + 1) % 6
+                    }
                 } else {
-                    (self.page + 5) % 6
+                    if self.page == 6 {
+                        0
+                    } else {
+                        (self.page + 5) % 6
+                    }
                 };
                 self.entries = entries(self.page);
                 self.index = 0;
             }
-            KeyCode::Home if self.menu => self.index = 0,
-            KeyCode::End if self.menu => self.index = self.entries.len().saturating_sub(1),
+            KeyCode::Char('t') if self.menu => {
+                self.page = 6;
+                self.index = 0;
+                self.entries = entries(6);
+                self.table_identity = None;
+            }
+            KeyCode::Home if self.menu => {
+                self.index = 0;
+                self.table_identity = None;
+            }
+            KeyCode::End if self.menu => {
+                self.index = self.entries.len().saturating_sub(1);
+                self.table_identity = None;
+            }
             KeyCode::Enter if self.menu && self.operation.is_none() => {
                 self.failed = false;
                 self.operation = Some(Operation::Command(self.entries[self.index].1));
@@ -267,6 +402,7 @@ impl FoldUi {
     }
     pub fn resize(&mut self) {
         self.prefixes.resize();
+        self.table_range_next = None;
     }
     pub fn take_changed(&mut self) -> bool {
         std::mem::take(&mut self.changed)
@@ -284,6 +420,35 @@ impl FoldUi {
         budget: &mut Budget,
     ) {
         let Some(mut operation) = self.operation.take() else {
+            if self.row_retiring > 0 {
+                if charge(budget) {
+                    self.row_auto.pop_front();
+                    self.row_retiring -= 1;
+                }
+                self.message = "cancel table work; paid choices kept".into();
+                return;
+            }
+            if let Some(task) = self.row_auto.front_mut() {
+                let old = view.version();
+                let result = task
+                    .rebind(doc, view)
+                    .and_then(|()| task.advance(doc, view, budget));
+                match result {
+                    Ok(p) => {
+                        self.message = "new table row policy".into();
+                        if p.completion == Completion::Covered {
+                            self.row_auto.pop_front();
+                        }
+                    }
+                    Err(e) => {
+                        self.message = e.to_string();
+                        self.failed = true;
+                        self.row_retiring = self.row_auto.len();
+                    }
+                }
+                self.changed |= old != view.version();
+                return;
+            }
             if self.prefixes.pending() {
                 let old = view.version();
                 if let Err(error) = self.prefixes.advance(doc, view, links, width, budget) {
@@ -336,6 +501,9 @@ impl FoldUi {
         let old = view.version();
         let result = self.advance_operation(doc, view, links, width, budget, &mut operation);
         self.changed |= old != view.version();
+        if old != view.version() {
+            self.table_range_next = None;
+        }
         if old != view.version()
             && let Some(task) = self.auto.take()
         {
@@ -369,6 +537,65 @@ impl FoldUi {
         operation: &mut Operation,
     ) -> Result<bool, LayoutError> {
         match operation {
+            Operation::TablePolicy(policy) => {
+                if !view.set_table_row_policy(doc, *policy, budget)? {
+                    return Ok(false);
+                }
+                self.table_identity = Some(policy.map_or_else(
+                    || "new rows off".into(),
+                    |p| format!("new rows={}", p.visible_body_rows),
+                ));
+                self.message = policy.map_or_else(
+                    || "new table row policy off".into(),
+                    |p| format!("new tables: first {} body rows", p.visible_body_rows),
+                );
+                Ok(true)
+            }
+            Operation::TableRegister(task, collapse) => {
+                let p = task.advance(doc, view, budget)?;
+                if p.completion == Completion::BudgetExhausted {
+                    return Ok(false);
+                }
+                self.target = p.id;
+                if let Some(FoldId::TableRange(id)) = p.id {
+                    self.table_identity = view.table_row_fold_info(doc, id)?.map(table_identity);
+                    if *collapse {
+                        *operation = Operation::Collapse(FoldId::TableRange(id));
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
+            Operation::TableEdit(task, remove) => {
+                let p = task.advance(doc, view, budget)?;
+                if p.completion == Completion::BudgetExhausted {
+                    return Ok(false);
+                }
+                if *remove {
+                    self.target = None;
+                    self.table_identity = None;
+                    self.message = "table range removed".into();
+                } else if let Some(FoldId::TableRange(id)) = p.id {
+                    self.target = p.id;
+                    self.table_identity = view.table_row_fold_info(doc, id)?.map(table_identity);
+                }
+                Ok(true)
+            }
+            Operation::TableRanges(task) => match task.next(doc, view, budget)? {
+                TableRowCandidateStep::BudgetExhausted => Ok(false),
+                TableRowCandidateStep::Complete => {
+                    self.table_identity = None;
+                    self.message = "no more registered table IDs".into();
+                    Ok(true)
+                }
+                TableRowCandidateStep::Candidate(info) => {
+                    self.target = Some(FoldId::TableRange(info.id));
+                    let placeholder = TableRowCandidates::all(doc, view, info.table)?;
+                    self.table_identity = Some(table_identity(info));
+                    self.table_range_next = Some(std::mem::replace(task, placeholder));
+                    Ok(true)
+                }
+            },
             Operation::PublishSummary(summary) => {
                 summary.check_binding(doc, view)?;
                 if !charge(budget) {
@@ -458,6 +685,112 @@ impl FoldUi {
                 }
                 let target = self.target;
                 match *command {
+                    Command::TablePrefixInput | Command::TableDefaultInput => {
+                        self.number_input =
+                            Some((matches!(command, Command::TableDefaultInput), String::new()));
+                        self.table_identity = None;
+                    }
+                    Command::TableDefault(n) => {
+                        *operation = Operation::TablePolicy(n.map(|n| TableRowPolicy {
+                            visible_body_rows: n,
+                        }));
+                        return Ok(false);
+                    }
+                    Command::TablePrefix(n) => {
+                        let table = self.current_table(doc, view)?;
+                        *operation = Operation::TableRegister(
+                            TableRowRegistration::prefix(doc, view, table, n)?,
+                            false,
+                        );
+                        return Ok(false);
+                    }
+                    Command::TableOverlay | Command::TableRetarget => {
+                        let (table, rows) = selected_table_rows(
+                            doc,
+                            self.selection.ok_or(LayoutError::InvalidRange)?,
+                        )?;
+                        if matches!(command, Command::TableOverlay) {
+                            *operation = Operation::TableRegister(
+                                TableRowRegistration::fixed_overlay(doc, view, table, rows)?,
+                                true,
+                            );
+                        } else {
+                            let Some(FoldId::TableRange(id)) = target else {
+                                return Err(LayoutError::InvalidRange);
+                            };
+                            if view
+                                .table_row_fold_info(doc, id)?
+                                .ok_or(LayoutError::InvalidRange)?
+                                .table
+                                != table
+                            {
+                                return Err(LayoutError::InvalidRange);
+                            }
+                            *operation = Operation::TableEdit(
+                                TableRowEdit::retarget(
+                                    doc,
+                                    view,
+                                    id,
+                                    TableRowExtent::Fixed {
+                                        start: rows.start,
+                                        end: rows.end,
+                                    },
+                                )?,
+                                false,
+                            );
+                        }
+                        return Ok(false);
+                    }
+                    Command::TableLive => {
+                        let selection = self.selection.ok_or(LayoutError::InvalidRange)?;
+                        let table = doc
+                            .table_at(selection.start)
+                            .ok_or(LayoutError::InvalidRange)?;
+                        let row = doc
+                            .table(table)
+                            .and_then(|t| t.row_at(selection.start))
+                            .filter(|&r| r > 0)
+                            .ok_or(LayoutError::InvalidRange)?;
+                        *operation = Operation::TableRegister(
+                            TableRowRegistration::live(doc, view, table, row)?,
+                            true,
+                        );
+                        return Ok(false);
+                    }
+                    Command::TableSeal | Command::TableRemove => {
+                        let Some(FoldId::TableRange(id)) = target else {
+                            return Err(LayoutError::InvalidRange);
+                        };
+                        let remove = matches!(command, Command::TableRemove);
+                        let task = if remove {
+                            TableRowEdit::remove(doc, view, id)?
+                        } else {
+                            TableRowEdit::seal(doc, view, id)?
+                        };
+                        *operation = Operation::TableEdit(task, remove);
+                        return Ok(false);
+                    }
+                    Command::TableNext(all) => {
+                        if self.table_range_all != Some(all) {
+                            self.table_range_next = None;
+                            self.table_range_all = Some(all);
+                        }
+                        let table = self.current_table(doc, view)?;
+                        let task = if let Some(task) = self.table_range_next.take() {
+                            task
+                        } else if all {
+                            TableRowCandidates::all(doc, view, table)?
+                        } else {
+                            let row = doc
+                                .table(table)
+                                .and_then(|t| t.row_at(self.source))
+                                .filter(|&r| r > 0)
+                                .ok_or(LayoutError::InvalidRange)?;
+                            TableRowCandidates::intersecting(doc, view, table, row..row + 1)?
+                        };
+                        *operation = Operation::TableRanges(task);
+                        return Ok(false);
+                    }
                     Command::Parent => {
                         let candidate = if let Some(id) = target {
                             view.fold_candidate(doc, id)?
@@ -654,6 +987,13 @@ impl FoldUi {
                             FoldId::TableRows(range) => {
                                 view.remove_table_rows(doc, range)?;
                             }
+                            FoldId::TableRange(id) => {
+                                *operation = Operation::TableEdit(
+                                    TableRowEdit::remove(doc, view, id)?,
+                                    true,
+                                );
+                                return Ok(false);
+                            }
                             _ => return Err(LayoutError::InvalidRange),
                         }
                         self.target = None;
@@ -731,8 +1071,79 @@ fn charge(budget: &mut Budget) -> bool {
 fn candidate_label(c: FoldCandidate) -> String {
     crate::render::plan::placeholder_label(c)
 }
+fn selected_table_rows(
+    doc: &Document,
+    selection: Span,
+) -> Result<(mdtui3::TableId, std::ops::Range<usize>), LayoutError> {
+    if selection.is_empty() {
+        return Err(LayoutError::InvalidRange);
+    }
+    let id = doc
+        .table_at(selection.start)
+        .ok_or(LayoutError::InvalidRange)?;
+    if doc.table_at(selection.end - 1) != Some(id) {
+        return Err(LayoutError::InvalidRange);
+    }
+    let table = doc.table(id).ok_or(LayoutError::InvalidRange)?;
+    let first = table
+        .row_at(selection.start)
+        .or_else(|| {
+            table
+                .delimiter
+                .range()
+                .contains(&selection.start)
+                .then_some(1)
+        })
+        .ok_or(LayoutError::InvalidRange)?
+        .max(1);
+    let end = table
+        .row_at(selection.end - 1)
+        .ok_or(LayoutError::InvalidRange)?
+        + 1;
+    if first >= end {
+        return Err(LayoutError::InvalidRange);
+    }
+    Ok((id, first..end))
+}
+fn table_identity(info: TableRowFoldInfo) -> String {
+    let (start, end, mode) = match info.extent {
+        TableRowExtent::Fixed { start, end } => {
+            (start, end.to_string(), if info.closed { 'C' } else { 'G' })
+        }
+        TableRowExtent::Live { start } => (
+            start,
+            "*".into(),
+            if info.closed {
+                'C'
+            } else if info.rows.is_none() {
+                'D'
+            } else {
+                'L'
+            },
+        ),
+        TableRowExtent::SealedEmpty { start, .. } => (start, "empty".into(), 'E'),
+    };
+    format!(
+        "R{}{} T{} {start}..{end}",
+        info.id.index(),
+        mode,
+        info.table.0 + 1
+    )
+}
 fn compact_label(label: &str, command: Command) -> String {
     match command {
+        Command::TablePrefix(n) => format!("table first{n}"),
+        Command::TablePrefixInput => "table first N".into(),
+        Command::TableDefault(Some(n)) => format!("new table {n}"),
+        Command::TableDefault(None) => "new table off".into(),
+        Command::TableDefaultInput => "new table N".into(),
+        Command::TableOverlay => "table overlay".into(),
+        Command::TableLive => "table live tail".into(),
+        Command::TableSeal => "table seal ID".into(),
+        Command::TableRetarget => "row retarget ID".into(),
+        Command::TableRemove => "table remove ID".into(),
+        Command::TableNext(false) => "table next here".into(),
+        Command::TableNext(true) => "table next any".into(),
         Command::NextRange => "source next here".into(),
         Command::NextAnyRange => "source next any".into(),
         Command::RowTarget => "table rows here".into(),
@@ -783,6 +1194,55 @@ fn prefix_label(lines: PrefixLines) -> String {
     }
 }
 fn entries(page: usize) -> Vec<(String, Command)> {
+    // An explicit t submenu preserves the six established pages and their
+    // Home/End/left/right command positions, including narrow-screen controls.
+    if page == 6 {
+        return vec![
+            ("table: first 0 body rows".into(), Command::TablePrefix(0)),
+            ("table: first 1 body row".into(), Command::TablePrefix(1)),
+            ("table: first 3 body rows".into(), Command::TablePrefix(3)),
+            ("table: first N body rows".into(), Command::TablePrefixInput),
+            ("new table policy: off".into(), Command::TableDefault(None)),
+            (
+                "new tables: first 0 body rows".into(),
+                Command::TableDefault(Some(0)),
+            ),
+            (
+                "new tables: first 1 body row".into(),
+                Command::TableDefault(Some(1)),
+            ),
+            (
+                "new tables: first 3 body rows".into(),
+                Command::TableDefault(Some(3)),
+            ),
+            (
+                "new tables: first N body rows".into(),
+                Command::TableDefaultInput,
+            ),
+            ("selection: table row overlay".into(), Command::TableOverlay),
+            (
+                "selection start: live table tail".into(),
+                Command::TableLive,
+            ),
+            ("seal selected table range ID".into(), Command::TableSeal),
+            (
+                "retarget selected ID to rows".into(),
+                Command::TableRetarget,
+            ),
+            (
+                "remove selected table range ID".into(),
+                Command::TableRemove,
+            ),
+            (
+                "next overlapping table range".into(),
+                Command::TableNext(false),
+            ),
+            (
+                "next registered table range".into(),
+                Command::TableNext(true),
+            ),
+        ];
+    }
     let mut result = vec![
         ("toggle".into(), Command::Toggle),
         ("open".into(), Command::Open),

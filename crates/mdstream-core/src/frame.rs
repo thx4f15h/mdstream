@@ -468,11 +468,30 @@ impl LayoutPass {
                 self.active = true;
             }
             if let Some(FoldSegment::Hidden(candidate)) = self.fold_cursor.segment {
-                let placeholder = FoldPlaceholder {
+                let mut placeholder = FoldPlaceholder {
                     candidate,
                     owner: TileId(self.tile),
                     paragraph: folds.and_then(|f| f.paragraph(candidate.id)),
                 };
+                if self.cursor == candidate.hidden.start
+                    && self
+                        .fold_cursor
+                        .complete_placeholder(
+                            document,
+                            folds.unwrap(),
+                            &mut placeholder,
+                            budget,
+                            WorkLimit {
+                                queries: 1,
+                                objects: 1,
+                                recovery,
+                                ..Default::default()
+                            },
+                        )
+                        .is_err()
+                {
+                    return Ok(Completion::BudgetExhausted);
+                }
                 match self.fold_cursor.placeholder(
                     self.cursor,
                     placeholder,

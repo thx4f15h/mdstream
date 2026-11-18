@@ -3340,3 +3340,14 @@ resize后显式目录跳转再折叠的独立037缺陷已新增未勾待办，�
 独立手写状态行、网格和真实默认字段 oracle 在基线红、修复绿；覆盖六页72项、20/40列互相可辨识、0..19列不越界、20×3、Home/End/切页、20→40→80→20、零/6字节微预算、h1/h2独立字段、D1来源切口及取消保留已生效意愿。85项相关测试、84个文档测试、fmt、workspace all-target/all-feature check与严格Clippy/rustdoc通过；未新跑无关巨型parser/GCB/64MiB或整库门禁。
 
 固定 release 64fff139… 的10组真实终端流程全部通过；根另在独立私有tmux复验三组：held FIFO中h1/h2及resize可辨识、菜单期间FOLLOW帮助让位且关闭后恢复、最小20×3空目标/导航/Esc后READY、40→20的D1实际折叠/展开，所有q退出0。旧错误包名、初始测试/窄屏期望与FOLLOW回归均保留，不算最终通过。614个Rust输入与冻结逐字节相同，核心、依赖、旧夹具/HTML/goldens、既有断言、hook/rustfmt保持。源/旧失败/命令/固定二进制/终端与独立审查归档至 `/home/ajen/.local/state/codex/mdtui3/2026-11-17-resumed/040-accepted-evidence.tar.gz`。
+
+
+## 2026-11-19 稳定表格行策略与实际终端操作
+
+`TableRowFoldId` 为每个视图保存独立首 N/固定/live/封口范围意愿，真实 TableId 与已发布 row 元数据决定准入，表头和 delimiter 不计正文行；未出现的尾部可 dormant，封口空范围保留精确左亲和切口。同终点范围共享物理 mask，各 ID 独立选择、预览、批量、Reveal、重设及删除；追加只刷新当前 live/Growing 端点组，不扫描历史范围或隐藏正文。旧 TableRows 固定不相交接口与穷举断言保持。
+
+`z` → `t` 提供当前表首0/1/3/数字N、新表默认、选择区间/live、封口/同ID重设/删除及实际覆盖/全表ID续选。20列显示身份与模式，原六页72项菜单保持。来源PH、显示复制、原文复制、精确目标搜索、End/FOLLOW/冻结切口/历史共用实际 FoldView/高度与CP；原文CRLF及64KiB边界保持。宽 delimiter 的隐藏源码 tile 仅调整 base 高度，表头、正文、PH与边框各计一次。新增帮助曾挤掉80列批操作完成反馈，已用原FIFO PTY和独立宽度断言修复，旧失败保留。
+
+最终 workspace all-target/all-feature release 3006项及85项文档测试、严格Clippy/fmt通过；6项原有手工benchmark保持默认忽略。新旧core/UI与真实PTY/FIFO覆盖追加/EOF/晚表头、20×3与底层1列、共享1q/1o/6B、所有权/取消、嵌套交叉、完整PH/复制及搜索。实际输入owner下十万列表格局部查询读取14源码字节，总高度5；输入自身维护约4.3秒/4.02GB索引预留单列计账。百万次实际追加恰有百万次组刷新；2000历史范围不放大后续追加工作；2000注册/20000次切换保留分配不增长，丢弃视图回到Document基线。
+
+根独立核对18个变更与其余754个正式基线文件，固定release SHA256 `38160169a7fc5ed3080b321729b132aa94b99e8c0b915052542557ab80a1b4d7`，实跑首N、20×3身份、同ID数字修改、搜索展开及q退出0；前后772文件/618Rust哈希一致。旧低层冷Viewport fallback在原200000帧上限的Pending证据保留，和实际输入owner路径区别明确，由最终通用合同审计继续核对。正式9d50尚无脚注视图；后续029必须把这些注册/新表策略接入实际轻量意图恢复与付费退休，020必须集成正式新FoldId消费者，均未冒称本次已验证。证据归档：`/home/ajen/.local/state/codex/mdtui3/2026-11-17-resumed/033-accepted-evidence.tar.gz`。

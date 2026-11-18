@@ -707,6 +707,7 @@ pub(crate) fn placeholder_label(candidate: mdtui3::FoldCandidate) -> String {
         mdtui3::FoldId::Container(id) => ("container", id.0),
         mdtui3::FoldId::Table(id) => ("table", id.0),
         mdtui3::FoldId::TableRows(range) => ("rows", range.start),
+        mdtui3::FoldId::TableRange(id) => ("rows", id.index()),
         mdtui3::FoldId::Source(id) => ("source", id.index()),
     };
     format!(

@@ -43,7 +43,9 @@ impl SourceFoldHost {
                         ContainerKind::List { .. } => Shape::List,
                         ContainerKind::Item { .. } => Shape::Item,
                     },
-                    FoldId::Source(_) | FoldId::TableRows(_) => return None,
+                    FoldId::Source(_) | FoldId::TableRows(_) | FoldId::TableRange(_) => {
+                        return None;
+                    }
                 };
                 Some((c.source, shape))
             }),

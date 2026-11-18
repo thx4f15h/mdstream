@@ -14,7 +14,7 @@ pub enum FoldProjectionStep {
         tile: TileId,
     },
     /// Emitted once at the component's actual start, never for a remote start
-    /// inside it. The candidate's hidden end is a frontier, not a final union.
+    /// inside it. Its complete source union is resolved through paid frontiers.
     Placeholder(FoldPlaceholder),
     /// A paid jump through a hidden frontier. `source` is the skipped part of
     /// this request; candidate metadata retains the core's component identity.
@@ -221,11 +221,19 @@ impl FoldProjection {
                 Ok(FoldProjectionStep::Text { source, tile })
             }
             FoldSegment::Hidden(candidate) => {
-                let placeholder = FoldPlaceholder {
+                let mut placeholder = FoldPlaceholder {
                     candidate,
                     owner: document.tile_at(candidate.hidden.start).unwrap(),
                     paragraph: view.state.paragraph(candidate.id),
                 };
+                if self.cursor == candidate.hidden.start
+                    && self
+                        .folds
+                        .complete_placeholder(document, &view.state, &mut placeholder, budget, cost)
+                        .is_err()
+                {
+                    return Ok(FoldProjectionStep::BudgetExhausted);
+                }
                 match self
                     .folds
                     .placeholder(self.cursor, placeholder, budget, cost)
@@ -262,11 +270,55 @@ impl FoldProjection {
 pub(crate) struct FoldCursor {
     pub(crate) segment: Option<FoldSegment>,
     placeholder: Option<usize>,
+    envelope: Option<(usize, usize, bool)>,
     pending_end: Option<BlockId>,
     ended: Option<BlockId>,
 }
 
 impl FoldCursor {
+    /// Resolve a PH's complete source envelope without decoding or collecting
+    /// overlaps. Strictly-before-end probes preserve adjacent components. The
+    /// skip cursor retains its original independently paid frontiers; only the
+    /// single PH/source hit receives the complete span.
+    pub(crate) fn complete_placeholder(
+        &mut self,
+        document: &Document,
+        folds: &FoldState,
+        placeholder: &mut FoldPlaceholder,
+        budget: &mut Budget,
+        cost: WorkLimit,
+    ) -> Result<(), ()> {
+        let start = placeholder.candidate.hidden.start;
+        if self.placeholder == Some(start) {
+            return Ok(());
+        }
+        let (mut end, done) = self
+            .envelope
+            .filter(|x| x.0 == start)
+            .map_or((placeholder.candidate.hidden.end, false), |x| (x.1, x.2));
+        // EOF and a sole physical interval already prove the full endpoint.
+        // Neither needs another frontier lookup or another object admission.
+        if done || end == document.source().len() || folds.sole_hidden_interval() {
+            placeholder.candidate.hidden.end = end;
+            return Ok(());
+        }
+        loop {
+            if !budget.charge(cost) {
+                return Err(());
+            }
+            let FoldSegment::Hidden(next) = folds.segment(document, end - 1) else {
+                unreachable!("component's last byte is covered")
+            };
+            let next_end = end.max(next.hidden.end);
+            let done = next_end == end || next_end == document.source().len();
+            self.envelope = Some((start, next_end, done));
+            if done {
+                placeholder.candidate.hidden.end = next_end;
+                return Ok(());
+            }
+            end = next_end;
+        }
+    }
     pub(crate) fn query(
         &mut self,
         document: &Document,

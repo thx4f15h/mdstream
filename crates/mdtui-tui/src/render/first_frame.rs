@@ -1825,6 +1825,30 @@ fn suppress_nonwrapping(
             mdtui3::BlockKind::Heading { .. } => sources.push(block.source),
             mdtui3::BlockKind::Table { id } => {
                 if let Some(table) = document.table(id) {
+                    // The delimiter is syntax, never a logical table row. A
+                    // wide schema can span thousands of tiles between the
+                    // header owner and the first body/PH owner. Zero those
+                    // base heights using the existing paired measurement path.
+                    // Retain a mixed first tile that owns the header, and a
+                    // mixed last tile that may own following visible content.
+                    let delimiter = table.delimiter;
+                    if !delimiter.is_empty() {
+                        let first = document
+                            .tile_at(delimiter.start)
+                            .ok_or(FirstFrameError::InvalidTop)?;
+                        let last = document
+                            .tile_at(delimiter.end - 1)
+                            .ok_or(FirstFrameError::InvalidTop)?;
+                        let header_owner = table
+                            .row(0)
+                            .and_then(|row| document.tile_at(super::table_window::row_owner(row)));
+                        let start = first.0 + usize::from(header_owner == Some(first));
+                        let end =
+                            last.0 + usize::from(document.tile(last).unwrap().end <= delimiter.end);
+                        if start < end {
+                            ranges.push(start..end);
+                        }
+                    }
                     for segment in &plan.segments {
                         if let Some(row) = table
                             .row_at(segment.source.start)

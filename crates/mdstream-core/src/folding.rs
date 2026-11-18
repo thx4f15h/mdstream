@@ -9,6 +9,10 @@ use crate::{
     TableId, TileId, Update, WorkLimit,
 };
 
+#[path = "table_row_folds.rs"]
+pub(crate) mod table_row_folds;
+use table_row_folds::{TableRowFoldId, TableRowState};
+
 /// Syntax IDs are document-local; Source IDs identify one view registration.
 /// Source overlays can nest/cross syntax and other source overlays; original
 /// strict registration APIs retain their conservative validation.
@@ -20,6 +24,8 @@ pub enum FoldId {
     Table(TableId),
     Container(ContainerId),
     TableRows(TableRowRange),
+    /// View-owned, stable fixed/live body-row registration.
+    TableRange(TableRowFoldId),
     Source(SourceFoldId),
 }
 
@@ -113,6 +119,7 @@ impl FoldCandidate {
         let order = |candidate: &Self| match candidate.id {
             FoldId::Container(id) => (candidate.source.start, 0, id.0),
             FoldId::Source(id) => (candidate.source.start, 2, id.0),
+            FoldId::TableRange(id) => (candidate.source.start, 1, id.index()),
             _ => (candidate.source.start, 1, 0),
         };
         self.source.start <= other.source.start
@@ -273,6 +280,7 @@ struct SourceBoundary {
 
 #[derive(Default)]
 pub(crate) struct FoldState {
+    table_rows: TableRowState,
     collapsed: BTreeMap<FoldId, Mask>,
     starts: BTreeSet<(usize, FoldId)>,
     // Row registrations remain disjoint. Source envelopes and selected hidden
@@ -357,7 +365,7 @@ impl Document {
     /// Open containers provisionally include unclassified source, like tables.
     pub fn fold_candidate(&self, id: FoldId) -> Option<FoldCandidate> {
         match id {
-            FoldId::Source(_) => None, // Registrations belong to a FoldView.
+            FoldId::Source(_) | FoldId::TableRange(_) => None, // View registrations.
             FoldId::TableRows(range) => {
                 if range.start == 0 || range.start >= range.end {
                     return None;
@@ -545,7 +553,9 @@ impl FoldState {
     fn hidden_key(&self, c: FoldCandidate) -> crate::fold_intervals::Key {
         crate::fold_intervals::key(
             c.hidden.start,
-            if c.open || matches!(c.id, FoldId::Source(id) if self.open_source_tails.contains(&id))
+            if !matches!(c.id, FoldId::TableRange(_))
+                && (c.open
+                    || matches!(c.id, FoldId::Source(id) if self.open_source_tails.contains(&id)))
             {
                 usize::MAX
             } else {
@@ -634,6 +644,10 @@ impl FoldState {
         self.source_candidates.get(&id)?.paragraph
     }
 
+    pub(crate) fn sole_hidden_interval(&self) -> bool {
+        self.hidden_ranges.node_count() == 1
+    }
+
     pub(crate) fn covering(&self, document: &Document, offset: usize) -> Option<FoldCandidate> {
         if offset >= document.source().len() {
             return None;
@@ -643,6 +657,7 @@ impl FoldState {
             .next(Bound::Unbounded, offset, offset + 1)?;
         match key.3 {
             FoldId::Source(id) => self.source_candidate(document, id),
+            FoldId::TableRange(id) => self.table_rows.candidate(document, id),
             id => document.fold_candidate(id),
         }
     }
@@ -709,6 +724,10 @@ impl FoldState {
                 FoldId::Source(id) => self
                     .source_candidate(document, id)
                     .expect("registered source"),
+                FoldId::TableRange(id) => self
+                    .table_rows
+                    .candidate(document, id)
+                    .expect("registered table rows"),
                 _ => document.fold_candidate(id).expect("stable syntax identity"),
             };
             if component.owner.1.0 == usize::MAX
@@ -803,7 +822,10 @@ impl FoldState {
             self.starts.insert((hidden.start, candidate.id));
         }
         heights.cover(tiles.clone(), true);
-        if candidate.open && !open_shared && !matches!(candidate.id, FoldId::Source(_)) {
+        if candidate.open
+            && !open_shared
+            && !matches!(candidate.id, FoldId::Source(_) | FoldId::TableRange(_))
+        {
             self.growing.insert(candidate.id);
         }
         self.hidden_ranges.insert(self.hidden_key(candidate));
@@ -1110,6 +1132,15 @@ impl<S> FoldView<S> {
     pub(crate) fn candidate(&self, document: &Document, id: FoldId) -> Option<FoldCandidate> {
         match id {
             FoldId::Source(id) => self.state.source_candidate(document, id),
+            FoldId::TableRange(id)
+                if self
+                    .state
+                    .table_rows
+                    .owns(document.id(), self.heights.version().0, id) =>
+            {
+                self.state.table_rows.candidate(document, id)
+            }
+            FoldId::TableRange(_) => None,
             FoldId::TableRows(range) if !self.has_table_rows(document, range) => None,
             _ => document.fold_candidate(id),
         }
@@ -1174,7 +1205,14 @@ impl<S> FoldView<S> {
     }
 
     pub(crate) fn contains_candidate(&self, outer: &FoldCandidate, inner: &FoldCandidate) -> bool {
-        if outer.source == inner.source
+        if matches!(inner.id, FoldId::TableRange(_))
+            && inner.source.is_empty()
+            && !outer.source.is_empty()
+        {
+            // A dormant/sealed row cut belongs to the table on its left,
+            // including when the next heading begins exactly at that cut.
+            outer.source.start < inner.source.start && inner.source.end <= outer.source.end
+        } else if outer.source == inner.source
             && matches!(outer.id, FoldId::Source(_))
             && matches!(inner.id, FoldId::Source(_))
         {
@@ -1459,6 +1497,13 @@ impl<S> FoldView<S> {
             end: rows.end,
         };
         let id = FoldId::TableRows(range);
+        // Exact legacy reinsertion remains idempotent after a flexible overlay.
+        if self.has_table_rows(document, range) {
+            return Ok(id);
+        }
+        if self.state.table_rows.overlaps(table, rows.clone()) {
+            return Err(LayoutError::InvalidRange);
+        }
         let candidate = document
             .fold_candidate(id)
             .ok_or(LayoutError::InvalidRange)?;
@@ -1609,6 +1654,13 @@ impl<S> FoldView<S> {
     /// Local choice, including the choice temporarily overridden by preview.
     /// Use hidden_at to query actual visibility under ancestors and preview.
     pub fn is_collapsed(&self, id: FoldId) -> bool {
+        if let FoldId::TableRange(id) = id {
+            return self
+                .state
+                .table_rows
+                .owns(self.document, self.heights.version().0, id)
+                && self.state.table_rows.collapsed(id);
+        }
         match self.preview {
             Some((target, collapsed)) if target == id => collapsed,
             _ => self.state.collapsed.contains_key(&id),
@@ -1648,6 +1700,11 @@ impl<S> FoldView<S> {
                 FoldId::Table(id) => document.table(id).is_some(),
                 FoldId::Container(id) => document.container(id).is_some(),
                 FoldId::TableRows(range) => self.has_table_rows(document, range),
+                FoldId::TableRange(id) => {
+                    self.state
+                        .table_rows
+                        .owns(document.id(), self.heights.version().0, id)
+                }
                 FoldId::Source(id) => self.state.source_candidates.contains_key(&id),
             };
             if !valid {
@@ -1669,6 +1726,11 @@ impl<S> FoldView<S> {
                 completion: Completion::BudgetExhausted,
                 change: None,
             });
+        }
+        if matches!(target, Some(FoldId::TableRange(_)))
+            || matches!(self.preview(), Some(FoldId::TableRange(_)))
+        {
+            return self.preview_table_rows(document, target);
         }
         let mut source = None;
         if let Some((id, collapsed)) = self.preview.take() {
@@ -1859,6 +1921,9 @@ impl<S> FoldView<S> {
         collapsed: bool,
     ) -> Result<Option<FoldChange>, LayoutError> {
         self.check(document)?;
+        if let FoldId::TableRange(id) = id {
+            return self.set_table_rows_collapsed(document, id, collapsed);
+        }
         let candidate = self
             .candidate(document, id)
             .ok_or(LayoutError::InvalidRange)?;
@@ -2002,6 +2067,7 @@ impl<S> FoldView<S> {
         }
         crate::apply_layout_update(document, update, &mut self.heights, &mut self.checkpoints)?;
         let mut dirty = None;
+        self.refresh_table_row_groups(document, &mut dirty);
         self.refresh_paragraph(document, &mut dirty);
         self.refresh_source_tail(document, &mut dirty);
         // Six root sections, one code/math/table, and at most one disjoint range

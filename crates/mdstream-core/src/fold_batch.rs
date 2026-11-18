@@ -2,8 +2,8 @@ use std::ops::Bound;
 
 use crate::{
     BlockKind, Budget, Completion, ContainerFoldFilter, ContainerId, Document, DocumentId,
-    FoldCandidate, FoldCandidates, FoldChange, FoldId, FoldView, LayoutError, Span, TableRowRange,
-    WorkLimit,
+    FoldCandidate, FoldCandidates, FoldChange, FoldId, FoldView, LayoutError, Span, TableRowFoldId,
+    TableRowRange, WorkLimit,
 };
 
 /// Explicit commands on syntax candidates and registered table/source ranges.
@@ -77,6 +77,8 @@ pub struct FoldBatch {
     visited: usize,
     changed: usize,
     container_next: usize,
+    table_range_next: Option<(crate::TableId, TableRowFoldId, FoldCandidate)>,
+    table_range_window: Span,
 }
 
 impl FoldBatch {
@@ -106,7 +108,9 @@ impl FoldBatch {
                     FoldId::Table(id) => document.table(id).is_some(),
                     FoldId::Container(id) => document.container(id).is_some(),
                     FoldId::TableRows(range) => view.has_table_rows(document, range),
-                    FoldId::Source(_) => view.candidate(document, id).is_some(),
+                    FoldId::Source(_) | FoldId::TableRange(_) => {
+                        view.candidate(document, id).is_some()
+                    }
                 };
                 if !valid {
                     return Err(LayoutError::InvalidRange);
@@ -130,6 +134,8 @@ impl FoldBatch {
             visited: 0,
             changed: 0,
             container_next: 0,
+            table_range_next: None,
+            table_range_window: Span::default(),
         })
     }
 
@@ -192,7 +198,12 @@ impl FoldBatch {
             } else {
                 None
             };
-            if syntax_done && row.is_none() && source.is_none() {
+            let table_range = if syntax_done && row.is_none() && source.is_none() {
+                self.table_range_next
+            } else {
+                None
+            };
+            if syntax_done && row.is_none() && source.is_none() && table_range.is_none() {
                 return Ok(self.progress(Completion::Covered, change));
             }
             if !budget.charge(WorkLimit {
@@ -222,6 +233,8 @@ impl FoldBatch {
                 }
                 self.candidates = Some(document.fold_candidates(range)?);
                 if !matches!(self.action, FoldBatchAction::AtLevel { .. }) {
+                    self.table_range_window = range;
+                    self.table_range_next = view.next_table_row_fold(document, None, range);
                     self.rows_end = range.end;
                     self.row_next = view.next_table_rows(range.start, range.end);
                     // Source selections may lie in the retained parent title;
@@ -250,6 +263,10 @@ impl FoldBatch {
                     self.source_start,
                     self.rows_end,
                 );
+                Some(candidate)
+            } else if let Some((table, id, candidate)) = table_range {
+                self.table_range_next =
+                    view.next_table_row_fold(document, Some((table, id)), self.table_range_window);
                 Some(candidate)
             } else {
                 self.candidates.as_mut().unwrap().next_candidate(document)

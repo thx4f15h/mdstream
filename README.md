@@ -2180,7 +2180,38 @@ assert!(view.is_collapsed(rows)); // later is outside the fixed row interval
 
 设 R 为已注册行范围数：有序起点索引通过相邻项验证重叠、前驱查询查找点覆盖，注册 O(log R)、单点折叠与移除 O(log R + log F + log T)，不枚举覆盖行、列、字节或 tile。非空且不相交保证注册存储 O(正文行数)，反复切换不保留历史。追加最多刷新一个未完成行范围或一次旧 EOF 边界；叠加原有至多六个根章节与一张整表/代码块，保持既定增量复杂度。布局、导航、摘要和批量使用共享 Budget；直接注册、移除和单点切换是有限次数索引操作，和已有 `set_collapsed` 一样不自行驱动排版。占位高度归属范围起点 tile，完整隐藏内部使用区间遮蔽，边界及新可见内容按帧预算消费。
 
-`cargo run -p mdstream-core -r --example table_row_folding` 演示百万字末行、固定行范围、整表状态恢复及后续行可见性。真实表格边框、列宽、软换行、占位绘制，以及自动随新行延长的尾部策略仍由后续工作推进。
+`cargo run -p mdstream-core -r --example table_row_folding` 演示百万字末行、固定行范围、整表状态恢复及后续行可见性。该固定接口保持原合同；稳定 ID、live/重叠策略及实际终端入口见下节。
+
+## 稳定表格行策略与重叠范围
+
+终端按 `z` 后按 `t` 打开表格行子菜单，左右键返回原节点页。当前表可保留 0、1、3 或输入 N 个正文行（终端输入限 0…1000000）；第 0 行表头始终保留，分隔行不计正文。N 行之后是跟随该 `TableId` 的 live 尾，使用真实已索引行，包括 Growing 末行，不吸收尚未归入表格行的 pending 输入。新表默认值只初始化设置后确认的表格；既有表格和显式展开意愿不被重写。
+
+子菜单也支持真实选区创建 fixed overlay 或从正文行开始的 live 尾、封口、同 ID 重定向到选区、移除，以及逐个选择当前位置相交/本表全部注册 ID。短状态 `R12L T1 3..*` 表示 ID 12、表 1、从正文行 3 开始的 live 范围；`D` 为尚无合格行，`C` 为已闭合，`G` 为 fixed 的 Growing 末行，`E` 为封口后的空范围。20 列保留 ID/模式，操作文字与原六页菜单独立。范围可嵌套、交叉或同起点，分别保存意愿；表/祖先收起再展开不会改写它们。列 min/max、绝对列 pan、一次表头/边框和真实行计高仍走同一 FoldView。
+
+```rust
+use mdstream::*;
+let mut doc = Document::new();
+doc.append("| H |\n| - |\n| first |\n| hidden |\n")?;
+let mut view = FoldView::new(&doc, 1)?;
+let mut policy = TableRowRegistration::prefix(&doc, &view, TableId(0), 1)?;
+let result = policy.advance(&doc, &mut view, &mut Budget::new(WorkLimit {
+    queries: 1, objects: 1, ..Default::default()
+}))?;
+let Some(FoldId::TableRange(id)) = result.id else { unreachable!() };
+let update = doc.append("| later |\n")?;
+view.apply(&doc, &update)?;
+assert_eq!(view.table_row_fold_info(&doc, id)?.unwrap().rows, Some(2..4));
+let mut seal = TableRowEdit::seal(&doc, &view, id)?;
+seal.advance(&doc, &mut view, &mut Budget::new(WorkLimit::unlimited()))?;
+assert!(view.is_collapsed(FoldId::TableRange(id)));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`TableRowRegistration::{fixed_overlay,live,prefix}`、`TableRowEdit::{seal,retarget,remove}` 是绑定 Document、实际视图 owner、revision/version 的原子付费任务。零预算不分配 ID 或发表编辑；未完成任务可直接丢弃。ID 不复用，重定向不换表。封口保留 ID/意愿/预览：Growing 末行仍可增长，新行不加入；尚无合格正文行时保存精确的左亲和空源码锚点，后续输入不激活它。`TableRowCandidates::{all,intersecting}` 按预算逐个返回真实注册，不枚举行或复制全部相交集合。旧 `TableRows(TableRowRange)` 固定/不相交接口及其断言保持；显式 overlay 可与它重叠，旧接口新插入仍拒绝任何已注册行范围的交叠，精确重插入保持幂等。
+
+`FoldView::set_table_row_policy` 保存私有的新表默认策略，不给 `FoldDefaults` 增加必填字段；宿主对 `Update::new_tables` 驱动 `TableRowAutoFold`。终端队列每步使用共享 Budget，取消仅退役当时排队的任务，保留已生效选择。单点、预览、批量、搜索 Reveal、源码锚点及历史继续使用当前 FoldView 的高度和检查点，宽度 reset 保留意愿。完整占位源码并集先通过有预算的 frontier 查询确认；`y` 只复制一次最小 PH，`Y` 保留真实 CRLF/64 KiB 合同，搜索打开真正覆盖目标的 ID，而不是仅按 global PH owner 展开。
+
+同一表的 live 尾共用真实末行端点；fixed 范围按末行分组。每组的选中区间为嵌套关系，仅最早起点的代表进入已有全局区间并集和配对高度遮蔽。追加至多刷新当前 live 组和 Growing/旧 EOF fixed 端点组，不逐个刷新历史 live 注册。注册、编辑、查询和切换为固定数量的对数索引操作；大批默认初始化/批量操作逐帧付费。注册、当前组及索引占 O(当前范围数)，不保留 toggle 历史；core 不新增 runtime 依赖，保留 `forbid(unsafe_code)`。
 
 ## 表格前几行有界预览
 

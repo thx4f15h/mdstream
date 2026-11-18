@@ -395,7 +395,7 @@ fn oracle(doc: &Document, ids: &[FoldId]) -> String {
     let mut ranges: Vec<_> = ids
         .iter()
         .map(|&id| match id {
-            FoldId::TableRows(_) | FoldId::Source(_) => unreachable!(),
+            FoldId::TableRows(_) | FoldId::TableRange(_) | FoldId::Source(_) => unreachable!(),
             FoldId::Heading(id) => {
                 let h = doc.headings().get(id).unwrap();
                 let end = doc.headings().entries()[id.0 + 1..]

@@ -123,6 +123,11 @@ pub use fold_navigation::{
     FoldAnchor, FoldAnchorTarget, FoldNavigation, FoldNavigationPolicy, FoldNavigationProgress,
 };
 pub use fold_projection::{FoldProjection, FoldProjectionStep};
+pub use folding::table_row_folds::{
+    TableRowAutoFold, TableRowCandidateStep, TableRowCandidates, TableRowEdit, TableRowExtent,
+    TableRowFoldId, TableRowFoldInfo, TableRowFoldProgress, TableRowPolicy, TableRowRegistration,
+    TableRowWork,
+};
 pub use folding::{
     ContainerFoldFilter, FoldCandidate, FoldCandidates, FoldChange, FoldDefaults, FoldId,
     FoldLookup, FoldPlaceholder, FoldPreviewProgress, FoldView, FoldViewCompaction, TableRowRange,

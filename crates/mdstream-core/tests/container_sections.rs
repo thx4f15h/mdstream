@@ -107,7 +107,7 @@ fn model(doc: &Document, id: FoldId) -> (Span, Span) {
             );
             (source, source)
         }
-        FoldId::TableRows(_) | FoldId::Source(_) => unreachable!(),
+        FoldId::TableRows(_) | FoldId::TableRange(_) | FoldId::Source(_) => unreachable!(),
     }
 }
 fn order(source: Span, id: FoldId) -> (usize, usize, usize) {
