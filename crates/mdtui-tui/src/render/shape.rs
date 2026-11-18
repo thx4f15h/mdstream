@@ -63,6 +63,12 @@ fn merge(a: Mark, b: Mark) -> Mark {
 pub struct ShapeWork {
     pub source_decode_bytes: usize,
     pub classified_scalars: usize,
+    pub source_run_reads: usize,
+    pub source_index_nodes: usize,
+    pub native_source_capacity_bytes: usize,
+    pub source_indexed_bytes: usize,
+    pub source_summary_joins: usize,
+    pub html_state_steps: usize,
     pub input_node_visits: usize,
     pub property_replays: usize,
     pub width_state_transitions: usize,
@@ -76,6 +82,7 @@ pub struct ShapeWork {
     pub summary_hits: usize,
     pub recovered_guards: usize,
     pub scope_dependency_reads: usize,
+    pub index_nodes: usize,
     pub index_chunk_allocations: usize,
     pub index_reserved_bytes: usize,
     pub index_relocated_items: usize,
@@ -343,6 +350,8 @@ pub struct ShapeIndex {
     conditional_scopes: BTreeMap<usize, Span>,
     space: Properties,
     atoms: AppendStore<RawAtom>,
+    native_source: Option<mdtui3::DisplaySource>,
+    source_scalars: usize,
     positions: AppendStore<usize>,
     nodes: AppendStore<Node>,
     root: usize,
@@ -363,6 +372,10 @@ pub struct ShapeSeed {
     owner: Option<SharedShape>,
     revision: u64,
     source_at: usize,
+    indexed: bool,
+    source_ready: bool,
+    html_ready: bool,
+    html_after: Option<usize>,
     core: mdtui3::DisplayShapeSeed,
     done: bool,
 }
@@ -387,9 +400,64 @@ impl ShapeSeed {
             owner: None,
             revision: document.revision(),
             source_at: 0,
+            indexed: false,
+            source_ready: false,
+            html_ready: false,
+            html_after: None,
             core: document.display_shape_seed(),
             done: false,
         }
+    }
+    /// Adopt input-maintained source facts without decoding an unrelated prefix.
+    /// Native metadata/rollback adoption is identical to the ordinary seed.
+    pub(crate) fn indexed(document: &Document) -> Self {
+        Self {
+            indexed: true,
+            ..Self::new(document)
+        }
+    }
+    fn advance_source_index(
+        &mut self,
+        shape: &SharedShape,
+        document: &Document,
+        budget: &mut Budget,
+    ) -> Result<bool, LayoutError> {
+        if !self.source_ready {
+            if !paid(budget) {
+                return Ok(false);
+            }
+            let native = document.display_source();
+            let mut index = shape.0.borrow_mut();
+            index.source_scalars = native.len();
+            index.end = native.bytes();
+            index.positions[0] = index.end;
+            index.work.source_indexed_bytes = index.end;
+            index.html_scan = native.html_state();
+            index.native_source = Some(native);
+            index.capacity = index.source_scalars.max(LEAF).next_power_of_two();
+            let root = index.root;
+            index.nodes[root].hi = index.capacity;
+            let count = index.source_scalars;
+            index.nodes[root].raw = index.source_summary(0, count, false);
+            index.nodes[root].code = index.source_summary(0, count, true);
+            self.source_at = index.end;
+            self.source_ready = true;
+        }
+        while !self.html_ready {
+            if !paid(budget) {
+                return Ok(false);
+            }
+            let mut index = shape.0.borrow_mut();
+            let native = index.native_source.as_ref().unwrap();
+            if let Some(span) = native.next_html(self.html_after) {
+                index.html.insert(span.start, span);
+                index.fact(span, SemanticFact::Html(span.start))?;
+                self.html_after = Some(span.start);
+            } else {
+                self.html_ready = true;
+            }
+        }
+        Ok(true)
     }
     pub fn advance(
         &mut self,
@@ -418,6 +486,9 @@ impl ShapeSeed {
             return Ok(true);
         }
         self.owner.get_or_insert_with(|| shape.clone());
+        if self.indexed && !self.advance_source_index(shape, document, budget)? {
+            return Ok(false);
+        }
         while self.source_at < document.source().len() {
             let mut end =
                 (self.source_at + budget.remaining().bytes.min(256)).min(document.source().len());
@@ -470,11 +541,8 @@ impl ShapeSeed {
                     mark,
                     baseline,
                 } => {
-                    let lo = index.positions.partition_point(|&p| p < source.start);
-                    let hi = index
-                        .positions
-                        .partition_point(|&p| p < source.end)
-                        .min(index.atoms.len());
+                    let lo = index.lower_bound(source.start);
+                    let hi = index.lower_bound(source.end).min(index.atom_count());
                     let root = index.root;
                     if baseline {
                         index.seed_baseline(root, lo, hi, mark);
@@ -558,6 +626,11 @@ impl SharedShape {
     pub fn work(&self) -> ShapeWork {
         let index = self.0.borrow();
         let mut work = index.work;
+        work.native_source_capacity_bytes = index
+            .native_source
+            .as_ref()
+            .map_or(0, |s| s.stats().capacity_bytes);
+        work.index_nodes = index.nodes.len();
         work.index_chunk_allocations = index.atoms.allocations()
             + index.positions.allocations()
             + index.nodes.allocations()
@@ -604,8 +677,8 @@ impl SharedShape {
             }
         }
         let index = self.0.borrow();
-        let lo = index.positions.partition_point(|&p| p < source.start);
-        let hi = index.positions.partition_point(|&p| p < source.end);
+        let lo = index.lower_bound(source.start);
+        let hi = index.lower_bound(source.end);
         visit(&index, index.root, lo, hi)
     }
     pub(crate) fn semantic_clock(&self) -> u64 {
@@ -636,6 +709,8 @@ impl ShapeIndex {
             conditional_scopes: BTreeMap::new(),
             space: Properties::of(' '),
             atoms: AppendStore::default(),
+            native_source: None,
+            source_scalars: 0,
             positions: AppendStore::default(),
             nodes: AppendStore::default(),
             root: 0,
@@ -659,6 +734,59 @@ impl ShapeIndex {
         result.positions.push(0);
         result.root = result.node(0, LEAF, None);
         result
+    }
+    fn source_summary(&mut self, lo: usize, hi: usize, code: bool) -> Summary {
+        let mut work = mdtui3::DisplaySourceWork::default();
+        let answer = self
+            .native_source
+            .as_ref()
+            .unwrap()
+            .summary(lo, hi, code, &mut work);
+        self.work.source_index_nodes += work.query_nodes;
+        self.work.source_run_reads += work.query_runs;
+        self.work.source_summary_joins += work.summary_joins;
+        self.work.gcb_state_transitions += work.gcb_state_transitions;
+        self.work.width_state_transitions += work.width_state_transitions;
+        Summary {
+            gcb: answer.gcb,
+            width: answer.width,
+            bytes: answer.bytes,
+            scalars: answer.scalars,
+            ascii: answer.ascii,
+            first: answer.first,
+            last: answer.last,
+        }
+    }
+    fn atom_count(&self) -> usize {
+        self.source_scalars + self.atoms.len()
+    }
+    fn atom(&self, at: usize) -> RawAtom {
+        if at < self.source_scalars {
+            let atom = self.native_source.as_ref().unwrap().atom(at);
+            RawAtom {
+                source: atom.source,
+                ch: atom.scalar,
+                raw: atom.raw,
+                code: atom.code,
+                crlf: atom.crlf,
+            }
+        } else {
+            self.atoms[at - self.source_scalars]
+        }
+    }
+    fn position(&self, at: usize) -> usize {
+        if at < self.source_scalars {
+            self.native_source.as_ref().unwrap().position(at)
+        } else {
+            self.positions[at - self.source_scalars]
+        }
+    }
+    fn lower_bound(&self, byte: usize) -> usize {
+        if byte < self.positions[0] {
+            self.native_source.as_ref().unwrap().lower_bound(byte)
+        } else {
+            self.source_scalars + self.positions.partition_point(|&p| p < byte)
+        }
     }
     fn node(&mut self, lo: usize, hi: usize, parent: Option<usize>) -> usize {
         let id = self.nodes.len();
@@ -740,7 +868,7 @@ impl ShapeIndex {
         if span.start != self.end {
             return Err(LayoutError::StaleContinuation);
         }
-        let old_count = self.atoms.len();
+        let old_count = self.atom_count();
         let mut html = Vec::new();
         for (offset, ch) in source[span.range()].char_indices() {
             let start = span.start + offset;
@@ -753,7 +881,14 @@ impl ShapeIndex {
             } else {
                 raw
             };
-            let crlf = ch == '\n' && self.atoms.last().is_some_and(|a| a.ch == '\r');
+            let crlf = ch == '\n'
+                && if self.source_scalars == 0 {
+                    self.atoms.last().is_some_and(|a| a.ch == '\r')
+                } else {
+                    self.atom_count()
+                        .checked_sub(1)
+                        .is_some_and(|at| self.atom(at).ch == '\r')
+                };
             self.atoms.push(RawAtom {
                 crlf,
                 source: Span::new(start, start + ch.len_utf8()),
@@ -765,7 +900,7 @@ impl ShapeIndex {
             self.work.source_decode_bytes += ch.len_utf8();
             self.work.classified_scalars += 1;
         }
-        while self.atoms.len() > self.capacity {
+        while self.atom_count() > self.capacity {
             let old = self.root;
             let root = self.node(0, self.capacity * 2, None);
             let right = self.node(self.capacity, self.capacity * 2, Some(root));
@@ -775,8 +910,8 @@ impl ShapeIndex {
             self.capacity *= 2;
             self.refresh(root);
         }
-        if old_count < self.atoms.len() {
-            self.append_range(self.root, old_count, self.atoms.len(), old_count);
+        if old_count < self.atom_count() {
+            self.append_range(self.root, old_count, self.atom_count(), old_count);
         }
         self.end = span.end;
         if let Some(span) = self.html_scan.open(self.end) {
@@ -801,7 +936,7 @@ impl ShapeIndex {
         }
         if self.nodes[id].children.is_none() && self.nodes[id].hi - self.nodes[id].lo <= LEAF {
             for at in lo.max(self.nodes[id].lo)..hi.min(self.nodes[id].hi) {
-                let a = self.atoms[at];
+                let a = self.atom(at);
                 self.work.width_state_transitions += 264;
                 self.work.gcb_state_transitions += 48;
                 if let Some((ch, p)) = a.displayed(false) {
@@ -821,7 +956,7 @@ impl ShapeIndex {
         self.refresh(id);
     }
     fn split(&mut self, id: usize) {
-        self.split_to(id, self.atoms.len());
+        self.split_to(id, self.atom_count());
     }
     fn split_to(&mut self, id: usize, classified: usize) {
         if self.nodes[id].children.is_some() {
@@ -833,8 +968,19 @@ impl ShapeIndex {
         let a = self.node(lo, mid, Some(id));
         let b = self.node(mid, hi, Some(id));
         for child in [a, b] {
-            for at in self.nodes[child].lo..self.nodes[child].hi.min(classified) {
-                let atom = self.atoms[at];
+            let lo = self.nodes[child].lo;
+            let hi = self.nodes[child]
+                .hi
+                .min(classified)
+                .min(self.source_scalars);
+            if lo < hi {
+                self.nodes[child].raw = self.source_summary(lo, hi, false);
+                self.nodes[child].code = self.source_summary(lo, hi, true);
+            }
+            for at in
+                self.nodes[child].lo.max(self.source_scalars)..self.nodes[child].hi.min(classified)
+            {
+                let atom = self.atom(at);
                 if let Some((ch, p)) = atom.displayed(false) {
                     self.nodes[child].raw.push(p, ch, atom.source);
                 }
@@ -856,9 +1002,20 @@ impl ShapeIndex {
         self.nodes[id].children = Some([a, b]);
     }
     fn scalar(&self, byte: usize) -> Result<usize, LayoutError> {
-        self.positions
-            .binary_search(&byte)
-            .map_err(|_| LayoutError::InvalidRange)
+        if self.native_source.is_none() {
+            return self
+                .positions
+                .binary_search(&byte)
+                .map_err(|_| LayoutError::InvalidRange);
+        }
+        {
+            let at = self.lower_bound(byte);
+            if at <= self.atom_count() && self.position(at) == byte {
+                Ok(at)
+            } else {
+                Err(LayoutError::InvalidRange)
+            }
+        }
     }
     fn mark(&mut self, source: Span, mark: Mark) -> Result<(), LayoutError> {
         if mark == blank() {
@@ -1389,7 +1546,7 @@ impl ShapeIndex {
                 return None;
             }
             let at = this.scalar(info.source.start).ok()?;
-            Some(Span::new(info.source.start, this.positions[at + 1]))
+            Some(Span::new(info.source.start, this.position(at + 1)))
         };
         let old_image = old.and_then(|(info, active)| image(self, info, active));
         let new_image = image(self, info, active);
@@ -1404,7 +1561,7 @@ impl ShapeIndex {
         Ok(())
     }
     fn html_qualified(&self, source: Span) -> bool {
-        let at = self.positions.partition_point(|&p| p < source.start);
+        let at = self.lower_bound(source.start);
         let mut id = self.root;
         let mut mark = blank();
         let mut replaced = false;
@@ -1422,7 +1579,7 @@ impl ShapeIndex {
     }
     fn display_atom(&self, at: usize, id: usize, context: Context) -> Entity {
         let n = &self.nodes[id];
-        let atom = self.atoms[at];
+        let atom = self.atom(at);
         if self
             .pending_code
             .is_some_and(|p| p.start <= atom.source.start && atom.source.start < p.end)
@@ -1462,8 +1619,8 @@ impl ShapeIndex {
                 || context.code && matches!(atom.ch, '\r' | '\n');
             result.scalars = 1;
             result.chars[0] = if normalized { ' ' } else { atom.ch };
-            if normalized && atom.ch == '\n' && at > 0 && self.atoms[at - 1].ch == '\r' {
-                result.source.start = self.atoms[at - 1].source.start;
+            if normalized && atom.ch == '\n' && at > 0 && self.atom(at - 1).ch == '\r' {
+                result.source.start = self.atom(at - 1).source.start;
             }
             result.properties[0] = if normalized { self.space } else { atom.raw };
         }
@@ -1500,8 +1657,8 @@ impl ShapeIndex {
                     .any(|child| depends(index, child, lo, hi))
             })
         }
-        let lo = self.positions.partition_point(|&p| p < source.start);
-        let hi = self.positions.partition_point(|&p| p < source.end);
+        let lo = self.lower_bound(source.start);
+        let hi = self.lower_bound(source.end);
         if depends(self, self.root, lo, hi) {
             self.epoch
         } else {
@@ -1509,8 +1666,8 @@ impl ShapeIndex {
         }
     }
     fn semantic_version(&self, source: Span) -> u64 {
-        let lo = self.positions.partition_point(|&p| p < source.start);
-        let hi = self.positions.partition_point(|&p| p < source.end);
+        let lo = self.lower_bound(source.start);
+        let hi = self.lower_bound(source.end);
         fn range(index: &ShapeIndex, id: usize, lo: usize, hi: usize) -> u64 {
             let n = &index.nodes[id];
             if hi <= n.lo || n.hi <= lo {
@@ -1560,11 +1717,15 @@ impl ShapeIndex {
             self.nodes[id].resolved_style = Some(tag);
             return;
         }
-        if let Some(children) = n.children {
+        if n.children.is_none() && n.hi - n.lo > LEAF {
+            self.split(id);
+        }
+        if let Some(children) = self.nodes[id].children {
             for child in children {
                 self.style_in(child, lo, hi, tag);
             }
         } else {
+            let n = &self.nodes[id];
             let start = lo.max(n.lo) - n.lo;
             let end = hi.min(n.hi) - n.lo;
             let cells = self.nodes[id]
@@ -1896,9 +2057,11 @@ impl ShapeQuery {
                     let mut index = shape.0.borrow_mut();
                     index.work.query_nodes += 1;
                     let n = &index.nodes[id];
-                    let lo = index.positions[n.lo.min(index.atoms.len())];
-                    let hi = index.positions[n.hi.min(index.atoms.len())];
-                    if hi <= self.source.start || lo >= self.source.end || n.lo >= index.atoms.len()
+                    let lo = index.position(n.lo.min(index.atom_count()));
+                    let hi = index.position(n.hi.min(index.atom_count()));
+                    if hi <= self.source.start
+                        || lo >= self.source.end
+                        || n.lo >= index.atom_count()
                     {
                         let a = Answer::empty(f.input);
                         self.deliver(&mut index, a);
@@ -2085,8 +2248,8 @@ impl ShapeQuery {
                     let index = shape.0.borrow();
                     let n = &index.nodes[id];
                     let source = Span::new(
-                        index.positions[n.lo],
-                        index.positions[n.hi.min(index.atoms.len())],
+                        index.position(n.lo),
+                        index.position(n.hi.min(index.atom_count())),
                     );
                     let literal = f.literal_guard;
                     let image = if f.context.literal { None } else { n.image };
@@ -2177,8 +2340,10 @@ impl ShapeQuery {
                         let index = shape.0.borrow();
                         let n = &index.nodes[id];
                         let source = Span::new(
-                            index.positions[n.lo].max(self.source.start),
-                            index.positions[n.hi.min(index.atoms.len())].min(self.source.end),
+                            index.position(n.lo).max(self.source.start),
+                            index
+                                .position(n.hi.min(index.atom_count()))
+                                .min(self.source.end),
                         );
                         f.style_cursor = if self.kind == QueryKind::Gcb {
                             document.style_markers(source)
@@ -2204,9 +2369,10 @@ impl ShapeQuery {
                             index.work.style_buffer_peak_bytes =
                                 std::mem::size_of::<ResolvedStyleSpan>();
                             let n = &index.nodes[id];
-                            let begin = index.positions[n.lo].max(self.source.start);
-                            let end =
-                                index.positions[n.hi.min(index.atoms.len())].min(self.source.end);
+                            let begin = index.position(n.lo).max(self.source.start);
+                            let end = index
+                                .position(n.hi.min(index.atom_count()))
+                                .min(self.source.end);
                             f.style = Some(style);
                             if !f.style_mixed && style.source == Span::new(begin, end) {
                                 f.stage = Stage::Gate(0);
@@ -2314,6 +2480,17 @@ impl ShapeQuery {
                     f.stage = Stage::Gate(at + 1);
                 }
                 Stage::Contents => {
+                    {
+                        let mut index = shape.0.borrow_mut();
+                        if index.nodes[id].children.is_none()
+                            && index.nodes[id].hi - index.nodes[id].lo > LEAF
+                        {
+                            if !paid(budget) {
+                                return Ok(None);
+                            }
+                            index.split(id);
+                        }
+                    }
                     shape.0.borrow_mut().remember(id, f.context, f.replacement);
                     let index = shape.0.borrow();
                     let n = &index.nodes[id];
@@ -2366,7 +2543,7 @@ impl ShapeQuery {
                         f.offset -= 1;
                         f.offset
                     };
-                    let atom = index.atoms[at];
+                    let atom = index.atom(at);
                     if atom.source.end <= self.source.start || atom.source.start >= self.source.end
                     {
                         continue;
@@ -2539,7 +2716,7 @@ impl ShapeReader {
             // A saved suffix cut is also a traversal bound. Filtering only
             // after display_atom would re-read every old prefix on each
             // Extend batch even though the wire sent only the suffix.
-            let (cut_lo, cut_hi) = self.cut.map_or((0, index.atoms.len()), |(start, end)| {
+            let (cut_lo, cut_hi) = self.cut.map_or((0, index.atom_count()), |(start, end)| {
                 (start.atom, end.atom + usize::from(end.part != 0))
             });
             if n.hi <= cut_lo || cut_hi <= n.lo {
@@ -2547,17 +2724,17 @@ impl ShapeReader {
                 continue;
             }
             if index.pending_code.is_some_and(|p| {
-                p.start <= index.positions[n.lo.min(index.atoms.len())]
-                    && index.positions[n.hi.min(index.atoms.len())] <= p.end
+                p.start <= index.position(n.lo.min(index.atom_count()))
+                    && index.position(n.hi.min(index.atom_count())) <= p.end
             }) {
                 self.stack.pop();
                 continue;
             }
 
             if f.offset.is_none() {
-                let lo = index.positions[n.lo.min(index.atoms.len())];
-                let hi = index.positions[n.hi.min(index.atoms.len())];
-                if hi <= self.source.start || lo >= self.source.end || n.lo >= index.atoms.len() {
+                let lo = index.position(n.lo.min(index.atom_count()));
+                let hi = index.position(n.hi.min(index.atom_count()));
+                if hi <= self.source.start || lo >= self.source.end || n.lo >= index.atom_count() {
                     self.stack.pop();
                     continue;
                 }
@@ -2639,18 +2816,15 @@ impl ShapeReader {
                     ]);
                     continue;
                 }
-                f.offset = Some(
-                    n.lo.max(cut_lo)
-                        .max(index.positions.partition_point(|&p| p < self.source.start)),
-                );
+                f.offset = Some(n.lo.max(cut_lo).max(index.lower_bound(self.source.start)));
             }
             let at = f.offset.unwrap();
-            if at >= n.hi.min(index.atoms.len()).min(cut_hi) {
+            if at >= n.hi.min(index.atom_count()).min(cut_hi) {
                 self.stack.pop();
                 continue;
             }
             f.offset = Some(at + 1);
-            let atom = index.atoms[at];
+            let atom = index.atom(at);
             if atom.source.end <= self.source.start || atom.source.start >= self.source.end {
                 drop(index);
                 self.shape.0.borrow_mut().work.reader_atom_reads += 1;
@@ -2832,6 +3006,17 @@ impl ShapeSelect {
                 self.state = state.0;
                 self.part += 1;
                 continue;
+            }
+            {
+                let mut index = shape.0.borrow_mut();
+                if index.nodes[self.node].children.is_none()
+                    && index.nodes[self.node].hi - index.nodes[self.node].lo > LEAF
+                {
+                    if !paid(budget) {
+                        return Ok(None);
+                    }
+                    index.split(self.node);
+                }
             }
             let index = shape.0.borrow();
             let node = &index.nodes[self.node];
@@ -3015,11 +3200,11 @@ impl ShapeCluster {
         }
         let (start, end) = (self.start.unwrap(), self.end.unwrap());
         let index = shape.0.borrow();
-        let a = index.positions[start.atom];
+        let a = index.position(start.atom);
         let b = if end.part == 0 {
-            index.positions[end.atom]
+            index.position(end.atom)
         } else {
-            index.atoms[end.atom].source.end
+            index.atom(end.atom).source.end
         };
         let source = Span::new(a, b);
         drop(index);
@@ -3108,7 +3293,7 @@ impl ShapeCluster {
                 }
             }
         }
-        let first_raw_source = shape.0.borrow().atoms[first.atom].source;
+        let first_raw_source = shape.0.borrow().atom(first.atom).source;
         let envelope = Span::new(
             metrics.first.ok_or(LayoutError::InvalidRange)?.start,
             metrics.last.ok_or(LayoutError::InvalidRange)?.end,
@@ -3357,7 +3542,7 @@ impl ShapeWindow {
                 return Ok(ShapeWindowStep::Complete);
             }
             if glyph.end.part == 0
-                && shape.0.borrow().positions[glyph.end.atom] >= self.requested.end
+                && shape.0.borrow().position(glyph.end.atom) >= self.requested.end
             {
                 self.done = true;
             }

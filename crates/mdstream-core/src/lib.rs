@@ -30,6 +30,14 @@ mod destination;
 mod display;
 mod display_search;
 mod display_shape;
+mod display_source;
+#[doc(hidden)]
+pub mod display_source_html;
+#[doc(hidden)]
+pub mod display_source_unicode;
+pub use display_source::{
+    DisplaySource, DisplaySourceAtom, DisplaySourceStats, DisplaySourceSummary, DisplaySourceWork,
+};
 mod entity;
 mod excerpt;
 mod fold_batch;
@@ -297,6 +305,7 @@ pub struct Document {
     clock: std::sync::Arc<symbol_context::Clock>,
     host_clock: Option<std::sync::Arc<symbol_context::Clock>>,
     source: String,
+    source_scalars: display_source::DisplaySource,
     tiles: Vec<Span>,
     blocks: Vec<Block>,
     // Source-ordered candidates, excluding blank/definition blocks.
@@ -838,6 +847,7 @@ impl Document {
             .store(self.revision, std::sync::atomic::Ordering::Relaxed);
         update.revision = self.revision;
         self.source.push_str(text);
+        self.source_scalars.append(text, old_end);
         self.shape
             .emit(DisplayShapeEffectKind::SourceAppend(Span::new(
                 old_end,

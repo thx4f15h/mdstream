@@ -72,6 +72,43 @@ mod unix {
         }
     }
     #[test]
+    fn actual_file_middle_selection_y_y_keeps_visible_and_raw_source_bytes() {
+        let workspace = TempWorkspace::new().unwrap();
+        let prefix = "abcdefghij".repeat(8192);
+        let source = format!("{prefix}\n\na **b&amp;c** d\n\n$$\nx+y\n$$\n\nREADY_END\n");
+        let path = workspace.write("cold-copy.md", &source).unwrap();
+        let mut command = pty::command(env!("CARGO_BIN_EXE_mdtui-tui"));
+        command.arg(&path);
+        let size = pty::PTY_80X24;
+        let mut session = pty::spawn(command, size).unwrap();
+        wait(&mut session, size, |s| s.starts_with("abcdefghij"));
+        session.send(b"\x1b[F").unwrap();
+        wait(&mut session, size, |s| s.contains("READY_END"));
+        session.send(b"/b&c").unwrap();
+        wait(&mut session, size, |s| s.contains("/b&c | Enter: search"));
+        session.send(b"\r").unwrap();
+        wait(&mut session, size, |s| {
+            s.contains("a b&c d") && s.contains("match")
+        });
+        session.send(b"v ").unwrap();
+        wait(&mut session, size, |s| s.contains("SELECT EXTEND"));
+        for _ in 0..6 {
+            session.send(b"\x1b[C").unwrap();
+        }
+        let selected_end = prefix.len() + 2 + 15;
+        wait(&mut session, size, |s| {
+            s.contains(&format!("{}..{selected_end}", prefix.len() + 2))
+        });
+        session.send(b"y").unwrap();
+        assert_eq!(packets(&mut session, 1)[0], b"a b&c d");
+        wait(&mut session, size, |s| s.contains("clipboard request sent"));
+        session.send(b"Y").unwrap();
+        assert_eq!(packets(&mut session, 2)[1], b"a **b&amp;c** d");
+        session.send(b"q").unwrap();
+        assert!(session.wait(Duration::from_secs(2)).unwrap().success());
+    }
+
+    #[test]
     fn actual_cli_selection_clipboard_search_q_navigation_follow_resize_and_held_writer_exit() {
         let workspace = TempWorkspace::new().unwrap();
         let fifo = workspace.path().join("reading.fifo");

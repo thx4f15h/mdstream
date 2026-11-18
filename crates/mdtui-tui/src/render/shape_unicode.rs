@@ -1,61 +1,5 @@
-//! Fixed, composable Unicode machines. Classification never traverses Unicode
-//! at runtime. GCB17 and non-CJK width18 deliberately have different versions.
-#[path = "shape_tables.rs"]
-mod tables;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Properties {
-    pub gcb: u8,
-    pub width: u16,
-}
-impl Properties {
-    pub fn of(ch: char) -> Self {
-        let code = ch as u32;
-        let at = tables::PROPS.partition_point(|&(_, end, _, _)| end < code);
-        let (_, _, gcb, width) = tables::PROPS[at];
-        Self { gcb, width }
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct GcbState(pub u8);
-impl GcbState {
-    pub fn push(&mut self, properties: Properties) -> bool {
-        let value = tables::GCB[usize::from(self.0)][usize::from(properties.gcb)];
-        self.0 = value & 127;
-        value & 128 != 0
-    }
-}
-
-/// Reverse width fold as a forward append transducer: W(xc)=W(x)∘W(c).
-/// Every entry is maintained on input, while range queries read one entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct WidthSummary {
-    pub out: [u8; 132],
-    pub delta: [i64; 132],
-}
-impl Default for WidthSummary {
-    fn default() -> Self {
-        Self {
-            out: std::array::from_fn(|i| i as u8),
-            delta: [0; 132],
-        }
-    }
-}
-impl WidthSummary {
-    pub fn push(&mut self, properties: Properties) {
-        let transitions = &tables::WIDTH[usize::from(properties.width)];
-        let old = self.clone();
-        for (i, &transition) in transitions.iter().enumerate() {
-            let state = usize::from(transition & 255);
-            self.out[i] = old.out[state];
-            self.delta[i] = old.delta[state] + i64::from(transition >> 8) - 8;
-        }
-    }
-    pub fn width(&self) -> usize {
-        self.delta[0].max(0) as usize
-    }
-}
+//! The input index and TUI queries use the same Unicode transducers.
+pub(crate) use mdtui3::display_source_unicode::{GcbState, GcbSummary, Properties, WidthSummary};
 
 /// Sequential per-EGC measurement, retaining fixed metadata instead of an
 /// unfinished String. Used by table measurement of already-paid display runs.
@@ -145,49 +89,6 @@ mod tests {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct GcbSummary {
-    pub out: [u8; 24],
-    pub breaks: [usize; 24],
-}
-impl Default for GcbSummary {
-    fn default() -> Self {
-        Self {
-            out: std::array::from_fn(|i| i as u8),
-            breaks: [0; 24],
-        }
-    }
-}
-impl GcbSummary {
-    pub fn push(&mut self, properties: Properties) {
-        for i in 0..24 {
-            let next = tables::GCB[usize::from(self.out[i])][usize::from(properties.gcb)];
-            self.out[i] = next & 127;
-            self.breaks[i] += usize::from(next & 128 != 0);
-        }
-    }
-    pub fn join(left: &Self, right: &Self) -> Self {
-        Self {
-            out: std::array::from_fn(|i| right.out[usize::from(left.out[i])]),
-            breaks: std::array::from_fn(|i| {
-                left.breaks[i] + right.breaks[usize::from(left.out[i])]
-            }),
-        }
-    }
-}
-impl WidthSummary {
-    pub fn join(left: &Self, right: &Self) -> Self {
-        Self {
-            out: std::array::from_fn(|i| left.out[usize::from(right.out[i])]),
-            delta: std::array::from_fn(|i| right.delta[i] + left.delta[usize::from(right.out[i])]),
-        }
-    }
-    pub fn entry(properties: Properties, input: u8) -> (u8, i64) {
-        let value = tables::WIDTH[usize::from(properties.width)][usize::from(input)];
-        ((value & 255) as u8, i64::from(value >> 8) - 8)
-    }
-}
-
 #[cfg(test)]
 mod independent_oracles {
     use super::*;
@@ -252,9 +153,9 @@ mod independent_oracles {
                 "per GCB {text:?}"
             );
         }
-        let mut seen = vec![false; tables::WIDTH.len()];
+        let mut seen = vec![false; mdtui3::display_source_unicode::width_class_count()];
         let mut pool = Vec::new();
-        for &(start, _, _, width) in tables::PROPS {
+        for &(start, _, _, width) in mdtui3::display_source_unicode::property_ranges() {
             if !seen[usize::from(width)] {
                 seen[usize::from(width)] = true;
                 pool.push(char::from_u32(start).unwrap());

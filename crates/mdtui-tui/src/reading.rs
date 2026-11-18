@@ -1100,6 +1100,12 @@ impl CopyTask {
                 self.direct_at += 1;
             }
         } else {
+            if !links
+                .prepare_shape_indexed(document, budget)
+                .map_err(|_| "copy source changed")?
+            {
+                return Ok(false);
+            }
             if self.layout.is_none() && self.projection_start.is_none() {
                 if let Some(owner) = owner.as_ref().filter(|owner| owner.view().has_collapsed()) {
                     let anchor = mdtui3::FoldAnchor::new(document, self.source.start)
@@ -1921,6 +1927,188 @@ mod tests {
         }
         tools.cancel(&links);
         assert!(tools.search.is_none());
+    }
+
+    #[test]
+    fn cold_small_middle_copies_reuse_native_source_summaries_on_varied_inputs() {
+        for (label, unit) in [
+            ("ascii", "abcdefghijklmnopqrstuvwxyz"),
+            ("utf8", "a界é中b한ç語"),
+        ] {
+            for repeats in [1024, 4096, 16384] {
+                let source = unit.repeat(repeats);
+                let mut doc = Document::new();
+                doc.append(&source).unwrap();
+                doc.finish();
+                let at = unit.len() * (repeats / 2);
+                let selected = Span::new(at, at + unit.len());
+                let links = SharedLinks::new(&doc);
+                let input = doc.display_source_stats();
+                let mut tables = TableWidthCache::new(&doc);
+                tables.set_links(links.clone());
+                let mut copy = CopyTask::new(&doc, selected, CopyKind::Visible, 23);
+                let mut packet = Vec::new();
+                let mut bytes = 0;
+                let mut objects = 0;
+                let mut frames = 0;
+                let mut zero = Budget::new(WorkLimit::default());
+                assert!(
+                    !copy
+                        .advance(&doc, &links, &mut zero, &mut packet, &mut tables)
+                        .unwrap()
+                );
+                assert!(links.shape().is_none());
+                assert_eq!(zero.used(), WorkLimit::default());
+                for frame in 0..1000 {
+                    let mut budget = Budget::new(WorkLimit {
+                        queries: 1000,
+                        objects: 1000,
+                        bytes: 8192,
+                        tiles: 8,
+                        dependencies: 1000,
+                        recovery: 1000,
+                    });
+                    let done = copy
+                        .advance(&doc, &links, &mut budget, &mut packet, &mut tables)
+                        .unwrap();
+                    bytes += budget.used().bytes;
+                    objects += budget.used().objects;
+                    frames = frame + 1;
+                    if done {
+                        break;
+                    }
+                    assert!(packet.is_empty());
+                }
+                assert_eq!(
+                    decode(&packet),
+                    unit.as_bytes(),
+                    "{label} repeats={repeats}"
+                );
+                let work = links.shape().unwrap().work();
+                assert_eq!(work.source_decode_bytes, 0);
+                assert_eq!(work.classified_scalars, 0);
+                assert_eq!(
+                    doc.display_source_stats(),
+                    input,
+                    "copy does not mutate its shared native source owner"
+                );
+                let scanned = copy
+                    .layout
+                    .as_ref()
+                    .unwrap()
+                    .scanner()
+                    .stats()
+                    .scanned_bytes;
+                assert!(scanned < 128 * 1024);
+                assert!(bytes < 2 * 1024 * 1024);
+                assert!(
+                    work.source_run_reads <= 20 * 512,
+                    "only the fixed edge leaves: {work:?}"
+                );
+                assert!(
+                    work.source_index_nodes <= 128 * (input.scalars.ilog2() as usize + 1),
+                    "native range work grows with tree height: {work:?}"
+                );
+                assert!(work.source_summary_joins < 30_000);
+                println!(
+                    "cold copy {label}: source={} frames={frames} work_bytes={bytes} objects={objects} scanned={scanned} shape_capacity={} input={input:?} shape={work:?}",
+                    source.len(),
+                    links.shape().unwrap().capacity_bytes()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cold_copy_micro_budget_keeps_complete_native_atoms_and_long_clusters() {
+        let marks = "\u{301}".repeat(5000);
+        let giant_raw = format!("a&#x301;{marks}");
+        let giant_visible = format!("a\u{301}{marks}");
+        for (raw, visible) in [
+            ("&fjlig;".to_owned(), "fj".to_owned()),
+            ("` x  y `".to_owned(), "x  y".to_owned()),
+            (
+                "![A &amp; 界](x) ![](x)".to_owned(),
+                "A & 界 [image]".to_owned(),
+            ),
+            (
+                "\\*x\\* &NotEqualTilde; &fjlig;".to_owned(),
+                "*x* ≂̸ fj".to_owned(),
+            ),
+            (giant_raw, giant_visible),
+        ] {
+            let prefix = format!("{}\n\n", "ab".repeat(32768));
+            let source = format!("{prefix}{raw}\n");
+            let mut doc = Document::new();
+            doc.append(&source).unwrap();
+            doc.finish();
+            let input = doc.display_source_stats();
+            let selected = Span::new(prefix.len(), prefix.len() + raw.len());
+            let links = SharedLinks::new(&doc);
+            let mut tables = TableWidthCache::new(&doc);
+            tables.set_links(links.clone());
+            for (kind, expected) in [
+                (CopyKind::Visible, visible.as_bytes()),
+                (CopyKind::Source, raw.as_bytes()),
+            ] {
+                let mut task = CopyTask::new(&doc, selected, kind, 80);
+                let mut packet = Vec::new();
+                let mut bytes = 0;
+                let mut frames = 0;
+                let mut max_nodes = 0;
+                let mut max_runs = 0;
+                let mut max_joins = 0;
+                for _ in 0..200_000 {
+                    let old = links.shape().map(|shape| shape.work()).unwrap_or_default();
+                    let mut zero = Budget::new(WorkLimit::default());
+                    let wire_before = packet.len();
+                    assert!(
+                        !task
+                            .advance(&doc, &links, &mut zero, &mut packet, &mut tables)
+                            .unwrap()
+                    );
+                    assert_eq!(zero.used(), WorkLimit::default());
+                    assert_eq!(packet.len(), wire_before);
+                    assert_eq!(
+                        links.shape().map(|shape| shape.work()).unwrap_or_default(),
+                        old
+                    );
+                    let mut budget = Budget::new(tiny());
+                    let done = task
+                        .advance(&doc, &links, &mut budget, &mut packet, &mut tables)
+                        .unwrap();
+                    let used = budget.used();
+                    bytes += used.bytes;
+                    frames += 1;
+                    assert!(
+                        used.queries <= 1
+                            && used.objects <= 1
+                            && used.bytes <= 6
+                            && used.tiles <= 1
+                    );
+                    let now = links.shape().map(|shape| shape.work()).unwrap_or_default();
+                    max_nodes = max_nodes.max(now.source_index_nodes - old.source_index_nodes);
+                    max_runs = max_runs.max(now.source_run_reads - old.source_run_reads);
+                    max_joins = max_joins.max(now.source_summary_joins - old.source_summary_joins);
+                    if done {
+                        break;
+                    }
+                    assert!(packet.is_empty(), "prepare atomically before OSC52");
+                }
+                assert_eq!(decode(&packet), expected);
+                assert!(bytes < 2 * 1024 * 1024);
+                assert!(max_runs <= 4 * 512 && max_joins <= 8192 && max_nodes <= 256);
+                assert_eq!(doc.display_source_stats(), input);
+                if kind == CopyKind::Visible {
+                    assert_eq!(links.shape().unwrap().work().source_decode_bytes, 0);
+                }
+                println!(
+                    "cold micro {kind:?}: selection={} output={} frames={frames} work_bytes={bytes} max_source_nodes={max_nodes} max_source_runs={max_runs} max_source_joins={max_joins}",
+                    raw.len(),
+                    expected.len()
+                );
+            }
+        }
     }
 
     #[test]

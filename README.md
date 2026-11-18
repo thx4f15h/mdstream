@@ -4288,7 +4288,7 @@ assert_eq!(text, "a\n\nb\n");
 
 ## 完整超长字素绘制
 
-实际终端读取器现以完整显示 EGC 为绘制单位，超长 combining、ZWJ、RI 上下文不再生成窗口超限占位。普通段落、引用、列表、标题、代码和表格共用 TUI 的 `SharedShape`；分割输入先处理真实 Markdown 显示效果，再按 GCB 分段。隐藏标记、实体/escape、代码空白、tab/CRLF、图片 alt 和当前条件引用都影响显示序列。样式与 LinkId 取首个实际可见标量，源码保留整个字素的真实包络；读 payload 通过索引跳过包络内的语法间隙，不回扫原始包络。块、表格 cell 和显式 projection fragment 是 GCB 上下文屏障。核心库仍零运行时依赖并禁止 unsafe，Unicode 宽度策略只在 TUI。
+实际终端读取器现以完整显示 EGC 为绘制单位，超长 combining、ZWJ、RI 上下文不再生成窗口超限占位。普通段落、引用、列表、标题、代码和表格共用 TUI 的 `SharedShape`；分割输入先处理真实 Markdown 显示效果，再按 GCB 分段。隐藏标记、实体/escape、代码空白、tab/CRLF、图片 alt 和当前条件引用都影响显示序列。样式与 LinkId 取首个实际可见标量，源码保留整个字素的真实包络；读 payload 通过索引跳过包络内的语法间隙，不回扫原始包络。块、表格 cell 和显式 projection fragment 是 GCB 上下文屏障。核心库仍零运行时依赖并禁止 unsafe；原始源码摘要与 TUI 复用同一份固定 Unicode 机器，终端排版继续由 TUI 决定。
 
 `unicode-segmentation = 1.13.3` 对应 Unicode 17，`unicode-width = 0.2.3` 对应 Unicode 18，两者版本刻意不同。固定生成的 24 状态 GCB / 132 状态非 CJK width 机器及属性范围在启动或帧内不遍历 Unicode 全域；离线复现、上游来源哈希与许可见 [Unicode 数据说明](data/unicode/README.md)。宽度采用既有固定字符政策，并对每个真实 EGC 上限两列；原始未截断 width transducer 另与锁定 crate 独立对照。官方 GraphemeBreakTest17 的 766 例、2,000 份随机组合、长 EP Extend* ZWJ EP 的旧 3 列/新 2 列反例都由实际测试固定。
 
@@ -4319,3 +4319,9 @@ assert_eq!(text, "a\n\nb\n");
 已解析source的分预算采用也不能把旧Vec整体搬移藏在一个步骤里。atoms/positions/nodes及first-save索引现用固定目录的指数分块，位运算O(1)寻址，增长只申请新的未初始化chunk，不realloc或复制旧元素。replacement目录改用当前BTreeMap；单个replacement的保存节点仍为固定数量区间的O(logN)canonical分解。每步至多256个新source bytes（微预算时至多6）分类，维护的132-state转换及固定O(logN)树操作分别计数；chunk容量申请单列，不把allocator延迟/新保留地址空间称为硬CPU或malloc字节预算。131073字节实际采用、100000个不可Clone元素与指针稳定测试覆盖增长边界，old_items_relocated为0；取消seed保留宿主当前index，native undo scratch逐预算退休。孤立字素跨append ACK现在同步更新front行来源，根原三批256/512/768包络探针与64批不重发测试通过。
 
 取消按UTF8标量而非replacement atom收尾：一个实体可同时产生两个标量，旧路径会在q后多发第二个标量。`&NotEqualTilde;`的真实红例现在只补齐U2242的两字节尾部，不发送后续U0338。OSC8控制串也按完整UTF8边界暂存至多8字节，实际write继续受当前byte credit限制；8种chunk对齐、单字节短写/EAGAIN与q回归验证最多3个当前标量尾字节。固定cleanup的实际长度为NoOsc8模式15字节、允许OSC8模式22字节，与终端最后的session恢复操作分账。
+
+### 大段落中部小选区的有界复制
+
+`Document` 输入时维护共享的 `DisplaySource` 原始源码索引，定型页保存同一套 GCB/width 摘要。已解析 `Utf8Document` 接入与冷 Reading 复制采用它的范围摘要，避免为了局部选区重新解码无关前缀；原生语义 seed 仍按共享预算读取样式、实体、HTML 与对象元数据。后续追加保留原生前缀与新增后缀的源坐标，y 复制显示文本、Y 复制真实源码的既有操作不变。
+
+输入累计 O(n log n)、持久空间 O(n)；局部冷路径保守为 O(log² n) 元数据工作加实际局部和输出工作，不能将逻辑覆盖字节当作实际扫描，也不承诺任意稠密 Markdown 的准备时间恒定。`display_source_stats` 与 `SharedShape::work` 分开报告输入维护、范围操作、形状索引和实际 capacity；它们不包括全部 allocator 开销或进程 RSS。原始64MiB中部选区、真实OSC52及组合门禁记录见[交付](DONE.md#2026-11-18-大段落中部小选区的有界复制)。

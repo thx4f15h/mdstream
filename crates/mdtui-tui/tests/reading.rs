@@ -1474,6 +1474,152 @@ fn raw_clipboard_waits_for_a_true_giant_boundary_and_never_cancels_pure_extend()
         "copy did not cancel/repaint the existing glyph"
     );
 }
+
+#[test]
+fn native_cold_reading_y_y_keeps_selection_direction_and_the_same_math_fold_view() {
+    fn cold_engine(source: &str) -> StreamEngine {
+        let mut document = mdtui3::Utf8Document::new();
+        document.append(source.as_bytes()).unwrap();
+        document.finish();
+        let runtime = FrameRuntime::from_utf8_document(
+            document,
+            FrameGeometry {
+                rows: 8,
+                cols: 64,
+                content_width: 64,
+            },
+            LinkMode::NoOsc8,
+        )
+        .unwrap();
+        let mut engine = StreamEngine::new(runtime);
+        paint(&mut engine);
+        engine
+    }
+    fn settle_fold(engine: &mut StreamEngine) {
+        for _ in 0..1000 {
+            paint(engine);
+            if !engine.runtime().fold_pending() {
+                return;
+            }
+        }
+        panic!("fold operation did not settle");
+    }
+    for reverse in [false, true] {
+        let source = "a **b&amp;c** d\n";
+        let mut engine = cold_engine(source);
+        let mut app = AppState::default();
+        let input = engine.runtime().document().display_source_stats();
+        let shape = engine.runtime().viewport().shared_links().shape().unwrap();
+        assert_eq!(shape.work().source_decode_bytes, 0);
+        key(&mut app, &mut engine, KeyCode::Char('v'));
+        if reverse {
+            for _ in 0..6 {
+                key(&mut app, &mut engine, KeyCode::Right);
+            }
+        }
+        key(&mut app, &mut engine, KeyCode::Char(' '));
+        for _ in 0..6 {
+            key(
+                &mut app,
+                &mut engine,
+                if reverse {
+                    KeyCode::Left
+                } else {
+                    KeyCode::Right
+                },
+            );
+        }
+        assert_eq!(
+            engine.runtime().reading().selection.range(),
+            Some(Span::new(0, 15))
+        );
+        key(&mut app, &mut engine, KeyCode::Char('y'));
+        assert_eq!(clipboard(&finish_task(&mut engine)), b"a b&c d");
+        key(&mut app, &mut engine, KeyCode::Char('Y'));
+        assert_eq!(clipboard(&finish_task(&mut engine)), b"a **b&amp;c** d");
+        assert_eq!(engine.runtime().document().display_source_stats(), input);
+    }
+    let mut engine = cold_engine("$x+y$\n");
+    let mut app = AppState::default();
+    key(&mut app, &mut engine, KeyCode::Char('v'));
+    key(&mut app, &mut engine, KeyCode::Char(' '));
+    for _ in 0..2 {
+        key(&mut app, &mut engine, KeyCode::Right);
+    }
+    key(&mut app, &mut engine, KeyCode::Char('y'));
+    assert_eq!(clipboard(&finish_task(&mut engine)), b"x+y");
+    let source = "$$\n\\sin+x\n$$\n\ntail &amp; 界\n";
+    let mut engine = cold_engine(source);
+    let id = mdtui3::FoldId::Math(mdtui3::BlockId(0));
+    let candidate = engine.runtime().document().fold_candidate(id).unwrap();
+    // The accepted native math consumer paints command aliases and copies
+    // their whole source atom before the same FoldView is collapsed.
+    let expanded = (0..8)
+        .map(|row| {
+            (0..64)
+                .map(|col| {
+                    engine
+                        .screen()
+                        .front_cell(row, col)
+                        .unwrap()
+                        .text()
+                        .collect_text()
+                })
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(expanded.contains("tail & 界"), "{expanded}");
+    assert!(expanded.contains("sin+x"), "{expanded}");
+    key(&mut app, &mut engine, KeyCode::Char('v'));
+    assert_eq!(
+        engine.runtime().reading().selection.range(),
+        Some(Span::new(3, 7))
+    );
+    key(&mut app, &mut engine, KeyCode::Char('y'));
+    assert_eq!(clipboard(&finish_task(&mut engine)), b"sin");
+    key(&mut app, &mut engine, KeyCode::Char('Y'));
+    assert_eq!(clipboard(&finish_task(&mut engine)), br"\sin");
+    key(&mut app, &mut engine, KeyCode::Esc);
+    engine.runtime_mut().open_fold_menu(false);
+    settle_fold(&mut engine);
+    engine.runtime_mut().fold_menu_key(KeyCode::Right);
+    engine.runtime_mut().fold_menu_key(KeyCode::Down);
+    engine.runtime_mut().fold_menu_key(KeyCode::Down);
+    assert!(engine.runtime_mut().fold_menu_key(KeyCode::Enter));
+    settle_fold(&mut engine);
+    assert!(engine.runtime().viewport().folds().is_collapsed(id));
+    assert!(engine.runtime_mut().fold_menu_key(KeyCode::Esc));
+    paint(&mut engine);
+    key(&mut app, &mut engine, KeyCode::Home);
+    paint(&mut engine);
+    let version = engine.runtime().viewport().folds().version();
+    key(&mut app, &mut engine, KeyCode::Char('v'));
+    assert_eq!(
+        engine.runtime().reading().selection.range(),
+        Some(candidate.hidden)
+    );
+    key(&mut app, &mut engine, KeyCode::Char('y'));
+    assert_eq!(
+        clipboard(&finish_task(&mut engine)),
+        format!(
+            "[+ math 0 {}..{}]",
+            candidate.source.start, candidate.source.end
+        )
+        .as_bytes()
+    );
+    key(&mut app, &mut engine, KeyCode::Char('Y'));
+    assert_eq!(
+        clipboard(&finish_task(&mut engine)),
+        &source.as_bytes()[candidate.hidden.range()]
+    );
+    assert_eq!(engine.runtime().viewport().folds().version(), version);
+    assert_eq!(
+        engine.runtime().reading().selection.range(),
+        Some(candidate.hidden)
+    );
+}
+
 #[test]
 fn actual_math_reading_search_and_copy_keep_post_tex_atom_root_source() {
     let source = "\\(\\alpha{}́\\)\n\nplain tail\n";
@@ -1952,4 +2098,56 @@ fn an_unrelated_math_object_preserves_ordinary_hit_source_and_resize_lifetime() 
             );
         }
     }
+}
+
+#[test]
+fn cold_native_prefix_then_live_suffix_keeps_entity_source_range_and_copy() {
+    let prefix = format!("{}\n\n", "ab".repeat(16384));
+    let suffix = "tail &amp; 界\n";
+    let mut document = mdtui3::Utf8Document::new();
+    document.append(prefix.as_bytes()).unwrap();
+    let runtime = FrameRuntime::from_utf8_document(
+        document,
+        FrameGeometry {
+            rows: 8,
+            cols: 64,
+            content_width: 64,
+        },
+        LinkMode::NoOsc8,
+    )
+    .unwrap();
+    let mut engine = StreamEngine::new(runtime);
+    paint(&mut engine);
+    let shape = engine.runtime().viewport().shared_links().shape().unwrap();
+    assert_eq!(shape.work().source_decode_bytes, 0);
+    assert_eq!(shape.work().source_indexed_bytes, prefix.len());
+    let update = engine
+        .runtime_mut()
+        .append_bytes(suffix.as_bytes())
+        .unwrap()
+        .unwrap();
+    engine.runtime_mut().apply_update(&update).unwrap();
+    let update = engine.runtime_mut().finish_input().unwrap().unwrap();
+    engine.runtime_mut().apply_update(&update).unwrap();
+    paint(&mut engine);
+    let mut app = AppState::default();
+    query(&mut app, &mut engine, "&");
+    finish_task(&mut engine);
+    paint(&mut engine);
+    let selected = Span::new(prefix.len() + 5, prefix.len() + 10);
+    assert_eq!(
+        engine.runtime().reading().current_match().unwrap().source,
+        selected
+    );
+    key(&mut app, &mut engine, KeyCode::Char('v'));
+    for _ in 0..5 {
+        key(&mut app, &mut engine, KeyCode::Right);
+    }
+    assert_eq!(engine.runtime().reading().selection.range(), Some(selected));
+    key(&mut app, &mut engine, KeyCode::Char('y'));
+    assert_eq!(clipboard(&finish_task(&mut engine)), b"&");
+    key(&mut app, &mut engine, KeyCode::Char('Y'));
+    assert_eq!(clipboard(&finish_task(&mut engine)), b"&amp;");
+    assert_eq!(shape.work().source_decode_bytes, suffix.len());
+    assert_eq!(shape.work().source_indexed_bytes, prefix.len());
 }

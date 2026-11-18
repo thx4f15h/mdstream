@@ -123,6 +123,21 @@ impl SharedLinks {
         document: &Document,
         budget: &mut Budget,
     ) -> Result<bool, LayoutError> {
+        self.prepare_shape_inner(document, budget, false)
+    }
+    pub(crate) fn prepare_shape_indexed(
+        &self,
+        document: &Document,
+        budget: &mut Budget,
+    ) -> Result<bool, LayoutError> {
+        self.prepare_shape_inner(document, budget, true)
+    }
+    fn prepare_shape_inner(
+        &self,
+        document: &Document,
+        budget: &mut Budget,
+        indexed: bool,
+    ) -> Result<bool, LayoutError> {
         let mut state = self.0.borrow_mut();
         if state.document != document.id() || state.resolver.document_id() != document.id() {
             return Err(LayoutError::WrongDocument);
@@ -135,8 +150,15 @@ impl SharedLinks {
             return Err(LayoutError::WrongDocument);
         }
         if state.shape.is_none() {
+            if indexed && (budget.remaining().queries == 0 || budget.remaining().objects == 0) {
+                return Ok(false);
+            }
             state.shape = Some(super::shape::SharedShape::from_current(document));
-            state.seed = Some(super::shape::ShapeSeed::new(document));
+            state.seed = Some(if indexed {
+                super::shape::ShapeSeed::indexed(document)
+            } else {
+                super::shape::ShapeSeed::new(document)
+            });
         }
         let shape = state.shape.as_ref().unwrap().clone();
         if let Some(seed) = state.seed.as_mut() {

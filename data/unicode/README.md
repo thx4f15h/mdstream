@@ -64,7 +64,7 @@ The TUI pins **unicode-segmentation 1.13.3 (Unicode 17)** and
 **unicode-width 0.2.3 (Unicode 18, non-CJK)**. These versions are intentionally
 different. `scripts/generate_display_shape.py` reads the locked local registry
 sources and fixed `scripts/display_shape/width-states.json`, verifies their Rust
-source hashes, and emits `crates/mdtui-tui/src/render/shape_tables.rs`. Run it with
+source hashes, and emits `crates/mdstream-core/src/shape_tables.rs`. Run it with
 `nix develop -c python3 scripts/generate_display_shape.py`; add `--check` for an
 offline reproducibility check. Neither build nor application startup runs a
 Unicode-domain generator. The generated GCB machine has 24 reachable states and

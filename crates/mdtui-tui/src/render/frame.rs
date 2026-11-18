@@ -414,7 +414,7 @@ impl FrameRuntime {
         }
         document.subscribe_display_shape_effects();
         let shape = super::shape::SharedShape::from_current(document.document());
-        let seed = super::shape::ShapeSeed::new(document.document());
+        let seed = super::shape::ShapeSeed::indexed(document.document());
         let runtime = Self::from_indexed_document(document, Some(shape), geometry, link_mode)?;
         runtime.viewport.shared_links().set_seed(seed);
         Ok(runtime)

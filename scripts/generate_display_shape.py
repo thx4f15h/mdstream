@@ -9,7 +9,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES = ROOT / 'scripts/display_shape'
-OUTPUT = ROOT / 'crates/mdtui-tui/src/render/shape_tables.rs'
+OUTPUT = ROOT / 'crates/mdstream-core/src/shape_tables.rs'
 PROVENANCE = ROOT / 'data/unicode/display-shape-provenance.json'
 
 def main():
