@@ -3434,6 +3434,7 @@ pub enum ShapeWindowStep {
 /// A finite source request inside one explicit rendering fragment. Fragment
 /// boundaries reset GCB state; callers use block/cell/fold projection boundaries.
 pub struct ShapeWindow {
+    following_source: Option<usize>,
     owner: SharedShape,
     revision: u64,
     requested: Span,
@@ -3451,6 +3452,7 @@ impl ShapeWindow {
             return Err(LayoutError::InvalidRange);
         }
         Ok(Self {
+            following_source: None,
             owner: shape.clone(),
             revision: shape.applied_revision(),
             requested,
@@ -3465,6 +3467,9 @@ impl ShapeWindow {
             cluster: None,
             done: requested.is_empty(),
         })
+    }
+    pub(crate) fn following_source(&self) -> Option<usize> {
+        self.following_source
     }
     pub fn advance(
         &mut self,
@@ -3512,6 +3517,7 @@ impl ShapeWindow {
         }
         loop {
             if self.rank.unwrap() >= self.count.unwrap() {
+                self.following_source = Some(self.fragment.end);
                 self.done = true;
                 return Ok(ShapeWindowStep::Complete);
             }
@@ -3538,6 +3544,7 @@ impl ShapeWindow {
                 continue;
             }
             if glyph.source.start >= self.requested.end {
+                self.following_source = Some(glyph.source.start);
                 self.done = true;
                 return Ok(ShapeWindowStep::Complete);
             }

@@ -308,6 +308,7 @@ pub(crate) struct FoldState {
 
 #[derive(Clone, Copy)]
 struct SourceCandidate {
+    keep_empty: bool,
     candidate: FoldCandidate,
     paragraph: Option<BlockId>,
     flexible: bool,
@@ -1247,6 +1248,7 @@ impl<S> FoldView<S> {
         self.state.source_candidates.insert(
             id,
             SourceCandidate {
+                keep_empty: false,
                 candidate: FoldCandidate {
                     id: FoldId::Source(id),
                     parent,
@@ -1328,6 +1330,74 @@ impl<S> FoldView<S> {
         self.version += 1;
         self.expire_from(document, candidate.hidden.start)?;
         Ok(candidate.id)
+    }
+
+    /// Move only the prefix cut of an existing flexible paragraph registration.
+    /// The host, envelope, ID, saved choice and preview remain the same. The
+    /// renderer supplies a complete display-atom cut; core checks UTF-8/CRLF.
+    /// A cut at the current end is allowed and has no placeholder until growth.
+    /// One query/object pays fixed indexed mask/checkpoint work, no body scan.
+    pub fn set_paragraph_fold_cut(
+        &mut self,
+        document: &Document,
+        id: SourceFoldId,
+        cut: usize,
+        budget: &mut crate::Budget,
+    ) -> Result<Option<FoldChange>, LayoutError> {
+        self.check(document)?;
+        let entry = self
+            .state
+            .source_candidates
+            .get(&id)
+            .copied()
+            .filter(|e| e.flexible && e.paragraph.is_some())
+            .ok_or(LayoutError::InvalidRange)?;
+        let old = entry.candidate;
+        if cut < old.source.start
+            || cut > old.source.end
+            || !document.source().is_char_boundary(cut)
+            || cut > old.source.start
+                && cut < old.source.end
+                && document.source().as_bytes()[cut - 1] == b'\r'
+                && document.source().as_bytes()[cut] == b'\n'
+        {
+            return Err(LayoutError::InvalidRange);
+        }
+        if cut == old.hidden.start {
+            return Ok(Some(FoldChange {
+                version: self.version,
+                source: Span::new(cut, cut),
+            }));
+        }
+        if !budget.charge(crate::WorkLimit {
+            queries: 1,
+            objects: 1,
+            ..Default::default()
+        }) {
+            return Ok(None);
+        }
+        let selected = self
+            .state
+            .remove(document, &mut self.heights, old.id)
+            .is_some();
+        let candidate = FoldCandidate {
+            hidden: Span::new(cut, old.hidden.end),
+            summary: Some(Span::new(old.source.start, cut)),
+            ..old
+        };
+        let entry = self.state.source_candidates.get_mut(&id).unwrap();
+        entry.candidate = candidate;
+        entry.keep_empty |= candidate.hidden.is_empty();
+        if selected {
+            self.state.insert(document, &mut self.heights, candidate);
+        }
+        self.version += 1;
+        let start = old.hidden.start.min(cut);
+        self.expire_from(document, start)?;
+        Ok(Some(FoldChange {
+            version: self.version,
+            source: Span::new(start, old.hidden.end),
+        }))
     }
 
     /// Remove one registration, choice and preview; other IDs never change and
@@ -1637,6 +1707,16 @@ impl<S> FoldView<S> {
         self.defaults
     }
 
+    /// Metadata-only admission check shared with renderer-owned line policies.
+    pub fn paragraph_auto_excluded(
+        &self,
+        document: &Document,
+        block: BlockId,
+    ) -> Result<bool, LayoutError> {
+        self.check(document)?;
+        Ok(self.paragraph_auto_excluded.contains(&block))
+    }
+
     /// Opt a logical paragraph out of (or back into) automatic registration,
     /// even before its length reaches the threshold. Existing registrations and
     /// their choices are unchanged. O(log E), one entry per excluded BlockId;
@@ -1851,7 +1931,7 @@ impl<S> FoldView<S> {
         let old = entry.candidate;
         let next = document.open_paragraph_source(entry.paragraph.unwrap());
         if let Some((source, open)) = next
-            && source.end > old.hidden.start
+            && (source.end > old.hidden.start || entry.keep_empty && source.end == old.hidden.start)
         {
             let new = FoldCandidate {
                 source,

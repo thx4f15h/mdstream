@@ -1,5 +1,5 @@
 //! One view's concrete keyboard menu and paid fold operations.
-use crate::render::checkpoint::RenderCheckpoint;
+use crate::render::{checkpoint::RenderCheckpoint, prefix::PrefixLines};
 use crossterm::event::KeyCode;
 use mdtui3::{
     Budget, Completion, ContainerFoldFilter, Document, FoldBatch, FoldBatchAction, FoldCandidate,
@@ -35,6 +35,8 @@ enum Command {
     Remove,
     Rows,
     Paragraph,
+    ParagraphLines(PrefixLines),
+    DefaultLines(PrefixLines),
 }
 
 enum Operation {
@@ -50,6 +52,7 @@ enum Operation {
 
 #[derive(Default)]
 pub struct FoldUi {
+    prefixes: crate::render::prefix_policy::ParagraphPrefixes,
     auto: Option<mdtui3::ParagraphAutoFold>,
     auto_range: Option<Span>,
     menu: bool,
@@ -76,10 +79,13 @@ impl FoldUi {
         self.operation = Some(Operation::Command(Command::Open));
     }
     pub fn active(&self) -> bool {
-        self.menu || self.operation.is_some() || self.auto.is_some() || self.auto_range.is_some()
+        self.menu || self.pending()
     }
     pub fn pending(&self) -> bool {
-        self.operation.is_some() || self.auto.is_some() || self.auto_range.is_some()
+        self.operation.is_some()
+            || self.auto.is_some()
+            || self.auto_range.is_some()
+            || self.prefixes.pending()
     }
     pub fn on_update(
         &mut self,
@@ -87,6 +93,10 @@ impl FoldUi {
         view: &View,
         update: &mdtui3::Update,
     ) -> Result<(), LayoutError> {
+        self.prefixes.on_update(doc, view, update)?;
+        if self.prefixes.default.is_some() {
+            return Ok(());
+        }
         let old = self
             .auto
             .take()
@@ -163,7 +173,12 @@ impl FoldUi {
                 self.range_next = None;
                 self.auto = None;
                 self.auto_range = None;
-                self.message = "cancelled; completed choices retained".into();
+                self.prefixes.cancel();
+                self.message = if self.prefixes.validation_pending() {
+                    "menu closed; current prefix validation continues; q exits".into()
+                } else {
+                    "cancelled; completed choices retained".into()
+                };
             }
             KeyCode::Up if self.menu => {
                 self.index = self.index.saturating_sub(1);
@@ -190,6 +205,15 @@ impl FoldUi {
         }
         true
     }
+    pub fn prefix_validation_pending(&self) -> bool {
+        self.prefixes.validation_pending()
+    }
+    pub fn prefix_query_starts(&self) -> usize {
+        self.prefixes.query_starts()
+    }
+    pub fn resize(&mut self) {
+        self.prefixes.resize();
+    }
     pub fn take_changed(&mut self) -> bool {
         std::mem::take(&mut self.changed)
     }
@@ -206,6 +230,20 @@ impl FoldUi {
         budget: &mut Budget,
     ) {
         let Some(mut operation) = self.operation.take() else {
+            if self.prefixes.pending() {
+                let old = view.version();
+                if let Err(error) = self.prefixes.advance(doc, view, links, width, budget) {
+                    self.message = error;
+                    self.prefixes.cancel();
+                } else {
+                    self.message = self.prefixes.message.clone();
+                }
+                if let Some(id) = self.prefixes.selected.take() {
+                    self.target = Some(id);
+                }
+                self.changed |= old != view.version();
+                return;
+            }
             if self.auto.is_none()
                 && let Some(range) = self.auto_range.take()
             {
@@ -485,6 +523,10 @@ impl FoldUi {
                         return Ok(false);
                     }
                     Command::Default(kind) => {
+                        if kind == 15 {
+                            self.prefixes.default = None;
+                            self.prefixes.cancel();
+                        }
                         let mut defaults = view.defaults();
                         match kind {
                             0..=5 => defaults.heading_levels[kind as usize] ^= true,
@@ -577,6 +619,28 @@ impl FoldUi {
                         *operation = Operation::Collapse(FoldId::TableRows(range));
                         return Ok(false);
                     }
+                    Command::ParagraphLines(mode) => {
+                        self.prefixes.request(doc, self.source, mode)?;
+                        self.message = "body-prefix pending".into();
+                    }
+                    Command::DefaultLines(mode) => {
+                        self.prefixes.default = if self.prefixes.default == Some(mode) {
+                            None
+                        } else {
+                            Some(mode)
+                        };
+                        self.auto = None;
+                        self.auto_range = None;
+                        let mut defaults = view.defaults();
+                        defaults.paragraphs =
+                            self.prefixes.default.map(|_| mdtui3::ParagraphFoldPolicy {
+                                min_bytes: 4096,
+                                preview_bytes: 0,
+                            });
+                        view.set_defaults(defaults);
+                        self.message =
+                            format!("new paragraph line default: {:?}", self.prefixes.default);
+                    }
                     Command::Paragraph => {
                         let block = doc.block_at(self.source).ok_or(LayoutError::InvalidRange)?;
                         *operation = Operation::Register(
@@ -628,6 +692,26 @@ fn entries(page: usize) -> Vec<(String, Command)> {
         ("remove selected range ID".into(), Command::Remove),
         ("selection: fixed table rows".into(), Command::Rows),
         ("paragraph: source prefix 256B".into(), Command::Paragraph),
+        (
+            "0 body lines: paragraph".into(),
+            Command::ParagraphLines(PrefixLines::Display(0)),
+        ),
+        (
+            "L1 paragraph: 1 logical line".into(),
+            Command::ParagraphLines(PrefixLines::Logical(1)),
+        ),
+        (
+            "L3 paragraph: 3 logical lines".into(),
+            Command::ParagraphLines(PrefixLines::Logical(3)),
+        ),
+        (
+            "D1 paragraph: 1 display row".into(),
+            Command::ParagraphLines(PrefixLines::Display(1)),
+        ),
+        (
+            "D3 paragraph: 3 display rows".into(),
+            Command::ParagraphLines(PrefixLines::Display(3)),
+        ),
     ];
     for level in 1..=6 {
         for collapsed in [false, true] {
@@ -710,6 +794,18 @@ fn entries(page: usize) -> Vec<(String, Command)> {
             Command::Default(kind as u8),
         ));
     }
+    for (label, mode) in [
+        ("0 body lines", PrefixLines::Display(0)),
+        ("1 logical line", PrefixLines::Logical(1)),
+        ("3 logical lines", PrefixLines::Logical(3)),
+        ("1 display row", PrefixLines::Display(1)),
+        ("3 display rows", PrefixLines::Display(3)),
+    ] {
+        result.push((
+            format!("default paragraph >=4096B: {label}"),
+            Command::DefaultLines(mode),
+        ));
+    }
     result.retain(|(_, command)| match command {
         Command::All(_) | Command::Focus => page == 1,
         Command::Overlay
@@ -719,12 +815,13 @@ fn entries(page: usize) -> Vec<(String, Command)> {
         | Command::Remove
         | Command::Rows
         | Command::Paragraph
+        | Command::ParagraphLines(_)
         | Command::NextRange
         | Command::NextAnyRange
         | Command::RowTarget => page == 2,
         Command::Level(_, _) => page == 3,
         Command::Containers(_, _) => page == 4,
-        Command::Default(_) => page == 5,
+        Command::Default(_) | Command::DefaultLines(_) => page == 5,
         _ => page == 0,
     });
     result

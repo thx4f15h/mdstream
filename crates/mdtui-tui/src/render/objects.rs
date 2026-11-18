@@ -74,6 +74,10 @@ impl SharedLinks {
         })))
     }
 
+    pub(crate) fn same_owner(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+
     pub fn math(&self) -> super::math::SharedMath {
         self.0.borrow().math.clone()
     }
@@ -360,6 +364,7 @@ pub struct ObjectWindow {
     literal_image_ranges: Vec<Span>,
     composite_images: Vec<(Span, ImagePlaceholder)>,
     fallback_cursor: usize,
+    fallback_paid: bool,
     pub empty_fallbacks: Vec<ImagePlaceholder>,
     window: LinkWindow,
     pending: Option<Pending>,
@@ -379,6 +384,7 @@ impl ObjectWindow {
             literal_image_ranges: Vec::new(),
             composite_images: Vec::new(),
             fallback_cursor: 0,
+            fallback_paid: false,
             empty_fallbacks: Vec::new(),
             window: document.link_window(source),
             pending: None,
@@ -430,6 +436,7 @@ impl ObjectWindow {
             self.empty_fallbacks.clear();
             self.placeholders.clear();
             self.fallback_cursor = 0;
+            self.fallback_paid = false;
             self.window = document.link_window(self.source);
             self.restart = false;
         }
@@ -584,14 +591,28 @@ impl ObjectWindow {
     /// Only complete labels inside this prepared window can establish an empty
     /// displayed alt. No extra label scan and no nested empty-image control.
     pub fn finish_empty(&mut self, budget: &mut Budget, has_text: impl Fn(Span) -> bool) -> bool {
+        self.finish_empty_with(budget, |label, _| Some(has_text(label)))
+    }
+    pub(crate) fn finish_empty_with(
+        &mut self,
+        budget: &mut Budget,
+        mut has_text: impl FnMut(Span, &mut Budget) -> Option<bool>,
+    ) -> bool {
         while let Some(&(label, placeholder)) = self.composite_images.get(self.fallback_cursor) {
-            if !charge(budget) {
-                return false;
+            if !self.fallback_paid {
+                if !charge(budget) {
+                    return false;
+                }
+                self.fallback_paid = true;
             }
-            if !has_text(label) {
+            let Some(visible) = has_text(label, budget) else {
+                return false;
+            };
+            if !visible {
                 self.empty_fallbacks.push(placeholder);
             }
             self.fallback_cursor += 1;
+            self.fallback_paid = false;
         }
         true
     }

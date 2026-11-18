@@ -271,10 +271,10 @@ pub(crate) fn render_list_input_with_visual(
         content_width: content.width,
         continuation_indent: marker.visual.continuation_indent,
         body_style: marker.visual.body_style,
-        capacity: first_capacity,
-        used: 0,
-        has_content: false,
-        last_class: None,
+        flow: ListFlow::new(
+            first_capacity,
+            usize::from(content.width).saturating_sub(marker.visual.continuation_indent),
+        ),
     };
     writer.place_words(&words)?;
     writer.line.checked_add(1).ok_or(ListError::RowOverflow)
@@ -319,7 +319,7 @@ pub(crate) fn item_input(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ListWordClass {
+pub(crate) enum ListWordClass {
     Cjk,
     Punctuation,
     Other,
@@ -384,14 +384,7 @@ fn words_from_glyphs(glyphs: Vec<super::input::DisplayGlyph>) -> Vec<ListWord> {
             }
             continue;
         }
-        let first = glyph.text.first_char().unwrap();
-        let class = if is_cjk(first) {
-            ListWordClass::Cjk
-        } else if is_punctuation(first) {
-            ListWordClass::Punctuation
-        } else {
-            ListWordClass::Other
-        };
+        let class = word_class(glyph.text.first_char().unwrap());
         if class == ListWordClass::Other {
             if current.is_empty() {
                 separated = pending_space && !words.is_empty();
@@ -467,6 +460,111 @@ fn is_punctuation(character: char) -> bool {
         )
 }
 
+pub(crate) fn word_class(character: char) -> ListWordClass {
+    if is_cjk(character) {
+        ListWordClass::Cjk
+    } else if is_punctuation(character) {
+        ListWordClass::Punctuation
+    } else {
+        ListWordClass::Other
+    }
+}
+
+/// The existing list word/hard-wrap placement, shared by drawing and paid
+/// body-prefix preparation. No text, screen, parser or source is owned here.
+#[derive(Clone, Copy)]
+pub(crate) struct ListFlow {
+    pub capacity: usize,
+    continued: usize,
+    pub used: usize,
+    pub line: usize,
+    has_content: bool,
+    last_class: Option<ListWordClass>,
+}
+impl ListFlow {
+    pub fn new(first: usize, continued: usize) -> Self {
+        Self {
+            capacity: first,
+            continued,
+            used: 0,
+            line: 0,
+            has_content: false,
+            last_class: None,
+        }
+    }
+    pub fn height(self) -> usize {
+        self.line + usize::from(self.has_content)
+    }
+    pub fn continuation(&mut self) -> bool {
+        if self.continued == 0 {
+            return false;
+        }
+        self.capacity = self.continued;
+        self.line += 1;
+        self.used = 0;
+        self.has_content = false;
+        self.last_class = None;
+        true
+    }
+    /// (synthetic separator, hard word), or no room even for continuation.
+    pub fn word(
+        &mut self,
+        width: usize,
+        class: ListWordClass,
+        separated: bool,
+        preserved: bool,
+    ) -> Option<(bool, bool)> {
+        if width == 0 {
+            self.has_content = true;
+            return Some((false, false));
+        }
+        let separator = self.has_content
+            && (separated
+                || !preserved
+                    && self
+                        .last_class
+                        .is_some_and(|last| needs_separator(last, class)));
+        if width + usize::from(separator) <= self.capacity.saturating_sub(self.used) {
+            self.used += width + usize::from(separator);
+            self.has_content = true;
+            return Some((separator, false));
+        }
+        if self.has_content {
+            if !self.continuation() {
+                return None;
+            }
+        } else if self.capacity == 0 && (self.line != 0 || !self.continuation()) {
+            return None;
+        }
+        if width <= self.capacity {
+            self.used += width;
+            self.has_content = true;
+            Some((false, false))
+        } else {
+            Some((false, true))
+        }
+    }
+    pub fn glyph(&mut self, width: usize, hard: bool) -> bool {
+        if !hard {
+            return true;
+        }
+        if width > 0 && self.used + width > self.capacity {
+            if self.has_content && !self.continuation() {
+                return false;
+            }
+            if self.capacity == 0 || width > self.capacity {
+                return false;
+            }
+        }
+        self.used += width;
+        self.has_content |= width > 0;
+        true
+    }
+    pub fn finish_word(&mut self, class: ListWordClass) {
+        self.last_class = Some(class);
+    }
+}
+
 fn needs_separator(previous: ListWordClass, current: ListWordClass) -> bool {
     !matches!(
         (previous, current),
@@ -489,10 +587,7 @@ struct BodyWriter<'a> {
     content_width: u16,
     continuation_indent: usize,
     body_style: StyleRole,
-    capacity: usize,
-    used: usize,
-    has_content: bool,
-    last_class: Option<ListWordClass>,
+    flow: ListFlow,
 }
 
 impl BodyWriter<'_> {
@@ -504,45 +599,30 @@ impl BodyWriter<'_> {
     }
 
     fn place_word(&mut self, word: &ListWord) -> Result<(), ListError> {
-        if word.width == 0 {
-            self.write_glyphs(&word.glyphs, false)?;
-            self.has_content = true;
-            self.last_class = Some(word.class);
+        let old = self.flow.line;
+        let Some((separator, hard)) = self.flow.word(
+            word.width,
+            word.class,
+            word.separated,
+            word.preserved_boundary,
+        ) else {
             return Ok(());
+        };
+        if old != self.flow.line {
+            self.start_continuation()?;
         }
-        let separator = self.has_content
-            && (word.separated
-                || !word.preserved_boundary
-                    && self
-                        .last_class
-                        .is_some_and(|last| needs_separator(last, word.class)));
-        if word.width + usize::from(separator) <= self.capacity.saturating_sub(self.used) {
-            if separator {
-                let space = graphemes(" ").next().unwrap();
-                self.cursor
-                    .place(self.screen, self.row, space, self.body_style, None, None)?;
-            }
-            self.write_glyphs(&word.glyphs, false)?;
-            self.used += word.width + usize::from(separator);
-            self.has_content = true;
-            self.last_class = Some(word.class);
-            return Ok(());
+        if separator {
+            self.cursor.place(
+                self.screen,
+                self.row,
+                graphemes(" ").next().unwrap(),
+                self.body_style,
+                None,
+                None,
+            )?;
         }
-        if self.has_content {
-            if !self.start_continuation()? {
-                return Ok(());
-            }
-        } else if self.capacity == 0 && (self.line != 0 || !self.start_continuation()?) {
-            return Ok(());
-        }
-        if word.width <= self.capacity {
-            self.write_glyphs(&word.glyphs, false)?;
-            self.used += word.width;
-            self.has_content = true;
-        } else {
-            self.write_glyphs(&word.glyphs, true)?;
-        }
-        self.last_class = Some(word.class);
+        self.write_glyphs(&word.glyphs, hard)?;
+        self.flow.finish_word(word.class);
         Ok(())
     }
     fn write_glyphs(
@@ -551,17 +631,13 @@ impl BodyWriter<'_> {
         hard: bool,
     ) -> Result<(), ListError> {
         for glyph in glyphs {
-            let width = usize::from(glyph.width);
-            if hard && width > 0 && self.used + width > self.capacity {
-                if self.has_content && !self.start_continuation()? {
-                    return Ok(());
-                }
-                if self.capacity == 0 {
-                    return Ok(());
-                }
-                if width > self.capacity {
-                    continue;
-                }
+            let old = self.flow.line;
+            let visible = self.flow.glyph(usize::from(glyph.width), hard);
+            if old != self.flow.line {
+                self.start_continuation()?;
+            }
+            if !visible {
+                continue;
             }
             if let Err(error) = self.cursor.place_payload(
                 self.screen,
@@ -576,20 +652,12 @@ impl BodyWriter<'_> {
             {
                 return Err(error.into());
             }
-            if hard {
-                self.used += width;
-                self.has_content |= width > 0;
-            }
         }
         Ok(())
     }
 
-    fn start_continuation(&mut self) -> Result<bool, ListError> {
-        let capacity = usize::from(self.content_width).saturating_sub(self.continuation_indent);
-        if capacity == 0 {
-            return Ok(false);
-        }
-        let line = self.line.checked_add(1).ok_or(ListError::RowOverflow)?;
+    fn start_continuation(&mut self) -> Result<(), ListError> {
+        let line = u16::try_from(self.flow.line).map_err(|_| ListError::RowOverflow)?;
         let row = self
             .start_row
             .checked_add(line)
@@ -606,11 +674,7 @@ impl BodyWriter<'_> {
         self.line = line;
         self.row = row;
         self.cursor = TextCursor::new(column);
-        self.capacity = capacity;
-        self.used = 0;
-        self.has_content = false;
-        self.last_class = None;
-        Ok(true)
+        Ok(())
     }
 }
 

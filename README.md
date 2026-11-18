@@ -4308,7 +4308,7 @@ assert_eq!(text, "a\n\nb\n");
 
 中间源码位置、End 与 Ctrl+End 都归一到完整同一字素，不扫描巨型旧 prefix；Ctrl+End 固定 cut 不混入未来 append，End/FOLLOW 保持跟随意愿。巨型 continuation tile 通过同一 HeightIndex 的零高票据测量，不清空整棵树或折叠 mask；fold/resize/checkpoint/相关语义变化失效后重新取票。原生 fenced 检查点失效重放恢复准确的 line source，固定组合同时保留 indented-code 内部空白与 CRLF copy。v/Shift 选区、source highlight、y 可见/Y 原文、搜索 n/N、目录和 Alt 历史共用真实来源；大于64KiB的单一 payload 可见复制先按 metadata 拒绝，不先展开。表格 min/max、pan、alignment、row owner、softwrap 与尾部共用相同 shape/width 结果。
 
-应用承诺完整逻辑 UTF-8、宽度/来源、实际有界 wire 发送及可响应取消。字体/终端对超长组合序列的内部储存和成字能力属于外部限制：实测 tmux 对 10,000 combining marks 只保留 16 个，不据此截断、默认拒绝或增加终端探测 gate，也不声称发完字节就等于字体画出完整 glyph。该021阶段列出的数学绘制现由[数学对象接入](#额外数学定界与拥有型查询)扩展；正文折叠 UI、长段落按显示行 prefix/媒体摘要、脚注绘制及原有完整语法后缀需求继续独立保留。
+应用承诺完整逻辑 UTF-8、宽度/来源、实际有界 wire 发送及可响应取消。字体/终端对超长组合序列的内部储存和成字能力属于外部限制：实测 tmux 对 10,000 combining marks 只保留 16 个，不据此截断、默认拒绝或增加终端探测 gate，也不声称发完字节就等于字体画出完整 glyph。该021阶段列出的数学绘制现由[数学对象接入](#额外数学定界与拥有型查询)扩展；正文折叠 UI 与长段落行前缀/有限媒体详情已由后续专项交付；脚注绘制及原有完整语法后缀需求继续独立保留。
 
 专项入口为 `giant_clusters`、`giant_pty`、Reading 的巨型复制/搜索/OSC52 测试、`display_shape_seed` 及 `zero_height_range`。实际64MiB源文档与百万 continuation 的 HeightIndex-only scale 分开报告；后者不分配对应源码。仓外021验收材料保留独立 oracle、冷查询最大值、真实 kernel PTY EAGAIN、UTF-8 cleanup、输入/查询/输出/容量/CPU/RSS及冻结命令，不把纯模型当成生产交付。
 
@@ -4331,3 +4331,9 @@ assert_eq!(text, "a\n\nb\n");
 `Document` 输入时维护共享的 `DisplaySource` 原始源码索引，定型页保存同一套 GCB/width 摘要。已解析 `Utf8Document` 接入与冷 Reading 复制采用它的范围摘要，避免为了局部选区重新解码无关前缀；原生语义 seed 仍按共享预算读取样式、实体、HTML 与对象元数据。后续追加保留原生前缀与新增后缀的源坐标，y 复制显示文本、Y 复制真实源码的既有操作不变。
 
 输入累计 O(n log n)、持久空间 O(n)；局部冷路径保守为 O(log² n) 元数据工作加实际局部和输出工作，不能将逻辑覆盖字节当作实际扫描，也不承诺任意稠密 Markdown 的准备时间恒定。`display_source_stats` 与 `SharedShape::work` 分开报告输入维护、范围操作、形状索引和实际 capacity；它们不包括全部 allocator 开销或进程 RSS。原始64MiB中部选区、真实OSC52及组合门禁记录见[交付](DONE.md#2026-11-18-大段落中部小选区的有界复制)。
+
+### 段落正文行前缀与有限媒体详情
+
+正文 `z` 菜单可选择 0 行、1/3 个逻辑行或当前宽度的显示行前缀；新默认选项沿用已分类长度 4096B 准入。逻辑行消费规范显示 LF，显示行与真实段落/列表 sink 共用放置状态，包含引用/列表前缀、宽字、完整 EGC 与原生数学尺寸。跨截止线的替换 atom 或活动原生对象整体后退隐藏；段间空行及占位不占正文限额。现有显式源码切口合同保持独立。
+
+同一 FoldView/Source ID 消费追加、resize、预览、复制、Reveal、历史和 End；媒体/代码的显式详情只读有限已有字段，图片尺寸/协议未知会明确暂缺。`y` 不把详情当成隐藏正文已可见，`Y` 保持原始源码。输入仍累计 O(n log n)/空间 O(n)，查询、实际准备和完整可见 payload 输出分别报告，不将索引覆盖字节冒充实际扫描，也不承诺固定 CPU 时延。合同、操作与界限见 [TUI 使用说明](crates/mdtui-tui/README.md)，验收见[交付](DONE.md#2026-11-18-段落正文行前缀与有限媒体详情)。

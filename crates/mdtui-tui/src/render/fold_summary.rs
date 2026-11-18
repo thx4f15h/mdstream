@@ -9,7 +9,9 @@ use mdtui3::{
 };
 
 enum Reader {
+    Metadata,
     Code(mdtui3::CodeInfoCursor),
+    Media(Box<super::media_summary::MediaDetails>),
     Display(mdtui3::DisplayExcerpt),
     Table(mdtui3::TablePreview),
 }
@@ -31,6 +33,7 @@ impl FoldSummary {
     }
 }
 pub(crate) struct SummaryJob {
+    owner: SharedLinks,
     binding: std::rc::Rc<mdtui3::FoldProjection>,
     document: DocumentId,
     revision: u64,
@@ -56,11 +59,20 @@ impl SummaryJob {
         let candidate = view
             .fold_candidate(doc, id)?
             .ok_or(LayoutError::InvalidRange)?;
-        let source = candidate.summary.unwrap_or(candidate.source);
+        let source = if matches!(id, FoldId::Source(_)) {
+            candidate.source
+        } else {
+            candidate.summary.unwrap_or(candidate.source)
+        };
         let reader = match id {
             FoldId::Code(block) if doc.code_info_prefix(block, 256).is_some() => {
                 Reader::Code(doc.code_info_prefix(block, 256).unwrap())
             }
+            FoldId::Code(_) | FoldId::Math(_) => Reader::Metadata,
+            FoldId::Source(_) => Reader::Media(Box::new(super::media_summary::MediaDetails::new(
+                doc,
+                candidate.source,
+            )?)),
             FoldId::Table(table) => Reader::Table(mdtui3::TablePreview::new(
                 doc,
                 table,
@@ -82,6 +94,7 @@ impl SummaryJob {
         };
         let binding = mdtui3::FoldProjection::new(doc, view, Span::new(0, 0))?;
         Ok(Self {
+            owner: links.clone(),
             binding: std::rc::Rc::new(binding),
             document: doc.id(),
             revision: doc.revision(),
@@ -90,7 +103,22 @@ impl SummaryJob {
             source,
             width,
             reader,
-            text: String::new(),
+            text: if let FoldId::Code(block) = id {
+                match doc.block(block).map(|b| &b.kind) {
+                    Some(mdtui3::BlockKind::Code { info: Some(_), .. }) => {
+                        "code fenced info=".into()
+                    }
+                    _ => "code language=unavailable".into(),
+                }
+            } else if let FoldId::Math(block) = id {
+                doc.math_object(mdtui3::MathObjectId::Block(block))
+                    .map_or_else(
+                        || "math details unavailable".into(),
+                        |meta| format!("math {:?}; delimiter={:?}", meta.kind, meta.delimiter),
+                    )
+            } else {
+                String::new()
+            },
             row: None,
             lfs: 0,
             source_bytes: 0,
@@ -121,6 +149,9 @@ impl SummaryJob {
         budget: &mut Budget,
     ) -> Result<Option<FoldSummary>, LayoutError> {
         self.binding.check_binding(doc, view)?;
+        if !self.owner.same_owner(links) {
+            return Err(LayoutError::WrongDocument);
+        }
         if self.document != doc.id() {
             return Err(LayoutError::WrongDocument);
         }
@@ -134,6 +165,15 @@ impl SummaryJob {
             let mut text = String::new();
             let mut next_row = None;
             match &mut self.reader {
+                Reader::Metadata => finished = true,
+                Reader::Media(reader) => {
+                    if let Some(details) = reader.advance(doc, links, budget)? {
+                        text = details;
+                        finished = true;
+                    } else {
+                        pending = true;
+                    }
+                }
                 Reader::Code(reader) => match reader.next(doc, budget)? {
                     CodeInfoStep::Atom { utf8, len, .. } => text.push_str(
                         std::str::from_utf8(&utf8[..usize::from(len)])

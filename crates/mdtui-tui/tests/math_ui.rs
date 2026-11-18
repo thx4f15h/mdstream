@@ -555,3 +555,19 @@ fn a_source_fold_inside_math_stops_payload_at_the_semantic_fragment_boundary() {
     }
     panic!("source fold did not finish");
 }
+
+#[test]
+fn semantic_empty_math_alt_uses_one_existing_image_placeholder() {
+    for (source, expected) in [
+        ("A ![**\\(\\)**](/img) Z\n", "A [image] Z"),
+        ("A ![\\(\\)\\(\\)](/img) Z\n", "A [image] Z"),
+        ("A ![** **](/img) Z \\(x\\)\n", "A ** ** Z x"),
+    ] {
+        assert_eq!(grid(&render(source, 40)), [expected]);
+    }
+}
+
+#[test]
+fn empty_math_inside_a_nonempty_alt_does_not_invent_an_image_fallback() {
+    assert_eq!(grid(&render("A ![\\(\\)abc](/img) Z\n", 40)), ["A abc Z"]);
+}

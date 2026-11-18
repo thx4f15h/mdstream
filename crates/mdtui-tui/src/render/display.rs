@@ -139,6 +139,8 @@ impl MathContext {
     }
 }
 struct MathScan {
+    context_start: usize,
+    context_end: usize,
     context: Option<MathContext>,
     index_work: mdtui3::LinkWindowWork,
     source_work: usize,
@@ -151,6 +153,9 @@ struct MathScan {
 }
 
 pub struct DisplayScanner {
+    empty_alt_at: Option<(Span, usize)>,
+    following_source: Option<usize>,
+    force_indexed: bool,
     math_refresh: Option<MathRefresh>,
     math_by_id: std::collections::BTreeMap<mdtui3::MathObjectId, usize>,
     math_floor: usize,
@@ -246,6 +251,9 @@ impl DisplayScanner {
             context_end = requested.end;
         }
         Some(Self {
+            empty_alt_at: None,
+            following_source: None,
+            force_indexed: false,
             math_refresh: None,
             math_by_id: Default::default(),
             math_floor: 0,
@@ -322,6 +330,13 @@ impl DisplayScanner {
         scanner.context_end = source.end;
         scanner.cursor_initialized = true;
         Some(scanner)
+    }
+
+    pub(crate) fn following_source(&self) -> Option<usize> {
+        self.following_source
+    }
+    pub(crate) fn force_indexed(&mut self) {
+        self.force_indexed = true;
     }
 
     pub(crate) fn fold_fragment(
@@ -652,7 +667,37 @@ impl DisplayScanner {
         budget: &mut Budget,
     ) -> Result<ScanStatus, LayoutError> {
         if self.math_scan.is_none() {
+            if !budget.charge(mdtui3::WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            }) {
+                return Ok(ScanStatus::BudgetExhausted);
+            }
+            let block = document
+                .block_at(self.requested.start)
+                .and_then(|id| document.block(id));
+            let mut context_start = block.map_or(document.pending().start, |b| b.source.start);
+            let mut context_end = block
+                .map_or(document.source().len(), |b| b.source.end)
+                .max(self.requested.end);
+            if let Some(meta) = document.math_object_before(self.requested.start)
+                && meta.source.end <= self.requested.start
+            {
+                context_start = context_start.max(meta.source.end);
+            }
+            if let Some(meta) = document.math_object_at_or_after(self.requested.end)
+                && meta.source.start >= self.requested.end
+            {
+                context_end = context_end.min(meta.source.start);
+            }
+            if let Some(cell) = self.table_context {
+                context_start = context_start.max(cell.start);
+                context_end = context_end.min(cell.end);
+            }
             self.math_scan = Some(Box::new(MathScan {
+                context_start,
+                context_end,
                 context: None,
                 index_work: Default::default(),
                 source_work: 0,
@@ -676,6 +721,9 @@ impl DisplayScanner {
                 scan.index_work.index_visits += work.index_visits;
                 scan.index_work.sort_steps += work.sort_steps;
                 scan.index_work.objects += work.objects;
+                if let Some(hint) = child.following_source.filter(|&at| at > self.requested.end) {
+                    self.following_source = Some(hint);
+                }
                 self.display_source_work += child.display_source_work;
                 self.display_bytes += child.display_bytes;
                 self.cursor_steps += child.cursor_steps;
@@ -699,6 +747,11 @@ impl DisplayScanner {
                 m.source.start.min(self.requested.end)
             });
             if scan.ended && scan.next == self.requested.start && self.math_views.is_empty() {
+                let gap = Span::new(scan.context_start, scan.context_end);
+                self.fold_fragment = Some(self.fold_fragment.map_or(gap, |f| {
+                    Span::new(f.start.max(gap.start), f.end.min(gap.end))
+                }));
+                self.source_cut = Some(self.source_cut.unwrap_or(usize::MAX).min(gap.end));
                 self.math_scan = None;
                 self.math_bypass = true;
                 return self.advance(document, budget);
@@ -708,13 +761,23 @@ impl DisplayScanner {
                     Self::exact(document, Span::new(scan.next, gap_end), self.links.clone())
                         .ok_or(LayoutError::InvalidRange)?;
                 child.math_bypass = true;
-                child.fold_fragment = self.fold_fragment;
+                child.force_indexed = self.force_indexed;
+                // A native object is a real display-atom barrier. Reset both
+                // GCB selection and payload at this plain-text gap, including
+                // when a requested window starts immediately after an object.
+                let context_end = scan
+                    .pending
+                    .map_or(scan.context_end, |meta| meta.source.start);
+                let gap = Span::new(scan.context_start, context_end);
+                child.fold_fragment = Some(self.fold_fragment.map_or(gap, |f| {
+                    Span::new(f.start.max(gap.start), f.end.min(gap.end))
+                }));
                 child.table_mode = self.table_mode;
                 child.table_context = self.table_context;
                 child.source_cut = self.source_cut;
                 // GCB and style preparation must stop at the native object.
                 child.cluster_floor = Some(scan.next);
-                child.source_cut = Some(child.source_cut.unwrap_or(usize::MAX).min(gap_end));
+                child.source_cut = Some(child.source_cut.unwrap_or(usize::MAX).min(context_end));
                 scan.child = Some(Box::new(child));
                 scan.next = gap_end;
                 continue;
@@ -820,6 +883,7 @@ impl DisplayScanner {
                 self.segments.push(segment.clone());
                 self.layout_segments.push(segment);
                 scan.next = meta.source.end.max(scan.next);
+                scan.context_start = scan.next;
                 scan.pending = None;
                 let work = scan.context.take().unwrap().objects.index_work();
                 scan.index_work.index_visits += work.index_visits;
@@ -831,9 +895,21 @@ impl DisplayScanner {
             self.scanned_through = self.requested.end;
             self.refresh_complete_tiles(document)?;
             self.source_complete = true;
-            self.complete = true;
-            self.lease = None;
-            return Ok(ScanStatus::Complete);
+            // Empty alt is decided once over this actual semantic window,
+            // using the existing image-placeholder mechanism. A math gap is
+            // not a complete alt and an empty native box is not painted text.
+            let objects = self.objects.get_or_insert_with(|| {
+                crate::render::objects::ObjectWindow::new(
+                    document,
+                    self.requested,
+                    self.links.clone(),
+                )
+                .expect("valid semantic window")
+            });
+            if !objects.advance(document, budget)? {
+                return Ok(ScanStatus::BudgetExhausted);
+            }
+            return self.finish_empty(document, budget);
         }
     }
 
@@ -1051,7 +1127,8 @@ impl DisplayScanner {
             )
         };
         if let Some(shape) = self.links.shape()
-            && (self.source_cut.is_some_and(|cut| shape_context.end > cut)
+            && (self.force_indexed
+                || self.source_cut.is_some_and(|cut| shape_context.end > cut)
                 || shape.requires_shape(shape_context))
         {
             return self.advance_indexed(document, &shape, budget);
@@ -1220,6 +1297,7 @@ impl DisplayScanner {
                     return Ok(ScanStatus::BudgetExhausted);
                 }
                 super::shape::ShapeWindowStep::Complete => {
+                    self.following_source = scan.window.as_ref().unwrap().following_source();
                     scan.next = scan.end;
                     scan.window = None;
                 }
@@ -1395,12 +1473,56 @@ impl DisplayScanner {
         budget: &mut Budget,
     ) -> Result<ScanStatus, LayoutError> {
         let segments = &self.layout_segments;
+        let math = &self.math_views;
+        let probe = &mut self.empty_alt_at;
         let objects = self.objects.as_mut().expect("prepared objects");
-        if !objects.finish_empty(budget, |label| {
-            let at = segments.partition_point(|segment| segment.source.end <= label.start);
-            segments
-                .get(at)
-                .is_some_and(|segment| segment.source.start < label.end && !segment.text.is_empty())
+        if !objects.finish_empty_with(budget, |label, budget| {
+            if probe.is_none() {
+                if !budget.charge(mdtui3::WorkLimit {
+                    queries: 1,
+                    objects: 1,
+                    ..Default::default()
+                }) {
+                    return None;
+                }
+                let at = segments.partition_point(|segment| segment.source.end <= label.start);
+                // A plain child may already have published this exact canonical
+                // fallback. Do not add a second one at the enclosing math window.
+                let existing = at
+                    .checked_sub(1)
+                    .and_then(|i| segments.get(i))
+                    .filter(|s| s.text.contiguous() == Some("[image]"))
+                    .and_then(|s| s.link)
+                    .and_then(|id| document.link_info(id))
+                    .is_some_and(|info| info.label == label);
+                if existing {
+                    return Some(true);
+                }
+                *probe = Some((label, at));
+            }
+            loop {
+                if !budget.charge(mdtui3::WorkLimit {
+                    queries: 1,
+                    objects: 1,
+                    ..Default::default()
+                }) {
+                    return None;
+                }
+                let (_, at) = probe.as_mut().unwrap();
+                let Some(segment) = segments.get(*at).filter(|s| s.source.start < label.end) else {
+                    *probe = None;
+                    return Some(false);
+                };
+                *at += 1;
+                if !segment.text.is_empty()
+                    && math
+                        .get(&segment.source.start)
+                        .is_none_or(|view| view.metrics.width != 0)
+                {
+                    *probe = None;
+                    return Some(true);
+                }
+            }
         }) {
             return Ok(ScanStatus::BudgetExhausted);
         }

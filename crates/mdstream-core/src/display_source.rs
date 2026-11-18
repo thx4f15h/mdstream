@@ -281,6 +281,22 @@ impl DisplaySource {
         let s = self.0.read().unwrap();
         s.runs[s.runs.partition_point(|r| r.start + r.len <= at)].at(at)
     }
+    /// Homogeneous input run containing a source byte, O(log R), metadata only.
+    /// Semantic consumers must still apply their existing overlays/atom rules.
+    pub fn run_at_source(&self, byte: usize) -> Option<(char, Span)> {
+        let s = self.0.read().unwrap();
+        let r =
+            *s.runs.get(s.runs.partition_point(|r| {
+                r.atom.source.start + r.len * r.atom.scalar.len_utf8() <= byte
+            }))?;
+        Some((
+            r.atom.scalar,
+            Span::new(
+                r.atom.source.start,
+                r.atom.source.start + r.len * r.atom.scalar.len_utf8(),
+            ),
+        ))
+    }
     pub fn position(&self, at: usize) -> usize {
         let s = self.0.read().unwrap();
         if at == s.scalars {

@@ -34,7 +34,8 @@ impl Document {
         })
     }
 
-    fn paragraph_fold_snapshot(&self, block: BlockId) -> Option<ParagraphFoldCandidate> {
+    /// Current first-leaf paragraph metadata; O(log P), without reading body bytes.
+    pub fn paragraph_fold_snapshot(&self, block: BlockId) -> Option<ParagraphFoldCandidate> {
         let (source, open) = self.open_paragraph_source(block)?;
         let entry = self.block(block)?;
         let classified_end = if !open {

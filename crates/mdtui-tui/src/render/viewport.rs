@@ -303,6 +303,7 @@ struct EndPosition {
     table_snapshots: HashMap<TableId, TableWidthSnapshot>,
     tables_ready: bool,
     table_windows: Vec<super::table::TableWindowStatus>,
+    folds: Vec<mdtui3::FoldPlaceholder>,
     lines: Vec<(Anchor, SinkLine)>,
     frame: Option<ViewportFrame>,
 }
@@ -323,6 +324,7 @@ impl EndPosition {
             table_snapshots: HashMap::new(),
             tables_ready: false,
             table_windows: Vec::new(),
+            folds: Vec::new(),
             lines: Vec::new(),
             frame: None,
         }
@@ -918,6 +920,7 @@ impl ViewportState {
                 }
             }
         }
+        end.folds.extend_from_slice(first.placeholders());
         end.before = end.next_before;
         end.projected_tail = false;
         end.work.windows += 1;
@@ -960,6 +963,10 @@ impl ViewportState {
     }
 
     fn finish_end(&mut self, document: &Document, end: &EndPosition) -> ViewportFrame {
+        // End paints its own bounded FirstFrames. Publish their PH metadata
+        // with those rows, just as the ordinary viewport path does; stale
+        // envelopes cannot bind a growing source fold's actual screen cells.
+        self.shown_folds = end.folds.clone();
         self.shown_tables = end
             .table_windows
             .iter()

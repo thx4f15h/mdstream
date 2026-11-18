@@ -2039,7 +2039,45 @@ fn math_flow(
         .iter()
         .rposition(|g| !trim_glyph(g))
         .map_or(first, |i| i + 1);
+    let mut flow = super::flow::FlowCursor::new(
+        width,
+        usize::from(context.width).saturating_sub(continued_prefix),
+    );
     for g in &visible[first..last] {
+        if !matches!(block.kind, BlockKind::Heading { .. }) {
+            let (gw, ga, gd) = g.math.as_ref().map_or((usize::from(g.width), 0, 0), |v| {
+                (
+                    v.metrics.width,
+                    v.metrics.baseline,
+                    v.metrics.height.saturating_sub(v.metrics.baseline + 1),
+                )
+            });
+            let step = flow.push(gw, ga, gd, g.math.is_some())?;
+            if let Some(old) = step.flush {
+                first_baseline.get_or_insert(old.top + old.ascent);
+                first_height.get_or_insert(old.top + old.ascent + old.descent + 1);
+                flush(
+                    &mut line,
+                    old.top,
+                    old.ascent,
+                    &mut placed,
+                    &mut placements,
+                    prefix_width,
+                    width,
+                );
+                prefix_width = continued_prefix;
+            }
+            width = flow.capacity;
+            x = flow.x;
+            y = flow.y;
+            ascent = flow.ascent;
+            descent = flow.descent;
+            if let Some(column) = step.column {
+                line.push((g, column));
+            }
+            continue;
+        }
+
         let (mut gw, ga, gd) = g.math.as_ref().map_or((usize::from(g.width), 0, 0), |v| {
             (
                 v.metrics.width.min(width),
@@ -2464,23 +2502,24 @@ fn stream_lines(glyphs: &[OwnedGlyph], quote: bool, width: u16) -> Vec<SinkLine>
 
     let mut rows = Vec::new();
     let mut line: Vec<SinkCell> = Vec::new();
-    let mut line_width = 0_usize;
+    let mut flow = super::flow::FlowCursor::new(body_width, body_width);
     let mut line_source = None;
     for glyph in glyphs {
         if glyph.kind == GraphemeKind::Control {
             continue;
         }
-        let glyph_width = usize::from(glyph.width);
-        if glyph_width > body_width {
-            continue;
-        }
-        if line_source.is_some() && line_width + glyph_width > body_width {
+        let step = flow
+            .push(usize::from(glyph.width), 0, 0, false)
+            .expect("bounded paragraph rows fit usize");
+        if step.flush.is_some() {
             rows.push(assemble_line(
                 &prefix,
                 std::mem::take(&mut line),
                 line_source.take(),
             ));
-            line_width = 0;
+        }
+        if step.column.is_none() {
+            continue;
         }
         if line_source.is_none() {
             line_source = Some(glyph_line_source(glyph));
@@ -2492,7 +2531,6 @@ fn stream_lines(glyphs: &[OwnedGlyph], quote: bool, width: u16) -> Vec<SinkLine>
             link: glyph.link,
             source: Some(glyph.source),
         });
-        line_width += glyph_width;
     }
     if line_source.is_some() {
         rows.push(assemble_line(&prefix, line, line_source));

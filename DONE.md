@@ -3282,3 +3282,22 @@ resize后显式目录跳转再折叠的独立037缺陷已新增未勾待办，�
 成本探索另保留一条既有边界：32780 字节多段正文、8-tile/row_slack=4 自定义配置下，SourceRefiner 在导航提交前返回 NotFound；干净 `bc1b4b9` 与本版同输入实际复现。本项不宣称修复它，也未删除反例或更改生产默认参数。原失败、修正过程、命令/退出/中断、实际 UI、成本与冻结清单保存在 `/tmp/mdtui3-codex-todo/037-prototypes`，交 root 独立复核与正式提交。
 
 根独立验收：已审查最小 viewport 生命周期变更、九项基线反例与正式用例日志，冻结的 600 个 Rust 输入逐字节一致。根私有 tmux 在固定二进制 2a062c9e… 上实际重走原目录跳转/折叠流程、无需 End 展开及 20×3→40×10 恢复，目标 Tail 与 READY 保持，q 退出 0。相关门禁为实际 debug 293+37、release 330；不扩称整库新执行。完整冻结、旧失败、终端和成本证据归档至 `/home/ajen/.local/state/codex/mdtui3/2026-11-17-resumed/037-accepted-evidence.tar.gz`。
+
+
+## 2026-11-18 段落正文行前缀与有限媒体详情
+
+完成原 TODO166 的有限范围：复用已识别顶层/容器逻辑段落候选与长度准入，在 026 单 FoldView 中交付 0、逻辑 1/3、显示 1/3 行正文前缀及有限图片/代码详情；035/036/027 正式稳定提交已组合。显示行与生产 FlowCursor/ListFlow 共用真正放置决定，按 027 实际间距/PH/source/height 核验，不能以旧两行 DisplayExcerpt 或原始字节 prefix 代替正文行数。
+
+自动切口保全规范 EGC、替换 source atom 和活动链接/图片/数学对象；跨截止线整体后退隐藏，分式 3 行在 N=1 时不展示半个对象。显式 manual fixed/strict/overlay 旧切口及原断言保留。准备按固定 scanner source quanta 和逐 atom/单词步骤继续，零与 1q/1o/6B、巨型单 EGC、跨 tile、实体/转义/CRLF、tab/宽字/组合字素、列表单词与原生二维高度均有手写独立期望。持续追加复用已建立切口证明，保留当前共享索引而不保存每 revision 整段源快照。宽度/来源必要校验完成前保留已提交画面；取消可撤销未交付请求，q 可退出。
+
+有限详情读取现有对象身份/来源和 CodeInfoCursor，不伪造尺寸、解码、缓存或协议状态；图片候选窗口 256B/至多 8 个，alt 96B 源码/32B 显示，目标字段 32B 显示，所有阶段共享最多 256 个已计费字节，输出 128B/2 个终端行。未读字段明确暂缺，完整为空才标 empty。原生空数学 alt 复用既有图片占位机制，逐预算检查实际已画语义；隐藏强调、多个空对象及空对象后有非空文本的反例均保留。Source 元数据范围与 ID/文档/revision/view/SharedLinks owner 绑定。y 只得原可见前缀和最小 PH，不泄漏摘要或隐藏正文；Y 保留 CRLF 等原文。End 的局部 FirstFrame 现在同时发布所画 PH 元数据，追加后冻结 End 的占位仍能命中并展开同一 ID。
+
+最终冻结 Rust：相关 TUI debug 新执行 214/214，加 fragments/stream 24/24；此前完整 debug 844 项中 840 通过、4 项失败已据原断言修正复验，不将其称为本轮最终整库 fresh pass。最终完整 TUI release 845/845、6 项既有忽略；核心相关折叠/查询 debug 244/244、release 244/244。fmt、all-targets check、strict clippy、strict rustdoc 和 84 个文档测试通过。首轮空策略错误阻断无前缀键路由/首帧的原始四项失败、所有修正日志及两个冻结之间的准确差异另存；既有断言、官方原文/HTML、生成器/SHA、golden、锁文件和 rustfmt/hook 未弱化。
+
+规模口径分别记录：固定 N=1/W=4，内部空格 16/64/1024/16384；后两组实际放置 7 步/2 quanta，显示阶段计费 260B、shape 源码重解码 0，微预算 56062/69702 次。普通 FRAME_WORK 实际菜单约 30/37 帧、调试约 40–71ms，索引工作仍增长而非固定 CPU 承诺。10 万组合符单 EGC cut=200001，准备 2 步、1606 个微调用、旧源码重解码 0；真实输出 200030B/26 帧、约 29MiB 进程 RSS，输出与输入维护不能混称 O(1)。列表长空格亦复用源码 run 索引跳过内部，原 200000 微步上限保留。最终同组 GNU time 记录 user CPU 1.42s、system 0.13s、墙钟 1.66s、峰值 43792KiB；该口径包含 Nix/Cargo/nextest 与全组输入/查询/输出，不能归为单帧 CPU。
+
+实际私有 tmux 验证 D1/D3、20/80 列 resize、PH 焦点、临时预览/Esc、v/Shift 选区、y/Y 请求、隐藏搜索 Reveal、批量折叠、有限图片/代码详情及 q 退出 0。最终冻结版另验证空 alt 的 [image]、非空 abc、4 列 D1 整对象隐藏、0..38 有源详情且不含 SECRET 正文，并绑定实际运行二进制 SHA 与源码清单。真正 held-FIFO 在首帧就绪后启用新默认 D1，5001B 新段落只显示一行，同一 PH 随追加从 5002..10003 增为 5002..10015；Tab/Enter 展开、Ctrl-End 排除未来追加、End 跟随未来及 FIFO 未关时 q 退出 0 均实测。早期 AltLeft 的 no-op 原样保留；补充 A→B→A 的两次显式目录跳转后，AltLeft 实际返回 B、AltRight 恢复 A 的同一 Source ID/范围且余文仍隐藏，独立运行时源码历史恢复用例亦通过。终端字体对超长 EGC 的成字能力未冒充实测。完整 URI/图片协议缓存（030）、任务统计（032）、自动表格行（033）及未识别的完整容器方言继续独立。
+
+原始命令、失败、手写合同/oracle、冻结清单、成本/内存和终端捕获位于 `/tmp/mdtui3-codex-todo/028-prototypes`；机器结果为 `/tmp/mdtui3-codex-todo/028-result.json`。仅 own branch WIP 检查点，正式验收及单独 main 提交交 root，未 push。
+
+根独立验收：已审查安全切口、共享 flow/word 放置、追加/宽度失效与单 FoldView 注册机制，并组合正式 037 导航修复。组合的 611 个 Rust 输入冻结后，相关 debug/release 各 80 项、fmt 与 workspace all-targets 严格 Clippy 实际通过；原 028 完整 release 845、相关 debug 214+24、核心两档各 244 与文档 84 的范围保持如上，不称组合后新执行整库。根固定二进制 6652acb7… 在四个独立私有 tmux 流程中验证普通长行、完整组合字符、跨行图片整体退回和三行分数整体隐藏，另验证 40→20→40 重算仍为同 Source ID、Tab/Enter 展开及全部 q 退出 0。第一次终端 oracle 错把 inline 占位要求为独占行，原失败与更正保留；未改生产实现或输入迎合检查。证据归档至 `/home/ajen/.local/state/codex/mdtui3/2026-11-17-resumed/028-accepted-evidence.tar.gz`。

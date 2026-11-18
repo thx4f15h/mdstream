@@ -160,6 +160,23 @@ impl Document {
             .map(|m| m.delimiter)
     }
 
+    /// Closest current source opener strictly before offset, possibly containing
+    /// it. O(log M), metadata only; no payload read or hidden body preparation.
+    pub fn math_object_before(&self, offset: usize) -> Option<MathObjectMeta> {
+        let (_, id) = self.math_objects.order.range(..offset).next_back()?;
+        self.math_objects.get(*id)
+    }
+    /// Current containing object, otherwise the next opener at/after offset.
+    /// O(log M), metadata only. Native gap consumers charge their query budget.
+    pub fn math_object_at_or_after(&self, offset: usize) -> Option<MathObjectMeta> {
+        if let Some(meta) = self.math_object_before(offset)
+            && meta.source.end > offset
+        {
+            return Some(meta);
+        }
+        let (_, id) = self.math_objects.order.range(offset..).next()?;
+        self.math_objects.get(*id)
+    }
     pub fn math_object_stats(&self) -> MathObjectStats {
         MathObjectStats {
             active: self.math_objects.order.len(),

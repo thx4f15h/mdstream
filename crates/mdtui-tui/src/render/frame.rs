@@ -332,6 +332,11 @@ impl FrameRuntime {
     pub fn fold_menu_key(&mut self, code: crossterm::event::KeyCode) -> bool {
         self.fold_ui.key(code)
     }
+    /// Diagnostic count of actual body-prefix query starts, excluding retained
+    /// metadata checks. This does not enumerate task/checkbox statistics.
+    pub fn prefix_query_starts(&self) -> usize {
+        self.fold_ui.prefix_query_starts()
+    }
     pub fn fold_pending(&self) -> bool {
         self.fold_ui.pending() || self.fold_jump.is_some()
     }
@@ -1121,6 +1126,7 @@ impl FrameRuntime {
         let terminal_changed = rows != previous_rows || cols != previous_cols;
 
         if width_changed {
+            self.fold_ui.resize();
             self.fold_jump = None;
             self.revealed = None;
             self.refiner = None;
@@ -1181,6 +1187,7 @@ impl FrameRuntime {
 
     pub fn set_content_width(&mut self, width: u16) -> Result<ContentWidthChange, FrameError> {
         if width != self.geometry.content_width {
+            self.fold_ui.resize();
             if let Some(fragment) = &mut self.fragment {
                 fragment.refined = None;
             }
@@ -1237,6 +1244,7 @@ impl FrameRuntime {
         }
         let previous_x = self.content_x;
         if width != self.geometry.content_width {
+            self.fold_ui.resize();
             if let Some(fragment) = &mut self.fragment {
                 fragment.refined = None;
             }
@@ -1313,6 +1321,20 @@ impl FrameRuntime {
             self.body_dirty = true;
             self.refiner = None;
             self.reading.view_changed();
+        }
+        // An old acknowledged frame may remain on screen while a current
+        // source/width prefix is checked. Do not publish an intermediate cut
+        // through a newly extended EGC or a prefix exceeding the new row cap.
+        if self.fold_ui.prefix_validation_pending() {
+            return Ok(FrameCommit {
+                status: Some(ViewportFrameStatus::BudgetExhausted),
+                metrics: FrameMetrics {
+                    layout_budget: budget.used(),
+                    frame_elapsed: started.elapsed(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
         }
         if self.pending_sidebar_activate {
             self.activate_sidebar_selection(budget)?;
