@@ -176,6 +176,9 @@ pub struct BlockPlan {
     info_prefixes: Vec<InfoPrefix>,
     pub segments: Vec<TileSegment>,
     pub(crate) projected: bool,
+    pub(crate) flow_owners: HashMap<BlockId, BlockId>,
+    pub(crate) flow_sources: HashMap<BlockId, Span>,
+    pub(crate) flow_ids: HashMap<BlockId, BlockId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -337,6 +340,9 @@ pub(crate) fn empty_plan(
         unbudgeted_drawable_queries: 0,
         info_prefixes: Vec::new(),
         projected: false,
+        flow_owners: HashMap::new(),
+        flow_sources: HashMap::new(),
+        flow_ids: HashMap::new(),
         segments: (tile_start.0..tile_end.0)
             .map(|index| {
                 let tile = TileId(index);
@@ -626,7 +632,10 @@ pub(crate) fn projected_plan(
             continue;
         }
         result.events.push(PlanEvent {
-            block: document.block_at(source.start),
+            block: match placeholder.candidate.id {
+                mdtui3::FoldId::Heading(id) => document.headings().get(id).map(|h| h.block),
+                _ => document.block_at(source.start),
+            },
             source: Span::new(source.start, source.start),
             display_source: Some(source),
             kind: PlanEventKind::FoldLabel {

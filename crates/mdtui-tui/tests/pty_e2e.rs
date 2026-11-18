@@ -165,6 +165,12 @@ fn run_basic_scenario(size: PtySize) {
         &body(&initial, size.cols, false),
         "TOP_MARK"
     ));
+    // The heading can arrive before the wrap row in another PTY read. Wait
+    // for the compared paragraph's tail before taking its initial width.
+    session
+        .read_until(b"marker.", Duration::from_secs(5))
+        .expect("first wrap paragraph complete");
+    let initial = screen_before_leave(&mut session, size);
     let initial_wrap_width = marker_line_width(&body(&initial, size.cols, false), "WRAP_MARK");
 
     for _ in 0..3 {

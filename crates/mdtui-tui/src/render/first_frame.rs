@@ -154,6 +154,9 @@ pub(crate) fn measure_zero_ranges(
 }
 
 pub struct FirstFrame {
+    reference_layout: bool,
+    spacing: super::spacing::WindowSpacing,
+    spacing_ready: bool,
     binding: Option<mdtui3::FoldProjection>,
     projection_cut: Option<usize>,
     summary: Option<super::fold_summary::FoldSummary>,
@@ -319,6 +322,9 @@ impl FirstFrame {
         });
         let suppressed_heading_tiles = Vec::new();
         Ok(Self {
+            reference_layout: false,
+            spacing: Default::default(),
+            spacing_ready: false,
             binding: None,
             projection_cut: None,
             summary: None,
@@ -419,6 +425,9 @@ impl FirstFrame {
         let source = Span::new(start, document.source().len());
         let empty = Span::new(start, start);
         Ok(Self {
+            reference_layout: false,
+            spacing: Default::default(),
+            spacing_ready: false,
             binding: None,
             projection_cut: None,
             summary: None,
@@ -489,6 +498,10 @@ impl FirstFrame {
     pub(crate) fn set_fold_summary(&mut self, summary: Option<super::fold_summary::FoldSummary>) {
         self.summary = summary;
     }
+    pub(crate) fn use_reference_layout(&mut self) {
+        self.reference_layout = true;
+    }
+
     /// Recovery/overscan rows precede the requested viewport. They must not
     /// consume its row allowance before the target tile has been measured.
     pub(crate) fn set_row_limit_anchor(&mut self, tile: TileId) {
@@ -925,6 +938,7 @@ impl FirstFrame {
             let mut stats = sink.stats();
             stats.objects = self.scanner.shared_links().stats();
             stats.object_index = self.scanner.object_index_work();
+            stats.spacing_metadata_steps = self.spacing.metadata_steps;
             stats
         })
     }
@@ -1562,6 +1576,17 @@ impl FirstFrame {
             *self = replacement;
             return Ok(Some(FirstFrameStatus::PendingScan));
         }
+        if !self.reference_layout && !self.spacing_ready {
+            if !self.spacing.advance(
+                document,
+                &mut self.plan,
+                budget,
+                !self.projected && self.contexts.is_empty(),
+            ) {
+                return Ok(Some(FirstFrameStatus::BudgetExhausted));
+            }
+            self.spacing_ready = true;
+        }
         if self.sink.is_none() {
             // Dynamic selection is now prepared. Classify from that window,
             // rather than evaluating unbudgeted next_drawable predicates.
@@ -1613,7 +1638,7 @@ impl FirstFrame {
                 self.config.width,
                 &self.table_widths,
                 &self.contexts.entries,
-                self.contexts.reads,
+                self.contexts.reads + self.spacing.container_reads,
             )?);
             if let Some(replay) = self.replay
                 && !self.replay_used

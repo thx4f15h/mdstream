@@ -80,6 +80,8 @@ pub struct LayoutSinkStats {
     pub document_queries_in_callbacks: u64,
     pub table_rows_prepared: usize,
     pub container_nodes_read: usize,
+    /// Paid logical-object/predecessor queries performed by reading spacing.
+    pub spacing_metadata_steps: usize,
     /// Source bytes requested by preparation in addition to DisplayScanner.
     /// Repeated code/list passes are counted separately.
     pub preparation_source_bytes: usize,
@@ -173,6 +175,7 @@ struct PrepareContext<'a> {
     display_bytes: &'a std::cell::Cell<usize>,
     scratch_cells: &'a std::cell::Cell<usize>,
     fragment_titles: bool,
+    reading: bool,
 }
 
 impl PrepareContext<'_> {
@@ -314,13 +317,15 @@ impl TileLayoutSink {
                 }
                 continue;
             };
-            let owner = document
-                .block(block)
-                .filter(|block| block.kind == BlockKind::Paragraph)
-                .and_then(|block| block.container)
-                .and_then(|container| item_owners.get(&container))
-                .copied()
-                .unwrap_or(block);
+            let owner = plan.flow_owners.get(&block).copied().unwrap_or_else(|| {
+                document
+                    .block(block)
+                    .filter(|block| block.kind == BlockKind::Paragraph)
+                    .and_then(|block| block.container)
+                    .and_then(|container| item_owners.get(&container))
+                    .copied()
+                    .unwrap_or(block)
+            });
             segments_by_block.entry(owner).or_default().push(segment);
         }
 
@@ -341,6 +346,23 @@ impl TileLayoutSink {
             let Some(block) = document.block(planned.id) else {
                 continue;
             };
+            if plan
+                .flow_owners
+                .get(&planned.id)
+                .is_some_and(|owner| *owner != planned.id)
+            {
+                continue;
+            }
+            let mut flow_block = block.clone();
+            if let Some(source) = plan.flow_sources.get(&planned.id) {
+                flow_block.source = *source;
+            }
+            let block = &flow_block;
+            let render_id = plan
+                .flow_ids
+                .get(&planned.id)
+                .copied()
+                .unwrap_or(planned.id);
             let has_label = plan.events.iter().any(|event| {
                 event.block == Some(planned.id)
                     && matches!(event.kind, PlanEventKind::CodeLabel { .. })
@@ -385,12 +407,13 @@ impl TileLayoutSink {
                 display_bytes: &display_bytes,
                 scratch_cells: &scratch_cells,
                 fragment_titles: scanner.shared_links().fragment_titles(),
+                reading: !plan.flow_owners.is_empty(),
             };
             let mut glyphs = block_glyphs(
                 document,
                 block,
                 segments_by_block.remove(&planned.id).unwrap_or_default(),
-                planned.id,
+                render_id,
                 scanner.math_views(),
             );
             if matches!(block.kind, BlockKind::Table { .. }) {
@@ -468,7 +491,7 @@ impl TileLayoutSink {
                 });
             }
             let Some(mut content) =
-                prepare_block(&context, planned.id, block, glyphs, has_label, has_rule)?
+                prepare_block(&context, render_id, block, glyphs, has_label, has_rule)?
             else {
                 continue;
             };
@@ -1368,7 +1391,8 @@ fn prepare_block(
     }
     match &block.kind {
         BlockKind::Paragraph
-            if is_item_continuation(document, block)
+            if !context.reading
+                && is_item_continuation(document, block)
                 && block
                     .container
                     .and_then(|id| document.container(id))
@@ -1376,8 +1400,15 @@ fn prepare_block(
         {
             Ok(None)
         }
+        BlockKind::Paragraph if context.reading && is_item_continuation(document, block) => {
+            prepare_list_paragraph(context, block_id, block, glyphs, true)
+        }
         BlockKind::Paragraph => Ok(Some(PreparedContent::Streamed {
-            quote: false,
+            quote: context.reading
+                && block
+                    .container
+                    .and_then(|id| document.container(id))
+                    .is_some_and(|c| matches!(c.kind, mdtui3::ContainerKind::Quote)),
             glyphs,
         })),
         BlockKind::Quote { .. } => Ok(Some(PreparedContent::Streamed {
@@ -1426,50 +1457,7 @@ fn prepare_block(
             ))))
         }
         BlockKind::ListItem { .. } => {
-            let window = Span::new(
-                block.source.start.max(context.plan_source.start),
-                block.source.end.min(context.plan_source.end),
-            );
-            let item = block.container.and_then(|id| document.container(id));
-            let full_item = item.is_none_or(|item| {
-                item.source.start >= context.plan_source.start
-                    && item.source.end <= context.plan_source.end
-            });
-            let visual = prepared_list_visual(document, block, context.containers)?;
-            let input = prepared_input(context, glyphs)?;
-            let display_bytes = input
-                .tokens()
-                .iter()
-                .map(|token| token.text.len())
-                .sum::<usize>();
-            let capacity = usize::from(context.width)
-                .saturating_sub(visual.continuation_indent)
-                .max(1);
-            let rows_bound = display_bytes.saturating_mul(2) / capacity + 4;
-            let mut screen = scratch_screen_rows(
-                u16::try_from(rows_bound).map_err(|_| SinkError::RowOverflow)?,
-                context.width,
-            )?;
-            context.scratch(&screen);
-            let rows = crate::render::list::render_list_input_with_visual(
-                block_id,
-                block,
-                &input,
-                visual,
-                &mut screen,
-                0,
-            )
-            .map_err(|error| SinkError::Render(error.to_string()))?;
-            let owner = if full_item {
-                list_item_owner_tile(document, block, context.fallback_tile)
-            } else {
-                owner_tile(document, window, context.fallback_tile)
-            };
-            Ok(Some(PreparedContent::Rows(prepared_rows(
-                extract_rows(&screen, 0, Some(rows))?,
-                owner,
-                block.source.start,
-            ))))
+            prepare_list_paragraph(context, block_id, block, glyphs, false)
         }
         BlockKind::Code { .. } => {
             let input = prepared_input(context, glyphs)?;
@@ -1937,6 +1925,8 @@ fn math_flow(
             block,
             context.containers,
         )?)
+    } else if context.reading && is_item_continuation(context.document, block) {
+        Some(continuation_visual(context, block)?)
     } else {
         None
     };
@@ -2247,6 +2237,103 @@ fn prepared_rows(
             source_start,
         })
         .collect()
+}
+
+fn continuation_visual(
+    context: &PrepareContext<'_>,
+    block: &mdtui3::Block,
+) -> Result<ListVisual, SinkError> {
+    let node = block
+        .container
+        .and_then(|id| context.document.container(id))
+        .expect("item continuation");
+    let mdtui3::ContainerKind::Item { number, task } = node.kind else {
+        unreachable!()
+    };
+    let mut marker = block.clone();
+    marker.kind = BlockKind::ListItem {
+        indent: 0,
+        number,
+        task,
+    };
+    let mut visual = prepared_list_visual(context.document, &marker, context.containers)?;
+    visual.marker.clear();
+    visual.indent = visual.continuation_indent;
+    visual.body_indent = visual.continuation_indent;
+    visual.marker_width = 0;
+    Ok(visual)
+}
+fn prepare_list_paragraph(
+    context: &PrepareContext<'_>,
+    block_id: BlockId,
+    block: &mdtui3::Block,
+    glyphs: Vec<OwnedGlyph>,
+    continuation: bool,
+) -> Result<Option<PreparedContent>, SinkError> {
+    let document = context.document;
+    let window = Span::new(
+        block.source.start.max(context.plan_source.start),
+        block.source.end.min(context.plan_source.end),
+    );
+    let item = block.container.and_then(|id| document.container(id));
+    let full_item = item.is_none_or(|item| {
+        item.source.start >= context.plan_source.start && item.source.end <= context.plan_source.end
+    });
+    let mut visual = if continuation {
+        continuation_visual(context, block)?
+    } else {
+        prepared_list_visual(document, block, context.containers)?
+    };
+    if continuation {
+        visual.marker.clear();
+    }
+    let input = prepared_input(context, glyphs)?;
+    let display_bytes = input
+        .tokens()
+        .iter()
+        .map(|token| token.text.len())
+        .sum::<usize>();
+    let capacity = usize::from(context.width)
+        .saturating_sub(visual.continuation_indent)
+        .max(1);
+    let rows_bound = display_bytes.saturating_mul(2) / capacity + 4;
+    let mut screen = scratch_screen_rows(
+        u16::try_from(rows_bound).map_err(|_| SinkError::RowOverflow)?,
+        context.width,
+    )?;
+    context.scratch(&screen);
+    let rows = crate::render::list::render_list_input_with_visual(
+        block_id,
+        block,
+        &input,
+        visual,
+        &mut screen,
+        0,
+    )
+    .map_err(|error| SinkError::Render(error.to_string()))?;
+    let owner = if full_item && !context.reading {
+        list_item_owner_tile(document, block, context.fallback_tile)
+    } else {
+        owner_tile(document, window, context.fallback_tile)
+    };
+    let mut rows = prepared_rows(
+        extract_rows(&screen, 0, Some(rows))?,
+        owner,
+        block.source.start,
+    );
+    if context.reading && rows.len() > 1 {
+        for row in &mut rows {
+            let mut sources = row.line.cells.iter().filter_map(|cell| cell.source);
+            if let Some(first) = sources.next() {
+                let source = sources.fold(first, |a, b| {
+                    Span::new(a.start.min(b.start), a.end.max(b.end))
+                });
+                row.source_start = source.start;
+                row.line.source = Some(LineSource::new(source, block_id));
+            }
+        }
+    }
+    Ok(Some(PreparedContent::Rows(rows)))
 }
 
 fn list_item_owner_tile(document: &Document, block: &mdtui3::Block, fallback: TileId) -> TileId {

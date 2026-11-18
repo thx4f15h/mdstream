@@ -133,6 +133,7 @@ pub fn render_static_screen(
         };
         let mut first = FirstFrame::new(document, config)
             .map_err(|e| StaticRenderError::Prepared(e.to_string()))?;
+        first.use_reference_layout();
         loop {
             let step = first
                 .advance(

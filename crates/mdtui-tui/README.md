@@ -226,6 +226,33 @@ TUI 不允许用 `--once` 截图替代 committed `Screen`，`--once` 也不允�
 raw golden。TUI 的 PTY 验收覆盖真实二进制启动、滚动、侧栏、目录/锚点跳转、历史、外链焦点、
 `--no-links`、resize 和退出恢复。
 
+## 容器段落与列表间距
+
+交互正文按核心的逻辑段落首叶、确切 ContainerId 路径和当前 ListTightness 排版。
+同段显式/lazy 续行合并；同 Item 的不同段落分别绘制，后段保留正文缩进而不重复标记。
+Quote 内段落之间、loose 列表兄弟/直接内容之间留一行；tight 兄弟及 tight 的嵌套列表保持紧凑，
+外层 loose 不改变内层 tight。容器内代码、表格、独立数学和 Quote 边界留一行。
+顶层继续使用原间距矩阵：段落类与 List、List 与 List 紧贴，其余独立组留一行。
+文档首尾不补空行。标题自身的折叠占位归属真实 Heading.block，延续标题而不多加段落空行。
+Quote 前缀沿用既有样式，前缀扩展和脚注 UI 仍属独立任务。
+
+间距行属于后一个对象起点的 tile，但没有 LineSource 或 cell source，不能成为搜索/复制的
+精确正文目标。FirstFrame、Viewport、SourceRefiner、HeightIndex 和检查点共用同一事件流；
+折叠投影只检查可见片段、占位和索引前驱，不为间距读取隐藏正文。迟 loose 消费原区间失效，
+保留旧高度估计并在访问时重排。`--once` 继续使用参考紧凑分组和原始字节政策，数学静态回退也
+显式选择该政策；没有新增用户配置。
+
+间距元数据准备按对象/索引前驱和祖先节点共享 Budget，可在 1 query / 1 object / 6 bytes
+下逐步恢复；`LayoutSinkStats.spacing_metadata_steps` 和 `container_nodes_read` 分别记录其元数据
+步骤和实际路径读取（后者含已有上下文准备）。查询的索引成本为 O(log B + log P)，祖先按实际
+访问节点计费，窗口存储 O(K + D)，不为每个叶块复制全祖先。输入解析和核心存储上界不变。
+规范 shape 冷准备、显示扫描、同步 sink 准备与输出分别计费。低层默认 ShapeSeed 的首次准备
+仍可能处理百万输入字节；已解析文档的 FrameRuntime 索引冷接管复用 035 的共享 DisplaySource，
+实测百万隐藏正文 shape 解码为 0，frame_to 查询/对象/字节累计 123/121/123（含额度/发送计费），
+实际帧输出 96 字节。输入自身的百万字节处理另报；热 resize 不因恢复间距重读隐藏正文。
+sink 准备包含当前显示片段的分配/排版，并非一个预算 object 就代表固定 CPU 时延。`prepared_display_bytes`、
+`preparation_source_bytes` 及 frame 的实际输出计数应与元数据步骤分别解读。
+
 ## 已知限制与差异
 
 完整的静态逐节证据见

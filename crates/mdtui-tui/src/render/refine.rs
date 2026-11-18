@@ -203,8 +203,11 @@ impl SourceRefiner {
                     })
                     .flatten()
             });
+        let paragraph = document.paragraph_at(lookup_source);
+        let block = paragraph.map(|p| p.block).or(block);
         let block_source = heading
             .map(|(_, source)| source)
+            .or_else(|| paragraph.map(|p| p.source))
             .or_else(|| block.and_then(|id| document.block(id)).map(|b| b.source))
             .or_else(|| in_pending.then_some(pending))
             .ok_or(RefineError::InvalidSource)?;

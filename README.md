@@ -212,6 +212,12 @@ assert_eq!(doc.container(item).unwrap().state, SyntaxState::Sealed);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+`Document::paragraph_at(offset)` 使用现有物理块和逻辑段落首叶/末端索引，在 O(log B + log P)
+内返回当前 revision 的 `ParagraphFoldCandidate` 快照；包含同段所有容器叶块和开放暂定尾部。
+不读取正文或遍历祖先，空行、定义和已改型 Setext 不返回段落。调用方需将该索引查询计入自身
+预算；批量窗口发现仍使用有预算的 `ParagraphFoldCandidates`。终端用此事实消费实际间距，
+不在 UI 重新判断 Markdown 段落边界。
+
 `container_ancestors` 借用文档，每次 `advance` 消费 1 query / 1 object 返回一层，预算不足返回 `Err(BudgetExhausted)` 且不移动，换预算继续；根之后为 `Ok(None)`。借用期间不能追加，游标不复制路径也不允许静默跨 revision 使用。简单上下文读取可以直接使用 O(1) 的父 ID 和深度摘要；不要每帧自行无预算地遍历所有容器。
 
 流式协议：只在换行、EOF 或 `BLOCK_LOOKAHEAD` 前缀达到上限时提交结构。未分类尾部不属于开放范围；`Update.container_end` 是所有 Growing 容器共用的已解析末端，解析长行时随实际消费增长。`new_containers` 给新 ID 范围；`closed_containers` 按实际弹栈次序报告关闭 ID，每次从最内层向外关闭，节点末端固定为离开该容器的行首或 EOF。结束一个叶块不意味着容器关闭；同一 List 的兄弟 Item 使用不同 ID，List ID 保持。容器范围/状态属于对象元数据，不能仅凭旧 `tile_key` 复用这些快照。追加仅改变共享末端，不逐祖先生成增长事件；消费方同样可以保存共享末端，不能因收到更新就自动遍历全部开放节点。`merge` 只移动新事件，`append_into/finish_into` 复用关闭缓冲区；空追加和重复 finish 不产生开闭。

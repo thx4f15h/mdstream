@@ -183,7 +183,11 @@ fn write_list_marker(
         let start = content
             .x
             .saturating_add(u16::try_from(visual.indent).unwrap_or(u16::MAX));
-        let marker = format!("{} ", visual.marker);
+        let marker = if visual.marker.is_empty() {
+            String::new()
+        } else {
+            format!("{} ", visual.marker)
+        };
         let fit = fit_prefix(&marker, available - visual.indent);
         let mut cursor = TextCursor::new(start);
         for grapheme in graphemes(&marker[..fit.end]) {

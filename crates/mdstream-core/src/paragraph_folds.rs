@@ -20,6 +20,20 @@ pub struct ParagraphFoldCandidate {
 }
 
 impl Document {
+    /// Logical paragraph containing an offset, including its physical container
+    /// leaves and provisional open tail. Uses the existing first-leaf/end index
+    /// in O(log B + log P), without reading source or walking container ancestry.
+    /// Like other metadata snapshots, the result belongs to this revision.
+    pub fn paragraph_at(&self, offset: usize) -> Option<ParagraphFoldCandidate> {
+        let leaf = self.blocks.partition_point(|b| b.source.end <= offset);
+        self.paragraph_fold_covering(offset, leaf).or_else(|| {
+            let entry = self.blocks.get(leaf)?;
+            (entry.source.start <= offset && offset < entry.source.end)
+                .then(|| self.paragraph_fold_snapshot(BlockId(leaf)))
+                .flatten()
+        })
+    }
+
     fn paragraph_fold_snapshot(&self, block: BlockId) -> Option<ParagraphFoldCandidate> {
         let (source, open) = self.open_paragraph_source(block)?;
         let entry = self.block(block)?;
