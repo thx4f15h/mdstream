@@ -102,6 +102,8 @@ mdtui-tui [OPTIONS] <FILE>
 
 临时展开与用户意愿分开，关闭菜单仍保留预览，菜单外 `Esc` 恢复当前范围下保存的选择。主动菜单、注册、批量/Reveal 和维护期间暂缓消费 Reader batches，容量 1 的 channel 形成背压；终端按键、预算推进、取消和 Reader.close 继续工作。自动长段落任务合并旧 remaining_range 与新更新，不丢旧积压。进度行显示已检查/变更数量。
 
+目录、fragment、搜索命中和历史成功定位后，后续折叠从当前目标开始；正文逐行、翻页和 Home/End 也会替换之前折叠或 resize 保存的定位意愿。有效的重复源码定位同样结束旧意愿，错误文档或非法目标则保留当前状态。单个折叠批次内的预算暂停、占位再投影、resize 和取消继续保留原精确源码，展开后恢复它；取消保留已经生效的折叠选择。
+
 侧栏名称输入限 **256 UTF-8 字节**，Backspace/Delete 删除末尾一个 Unicode 标量；输入期间 `q`、`s`、数字和 `/` 都作为字符，`Esc` 放弃编辑，`Enter` 提交，`Ctrl-C` 仍退出；Tab/Shift-Tab 焦点和 Alt-Left/Right 历史仍可用，草稿保留。编辑时不搜索；相同已提交查询不重复扫描，过期查询可用 `/ Enter` 显式刷新。
 
 名称匹配复用核心 `HeadingSearch` 的非隐藏显示文本（包括实体、图片 alt 与链接标签），按字面、区分大小写，不归一化 Unicode、不跨标题。每个匹配标题只列一次；名称模式为独立平面匹配列表，不受目录收起状态限制。只保留有限当前页：上下键移动，Down/PageDown 继续发现后页，Up/PageUp 精确前页按预算重扫，Home 回首页，End 按预算寻找末页。`scan hN @byte` 显示进度，Esc 随时取消；正文搜索状态独立，按当前焦点分别接收输入，切换焦点保留各自草稿。显式目录 Enter 暂停尚未完成的正文搜索导航，保留正文查询、选区和复制；回正文可用 n/N 或 `/ Enter` 恢复，旧搜索不会抢回视口。正文开始编辑也取消尚未执行的目录激活，不写入无移动历史。追加、finish 或晚定义使名称结果标为 `stale`，保留 HeadingId 选择，等待显式刷新，避免每 append 重搜历史。resize 从原匹配页附近重建有界窗口，不从文首扫描。隐藏侧栏会释放未完成的 guard/查询；未完成查询显示 stale，已完成页和选择保留。
@@ -209,6 +211,8 @@ nix develop -c cargo clippy --workspace --lib --bins -- -D warnings
 nix develop -c cargo clippy -p mdtui-tui --all-targets -- -D warnings
 # Cell、raw ANSI、实际读量/容量/预算、Unicode 窗口边界
 nix develop -c cargo nextest run -p mdtui-tui --test static_render --test once_ansi --test workspace_integration --test nested_objects
+# resize 后导航与下一次折叠；真实 CLI 和独立源码/画面断言
+nix develop -c cargo nextest run -p mdtui-tui --test navigation_anchor --test navigation_anchor_pty --test fold_reanchor
 # 手动 64 MiB 验收；不以墙钟作相等断言
 nix develop -c cargo nextest run -p mdtui-tui --run-ignored only -E 'test(/manual_.*(64|sixty_four)/)'
 ```

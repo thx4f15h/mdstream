@@ -474,6 +474,9 @@ impl ViewportState {
         Ok(())
     }
     pub fn fold_changed(&mut self, document: &Document) {
+        if self.check_document(document).is_err() {
+            return;
+        }
         self.summary = None;
         if self.fold_anchor.is_none() {
             self.fold_anchor = self.top_source(document);
@@ -1677,6 +1680,9 @@ impl ViewportState {
                 estimated_rows: CONTENT_WIDTH_RESET_ESTIMATE,
             });
         }
+        // A geometry change can occur between projections of the same fold
+        // batch. Keep its original source even while it is hidden by a PH.
+        let top_source = self.fold_anchor.or(top_source);
 
         self.restart_end(document);
         let old_top = self.top;
@@ -1775,8 +1781,10 @@ impl ViewportState {
     }
 
     pub fn scroll_down(&mut self, document: &Document, rows: u64) -> Result<bool, ViewportError> {
-        self.fold_anchor = None;
         self.check_document(document)?;
+        if rows == 0 {
+            return Ok(false);
+        }
         let current = self.top_row().unwrap_or(0);
         let target = current
             .saturating_add(u128::from(rows))
@@ -1785,8 +1793,10 @@ impl ViewportState {
     }
 
     pub fn scroll_up(&mut self, document: &Document, rows: u64) -> Result<bool, ViewportError> {
-        self.fold_anchor = None;
         self.check_document(document)?;
+        if rows == 0 {
+            return Ok(false);
+        }
         let current = self.top_row().unwrap_or(0);
         let target = current.saturating_sub(u128::from(rows));
         self.set_top_row(document, target)
@@ -1797,6 +1807,9 @@ impl ViewportState {
         self.calibration = None;
     }
 
+    /// Commit explicit source navigation. A valid target supersedes a previous
+    /// fold/resize intention even when it already occupies the displayed row.
+    /// Rejected targets leave the current intention and layout owner intact.
     pub fn set_top_from_refinement(
         &mut self,
         document: &Document,
@@ -1806,8 +1819,38 @@ impl ViewportState {
         exact: bool,
     ) -> Result<bool, ViewportError> {
         self.check_document(document)?;
+        if document.tile(anchor.tile).is_none()
+            || self
+                .checkpoints
+                .heights()
+                .height(anchor.tile)
+                .is_none_or(|height| anchor.offset > height.saturating_sub(1))
+            || !document.source().is_char_boundary(line_start)
+            || !document.source().is_char_boundary(source)
+        {
+            return Err(ViewportError::InvalidTop);
+        }
+        self.clear_fold_anchor();
+        self.commit_refined_top(document, anchor, line_start, source, exact)
+    }
+
+    fn clear_fold_anchor(&mut self) {
+        self.fold_anchor = None;
         self.fold_reanchor = false;
         self.anchor_refiner = None;
+    }
+
+    // Internal fold/resize projection changes the displayed row without
+    // replacing the original source retained by this batch. Public navigation
+    // first clears that intention, including a suspended resize refiner.
+    fn commit_refined_top(
+        &mut self,
+        document: &Document,
+        anchor: Anchor,
+        line_start: usize,
+        source: usize,
+        exact: bool,
+    ) -> Result<bool, ViewportError> {
         let moved = self.top != Some(anchor) || self.top_source(document) != Some(line_start);
         if !moved && document.math_object_stats().active == 0 {
             return Ok(false);
@@ -1882,7 +1925,7 @@ impl ViewportState {
                     match refiner.advance_owned(document, &mut self.checkpoints, budget) {
                         Ok(super::refine::RefineProgress::Ready(target)) => {
                             self.fold_reanchor = false;
-                            self.set_top_from_refinement(
+                            self.commit_refined_top(
                                 document,
                                 target.anchor,
                                 target.line_start,
@@ -2046,7 +2089,8 @@ impl ViewportState {
         let Some(anchor) = self.checkpoints.heights().locate(row) else {
             return Ok(false);
         };
-        if self.top == Some(anchor) {
+        self.clear_fold_anchor();
+        if self.top == Some(anchor) && !self.refined_top {
             return Ok(false);
         }
         self.top = Some(anchor);

@@ -3267,3 +3267,18 @@ fmt、all-targets check、strict clippy、strict rustdoc 与 84 个文档测试�
 根独立验收：当前所需唯一用例覆盖 debug 2923、release 2919；debug 实际新执行核心32+TUI816，另复用未变路径核心2072及无折叠重测试3；release 实际新执行核心3+TUI815，复用核心2101。新执行和实际复用的用例集合无交叠、无遗漏，明确不是本轮新执行整库。固定release二进制4a540e…在根私有tmux中，两组手写同Item多段/Quote网格、40×12→20×6→40×12及退出0均通过。598个Rust输入在文档闭环前后逐字节相同，原数据/HTML/生成器/锁文件/金样与提交钩子保持。
 
 resize后显式目录跳转再折叠的独立037缺陷已新增未勾待办，不在本项宣称修复。完整旧失败、修正后门禁、三项实际复用、源清单、根终端与成本证据归档至 `/home/ajen/.local/state/codex/mdtui3/2026-11-17-resumed/027-accepted-evidence.tar.gz`。
+
+
+## 2026-11-18 视口导航与折叠锚点生命周期
+
+在正式 `bc1b4b9` 基线上用固定二进制重走 End、40×10 resize、Home、s、Tab、Down、Enter、z、Enter，保留目录跳到 Tail+READY 后折叠却返回 Stream 的真实失败。独立 source/frame 与真实 PTY 的最终九项反例在同一基线全部失败；没有用早期候选补丁的 green 代替验收。
+
+有效的显式 source 定位（包括重复定位）和物理行导航一起结束旧 fold/resize 意愿及未完成 refiner；参数和文档检查在变更前完成。内部再投影继续保存批次原精确源，批次中途 resize 不以占位源覆盖它。复用单 FoldView 与原 height/checkpoint owner，无新核心运行时依赖；不自动 End、不新增全文高度清除或扫描、不丢历史、选区、预览与已生效折叠选择。已有 036 行限额锚点、完成/真正 pending 取消、StreamEngine EOF geometry 回归保持原输入和断言。
+
+本分支实际验证相关 TUI debug 330 项、release 330 项，各保留范围内原有 2 项 skipped；核心 navigation/fold_navigation/fold_layout_owner/history 31 项、84 个 doctest、严格 all-targets check/Clippy/rustdoc、fmt 通过。新增九项覆盖同/跨 tile、待完成 resize 后 Home、物理逐行/翻页/首尾、重复成功定位、错误文档与非法输入、零/微预算、批次再投影/resize 恢复以及目录/fragment/搜索 Reveal/历史。原官方数据、HTML、goldens、既有断言、核心源码、锁文件、hook 和 rustfmt 保持。未将无关 parser/GCB 全量评分称作本轮新执行。
+
+固定 release 二进制的私有 tmux 原流程在折叠后保留 Tail 及对应占位；无需 End 即可展开，20×3→40×10 恢复后仍为 Tail+READY，q 退出 0。实际 CLI 进程 CPU 为 user 0.142s/system 0.178s，峰值 RSS 18412 KiB；6.55s 墙钟包含驱动等待。独立 PTY 原流程实际输出 3064 字节。长段落 32783/131090 字节输入的显式细化均为 162 query/156 object，计费源码 6786/6792 字节，计划最多 8 tile；fold/expand、shape 输入准备、实际绘制字节、检查点容量和整个命令 CPU/RSS 分开记录。真实 64 MiB FOLLOW 回归仍处理 67108877 输入字节；重测试的约 10.1 GiB 峰值 RSS 不冒充本次局部导航成本。
+
+成本探索另保留一条既有边界：32780 字节多段正文、8-tile/row_slack=4 自定义配置下，SourceRefiner 在导航提交前返回 NotFound；干净 `bc1b4b9` 与本版同输入实际复现。本项不宣称修复它，也未删除反例或更改生产默认参数。原失败、修正过程、命令/退出/中断、实际 UI、成本与冻结清单保存在 `/tmp/mdtui3-codex-todo/037-prototypes`，交 root 独立复核与正式提交。
+
+根独立验收：已审查最小 viewport 生命周期变更、九项基线反例与正式用例日志，冻结的 600 个 Rust 输入逐字节一致。根私有 tmux 在固定二进制 2a062c9e… 上实际重走原目录跳转/折叠流程、无需 End 展开及 20×3→40×10 恢复，目标 Tail 与 READY 保持，q 退出 0。相关门禁为实际 debug 293+37、release 330；不扩称整库新执行。完整冻结、旧失败、终端和成本证据归档至 `/home/ajen/.local/state/codex/mdtui3/2026-11-17-resumed/037-accepted-evidence.tar.gz`。
