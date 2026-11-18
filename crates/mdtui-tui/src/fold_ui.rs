@@ -1,4 +1,5 @@
 //! One view's concrete keyboard menu and paid fold operations.
+use crate::render::text::{display_width, fit_prefix};
 use crate::render::{checkpoint::RenderCheckpoint, prefix::PrefixLines};
 use crossterm::event::KeyCode;
 use mdtui3::{
@@ -67,6 +68,7 @@ pub struct FoldUi {
     range_next: Option<SourceFoldCandidates>,
     range_all: Option<bool>,
     message: String,
+    failed: bool,
     summary: Option<super::render::fold_summary::FoldSummary>,
     changed: bool,
 }
@@ -113,26 +115,22 @@ impl FoldUi {
         Ok(())
     }
     pub fn status(&self, width: u16) -> Option<String> {
-        if self.operation.is_some() {
-            return Some(format!("Esc cancel | {}", self.message));
-        }
-        if self.menu && self.message == EMPTY_TARGET_MESSAGE {
-            return Some(if usize::from(width) < EMPTY_TARGET_MESSAGE.len() {
+        let width = usize::from(width);
+        let status = if self.operation.is_some() {
+            format!("Esc cancel | {}", self.message)
+        } else if self.menu && self.message == EMPTY_TARGET_MESSAGE {
+            if width < EMPTY_TARGET_MESSAGE.len() {
                 "No target Esc=resume".into()
             } else {
                 self.message.clone()
-            });
-        }
-        if let Some((label, _)) = self.menu.then(|| self.entries.get(self.index)).flatten() {
-            if width < 32 {
-                let fit = super::render::text::fit_prefix(
-                    label,
-                    usize::from(width.saturating_sub(12)).max(1),
-                );
-                return Some(format!("{} ↑↓ ↵ Esc ←→", &label[..fit.end]));
             }
-            Some(format!(
-                "z ↑↓ Enter Esc ←→ | {}: {} ({}/{}) | {}",
+        } else if self.menu && self.failed {
+            format!("{} | Esc", self.message)
+        } else if let Some((label, command)) =
+            self.menu.then(|| self.entries.get(self.index)).flatten()
+        {
+            let detailed = format!(
+                "{}: {} ({}/{})",
                 [
                     "node",
                     "document",
@@ -144,13 +142,44 @@ impl FoldUi {
                 label,
                 self.index + 1,
                 self.entries.len(),
-                self.message
-            ))
+            );
+            // Keep the whole action before spending cells on context or help.
+            // Finite short labels retain the type, level and prefix mode.
+            let help = [
+                " | ↑↓ Enter Esc ←→",
+                " Enter Esc",
+                " ↑↓ ↵ Esc ←→",
+                " ↑↓ ↵ Esc",
+                " ↵ Esc",
+                " Esc",
+            ];
+            let mut status = if display_width(&detailed) + display_width(help[0]) <= width {
+                detailed
+            } else if display_width(label) + display_width(" Esc") <= width {
+                label.clone()
+            } else {
+                compact_label(label, *command)
+            };
+            for help in help {
+                if width < 32 && help == " Enter Esc" {
+                    continue;
+                }
+                if display_width(&status) + display_width(help) <= width {
+                    status.push_str(help);
+                    break;
+                }
+            }
+            let message = format!(" | {}", self.message);
+            if display_width(&status) + display_width(&message) <= width {
+                status.push_str(&message);
+            }
+            status
         } else if self.pending() {
-            Some(format!("fold: {} | Esc cancel", self.message))
+            format!("fold: {} | Esc cancel", self.message)
         } else {
-            None
-        }
+            return None;
+        };
+        Some(status[..fit_prefix(&status, width).end].into())
     }
     pub fn open(&mut self, source: usize, selection: Option<Span>, target: Option<FoldId>) {
         self.menu = true;
@@ -161,6 +190,7 @@ impl FoldUi {
         self.target = target;
         self.entries = entries(self.page);
         self.message = "reader paused".into();
+        self.failed = false;
         self.range_next = None;
         self.range_all = None;
         if self.target.is_none() {
@@ -175,7 +205,7 @@ impl FoldUi {
             return true;
         }
         if self.menu
-            && self.message == EMPTY_TARGET_MESSAGE
+            && (self.failed || self.message == EMPTY_TARGET_MESSAGE)
             && matches!(
                 code,
                 KeyCode::Up
@@ -187,6 +217,7 @@ impl FoldUi {
             )
         {
             self.message = "reader paused".into();
+            self.failed = false;
         }
         match code {
             KeyCode::Esc => {
@@ -220,6 +251,7 @@ impl FoldUi {
             KeyCode::Home if self.menu => self.index = 0,
             KeyCode::End if self.menu => self.index = self.entries.len().saturating_sub(1),
             KeyCode::Enter if self.menu && self.operation.is_none() => {
+                self.failed = false;
                 self.operation = Some(Operation::Command(self.entries[self.index].1));
             }
             KeyCode::Char('q') | KeyCode::Char('c') => return false,
@@ -256,6 +288,7 @@ impl FoldUi {
                 let old = view.version();
                 if let Err(error) = self.prefixes.advance(doc, view, links, width, budget) {
                     self.message = error;
+                    self.failed = true;
                     self.prefixes.cancel();
                 } else {
                     self.message = self.prefixes.message.clone();
@@ -273,6 +306,7 @@ impl FoldUi {
                     Ok(task) => self.auto = Some(task),
                     Err(error) => {
                         self.message = error.to_string();
+                        self.failed = true;
                     }
                 }
             }
@@ -290,6 +324,7 @@ impl FoldUi {
                     }
                     Err(error) => {
                         self.message = error.to_string();
+                        self.failed = true;
                         self.auto_range = Some(task.remaining_range());
                         self.auto = None;
                     }
@@ -310,6 +345,7 @@ impl FoldUi {
             Ok(false) => self.operation = Some(operation),
             Ok(true) => {}
             Err(error) => {
+                self.failed = true;
                 self.message = if error == LayoutError::InvalidRange
                     && doc.source().is_empty()
                     && self.target.is_none()
@@ -694,6 +730,57 @@ fn charge(budget: &mut Budget) -> bool {
 }
 fn candidate_label(c: FoldCandidate) -> String {
     crate::render::plan::placeholder_label(c)
+}
+fn compact_label(label: &str, command: Command) -> String {
+    match command {
+        Command::NextRange => "source next here".into(),
+        Command::NextAnyRange => "source next any".into(),
+        Command::RowTarget => "table rows here".into(),
+        Command::Summary => "summary 2 rows".into(),
+        Command::Siblings(true) => "close siblings".into(),
+        Command::Focus => "keep path".into(),
+        Command::All(true) => "close document".into(),
+        Command::Level(level, collapsed) => {
+            format!("h{level} {}", if collapsed { "collapse" } else { "open" })
+        }
+        Command::Overlay => "source fixed".into(),
+        Command::Strict => "source strict".into(),
+        Command::Stream => "source live EOF".into(),
+        Command::Seal => "source seal".into(),
+        Command::Remove => "source remove".into(),
+        Command::Rows => "table rows fixed".into(),
+        Command::Paragraph => "para prefix256B".into(),
+        Command::ParagraphLines(lines) => format!("{} para", prefix_label(lines)),
+        Command::DefaultLines(lines) => format!("{} para default", prefix_label(lines)),
+        Command::Default(kind) => format!(
+            "{} default",
+            [
+                "h1", "h2", "h3", "h4", "h5", "h6", "code", "math", "table", "quotes", "lists",
+                "items", "done", "todo", "depth>=2", "para>=4K"
+            ][usize::from(kind)]
+        ),
+        Command::Containers(filter, collapsed)
+            if filter.completed_tasks || filter.incomplete_tasks =>
+        {
+            format!(
+                "{} {}",
+                if filter.completed_tasks {
+                    "done"
+                } else {
+                    "todo"
+                },
+                if collapsed { "collapse" } else { "open" }
+            )
+        }
+        _ => label.into(),
+    }
+}
+fn prefix_label(lines: PrefixLines) -> String {
+    match lines {
+        PrefixLines::Display(0) => "0".into(),
+        PrefixLines::Logical(count) => format!("L{count}"),
+        PrefixLines::Display(count) => format!("D{count}"),
+    }
 }
 fn entries(page: usize) -> Vec<(String, Command)> {
     let mut result = vec![

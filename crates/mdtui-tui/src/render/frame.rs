@@ -1687,7 +1687,8 @@ impl FrameRuntime {
                     .or(reading_status.as_deref())
                     .or(self.notice)
                     .or(table_notice.as_deref()),
-                following: self.viewport.following(),
+                // The fold status already allocates this row's full width.
+                following: self.viewport.following() && fold_status.is_none(),
                 table_notice: reading_status.is_none()
                     && self.notice.is_none()
                     && table_notice.is_some(),

@@ -3329,3 +3329,14 @@ resize后显式目录跳转再折叠的独立037缺陷已新增未勾待办，�
 原 baseline red、配置1边界 red、修正中的测试/工具失败、原始终端输出、退出/清理、命令与冻结清单保留于 `/tmp/mdtui3-codex-todo/038-prototypes`，结果交 `/tmp/mdtui3-codex-todo/038-result.json`。仅 own branch WIP；正式 root 独立验收与唯一 main feature 提交仍由 root 驱动，未 push。040窄屏相邻动作文字问题及020/029/030范围未混修。
 
 根独立验收：已审查两个生产文件的目标准入与边界修复、6 项手写源码/行数/预算/负例和冻结输入，相关门禁日志实际为 debug202/202、release6/6。根重跑原封不动32780B/8tile probe退出0；固定019b498a… release在根私有tmux中实际完成60×16→40×10、目录跳转、折叠/展开、恢复60×16及q退出0，未调用End。默认CLI旧暖流程原本可通过，已单独保留兼容对照，未冒称其为原8tile red。613个Rust输入在文档收尾前后逐字节相同。完整源/旧失败/命令/真实终端/成本与审查证据归档至 `/home/ajen/.local/state/codex/mdtui3/2026-11-17-resumed/038-accepted-evidence.tar.gz`。
+
+
+## 2026-11-19 窄屏折叠菜单动作可辨识
+
+正式 5e32cce 的 20×6 h1/h2 默认动作画面完全相同，40 列亦被帮助前缀挤掉身份。状态行现按真实显示列优先保留当前动作，再分配页名、序号与帮助；有限短标签保持级别、类型和模式，已注册 `table rows here` 与 `table rows fixed`、Source 入口分别准确。沿用既有宽度/GCB fit，不改命令、注册、默认、输入背压或 FoldView。
+
+空目标和执行错误优先显示，菜单导航恢复当前动作。真实流式测试另发现 FOLLOW 帮助与菜单争用同一状态行；呈现时只在没有 fold status 时叠加 FOLLOW，真实跟随状态不改，Esc 后恢复提示。未改变输入、折叠任务或正文排版。
+
+独立手写状态行、网格和真实默认字段 oracle 在基线红、修复绿；覆盖六页72项、20/40列互相可辨识、0..19列不越界、20×3、Home/End/切页、20→40→80→20、零/6字节微预算、h1/h2独立字段、D1来源切口及取消保留已生效意愿。85项相关测试、84个文档测试、fmt、workspace all-target/all-feature check与严格Clippy/rustdoc通过；未新跑无关巨型parser/GCB/64MiB或整库门禁。
+
+固定 release 64fff139… 的10组真实终端流程全部通过；根另在独立私有tmux复验三组：held FIFO中h1/h2及resize可辨识、菜单期间FOLLOW帮助让位且关闭后恢复、最小20×3空目标/导航/Esc后READY、40→20的D1实际折叠/展开，所有q退出0。旧错误包名、初始测试/窄屏期望与FOLLOW回归均保留，不算最终通过。614个Rust输入与冻结逐字节相同，核心、依赖、旧夹具/HTML/goldens、既有断言、hook/rustfmt保持。源/旧失败/命令/固定二进制/终端与独立审查归档至 `/home/ajen/.local/state/codex/mdtui3/2026-11-17-resumed/040-accepted-evidence.tar.gz`。
