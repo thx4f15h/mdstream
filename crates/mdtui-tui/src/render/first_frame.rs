@@ -203,6 +203,8 @@ pub struct FirstFrame {
     checkpoints: RenderCheckpointStore,
     cursor: usize,
     rows: u64,
+    row_limit_anchor: Option<TileId>,
+    leading_rows: u64,
     layout_attempts: usize,
     direct_tiles: usize,
     processed_tiles: usize,
@@ -370,6 +372,8 @@ impl FirstFrame {
             },
             cursor: 0,
             rows: 0,
+            row_limit_anchor: None,
+            leading_rows: 0,
             layout_attempts: 0,
             direct_tiles: 0,
             processed_tiles: 0,
@@ -469,6 +473,8 @@ impl FirstFrame {
             checkpoints: RenderCheckpointStore::borrowed(),
             cursor: 0,
             rows: 0,
+            row_limit_anchor: None,
+            leading_rows: 0,
             layout_attempts: 0,
             direct_tiles: 0,
             processed_tiles: 0,
@@ -482,6 +488,11 @@ impl FirstFrame {
 
     pub(crate) fn set_fold_summary(&mut self, summary: Option<super::fold_summary::FoldSummary>) {
         self.summary = summary;
+    }
+    /// Recovery/overscan rows precede the requested viewport. They must not
+    /// consume its row allowance before the target tile has been measured.
+    pub(crate) fn set_row_limit_anchor(&mut self, tile: TileId) {
+        self.row_limit_anchor = Some(tile);
     }
     pub(crate) fn prepare_only(&mut self) {
         self.measurements = false;
@@ -1045,6 +1056,7 @@ impl FirstFrame {
         self.pass = None;
         self.cursor = 0;
         self.rows = 0;
+        self.leading_rows = 0;
         self.processed_tiles = 0;
         self.replay = None;
         self.replay_pass = None;
@@ -1125,7 +1137,7 @@ impl FirstFrame {
             return Ok(self.step(status));
         }
         loop {
-            if self.rows >= self.config.row_limit {
+            if self.rows.saturating_sub(self.leading_rows) >= self.config.row_limit {
                 return self.finish_measurements(document, budget, FirstFrameStatus::Covered);
             }
             let Some(segment) = self.plan.segments.get(self.cursor) else {
@@ -1259,6 +1271,9 @@ impl FirstFrame {
                     .checkpoint_after_tile(tile, checkpoint, document)?;
             }
             self.rows = self.rows.saturating_add(expected);
+            if self.row_limit_anchor.is_some_and(|anchor| tile < anchor) {
+                self.leading_rows = self.rows;
+            }
             self.processed_tiles = self.processed_tiles.saturating_add(1);
             self.cursor += 1;
         }
@@ -1528,6 +1543,7 @@ impl FirstFrame {
             let view = self.table_view;
             let copy_view = self.math_copy_view;
             let mut replacement = Self::new_borrowed(document, config)?;
+            replacement.row_limit_anchor = self.row_limit_anchor;
             replacement.set_links(links);
             replacement.set_table_widths(widths)?;
             if let Some(view) = view {
@@ -1731,6 +1747,14 @@ impl FirstFrame {
                 self.replay_pass = None;
                 self.replay_used = true;
                 self.rows = u64::try_from(measured).unwrap_or(u64::MAX);
+                if self.row_limit_anchor == Some(replay.target) {
+                    self.leading_rows = self.rows.saturating_sub(
+                        self.sink
+                            .as_ref()
+                            .and_then(|sink| sink.tile_rows(replay.target))
+                            .unwrap_or(0),
+                    );
+                }
                 self.cursor = next
                     .0
                     .saturating_sub(self.plan.tile_start.0)

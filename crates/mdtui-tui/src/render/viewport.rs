@@ -2335,6 +2335,7 @@ impl ViewportRender {
             checkpoints,
         )?;
         first.set_table_options(document, policy, positions)?;
+        first.set_row_limit_anchor(anchor.tile);
         first.set_fold_summary(summary.cloned());
         first.set_table_view(super::table_window::TableView {
             anchor,
@@ -2726,7 +2727,10 @@ fn render_tile_range(
     start = block_start_tile(document, start).min(start);
 
     let mut end = visible_end.min(document.tile_count());
-    let earliest = visible_start
+    // Backward overscan/recovery must leave room for the requested tile in
+    // the bounded plan, including when projection counts visible tiles.
+    let earliest = anchor
+        .tile
         .0
         .saturating_sub(config.max_tiles.saturating_sub(1));
     if start.0 < earliest {
