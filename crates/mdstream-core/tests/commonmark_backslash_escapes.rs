@@ -157,6 +157,10 @@ fn project(doc: &Document) -> String {
 
 enum Assessment {
     Supported,
+    Deliberate {
+        reason: &'static str,
+        observed: &'static str,
+    },
     Unsupported {
         reason: &'static str,
         observed: &'static str,
@@ -166,7 +170,11 @@ enum Assessment {
 // Independent observations never replace the verbatim upstream oracle.
 fn assessment(number: usize) -> Assessment {
     match number {
-        12..=20 | 22..=24 => Assessment::Supported,
+        12 => Assessment::Deliberate {
+            reason: "formal empty backslash-paren math replaces the literal parentheses",
+            observed: "<p>!&quot;#$%&amp;'*+,-./:;&lt;=&gt;?@[\\]^_`{|}~</p>\n",
+        },
+        13..=20 | 22..=24 => Assessment::Supported,
         21 => Assessment::Unsupported {
             reason: "raw HTML is outside project requirements",
             observed: "<p>&lt;a href=&quot;/bar/)&quot;&gt;</p>\n",
@@ -176,11 +184,15 @@ fn assessment(number: usize) -> Assessment {
 }
 
 fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
-    let actual = project(doc);
+    let actual = if number == 12 {
+        empty_paren_dialect_observation(doc)
+    } else {
+        project(doc)
+    };
     link_metadata::snapshot(doc);
     match assessment(number) {
         Assessment::Supported => assert_eq!(actual, expected, "example {number}"),
-        Assessment::Unsupported { observed, .. } => {
+        Assessment::Deliberate { observed, .. } | Assessment::Unsupported { observed, .. } => {
             assert_ne!(
                 actual, expected,
                 "example {number} now matches; review classification"
@@ -218,6 +230,44 @@ fn check_case(number: usize, markdown: &str, expected: &str, doc: &Document) {
     assert_eq!(end, markdown.len());
 }
 
+// Root reviewed this exact new dialect observation against the ORIGINAL HTML.
+// Keep project() unchanged: it still rejects all unscored mathematical syntax.
+// This adapter is limited to one exact original source and asserts real current
+// metadata/visibility before serializing its single ordinary paragraph.
+fn empty_paren_dialect_observation(doc: &Document) -> String {
+    assert_eq!(doc.source(), BACKSLASH_CASES[0].1);
+    assert_eq!(doc.blocks().len(), 1);
+    assert_eq!(doc.blocks()[0].kind, BlockKind::Paragraph);
+    assert!(doc.links().is_empty() && doc.tables().is_empty());
+    assert_eq!(doc.maths().len(), 1);
+    let meta = doc
+        .math_object(mdstream::MathObjectId::Inline(mdstream::MathId(0)))
+        .unwrap();
+    assert_eq!(meta.delimiter, mdstream::MathDelimiter::Paren);
+    assert_eq!(meta.source, Span::new(14, 18));
+    assert_eq!(meta.content, Span::new(16, 16));
+    assert_eq!(meta.state, mdstream::SyntaxState::Sealed);
+    assert!(meta.closed);
+    assert!(
+        doc.runs_in(meta.source)
+            .unwrap()
+            .all(|r| r.style.contains(Style::HIDDEN))
+    );
+    let visible: String = doc
+        .display_runs_in(Span::new(0, doc.source().len()))
+        .unwrap()
+        .filter(|r| !r.style.contains(Style::HIDDEN))
+        .map(|r| r.text)
+        .collect();
+    assert_eq!(visible, "!\"#$%&'*+,-./:;<=>?@[\\]^_`{|}~\n");
+    let mut html = String::from("<p>");
+    for ch in visible.strip_suffix('\n').unwrap().chars() {
+        escape(ch, &mut html);
+    }
+    html.push_str("</p>\n");
+    html
+}
+
 #[test]
 fn pinned_commonmark_backslash_escapes_report() {
     assert_eq!(BACKSLASH_CASES.len(), 13);
@@ -227,14 +277,15 @@ fn pinned_commonmark_backslash_escapes_report() {
         check_case(number, markdown, expected, &parse(markdown));
         let (category, label, reason) = match assessment(number) {
             Assessment::Supported => (0, "supported", "matches upstream"),
+            Assessment::Deliberate { reason, .. } => (1, "deliberate difference", reason),
             Assessment::Unsupported { reason, .. } => (2, "unsupported", reason),
         };
         counts[category] += 1;
         eprintln!("example {number}: {label} — {reason}");
     }
-    assert_eq!(counts, [12, 0, 1]);
+    assert_eq!(counts, [11, 1, 1]);
     eprintln!(
-        "CommonMark 0.31.2 Backslash escapes (12–24): 12 supported, 0 deliberate differences, 1 unsupported; other sections not scored by this test"
+        "CommonMark 0.31.2 Backslash escapes (12–24): 11 supported, 1 deliberate difference, 1 unsupported; other sections not scored by this test"
     );
 }
 

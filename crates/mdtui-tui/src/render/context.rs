@@ -10,6 +10,12 @@ pub(crate) struct ContainerContext {
     total_indent: usize,
 }
 
+impl ContainerContext {
+    pub(crate) fn body_indent(self) -> usize {
+        self.total_indent
+    }
+}
+
 /// Resumable metadata-only ancestry preparation for the current source window.
 /// Shared ancestors are visited once. No source or ancestor path is copied per
 /// leaf block, and every node read/unwind consumes the caller's frame budget.

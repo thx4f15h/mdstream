@@ -15,6 +15,7 @@ struct Origin {
 }
 #[derive(Clone)]
 enum Storage {
+    Math(super::math::MathPayload),
     Small {
         utf8: [u8; INLINE],
         len: u8,
@@ -46,6 +47,25 @@ pub struct TextPayload {
     ascii_whitespace: bool,
 }
 impl TextPayload {
+    pub(crate) fn math(
+        payload: super::math::MathPayload,
+        width: usize,
+        kind: super::text::GraphemeKind,
+        first: char,
+        whitespace: bool,
+    ) -> Self {
+        let len = payload.len();
+        Self {
+            storage: Storage::Math(payload),
+            len,
+            width,
+            safe: true,
+            kind: Some(kind),
+            first: Some(first),
+            whitespace,
+            ascii_whitespace: whitespace && first.is_ascii_whitespace(),
+        }
+    }
     fn from_text(text: &str) -> Self {
         let storage = if text.len() <= INLINE {
             let mut utf8 = [0; INLINE];
@@ -148,6 +168,7 @@ impl TextPayload {
         matches!(
             self.storage,
             Storage::Indexed { .. }
+                | Storage::Math(_)
                 | Storage::Small {
                     origin: Some(_),
                     ..
@@ -158,8 +179,10 @@ impl TextPayload {
         // A replacement (entity, image fallback or tab) may supply several
         // separate clusters with the same source. Only complete atom cuts can
         // stand in for the visible projection of a source selection.
-        self.origin()
-            .is_some_and(|origin| origin.cut.0.part == 0 && origin.cut.1.part == 0)
+        matches!(&self.storage, Storage::Math(payload) if payload.contains_whole_source_atom())
+            || self
+                .origin()
+                .is_some_and(|origin| origin.cut.0.part == 0 && origin.cut.1.part == 0)
     }
     pub fn contiguous(&self) -> Option<&str> {
         match &self.storage {
@@ -167,7 +190,7 @@ impl TextPayload {
                 Some(std::str::from_utf8(&utf8[..usize::from(*len)]).unwrap())
             }
             Storage::Shared(text) => Some(text),
-            Storage::Indexed { .. } | Storage::Joined { .. } => None,
+            Storage::Indexed { .. } | Storage::Joined { .. } | Storage::Math(_) => None,
         }
     }
     /// A proven ordinary-append continuation of an already acknowledged cut.
@@ -197,10 +220,25 @@ impl TextPayload {
         }
     }
     pub(crate) fn ends_at_source(&self, end: usize) -> bool {
+        if let Storage::Math(payload) = &self.storage {
+            return payload.source_end() == end;
+        }
         self.origin()
             .is_some_and(|origin| origin.source.end == end && origin.cut.1.part == 0)
     }
     pub(crate) fn suffix_after(&self, old: &Self) -> Option<Self> {
+        if let (Storage::Math(next), Storage::Math(previous)) = (&self.storage, &old.storage) {
+            let suffix = next.suffix(previous)?;
+            let mut result = Self::math(
+                suffix,
+                0,
+                super::text::GraphemeKind::ZeroWidth,
+                self.first.unwrap(),
+                false,
+            );
+            result.first = None;
+            return Some(result);
+        }
         let next = self.origin()?;
         let previous = old.origin()?;
         if !Rc::ptr_eq(&next.shape.0, &previous.shape.0)
@@ -417,6 +455,7 @@ impl PartialEq for TextPayload {
                 a[..usize::from(*len)] == b[..usize::from(*len)]
                     || *len == 1 && matches!(a[0], b' ' | b'\t') && matches!(b[0], b' ' | b'\t')
             }
+            (Storage::Math(a), Storage::Math(b)) => a.same(b),
             (Storage::Shared(a), Storage::Shared(b)) => Rc::ptr_eq(a, b),
             (
                 Storage::Indexed {
@@ -488,6 +527,16 @@ pub struct PayloadReader {
 }
 impl PayloadReader {
     pub fn next(&mut self, budget: &mut Budget) -> Result<PayloadStep, LayoutError> {
+        if let Storage::Math(payload) = &self.payload.storage {
+            return Ok(match payload.next(self.position, budget)? {
+                None => PayloadStep::Complete,
+                Some((_, 0)) => PayloadStep::BudgetExhausted,
+                Some((utf8, len)) => {
+                    self.position += usize::from(len);
+                    PayloadStep::Bytes { utf8, len }
+                }
+            });
+        }
         if let Some(origin) = self.origin.as_mut() {
             if origin.epoch != 0 && origin.shape.binding_epoch() != origin.epoch {
                 return Err(LayoutError::StaleContinuation);

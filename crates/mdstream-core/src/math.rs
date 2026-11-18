@@ -6,9 +6,10 @@ pub struct MathId(pub usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MathKind {
-    /// Exactly one unescaped dollar at each end.
+    /// Exact one-dollar or backslash-paren inline delimiters.
     Inline,
-    /// Exactly two unescaped dollars at each end; a presentation hint, not a block.
+    /// A display presentation hint. Math uses exact two-dollar inline runs;
+    /// independent dollar/bracket blocks share this kind in MathObjectMeta.
     Display,
 }
 
@@ -169,13 +170,13 @@ pub struct MathChunk<'a> {
 
 /// Resumable raw or prefix-free reader with O(1) state and no output allocation.
 pub struct MathContent<'a> {
-    source: &'a str,
-    remaining: Span,
-    gaps: &'a [Span],
+    pub(crate) source: &'a str,
+    pub(crate) remaining: Span,
+    pub(crate) gaps: &'a [Span],
     // MAX means the first paid range lookup has not happened yet.
-    gap: usize,
-    spaces: &'a [(Span, u8)],
-    space: usize,
+    pub(crate) gap: usize,
+    pub(crate) spaces: &'a [(Span, u8)],
+    pub(crate) space: usize,
 }
 
 impl<'a> MathContent<'a> {

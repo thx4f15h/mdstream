@@ -2284,7 +2284,7 @@ loop {
 
 ## 定界数学核心
 
-数学使用本库明确限定的美元符号方言，不声明与某个数学 Markdown 扩展兼容：完整且未转义的 `$` 串长度为 1 时打开 inline 候选，为 2 时打开 display 候选；遇到相同长度的串才闭合。长度大于 2 的串在外部为普通文字，在候选内为原始内容；不同长度不嵌套、不切分匹配。没有空白、数字或货币启发式，例如 `$5 and $10` 会识别 `5 and `。`$$` 在行内上下文单独出现是未闭合 display opener；独占物理行时按下方独立数学块处理。连续 `$$$$` 是文字，无法表示空行内公式；空白内容允许。
+数学使用本库明确限定的定界方言，不声明与某个数学 Markdown 扩展兼容。美元符号规则保持：完整且未转义的 `$` 串长度为 1 时打开 inline 候选，为 2 时打开 display 候选；遇到相同长度的串才闭合。长度大于 2 的串在外部为普通文字，在候选内为原始内容；不同长度不嵌套、不切分匹配。没有空白、数字或货币启发式，例如 `$5 and $10` 会识别 `5 and `。`$$` 在行内上下文单独出现是未闭合 display opener；独占物理行时按下方独立数学块处理。连续 `$$$$` 是文字，无法表示空行内公式；空白内容允许。
 
 代码 span/代码块、链接目标及 title、引用定义、正在消费的自动链接等既有上下文先于数学。数学内容内不解析强调、实体、链接、代码或另一个数学对象；原始反斜线保留，一个反斜线使紧随的一个字节不参与定界，连续反斜线按奇偶处理。外部 `\$` 仍是既有标点转义，内部 `$a\$b$` 内容为 `a\$b`。外层强调/链接 label 可以包含数学，显示 run 可同时带这些样式/链接。
 
@@ -2317,7 +2317,23 @@ assert_eq!(content.advance(&mut budget), Err(Completion::BudgetExhausted));
 
 解析只增加一个 O(1) 候选；每个美元串只决议一次（`Work::math_steps`），所有正文只走既有单遍 `inline_bytes` 消费。闭合做常数次 O(log n) 区间标记，不查正文；额外对象存储 O(M)，跨行去前缀索引另计 O(G)（见下节），全库保持累计 O(n log n)、空间 O(n)。Vec 扩容及批量解析仍是摊还保证，不承诺单次 append 的硬时延。`crates/mdstream-core/tests/math.rs` 和现有分块/fuzz 快照验证方言、预算、失败输入、百万字晚闭合及索引模型；`cargo run -p mdstream-core -r --example math` 演示流式确认与逐帧原始内容读取。
 
-独立数学块见[独立数学块](#独立数学块)；后续仍保留 `\(...\)` / `\[...\]` 等额外定界方言、TeX 解析/排版和实际对象回调接入；脚注的独立核心接口见[脚注核心](#脚注核心)。
+独立数学块见[独立数学块](#独立数学块)。额外定界、有限 TeX 引擎和真实 TUI 数学对象接入见下节；脚注 UI 等独立范围保留，不能据此勾完父 TODO。脚注的独立核心接口见[脚注核心](#脚注核心)。
+
+### 额外数学定界与拥有型查询
+
+`\(...\)` 是正式行内方言，允许空内容；`\[` 和 `\]` 独占逻辑行时开启/关闭独立数学块。行内 `\[x\]` 仍按普通 Markdown 转义处理。定界符前连续反斜线按奇偶消费；最后一条未配对反斜线才能组成 `\(` 或 `\)`。定界家族不混用，代码、链接目标/title/引用后缀、引用定义和自动链接保持既有不透明优先级。候选中的内容不解析 Markdown；HTML 不新增识别规则，沿用现有普通源码/自动链接边界。未闭合行内候选在作用域结束时丢弃且不重放；未闭合数学块在真实 EOF 封存。
+
+块标记按现有容器路径和物理列规则分类：前缀部分 tab 的余量加原始缩进至多三列，随后精确标记、可选 space/tab、LF/CRLF 或真实 EOF。缺失容器路径不能 lazy 延续块；当前行只在外部重分类一次。长定界前缀使用同一个继续扫描器，不设新的字节上限。新 bracket 块正文一旦可区别于关闭行便提交可读前缀；既有 dollar 块保留原分类窗口。一般迟表头确认/撤销同样作用于 paren 对象，旧 arena ID 不作为当前对象索引。
+
+`MathDelimiter` 区分 Dollar/DoubleDollar/Paren/Bracket，`MathObjectId` 统一 Inline(MathId)/Block(BlockId)。`math_object` 返回绑定 DocumentId 的当前 `MathObjectMeta`：原始 source/content、类型、定界家族、状态、closed、epoch 和 version。`Update.math_changes` 按 Publish/Append/Seal/Withdraw 发布对应的 before/after；追加保留已提交 payload 前缀和 epoch，撤销/重新发布改变 epoch，版本改变使旧窗口输出/测量失效。新发布索引操作另计 `Work.math_object_steps`；旧语法 Work 投影不把新计数混入历史黄金数据。
+
+`math_window(source)` 无分配构造拥有型当前对象窗口；每次 advance 在共享预算下付 1 query/1 object，按源码索引做 O(log M) 前驱/后继查找，不遍历 arena 或读取正文。窗口绑定 revision。`math_payload_cursor(id)` 只做 O(log M) 元数据查找；拥有型游标可跨真实前缀追加和无关追加继续，以 `MathPayloadStep::Pending` 区别暂时没有新已提交内容与 Sealed 的 Complete。撤销或身份复用拒绝旧游标；内容依然通过原 typed math_payload 去前缀/映射部分 tab，原始 CRLF/TeX 拼写保持，每次最多 TILE_BYTES，源码前缀也收费。BodyView 对应接口用 BodyKey/BodyId/BodyAddress 保持投影命名空间。
+
+TUI 的 `render::math::MathEngine` 消费上述原生对象，逐字节解码、TeX token、平坦 AST、二维布局、窗口输出、源码定位和回收都可继续，构造和零预算不展开完整对象。有限语言包含分数、脚本、根号、Greek/数学符号、常见运算符、伸缩定界符、矩形 matrix/pmatrix/bmatrix/aligned；未知命令可见且不展开，结构错误显示 `[invalid]`，不声称完整 TeX。post-TeX 字符流复用已验收的共享 GCB/width 状态机，处理生成 Greek、透明分组/空白、组合符、ZWJ/RI 及矩阵单元格边界；没有第二套数学 Unicode 宽度政策。
+
+真实 DisplayScanner 在原生对象索引处切开普通内容，TileLayoutSink 接收数学元数据回调并排入原生 owner 行；行内基线/整体换行、块与表格单元格多行高度、源位置跳转、End/Ctrl+End、可见复制/原文复制及实际终端字节路径共用这些对象。搜索使用排版后的数学行，不匹配被隐藏的 `frac` 命令拼写，命中仍定位完整原始 TeX 原子；可见复制保留结构行并沿用 Reading 的规范分隔政策，原文复制保持选中的原始字节。脚注 UI 仍属独立范围；显示/复制先通过已验收正文折叠 UI 的同一 FoldView 投影，隐藏对象不准备 TeX，搜索可揭示命中路径。数学 continuation 的零高证明使用现有 HeightIndex/FoldView 同树票据，不改变折叠覆盖。
+
+对象级输入、AST、二维布局、字素、DFS 和输出记录使用固定页/有序索引，不扩容复制旧记录，也不建立完整对象位图。原生 Publish/Append/Seal/Withdraw 和实际引擎 owner 绑定共同决定继续任务有效性；相同文档/对象/版本的另一引擎不能接管旧 paint/locator/ink/query。窗口查询复用已准备 AST；显示宽度改变的字素尾部会付费重建布局，源 cut 改变也可产生新准备上下文，不能把反复查询成本冒充一次输入的累计界。页容量、索引 payload、实际输出及 RSS 分别报告。具体语言、公开窗口/源码 API、生命周期、预算及成本限定见 [数学引擎合同](crates/mdtui-tui/src/render/math/README.md)。
 
 ## 独立数学块
 
@@ -2499,7 +2515,7 @@ assert_eq!(next.number, 2); // 主文档先引用 n，正文再引用 next。
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-复杂度以宿主原始输入 N 计：获胜正文源片段只复制进投影一次，原始/投影总字节 O(N)；前缀间隙/虚拟 tab 的关系记录每物理片段 O(1)，相邻 raw 记录合并，不按 append 保存历史。原始地址转换只查关系端点 O(log N)，title 的间隙仅在该次定义发布时合成。每个子 parser 的累计输入/finish 成本沿用现有 O(n log n)，正文相互不重叠，求和 O(N log N)；本次有限符号 journal 在下一个外部行分类前排空，晚定义只改固定间接事实。总空间 O(N)，每个获胜脚注保留完整复用 parser，当前 x86_64 固定部分由 `BodyStorage.parser_fixed_bytes` 报告；加入内部空行账本和 Work 字段后实测 12,032 bytes，20,000 个仅这部分为 240,640,000 bytes，另有投影及私有索引，未实现 compact parser。`BodyStorage` 只报告列出的实际 capacity，非总堆；`BodyWork.engine` 汇总真实子 parser Work，峰值字段为各 parser 实际峰值增量之和，不当作操作数。百万逐字追加保持四条关系记录，旧分类、发布/地址步骤及祖先访问不增加；两万历史引用晚定义和两万正文后追加的真实计数见 `footnote_markdown_scaling`。输入 append/finish 仍只有累计保证，单次旧候选失败恢复可以很大，全部计入输入，不冒充小预算查询。
+复杂度以宿主原始输入 N 计：获胜正文源片段只复制进投影一次，原始/投影总字节 O(N)；前缀间隙/虚拟 tab 的关系记录每物理片段 O(1)，相邻 raw 记录合并，不按 append 保存历史。原始地址转换只查关系端点 O(log N)，title 的间隙仅在该次定义发布时合成。每个子 parser 的累计输入/finish 成本沿用现有 O(n log n)，正文相互不重叠，求和 O(N log N)；本次有限符号 journal 在下一个外部行分类前排空，晚定义只改固定间接事实。总空间 O(N)，每个获胜脚注保留完整复用 parser，当前 x86_64 固定部分由 `BodyStorage.parser_fixed_bytes` 报告；加入数学索引、当前前缀元数据和 Work 字段后在 release x86_64 实测 12,184 bytes，20,000 个仅这部分为 243,680,000 bytes，另有投影及私有索引，未实现 compact parser。`BodyStorage` 只报告列出的实际 capacity，非总堆；`BodyWork.engine` 汇总真实子 parser Work，峰值字段为各 parser 实际峰值增量之和，不当作操作数。百万逐字追加保持四条关系记录，旧分类、发布/地址步骤及祖先访问不增加；两万历史引用晚定义和两万正文后追加的真实计数见 `footnote_markdown_scaling`。输入 append/finish 仍只有累计保证，单次旧候选失败恢复可以很大，全部计入输入，不冒充小预算查询。
 
 `footnote_markdown`、`footnote_markdown_model`、`footnote_markdown_scaling` 和 `footnote_markdown_updates` 覆盖手写语义与源码预期、LF/CRLF/EOF、UTF-8 每切点/逐前缀、块/对象组合、全局晚定义/循环/重复赢家、真实微预算消费和增量布局。240 个容器/行尾组合来自事先固定的 20 个手写正文 oracle；流式自比较另列为一致性。原官方夹具、HTML、生成器、SHA 及旧黄金数组不改。核心结构和正文布局适配已经提供，脚注区、上标、双向跳转与实际 TUI 回调继续由 TODO 跟踪。
 
@@ -2713,7 +2729,7 @@ nix develop -c cargo nextest run --test commonmark_precedence
 
 新增 Precedence 42 保留官方两条列表项中失配反引号的输入/HTML；独立公开 API 投影核对真实 List/Item、正文叶块与 code 样式，证明块边界先于行内匹配。另验 UTF-8 逐字节切分/前缀、逐标量 EOF、原始源码切片与六字节共享预算；只省略借用源码的物理叶块终止 LF，实体生成的 LF 与尾空格保留。生成器保留 John MacFarlane / CC BY-SA 4.0 归属、规范行号，校验完整源 SHA 和 Precedence 章节成员，不修改官方期望或解析核心。
 
-实际执行报告的当前快照：CommonMark 588 例中 **554 支持、24 刻意差异、10 未支持**；GFM 27 例 **27 支持、0 刻意差异、0 未支持**。10 个 Unsupported 均为含需求外 HTML 的例子（21、31、344、475–477、491、494、642–643），仍保留所属章节评分。原深度消费、混合样式顺序/身份及 419、523 的作用域消费均已由真实有序 API 和条件作用域交付覆盖；419 保留既有 depth=2，不再归为未完成核心缺口。完整失败回退、完整容器兼容与 UI 等剩余需求继续由现有独立 TODO 验收；刻意方言不自动成为新增需求。逐例分类以[覆盖清单](docs/syntax-coverage.md)及各章实际报告为准。
+实际执行报告的当前快照：CommonMark 588 例中 **553 支持、25 刻意差异、10 未支持**；GFM 27 例 **27 支持、0 刻意差异、0 未支持**。10 个 Unsupported 均为含需求外 HTML 的例子（21、31、344、475–477、491、494、642–643），仍保留所属章节评分。原深度消费、混合样式顺序/身份及 419、523 的作用域消费均已由真实有序 API 和条件作用域交付覆盖；419 保留既有 depth=2，不再归为未完成核心缺口。完整失败回退、完整容器兼容与 UI 等剩余需求继续由现有独立 TODO 验收；刻意方言不自动成为新增需求。新数学方言的空 `\(\)` 使原官方例 12 从支持变为刻意差异，原始输入/HTML/投影器保留，当前报告独立断言其对象和可见输出。逐例分类以[覆盖清单](docs/syntax-coverage.md)及各章实际报告为准。
 
 `annotation_arena_stats`、高度树/检查点的 `arena_stats`、高度依赖树的 `dependency_arena_stats` 返回 Vec 容量字节数、节点数与实际容量增长分配次数。统计不包含 allocator 元数据、碎片、其它 String/Vec 或用户状态的间接堆分配。`scaling` 示例同时记录操作计数、查询分位数与容量；`one_byte_reused` 对照复用通知缓冲的逐字符输入。
 
@@ -4286,7 +4302,7 @@ assert_eq!(text, "a\n\nb\n");
 
 中间源码位置、End 与 Ctrl+End 都归一到完整同一字素，不扫描巨型旧 prefix；Ctrl+End 固定 cut 不混入未来 append，End/FOLLOW 保持跟随意愿。巨型 continuation tile 通过同一 HeightIndex 的零高票据测量，不清空整棵树或折叠 mask；fold/resize/checkpoint/相关语义变化失效后重新取票。原生 fenced 检查点失效重放恢复准确的 line source，固定组合同时保留 indented-code 内部空白与 CRLF copy。v/Shift 选区、source highlight、y 可见/Y 原文、搜索 n/N、目录和 Alt 历史共用真实来源；大于64KiB的单一 payload 可见复制先按 metadata 拒绝，不先展开。表格 min/max、pan、alignment、row owner、softwrap 与尾部共用相同 shape/width 结果。
 
-应用承诺完整逻辑 UTF-8、宽度/来源、实际有界 wire 发送及可响应取消。字体/终端对超长组合序列的内部储存和成字能力属于外部限制：实测 tmux 对 10,000 combining marks 只保留 16 个，不据此截断、默认拒绝或增加终端探测 gate，也不声称发完字节就等于字体画出完整 glyph。正文折叠 UI、长段落按显示行 prefix/媒体摘要、数学与脚注绘制及原有完整语法后缀待办继续独立保留。
+应用承诺完整逻辑 UTF-8、宽度/来源、实际有界 wire 发送及可响应取消。字体/终端对超长组合序列的内部储存和成字能力属于外部限制：实测 tmux 对 10,000 combining marks 只保留 16 个，不据此截断、默认拒绝或增加终端探测 gate，也不声称发完字节就等于字体画出完整 glyph。该021阶段列出的数学绘制现由[数学对象接入](#额外数学定界与拥有型查询)扩展；正文折叠 UI、长段落按显示行 prefix/媒体摘要、脚注绘制及原有完整语法后缀需求继续独立保留。
 
 专项入口为 `giant_clusters`、`giant_pty`、Reading 的巨型复制/搜索/OSC52 测试、`display_shape_seed` 及 `zero_height_range`。实际64MiB源文档与百万 continuation 的 HeightIndex-only scale 分开报告；后者不分配对应源码。仓外021验收材料保留独立 oracle、冷查询最大值、真实 kernel PTY EAGAIN、UTF-8 cleanup、输入/查询/输出/容量/CPU/RSS及冻结命令，不把纯模型当成生产交付。
 

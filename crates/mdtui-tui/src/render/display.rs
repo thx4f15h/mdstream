@@ -61,7 +61,105 @@ struct IndexedScan {
     window: Option<super::shape::ShapeWindow>,
 }
 
+struct MathRefresh {
+    after: Option<mdtui3::MathObjectId>,
+    query: Option<super::math::MathQuery>,
+    changed: bool,
+}
+pub(crate) struct MathContext {
+    objects: crate::render::objects::ObjectWindow,
+    cursor: DisplayCursor,
+    end: usize,
+    pub(crate) presentation: Option<(Option<LinkId>, StyleRole)>,
+    complete: bool,
+}
+impl MathContext {
+    pub(crate) fn new(
+        document: &Document,
+        meta: mdtui3::MathObjectMeta,
+        links: crate::render::objects::SharedLinks,
+    ) -> Result<Self, LayoutError> {
+        Ok(Self {
+            objects: crate::render::objects::ObjectWindow::new(document, meta.source, links)
+                .ok_or(LayoutError::InvalidRange)?,
+            cursor: document
+                .display_cursor(meta.content)
+                .ok_or(LayoutError::InvalidRange)?,
+            end: meta.content.end,
+            presentation: None,
+            complete: false,
+        })
+    }
+    pub(crate) fn rebind(&mut self, document: &Document) -> Option<()> {
+        self.objects.rebind_stable(document);
+        if !self.complete {
+            self.cursor =
+                document.display_cursor(Span::new(self.cursor.source_position(), self.end))?;
+        }
+        Some(())
+    }
+    pub(crate) fn advance(
+        &mut self,
+        document: &Document,
+        links: &crate::render::objects::SharedLinks,
+        budget: &mut Budget,
+    ) -> Result<bool, LayoutError> {
+        if self.complete {
+            return Ok(true);
+        }
+        if !self.objects.advance(document, budget)? {
+            return Ok(false);
+        }
+        match links
+            .with_resolver(|resolver| self.cursor.next_with_resolver(document, resolver, budget))?
+        {
+            DisplayStep::BudgetExhausted => Ok(false),
+            DisplayStep::Complete => {
+                self.complete = true;
+                Ok(true)
+            }
+            DisplayStep::Run(run) => {
+                let presentation = run
+                    .link
+                    .map(|id| self.objects.presentation(id))
+                    .unwrap_or_default();
+                let mut style =
+                    style_role(run.style, presentation.hit.is_some()).with(StyleRole::MATH);
+                if presentation.image.is_some() {
+                    style = style.with(StyleRole::IMAGE);
+                }
+                if presentation.disposition == Some(mdtui3::LinkDisposition::Unresolved) {
+                    style = style.with(StyleRole::LITERAL_LINK);
+                }
+                self.presentation = Some((presentation.hit, style));
+                self.complete = true;
+                Ok(true)
+            }
+        }
+    }
+}
+struct MathScan {
+    context: Option<MathContext>,
+    index_work: mdtui3::LinkWindowWork,
+    source_work: usize,
+    window: mdtui3::MathWindow,
+    next: usize,
+    pending: Option<mdtui3::MathObjectMeta>,
+    ended: bool,
+    child: Option<Box<DisplayScanner>>,
+    query: Option<super::math::MathQuery>,
+}
+
 pub struct DisplayScanner {
+    math_refresh: Option<MathRefresh>,
+    math_by_id: std::collections::BTreeMap<mdtui3::MathObjectId, usize>,
+    math_floor: usize,
+    skipped_math: Option<mdtui3::MathObjectMeta>,
+    math_bypass: bool,
+    math_maintenance: bool,
+    math_scan: Option<Box<MathScan>>,
+    math_views: std::collections::BTreeMap<usize, std::rc::Rc<super::math::MathView>>,
+    math_rect: super::math::Rect,
     // A fold cut is a semantic boundary, unlike an ordinary tile/window cut.
     // Both the GCB query and payload reader must use this same fragment.
     fold_fragment: Option<Span>,
@@ -148,6 +246,20 @@ impl DisplayScanner {
             context_end = requested.end;
         }
         Some(Self {
+            math_refresh: None,
+            math_by_id: Default::default(),
+            math_floor: 0,
+            skipped_math: None,
+            math_bypass: false,
+            math_maintenance: true,
+            math_scan: None,
+            math_views: Default::default(),
+            math_rect: super::math::Rect {
+                x: 0,
+                y: 0,
+                width: 80,
+                height: 24,
+            },
             fold_fragment: None,
             placeholders: Vec::new(),
             indexed: None,
@@ -381,8 +493,14 @@ impl DisplayScanner {
                 }
                 .ok_or(LayoutError::InvalidRange)?;
                 child.links = self.links.clone();
+                child.math_rect = self.math_rect;
+                child.math_floor = self.math_floor;
+                child.math_maintenance = false;
                 child.table_mode = table;
-                child.source_cut = self.source_cut;
+                child.source_cut = match (child.source_cut, self.source_cut) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                };
                 child.table_context = selection.contexts.get(&source.start).copied();
                 selection.child = Some(Box::new(child));
             }
@@ -404,6 +522,11 @@ impl DisplayScanner {
             self.budget_exhausted += child.budget_exhausted;
             self.display_bytes += child.display_bytes;
             self.zero_ranges.append(&mut child.zero_ranges);
+            self.math_views.append(&mut child.math_views);
+            self.math_by_id.append(&mut child.math_by_id);
+            if let Some(meta) = child.skipped_math {
+                self.skipped_math = Some(meta);
+            }
             self.layout_segments.extend(child.segments.iter().cloned());
             self.segments.append(&mut child.segments);
             selection.next += 1;
@@ -412,6 +535,306 @@ impl DisplayScanner {
         self.refresh_complete_tiles(document)?;
         self.complete = true;
         Ok(ScanStatus::Complete)
+    }
+
+    /// Cell rectangle requested from each intrinsic object. Hosts pass their
+    /// viewport, never an object-sized bitmap. Metadata/source parsing is shared.
+    pub(crate) fn math_rect(&self) -> super::math::Rect {
+        self.math_rect
+    }
+    pub(crate) fn math_floor(&self) -> usize {
+        self.math_floor
+    }
+    pub fn set_math_rect(&mut self, rect: super::math::Rect) {
+        assert!(self.math_scan.is_none() && self.segments.is_empty());
+        self.math_rect = rect;
+    }
+    pub(crate) fn skipped_math(&self) -> Option<mdtui3::MathObjectMeta> {
+        self.skipped_math
+    }
+    pub(crate) fn first_math_source(&self) -> Option<usize> {
+        self.math_views.first_key_value().map(|(at, _)| *at)
+    }
+    pub(crate) fn set_math_floor(&mut self, source: usize) {
+        self.math_floor = source;
+    }
+    pub(crate) fn math_views(
+        &self,
+    ) -> &std::collections::BTreeMap<usize, std::rc::Rc<super::math::MathView>> {
+        &self.math_views
+    }
+    pub(crate) fn math_at_source(
+        &self,
+        source: usize,
+    ) -> Option<std::rc::Rc<super::math::MathView>> {
+        self.math_views
+            .range(..=source)
+            .next_back()
+            .and_then(|(_, view)| (source < view.meta.source.end).then(|| view.clone()))
+    }
+    pub(crate) fn intersects_math(&self, source: Span) -> bool {
+        self.math_views
+            .range(..=source.start)
+            .next_back()
+            .is_some_and(|(_, view)| view.meta.source.end > source.start)
+            || self
+                .math_views
+                .range(source.start..source.end)
+                .next()
+                .is_some()
+    }
+
+    pub(crate) fn refresh_math(
+        &mut self,
+        document: &Document,
+        sink: &super::sink::TileLayoutSink,
+        view: super::table_window::TableView,
+        budget: &mut Budget,
+    ) -> Result<Option<bool>, LayoutError> {
+        if self.math_views.is_empty() {
+            return Ok(Some(false));
+        }
+        let cursor = self.math_refresh.get_or_insert(MathRefresh {
+            after: None,
+            query: None,
+            changed: false,
+        });
+        loop {
+            if cursor.query.is_none() {
+                if !budget.charge(mdtui3::WorkLimit {
+                    queries: 1,
+                    objects: 1,
+                    ..Default::default()
+                }) {
+                    return Ok(None);
+                }
+                let Some((id, rect, source)) =
+                    sink.math_rectangle_after(cursor.after, view, self.math_rect.width)
+                else {
+                    let changed = cursor.changed;
+                    self.math_refresh = None;
+                    return Ok(Some(changed));
+                };
+                cursor.after = Some(id);
+                let Some(&start) = self.math_by_id.get(&id) else {
+                    continue;
+                };
+                let current = &self.math_views[&start];
+                if source.is_none()
+                    && (rect.height == 0
+                        || rect.y >= current.rect.y
+                            && rect.y.saturating_add(rect.height)
+                                <= current.rect.y.saturating_add(current.rect.height))
+                {
+                    continue;
+                }
+                cursor.query = Some(
+                    self.links
+                        .math()
+                        .query_at_source_cut(document, current.meta, rect, current.source_cut)?
+                        .with_source(source),
+                );
+            }
+            let query = cursor.query.as_mut().unwrap();
+            if !query.advance(document, budget)? {
+                return Ok(None);
+            }
+            let result = query.result().unwrap();
+            self.math_views.insert(result.meta.source.start, result);
+            cursor.query = None;
+            cursor.changed = true;
+        }
+    }
+
+    fn advance_math(
+        &mut self,
+        document: &Document,
+        budget: &mut Budget,
+    ) -> Result<ScanStatus, LayoutError> {
+        if self.math_scan.is_none() {
+            self.math_scan = Some(Box::new(MathScan {
+                context: None,
+                index_work: Default::default(),
+                source_work: 0,
+                window: document.math_window(self.requested)?,
+                next: self.requested.start,
+                pending: None,
+                ended: false,
+                child: None,
+                query: None,
+            }));
+        }
+        loop {
+            let scan = self.math_scan.as_mut().unwrap();
+            if let Some(child) = scan.child.as_mut() {
+                if child.advance(document, budget)? != ScanStatus::Complete {
+                    return Ok(ScanStatus::BudgetExhausted);
+                }
+                let mut child = scan.child.take().unwrap();
+                scan.source_work += child.stats().scanned_bytes;
+                let work = child.object_index_work();
+                scan.index_work.index_visits += work.index_visits;
+                scan.index_work.sort_steps += work.sort_steps;
+                scan.index_work.objects += work.objects;
+                self.display_source_work += child.display_source_work;
+                self.display_bytes += child.display_bytes;
+                self.cursor_steps += child.cursor_steps;
+                self.edge_source_bytes += child.edge_source_bytes;
+                self.edge_queries += child.edge_queries;
+                self.zero_ranges.append(&mut child.zero_ranges);
+                self.layout_segments.append(&mut child.layout_segments);
+                self.segments.append(&mut child.segments);
+                continue;
+            }
+            if scan.pending.is_none() && !scan.ended {
+                match scan.window.advance(document, budget)? {
+                    mdtui3::MathWindowStep::Object(meta) => scan.pending = Some(meta),
+                    mdtui3::MathWindowStep::BudgetExhausted => {
+                        return Ok(ScanStatus::BudgetExhausted);
+                    }
+                    mdtui3::MathWindowStep::Complete => scan.ended = true,
+                }
+            }
+            let gap_end = scan.pending.map_or(self.requested.end, |m| {
+                m.source.start.min(self.requested.end)
+            });
+            if scan.ended && scan.next == self.requested.start && self.math_views.is_empty() {
+                self.math_scan = None;
+                self.math_bypass = true;
+                return self.advance(document, budget);
+            }
+            if scan.next < gap_end {
+                let mut child =
+                    Self::exact(document, Span::new(scan.next, gap_end), self.links.clone())
+                        .ok_or(LayoutError::InvalidRange)?;
+                child.math_bypass = true;
+                child.fold_fragment = self.fold_fragment;
+                child.table_mode = self.table_mode;
+                child.table_context = self.table_context;
+                child.source_cut = self.source_cut;
+                // GCB and style preparation must stop at the native object.
+                child.cluster_floor = Some(scan.next);
+                child.source_cut = Some(child.source_cut.unwrap_or(usize::MAX).min(gap_end));
+                scan.child = Some(Box::new(child));
+                scan.next = gap_end;
+                continue;
+            }
+            if let Some(meta) = scan.pending {
+                if self
+                    .fold_fragment
+                    .is_some_and(|fragment| meta.source.start < fragment.start)
+                {
+                    scan.next = scan.next.max(meta.source.end.min(self.requested.end));
+                    scan.pending = None;
+                    continue;
+                }
+                if self.source_cut.is_some_and(|cut| meta.source.start >= cut) {
+                    scan.next = self.requested.end;
+                    scan.pending = None;
+                    scan.ended = true;
+                    continue;
+                }
+                let owner = document
+                    .tile_at(meta.source.start)
+                    .ok_or(LayoutError::InvalidRange)?;
+                let last = document
+                    .tile_at(meta.source.end.saturating_sub(1))
+                    .unwrap_or(owner);
+                let end = last.0 + usize::from(document.tile(last).unwrap().end <= meta.source.end);
+                if owner.0 + 1 < end && scan.query.is_none() {
+                    self.zero_ranges.push(owner.0 + 1..end);
+                }
+                if meta.source.start < self.math_floor
+                    && self.source_cut.is_none_or(|cut| meta.source.end < cut)
+                {
+                    self.skipped_math = Some(meta);
+                    scan.next = scan.next.max(meta.source.end);
+                    scan.pending = None;
+                    continue;
+                }
+                if scan.context.is_none() {
+                    if self.lease.is_none() {
+                        if !self.links.prepare(document, budget)? {
+                            return Ok(ScanStatus::BudgetExhausted);
+                        }
+                        self.lease = Some(self.links.hold());
+                    }
+                    scan.context = Some(MathContext::new(document, meta, self.links.clone())?);
+                }
+                let context = scan.context.as_mut().unwrap();
+                let before = budget.used().bytes;
+                let ready = context.advance(document, &self.links, budget)?;
+                scan.source_work += budget.used().bytes - before;
+                if !ready {
+                    return Ok(ScanStatus::BudgetExhausted);
+                }
+                if context.presentation.is_none() && !meta.content.is_empty() {
+                    let work = context.objects.index_work();
+                    scan.index_work.index_visits += work.index_visits;
+                    scan.index_work.sort_steps += work.sort_steps;
+                    scan.index_work.objects += work.objects;
+                    scan.next = scan.next.max(meta.source.end);
+                    scan.pending = None;
+                    scan.context = None;
+                    continue;
+                }
+                if scan.query.is_none() {
+                    scan.query = Some(self.links.math().query_at_source_cut(
+                        document,
+                        meta,
+                        self.math_rect,
+                        self.source_cut,
+                    )?);
+                }
+                let query = scan.query.as_mut().unwrap();
+                if !query.advance(document, budget)? {
+                    return Ok(ScanStatus::BudgetExhausted);
+                }
+                let view = query.result().unwrap();
+                scan.source_work += query.source_work();
+                let segment = DisplaySegment {
+                    tile: owner,
+                    source: meta.source,
+                    replacement: Some(meta.source),
+                    text: " ".into(),
+                    block: match meta.id {
+                        mdtui3::MathObjectId::Block(id) => Some(id),
+                        _ => document.block_at(meta.source.start),
+                    },
+                    link: scan
+                        .context
+                        .as_ref()
+                        .unwrap()
+                        .presentation
+                        .and_then(|(link, _)| link),
+                    style: scan
+                        .context
+                        .as_ref()
+                        .unwrap()
+                        .presentation
+                        .map_or(StyleRole::MATH, |(_, style)| style),
+                    kind: TokenKind::Text,
+                };
+                self.math_views.insert(meta.source.start, view);
+                self.math_by_id.insert(meta.id, meta.source.start);
+                self.segments.push(segment.clone());
+                self.layout_segments.push(segment);
+                scan.next = meta.source.end.max(scan.next);
+                scan.pending = None;
+                let work = scan.context.take().unwrap().objects.index_work();
+                scan.index_work.index_visits += work.index_visits;
+                scan.index_work.sort_steps += work.sort_steps;
+                scan.index_work.objects += work.objects;
+                scan.query = None;
+                continue;
+            }
+            self.scanned_through = self.requested.end;
+            self.refresh_complete_tiles(document)?;
+            self.source_complete = true;
+            self.complete = true;
+            self.lease = None;
+            return Ok(ScanStatus::Complete);
+        }
     }
 
     pub fn object_index_work(&self) -> mdtui3::LinkWindowWork {
@@ -423,6 +846,19 @@ impl DisplayScanner {
                 work.sort_steps += pending.sort_steps;
                 work.objects += pending.objects;
             }
+            return work;
+        }
+        if let Some(scan) = &self.math_scan {
+            let mut work = scan.index_work;
+            let pending = scan
+                .child
+                .as_ref()
+                .map(|c| c.object_index_work())
+                .or_else(|| scan.context.as_ref().map(|c| c.objects.index_work()))
+                .unwrap_or_default();
+            work.index_visits += pending.index_visits;
+            work.sort_steps += pending.sort_steps;
+            work.objects += pending.objects;
             return work;
         }
         self.objects
@@ -516,6 +952,11 @@ impl DisplayScanner {
             complete_tiles: self.complete_tiles.len(),
             scanned_bytes: self.selection.as_ref().map_or_else(
                 || {
+                    if let Some(scan) = &self.math_scan {
+                        return scan.source_work
+                            + scan.child.as_ref().map_or(0, |c| c.stats().scanned_bytes)
+                            + scan.query.as_ref().map_or(0, |q| q.source_work());
+                    }
                     self.scanned_through
                         .min(self.requested.end)
                         .saturating_sub(self.requested.start.max(self.cluster_floor.unwrap_or(0)))
@@ -570,10 +1011,20 @@ impl DisplayScanner {
         if self.complete {
             return Ok(ScanStatus::Complete);
         }
+        if !self.math_bypass && self.math_maintenance {
+            self.links.math().maintenance(budget);
+        }
         if self.selection.is_some() {
             return self.advance_selected(document, budget);
         }
 
+        if !self.math_bypass {
+            if document.math_object_stats().active == 0 {
+                self.math_bypass = true;
+                return self.advance(document, budget);
+            }
+            return self.advance_math(document, budget);
+        }
         if !self.links.prepare_shape(document, budget)? {
             return Ok(ScanStatus::BudgetExhausted);
         }

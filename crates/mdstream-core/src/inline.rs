@@ -21,6 +21,7 @@ use code_fallback::{Checkpoint as CodeCheckpoint, CodeFallback, Event as CodeEve
 use label_journal::List as LabelList;
 
 pub(crate) struct Publishing<'a> {
+    pub document: crate::DocumentId,
     pub styles: &'a mut crate::inline_styles::Styles,
     pub annotations: &'a mut Annotations,
     pub display: &'a mut crate::display::DisplayIndex,
@@ -33,6 +34,7 @@ pub(crate) struct Publishing<'a> {
     pub maths: &'a mut Vec<crate::Math>,
     pub math_active: &'a mut Vec<bool>,
     pub math_states: &'a mut Vec<SyntaxState>,
+    pub math_objects: &'a mut crate::math_object::MathIndex,
     pub math_index: &'a mut std::collections::BTreeMap<usize, crate::MathId>,
     pub line: &'a mut crate::header_effects::LineEffects,
     pub math_gaps: &'a mut Vec<Span>,
@@ -430,11 +432,7 @@ impl<'a> Effects<'a> {
         if let Some(p) = &mut self.publishing {
             let source = Span::new(pair.open.start, pair.close.end);
             let math = crate::Math {
-                kind: if pair.open.len() == 1 {
-                    crate::MathKind::Inline
-                } else {
-                    crate::MathKind::Display
-                },
+                kind: pair.delimiter.kind(),
                 source,
                 content: Span::new(pair.open.end, pair.close.start),
             };
@@ -455,6 +453,22 @@ impl<'a> Effects<'a> {
                 SyntaxState::Sealed
             };
             p.math_index.insert(source.start, id);
+            p.math_objects.publish(
+                crate::MathObjectMeta {
+                    document: p.document,
+                    id: crate::MathObjectId::Inline(id),
+                    source,
+                    content: math.content,
+                    kind: math.kind,
+                    delimiter: pair.delimiter,
+                    state: p.math_states[id.0],
+                    closed: true,
+                    epoch: 0,
+                    version: 0,
+                },
+                p.update,
+                self.work,
+            );
             p.update
                 .display_shape
                 .emit(crate::DisplayShapeEffectKind::Math {
@@ -734,6 +748,7 @@ impl CodePair {
 #[derive(Clone, Copy)]
 #[cfg_attr(test, derive(Debug))]
 struct MathCandidate {
+    delimiter: crate::MathDelimiter,
     open: Span,
     escaped: bool,
     // End of the last feed; same-scope container prefixes are not fed.
@@ -742,6 +757,7 @@ struct MathCandidate {
 
 #[cfg_attr(test, derive(Debug))]
 struct MathPair {
+    delimiter: crate::MathDelimiter,
     open: Span,
     close: Span,
 }
@@ -2003,14 +2019,27 @@ impl Inline {
             self.flush_header(effects);
             self.header_crossed = true;
         }
-        if let Some(math) = &mut self.math {
+        if let Some(mut math) = self.math.take() {
             if math.escaped {
                 math.escaped = false;
+                if math.delimiter == crate::MathDelimiter::Paren && byte == b')' {
+                    effects.work.math_steps += 1;
+                    self.math_pair(
+                        MathPair {
+                            delimiter: math.delimiter,
+                            open: math.open,
+                            close: Span::new(pos - 1, pos + 1),
+                        },
+                        effects,
+                    );
+                    return;
+                }
             } else if byte == b'\\' {
                 math.escaped = true;
-            } else if byte == b'$' {
+            } else if byte == b'$' && math.delimiter != crate::MathDelimiter::Paren {
                 self.start_run(byte, pos);
             }
+            self.math = Some(math);
             return;
         }
         if let Some(code) = &mut self.code {
@@ -2114,7 +2143,17 @@ impl Inline {
         if let Some(escape) = self.escape.take()
             && byte.is_ascii_punctuation()
         {
-            effects.hide(Span::new(escape, escape + 1));
+            if byte == b'(' {
+                effects.work.math_steps += 1;
+                self.math = Some(MathCandidate {
+                    delimiter: crate::MathDelimiter::Paren,
+                    open: Span::new(escape, pos + 1),
+                    escaped: false,
+                    end: pos + 1,
+                });
+            } else {
+                effects.hide(Span::new(escape, escape + 1));
+            }
             return;
         }
         if !self.bare_replay
@@ -2347,6 +2386,15 @@ impl Inline {
         }
     }
 
+    fn math_pair(&mut self, pair: MathPair, effects: &mut Effects<'_>) {
+        if self.header_opaque && !self.header_crossed {
+            debug_assert!(self.header_math.is_none());
+            self.header_math = Some(pair);
+        } else {
+            pair.commit(effects);
+        }
+    }
+
     fn start_run(&mut self, byte: u8, pos: usize) {
         self.run = Some(Run {
             byte,
@@ -2368,6 +2416,7 @@ impl Inline {
                 let open = math.open;
                 if open.len() == run.source.len() {
                     let pair = MathPair {
+                        delimiter: math.delimiter,
                         open,
                         close: run.source,
                     };
@@ -2381,6 +2430,11 @@ impl Inline {
                 }
             } else if run.source.len() <= 2 {
                 self.math = Some(MathCandidate {
+                    delimiter: if run.source.len() == 1 {
+                        crate::MathDelimiter::Dollar
+                    } else {
+                        crate::MathDelimiter::DoubleDollar
+                    },
                     open: run.source,
                     escaped: false,
                     end: run.source.end,
@@ -3042,6 +3096,7 @@ mod tests {
             publishing.style_suffix_bytes = 0;
             publishing.style_suffix_steps = 0;
             publishing.header_effect_steps = 0;
+            publishing.math_object_steps = 0;
             assert_eq!(publishing, self.work, "work after {event}");
             assert_eq!(self.work.tree_visits, 0);
         }
@@ -3131,6 +3186,7 @@ mod tests {
             "[a](u\n 't') [a](u\n 'a&amp;'x) [a](\n*u\nend*and",
             "a***b**c* _中_，~~🙂~~ \\* &amp; &#x1f600; &bad; <https://x> <a@b.co> [^签]",
             "`x``a```b`` y `ok` $x\\$y$ $$中$$ $unfinished",
+            r"\(x$y\) \\\(z\) [\(a\)](u) \(unfinished",
             "a  \r\nb\\\n c\t\n[<https://x> [replacement] [_x*]",
         ]
         .into_iter()
@@ -3175,6 +3231,7 @@ mod tests {
             "~~old\n",
             "`old``a\n",
             "$old\n",
+            "\\(old\n",
             "[old *a\n",
             "[old\n",
             "plain\n",
@@ -3188,6 +3245,7 @@ mod tests {
                 "end` ",
                 "end`` ",
                 "end$ ",
+                "end\\) ",
                 "end][key] ",
                 "end][] ",
                 "end](u 't') ",

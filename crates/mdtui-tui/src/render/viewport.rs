@@ -717,6 +717,7 @@ impl ViewportState {
                         .saturating_add(4),
                     tail: Some(end.window_cut),
                 });
+                first.set_math_floor(first.scanner().requested().start);
                 first.set_links(self.links.clone());
                 end.first = Some(first);
             }
@@ -767,6 +768,14 @@ impl ViewportState {
                     .filter(|g| g.text.is_indexed())
                 {
                     end.next_before = end.next_before.min(glyph.source.start);
+                }
+                if let Some(meta) = first.scanner().skipped_math()
+                    && meta.source.end < end.before
+                {
+                    end.next_before = end.next_before.max(meta.source.end);
+                }
+                if let Some(at) = first.scanner().first_math_source() {
+                    end.next_before = end.next_before.min(at);
                 }
                 end.selection = Some(EndSelection {
                     zero_progress: Default::default(),
@@ -1799,9 +1808,12 @@ impl ViewportState {
         self.check_document(document)?;
         self.fold_reanchor = false;
         self.anchor_refiner = None;
-        if self.top == Some(anchor) && self.top_source(document) == Some(line_start) {
+        let moved = self.top != Some(anchor) || self.top_source(document) != Some(line_start);
+        if !moved && document.math_object_stats().active == 0 {
             return Ok(false);
         }
+        // Repeating a source jump can retain its row while still needing the
+        // math rectangle's horizontal focus after a layout/cache refresh.
         self.top = Some(anchor);
         self.frame_source = Some((anchor, line_start));
         self.top_position = if exact {
@@ -1817,7 +1829,7 @@ impl ViewportState {
         self.pending_table_snapshots.clear();
         self.preparing_tables = false;
         self.calibration = None;
-        Ok(true)
+        Ok(moved)
     }
 
     pub fn frame(
@@ -2007,6 +2019,12 @@ impl ViewportState {
         });
         self.shown_folds = render.first.placeholders().to_vec();
         let preserve_source = render.preserve_refined_source;
+        // EOF table precision can rebuild this completed window again. Keep
+        // the intrinsic math source goal until an actual scroll/jump replaces
+        // it, rather than consuming it after the first successful paint.
+        self.refined_top = preserve_source
+            && math_focus_source(frame.top)
+                .is_some_and(|source| render.first.scanner().math_at_source(source).is_some());
 
         self.top = Some(frame.top.anchor().unwrap_or(anchor));
         self.top_position = frame.top;
@@ -2322,7 +2340,13 @@ impl ViewportRender {
             anchor,
             tail: None,
             source: if preserve_refined_source {
-                top_line_source(top)
+                top_line_source(top).or_else(|| {
+                    if document.math_object_stats().active > 0 {
+                        math_focus_source(top)
+                    } else {
+                        None
+                    }
+                })
             } else {
                 None
             },
@@ -2465,7 +2489,16 @@ impl ViewportRender {
                 skip = skip.saturating_add(sink.tile_rows(segment.tile).unwrap_or(0));
             }
         }
-        let offset = self.anchor.offset.min(target_rows - 1);
+        let mut offset = self.anchor.offset.min(target_rows - 1);
+        if self.preserve_refined_source
+            && let Some(source) = math_focus_source(self.top)
+            && let Some(view) = self.first.scanner().math_at_source(source)
+            && let Some(row) = sink.math_row(view.meta.id, view.rect.y)
+        {
+            // Resize and same-tile source restoration must keep the queried
+            // intrinsic row, including sparse rows omitted from the bitmap.
+            offset = row.saturating_sub(skip).min(target_rows - 1);
+        }
         skip = skip.saturating_add(offset);
         let mut lines = sink.visible_lines(skip, usize::from(self.config.rows));
         let mut top = with_anchor(
@@ -2555,6 +2588,14 @@ impl ViewportRender {
             layout_budget: WorkLimit::default(),
             layout: self.first.sink_stats().unwrap_or_default(),
         }
+    }
+}
+
+fn math_focus_source(top: TopPosition) -> Option<usize> {
+    match top {
+        TopPosition::Exact { line_start, .. } => line_start,
+        TopPosition::ApproximateLineStart { source, .. } => Some(source),
+        TopPosition::ReplayFrom { .. } | TopPosition::Empty => None,
     }
 }
 

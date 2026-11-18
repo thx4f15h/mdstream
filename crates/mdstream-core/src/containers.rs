@@ -712,6 +712,29 @@ impl Containers {
         }
     }
 
+    /// One read-only qualification of this NEW math physical prefix. No lazy
+    /// continuation or path mutation; a missing path waits for LF/EOF.
+    pub(crate) fn math_prefix(
+        &self,
+        source: &str,
+        span: Span,
+        scope: Option<ContainerId>,
+        work: &mut Work,
+    ) -> Option<ContainerLine> {
+        let prefix = self
+            .path_cursor(source, span, scope, true, false, work)
+            .ok()?;
+        Some(ContainerLine {
+            new_container: false,
+            indented: false,
+            prefix: prefix.pos,
+            virtual_spaces: prefix.virtual_spaces as u8,
+            kind: BlockKind::Paragraph,
+            lazy: false,
+            detached_blank: false,
+        })
+    }
+
     pub(crate) fn code_continuation(
         &self,
         source: &str,

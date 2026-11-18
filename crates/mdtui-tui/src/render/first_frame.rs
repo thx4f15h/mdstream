@@ -195,6 +195,8 @@ pub struct FirstFrame {
     table_view: Option<super::table_window::TableView>,
     selection_ready: bool,
     table_view_checked: bool,
+    math_view_checked: bool,
+    math_copy_view: Option<super::table_window::TableView>,
     scan_complete: bool,
     sink: Option<TileLayoutSink>,
     pass: Option<LayoutPass>,
@@ -305,7 +307,14 @@ impl FirstFrame {
         } else {
             crate::render::plan::empty_plan(document, source, start, end)
         };
-        let scanner = DisplayScanner::new(document, source).ok_or(FirstFrameError::InvalidTop)?;
+        let mut scanner =
+            DisplayScanner::new(document, source).ok_or(FirstFrameError::InvalidTop)?;
+        scanner.set_math_rect(super::math::Rect {
+            x: 0,
+            y: 0,
+            width: usize::from(config.width),
+            height: usize::try_from(config.row_limit).unwrap_or(usize::MAX),
+        });
         let suppressed_heading_tiles = Vec::new();
         Ok(Self {
             binding: None,
@@ -349,6 +358,8 @@ impl FirstFrame {
             table_view: None,
             selection_ready: false,
             table_view_checked: false,
+            math_view_checked: false,
+            math_copy_view: None,
             scan_complete: false,
             sink: None,
             pass: None,
@@ -370,6 +381,9 @@ impl FirstFrame {
         })
     }
 
+    pub(crate) fn set_math_floor(&mut self, source: usize) {
+        self.scanner.set_math_floor(source);
+    }
     pub(crate) fn new_for_view(
         document: &Document,
         config: FirstFrameConfig,
@@ -447,6 +461,8 @@ impl FirstFrame {
             table_view: None,
             selection_ready: false,
             table_view_checked: false,
+            math_view_checked: false,
+            math_copy_view: None,
             scan_complete: false,
             sink: None,
             pass: None,
@@ -777,6 +793,8 @@ impl FirstFrame {
         }
         self.plan.visible.end = self.projected_end;
         self.contexts = WindowContexts::fragments(document, &self.fragments);
+        let math_rect = self.scanner.math_rect();
+        let math_floor = self.scanner.math_floor();
         self.scanner = DisplayScanner::projected(
             document,
             self.plan.visible,
@@ -785,6 +803,8 @@ impl FirstFrame {
             self.scanner.shared_links(),
         )
         .ok_or(FirstFrameError::InvalidTop)?;
+        self.scanner.set_math_rect(math_rect);
+        self.scanner.set_math_floor(math_floor);
         self.scanner.set_source_cut(
             self.projection_cut
                 .or_else(|| self.table_view.and_then(|view| view.tail)),
@@ -1002,7 +1022,52 @@ impl FirstFrame {
         Ok(())
     }
 
+    pub(crate) fn set_math_copy_window(&mut self, offset: u64, rows: usize) {
+        self.math_copy_view = Some(super::table_window::TableView {
+            anchor: mdtui3::Anchor {
+                tile: self.plan.tile_start,
+                offset,
+            },
+            source: None,
+            rows,
+            tail: None,
+        });
+        if !self.scan_complete {
+            self.scanner.set_math_rect(super::math::Rect {
+                x: 0,
+                y: 0,
+                width: usize::from(self.config.width),
+                height: rows,
+            });
+        }
+        self.math_view_checked = false;
+        self.sink = None;
+        self.pass = None;
+        self.cursor = 0;
+        self.rows = 0;
+        self.processed_tiles = 0;
+        self.replay = None;
+        self.replay_pass = None;
+    }
+    pub(crate) fn prepared_copy_row_offset(
+        &self,
+        block: mdtui3::BlockId,
+        index: usize,
+    ) -> Option<u64> {
+        self.sink.as_ref()?.prepared_copy_row_offset(block, index)
+    }
+    pub(crate) fn copy_logical_rows(&self) -> u64 {
+        self.sink
+            .as_ref()
+            .map_or(0, |sink| sink.copy_logical_rows())
+    }
     pub(crate) fn set_table_view(&mut self, view: super::table_window::TableView) {
+        self.scanner.set_math_rect(super::math::Rect {
+            x: 0,
+            y: 0,
+            width: usize::from(self.config.width),
+            height: view.rows,
+        });
         self.scanner.set_source_cut(view.tail);
         self.table_view = Some(view);
     }
@@ -1443,11 +1508,10 @@ impl FirstFrame {
             self.placeholders_inserted = true;
         }
         if !self.relocated
-            && let Some(first) = self
-                .scanner
-                .segments()
-                .first()
-                .filter(|s| s.text.is_indexed() && s.source.start < self.plan.visible.start)
+            && let Some(first) = self.scanner.segments().first().filter(|s| {
+                (s.text.is_indexed() || self.scanner.math_views().contains_key(&s.source.start))
+                    && s.source.start < self.plan.visible.start
+            })
         {
             let owner = document
                 .tile_at(first.source.start)
@@ -1462,19 +1526,22 @@ impl FirstFrame {
             let links = self.scanner.shared_links();
             let widths = self.table_widths.clone();
             let view = self.table_view;
+            let copy_view = self.math_copy_view;
             let mut replacement = Self::new_borrowed(document, config)?;
             replacement.set_links(links);
             replacement.set_table_widths(widths)?;
-            replacement.table_view = view;
-            replacement
-                .scanner
-                .set_source_cut(view.and_then(|v| v.tail));
+            if let Some(view) = view {
+                replacement.set_table_view(view);
+            }
             replacement.scanner.set_cluster_floor(floor);
             let mut checkpoint = RenderCheckpoint::line_start();
             checkpoint.line_source_start = Some(floor);
             replacement.binding = self.binding.take();
             std::mem::swap(&mut replacement.checkpoints, &mut self.checkpoints);
             replacement.checkpoints.insert(owner, checkpoint)?;
+            if let Some(view) = copy_view {
+                replacement.set_math_copy_window(view.anchor.offset, view.rows);
+            }
             replacement.relocated = true;
             *self = replacement;
             return Ok(Some(FirstFrameStatus::PendingScan));
@@ -1502,11 +1569,12 @@ impl FirstFrame {
             }
             for (index, segment) in self.plan.segments.iter_mut().enumerate() {
                 segment.drawable_at = drawable[index];
-                segment.kind = if self.plan.blocks.iter().any(|b| {
-                    matches!(b.kind, mdtui3::BlockKind::Table { .. })
-                        && b.source.start < segment.source.end
-                        && segment.source.start < b.source.end
-                }) {
+                segment.kind = if self.scanner.intersects_math(segment.source)
+                    || self.plan.blocks.iter().any(|b| {
+                        matches!(b.kind, mdtui3::BlockKind::Table { .. })
+                            && b.source.start < segment.source.end
+                            && segment.source.start < b.source.end
+                    }) {
                     TileSegmentKind::TuiOwned
                 } else if drawable[index].is_some() {
                     TileSegmentKind::Drawable
@@ -1553,10 +1621,11 @@ impl FirstFrame {
                 return Ok(Some(FirstFrameStatus::BudgetExhausted));
             }
             self.table_view_checked = true;
-            if let Some((id, row, source)) = self
-                .sink
-                .as_ref()
-                .and_then(|sink| sink.corrected_table_source(document, view))
+            if !(view.source.is_some() && !self.scanner.math_views().is_empty())
+                && let Some((id, row, source)) = self
+                    .sink
+                    .as_ref()
+                    .and_then(|sink| sink.corrected_table_source(document, view))
                 && self
                     .scanner
                     .selected_rows(id)
@@ -1572,6 +1641,27 @@ impl FirstFrame {
                 self.scan_complete = false;
                 self.selection_ready = false;
                 return Ok(Some(FirstFrameStatus::PendingScan));
+            }
+        }
+        if !self.math_view_checked {
+            if let Some(view) = self.math_copy_view.or(self.table_view) {
+                match self.scanner.refresh_math(
+                    document,
+                    self.sink.as_ref().unwrap(),
+                    view,
+                    budget,
+                )? {
+                    None => return Ok(Some(FirstFrameStatus::PendingScan)),
+                    Some(changed) => {
+                        self.math_view_checked = true;
+                        if changed {
+                            self.sink = None;
+                            return Ok(Some(FirstFrameStatus::PendingScan));
+                        }
+                    }
+                }
+            } else {
+                self.math_view_checked = true;
             }
         }
         Ok(None)
@@ -1788,6 +1878,87 @@ mod giant_fold_seam_tests {
             .unwrap()
         );
         for t in range {
+            assert_eq!(heights.height(TileId(t)), Some(0));
+        }
+    }
+    #[test]
+    fn real_math_continuations_use_fold_owner_zero_tickets_and_preserve_coverage() {
+        let mut d = Document::new();
+        d.append(&format!(
+            "# A\n\\[\n\\frac{{a}}{{b}}{}\n\\]\n# B\ntail\n",
+            " ".repeat(TILE_BYTES * 4)
+        ))
+        .unwrap();
+        d.finish();
+        let mut first = FirstFrame::new(
+            &d,
+            FirstFrameConfig {
+                top_tile: TileId(0),
+                tile_limit: d.tile_count(),
+                width: 20,
+                row_limit: 100,
+            },
+        )
+        .unwrap();
+        loop {
+            let step = first
+                .advance(&d, &mut Budget::new(WorkLimit::unlimited()))
+                .unwrap();
+            if matches!(
+                step.status,
+                FirstFrameStatus::Covered | FirstFrameStatus::EndOfDocument
+            ) {
+                break;
+            }
+        }
+        let ranges = first.zero_ranges().to_vec();
+        assert_eq!(ranges.len(), 1);
+        let mut fold = FoldView::<()>::with_state(&d, 2).unwrap();
+        let id = FoldId::Heading(HeadingId(0));
+        fold.set_collapsed(&d, id, true).unwrap();
+        let (heights, _) = fold.layout_parts_mut(&d).unwrap();
+        let before: Vec<_> = (0..d.tile_count())
+            .map(|t| heights.height(TileId(t)))
+            .collect();
+        let mut progress = ZeroRangeProgress::default();
+        while !measure_zero_ranges(
+            &ranges,
+            heights,
+            &mut progress,
+            &mut Budget::new(WorkLimit {
+                queries: 1,
+                objects: 1,
+                bytes: 6,
+                ..Default::default()
+            }),
+        )
+        .unwrap()
+        {}
+        for (t, &old_height) in before.iter().enumerate() {
+            assert_eq!(heights.height(TileId(t)), old_height);
+            if ranges[0].contains(&t) {
+                assert_eq!(heights.base_height(TileId(t)), Some(0));
+            }
+        }
+        assert!(fold.is_collapsed(id));
+        fold.set_collapsed(&d, id, false).unwrap();
+        let (heights, _) = fold.layout_parts_mut(&d).unwrap();
+        let mut fresh = ZeroRangeProgress::default();
+        assert!(
+            measure_zero_ranges(
+                &ranges,
+                heights,
+                &mut fresh,
+                &mut Budget::new(WorkLimit::unlimited())
+            )
+            .unwrap()
+        );
+        let ticket = heights.ticket(TileId(0)).unwrap();
+        let rows = first.sink().unwrap().tile_rows(TileId(0)).unwrap();
+        heights.measure(ticket, rows).unwrap();
+        assert_eq!(heights.height(TileId(0)), Some(rows));
+        assert!(rows >= 3);
+        for t in ranges[0].clone() {
             assert_eq!(heights.height(TileId(t)), Some(0));
         }
     }

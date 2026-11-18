@@ -25,6 +25,7 @@ pub struct RenderStats {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StaticRenderError {
+    Prepared(String),
     MissingHeading(BlockId),
     InvalidContainer(BlockId),
     RowOverflow,
@@ -41,6 +42,7 @@ pub enum StaticRenderError {
 impl fmt::Display for StaticRenderError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Prepared(error) => formatter.write_str(error),
             Self::MissingHeading(block) => {
                 write!(formatter, "heading block {} is missing", block.0)
             }
@@ -121,6 +123,46 @@ pub fn render_static_screen(
     screen: &mut Screen,
 ) -> Result<RenderStats, StaticRenderError> {
     screen.clear_back();
+    if document.math_object_stats().active > 0 {
+        use super::first_frame::{FirstFrame, FirstFrameConfig, FirstFrameStatus};
+        let config = FirstFrameConfig {
+            top_tile: mdtui3::TileId(0),
+            tile_limit: document.tile_count().max(1),
+            width: screen.render_width(),
+            row_limit: u64::from(screen.rows()) + 1,
+        };
+        let mut first = FirstFrame::new(document, config)
+            .map_err(|e| StaticRenderError::Prepared(e.to_string()))?;
+        loop {
+            let step = first
+                .advance(
+                    document,
+                    &mut mdtui3::Budget::new(mdtui3::WorkLimit::unlimited()),
+                )
+                .map_err(|e| StaticRenderError::Prepared(e.to_string()))?;
+            if matches!(
+                step.status,
+                FirstFrameStatus::Covered | FirstFrameStatus::EndOfDocument
+            ) {
+                break;
+            }
+        }
+        if first.rows() > u64::from(screen.rows()) {
+            return Err(StaticRenderError::RowOverflow);
+        }
+        first
+            .write_to_screen(screen, 0)
+            .map_err(|e| StaticRenderError::Prepared(e.to_string()))?;
+        let rows = first.rows() as u16;
+        let content_rows = first.lines().iter().filter(|l| l.source.is_some()).count() as u16;
+        return Ok(RenderStats {
+            rows,
+            content_rows,
+            blank_rows: rows - content_rows,
+            groups: first.plan().blocks.len(),
+            math_blocks_skipped: 0,
+        });
+    }
     let groups = collect_groups(document)?;
     let mut stats = RenderStats::default();
     let mut previous = None;
@@ -532,10 +574,11 @@ mod tests {
     }
 
     #[test]
-    fn math_blocks_are_skipped_without_panicking_or_output() {
+    fn math_blocks_use_the_real_prepared_object_path() {
         let (_, screen, stats) = render("$$\nx\n$$\n", 2, 20);
-        assert_eq!(stats.math_blocks_skipped, 1);
-        assert_eq!(stats.content_rows, 0);
-        assert!(screen.line_source(0).is_none());
+        assert_eq!(stats.math_blocks_skipped, 0);
+        assert_eq!(stats.content_rows, 1);
+        assert_eq!(screen.cell(0, 0).unwrap().text().collect_text(), "x");
+        assert!(screen.line_source(0).is_some());
     }
 }

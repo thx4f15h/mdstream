@@ -890,7 +890,7 @@ fn measure_cell(
     let before_work = scanner.source_work;
     let result = scanner
         .advance(document, budget)
-        .map_err(|_| TableWidthError::Table(TableError::MissingContent))?;
+        .map_err(TableWidthError::Layout)?;
     entry.work.measurement_source_bytes += scanner.source_work - before_work;
     let Some(width) = result else {
         return Ok(false);

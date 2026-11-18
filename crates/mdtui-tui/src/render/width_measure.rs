@@ -23,6 +23,22 @@ pub(crate) struct WidthMeasure {
     memo_window: usize,
     indexed: Option<Box<super::shape::ShapeWindow>>,
     indexed_width: usize,
+    math: Option<Box<MathMeasure>>,
+    math_bypass: bool,
+    fragment: bool,
+}
+
+struct MathMeasure {
+    window: mdtui3::MathWindow,
+    next: usize,
+    window_next: usize,
+    ended: bool,
+    saw_math: bool,
+    pending: Option<mdtui3::MathObjectMeta>,
+    context: Option<super::display::MathContext>,
+    child: Option<Box<WidthMeasure>>,
+    query: Option<super::math::MathQuery>,
+    width: usize,
 }
 
 struct PendingRun {
@@ -55,12 +71,29 @@ impl WidthMeasure {
             memo_window: source.start,
             indexed: None,
             indexed_width: 0,
+            math: None,
+            math_bypass: false,
+            fragment: false,
         })
     }
 
     /// The caller has proved the complete measured prefix unchanged. A pending
     /// paid run and its object recovery stay owned; no old prefix is replayed.
     pub fn rebind(&mut self, document: &Document) -> Option<()> {
+        if let Some(math) = &mut self.math {
+            math.window = document
+                .math_window(Span::new(math.window_next, self.source.end))
+                .ok()?;
+            if let Some(child) = &mut math.child {
+                child.rebind(document)?;
+            }
+            if let Some(context) = &mut math.context {
+                context.rebind(document)?;
+            }
+        }
+        if let Some(pending) = &mut self.pending {
+            pending.objects.rebind_stable(document);
+        }
         let position = self.cursor.source_position();
         self.cursor = document.display_cursor(Span::new(position, self.source.end))?;
         self.memo_window = position;
@@ -68,7 +101,9 @@ impl WidthMeasure {
     }
 
     pub fn capacity_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
+        self.math.as_ref().map_or(0, |m| {
+            std::mem::size_of::<MathMeasure>() + m.child.as_ref().map_or(0, |c| c.capacity_bytes())
+        }) + std::mem::size_of::<Self>()
             + self.cursor.scratch_stats().capacity_bytes
             + self.pending.as_ref().map_or(0, |run| {
                 run.text.capacity()
@@ -82,6 +117,9 @@ impl WidthMeasure {
         document: &Document,
         budget: &mut Budget,
     ) -> Result<Option<usize>, LayoutError> {
+        if !self.math_bypass && document.math_object_stats().active > 0 {
+            return self.advance_math(document, budget);
+        }
         if self.source.len() > mdtui3::TILE_BYTES && !self.links.prepare_shape(document, budget)? {
             return Ok(None);
         }
@@ -202,6 +240,8 @@ impl WidthMeasure {
             }
             if let Some(&(id, source, _)) = pending.objects.outer_images.first()
                 && self.image.is_none()
+                && (!self.fragment
+                    || (self.source.start <= source.start && source.end <= self.source.end))
             {
                 self.image = Some((id, source.end, false));
             }
@@ -249,6 +289,122 @@ impl WidthMeasure {
                 self.lease = None;
                 self.links.request_retirement();
             }
+        }
+    }
+
+    fn advance_math(
+        &mut self,
+        document: &Document,
+        budget: &mut Budget,
+    ) -> Result<Option<usize>, LayoutError> {
+        if !self.links.prepare(document, budget)? {
+            return Ok(None);
+        }
+        if self.math.is_none() {
+            self.math = Some(Box::new(MathMeasure {
+                window: document.math_window(self.source)?,
+                next: self.source.start,
+                window_next: self.source.start,
+                ended: false,
+                saw_math: false,
+                pending: None,
+                context: None,
+                child: None,
+                query: None,
+                width: 0,
+            }));
+        }
+        self.lease.get_or_insert_with(|| self.links.hold());
+        loop {
+            let math = self.math.as_mut().unwrap();
+            if let Some(child) = &mut math.child {
+                let before = child.source_work;
+                let result = child.advance(document, budget)?;
+                self.source_work += child.source_work - before;
+                let Some(width) = result else {
+                    return Ok(None);
+                };
+                math.width += width;
+                math.child = None;
+                continue;
+            }
+            if math.pending.is_none() && !math.ended {
+                match math.window.advance(document, budget)? {
+                    mdtui3::MathWindowStep::Object(meta) => {
+                        math.pending = Some(meta);
+                        math.window_next = meta.source.end.min(self.source.end);
+                        math.saw_math = true;
+                    }
+                    mdtui3::MathWindowStep::BudgetExhausted => return Ok(None),
+                    mdtui3::MathWindowStep::Complete => math.ended = true,
+                }
+            }
+            if math.ended && !math.saw_math {
+                self.math = None;
+                self.math_bypass = true;
+                return self.advance(document, budget);
+            }
+            let gap_end = math
+                .pending
+                .map_or(self.source.end, |m| m.source.start.min(self.source.end));
+            if math.next < gap_end {
+                let mut child =
+                    Self::new(document, Span::new(math.next, gap_end), self.links.clone())
+                        .ok_or(LayoutError::InvalidRange)?;
+                child.math_bypass = true;
+                child.fragment = true;
+                math.child = Some(Box::new(child));
+                math.next = gap_end;
+                continue;
+            }
+            if let Some(meta) = math.pending {
+                if math.context.is_none() {
+                    math.context = Some(super::display::MathContext::new(
+                        document,
+                        meta,
+                        self.links.clone(),
+                    )?);
+                }
+                let context = math.context.as_mut().unwrap();
+                let before = budget.used().bytes;
+                let ready = context.advance(document, &self.links, budget)?;
+                self.source_work += budget.used().bytes - before;
+                if !ready {
+                    return Ok(None);
+                }
+                if context.presentation.is_some() || meta.content.is_empty() {
+                    if math.query.is_none() {
+                        math.query = Some(self.links.math().query(
+                            document,
+                            meta,
+                            super::math::Rect {
+                                x: 0,
+                                y: 0,
+                                width: 0,
+                                height: 0,
+                            },
+                        )?);
+                    }
+                    let query = math.query.as_mut().unwrap();
+                    let before = query.source_work();
+                    let ready = query.advance(document, budget)?;
+                    self.source_work += query.source_work() - before;
+                    if !ready {
+                        return Ok(None);
+                    }
+                    math.width += query.result().unwrap().metrics.width;
+                }
+                math.next = math.next.max(meta.source.end);
+                math.pending = None;
+                math.context = None;
+                math.query = None;
+                continue;
+            }
+            self.complete = true;
+            let result = math.width;
+            self.lease = None;
+            self.links.request_retirement();
+            return Ok(Some(result));
         }
     }
 
@@ -514,5 +670,60 @@ mod append_recovery_tests {
             after.source_decode_bytes - before.source_decode_bytes,
             d.source().len() - (source.len() + 2)
         );
+    }
+}
+
+#[cfg(test)]
+mod math_tests {
+    use super::*;
+    use mdtui3::WorkLimit;
+    #[test]
+    fn intrinsic_math_measurement_uses_shared_engine_and_real_micro_budget() {
+        for (source, expected) in [
+            (r"A \(\frac{x}{y}\) Z", 7),
+            (r"\(x_1^2\)", 2),
+            (r"\begin", 6),
+            (r"\(\begin{matrix}a&b\\c&d\end{matrix}\)", 4),
+            ("\\(\\alpha{}\u{301}中\\)", 3),
+            (r"[\(\frac{x}{y}\)](/hidden)", 3),
+            (r"A ![\(x\)](/img) Z", 5),
+        ] {
+            let mut d = Document::new();
+            d.append(&format!("{source}\n\n")).unwrap();
+            d.finish();
+            let links = SharedLinks::new(&d);
+            let mut measure = WidthMeasure::new(&d, Span::new(0, source.len()), links).unwrap();
+            assert_eq!(
+                measure
+                    .advance(&d, &mut Budget::new(WorkLimit::default()))
+                    .unwrap(),
+                None
+            );
+            let mut result = None;
+            for _ in 0..source.len() * 200 + 500 {
+                let mut budget = Budget::new(WorkLimit {
+                    queries: 1,
+                    objects: 1,
+                    bytes: 6,
+                    ..Default::default()
+                });
+                result = measure.advance(&d, &mut budget).unwrap();
+                assert!(
+                    budget.used().queries <= 1
+                        && budget.used().objects <= 1
+                        && budget.used().bytes <= 6
+                );
+                if result.is_some() {
+                    break;
+                }
+            }
+            assert_eq!(result, Some(expected), "{source}");
+            assert_eq!(
+                measure
+                    .advance(&d, &mut Budget::new(WorkLimit::unlimited()))
+                    .unwrap(),
+                Some(expected)
+            );
+        }
     }
 }

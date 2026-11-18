@@ -1474,3 +1474,482 @@ fn raw_clipboard_waits_for_a_true_giant_boundary_and_never_cancels_pure_extend()
         "copy did not cancel/repaint the existing glyph"
     );
 }
+#[test]
+fn actual_math_reading_search_and_copy_keep_post_tex_atom_root_source() {
+    let source = "\\(\\alpha{}́\\)\n\nplain tail\n";
+    let mut engine = engine(source, 24, 8);
+    let mut app = AppState::default();
+    key(&mut app, &mut engine, KeyCode::Char('v'));
+    assert_eq!(
+        engine.runtime().reading().selection.range(),
+        Some(Span::new(2, 12))
+    );
+    key(&mut app, &mut engine, KeyCode::Char('y'));
+    assert_eq!(clipboard(&finish_task(&mut engine)), "ά".as_bytes());
+    key(&mut app, &mut engine, KeyCode::Char('Y'));
+    assert_eq!(clipboard(&finish_task(&mut engine)), "\\alpha{}́".as_bytes());
+    query(&mut app, &mut engine, "ά");
+    finish_task(&mut engine);
+    assert_eq!(
+        engine.runtime().reading().current_match().unwrap().source,
+        Span::new(2, 12)
+    );
+    let old = engine.runtime().reading().query().chars().count();
+    key(&mut app, &mut engine, KeyCode::Char('/'));
+    for _ in 0..old {
+        key(&mut app, &mut engine, KeyCode::Backspace);
+    }
+    for ch in "alpha".chars() {
+        key(&mut app, &mut engine, KeyCode::Char(ch));
+    }
+    key(&mut app, &mut engine, KeyCode::Enter);
+    finish_task(&mut engine);
+    assert!(engine.runtime().reading().current_match().is_none());
+    let old = engine.runtime().reading().query().chars().count();
+    key(&mut app, &mut engine, KeyCode::Char('/'));
+    for _ in 0..old {
+        key(&mut app, &mut engine, KeyCode::Backspace);
+    }
+    for ch in "tail".chars() {
+        key(&mut app, &mut engine, KeyCode::Char(ch));
+    }
+    key(&mut app, &mut engine, KeyCode::Enter);
+    finish_task(&mut engine);
+    let hit = engine.runtime().reading().current_match().unwrap();
+    assert_eq!(&source[hit.source.range()], "tail");
+}
+#[test]
+fn one_command_source_alias_copies_every_visible_operator_glyph() {
+    for (tex, visible) in [("\\sin", "sin"), ("\\unknown", "\\unknown")] {
+        let mut engine = engine(&format!("\\({tex}\\)\n"), 24, 8);
+        let mut app = AppState::default();
+        key(&mut app, &mut engine, KeyCode::Char('v'));
+        assert_eq!(
+            engine.runtime().reading().selection.range(),
+            Some(Span::new(2, 2 + tex.len()))
+        );
+        key(&mut app, &mut engine, KeyCode::Char('y'));
+        assert_eq!(clipboard(&finish_task(&mut engine)), visible.as_bytes());
+        key(&mut app, &mut engine, KeyCode::Char('Y'));
+        assert_eq!(clipboard(&finish_task(&mut engine)), tex.as_bytes());
+    }
+}
+
+#[test]
+fn rendered_math_search_reveals_the_body_glyph_after_source_jump_and_resize() {
+    let matrix = (0..40)
+        .map(|i| {
+            if i == 35 {
+                r"\alpha".to_owned()
+            } else {
+                format!("r{i}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(r"\\");
+    for source in [
+        format!("\\[\n\\begin{{matrix}}{matrix}\\end{{matrix}}\n\\]\n"),
+        format!("\\[\n\\frac{{\\alpha}}{{{}}}\n\\]\n", "x".repeat(80)),
+        format!("| a | b |\n| - | - |\n| \\(\\begin{{matrix}}{matrix}\\end{{matrix}}\\) | z |\n"),
+        format!(
+            "| a | b |\n| - | - |\n| \\({}\\alpha\\) | z |\n",
+            "x".repeat(20_000)
+        ),
+    ] {
+        let mut engine = engine(&source, 20, 6);
+        let mut app = AppState::default();
+        query(&mut app, &mut engine, "α");
+        // This added wide case emits over 20k glyph descriptors. Keep the
+        // original small-task helper's 200k assertion unchanged.
+        let mut completed = false;
+        for _ in 0..source.len() * 64 + 20_000 {
+            let mut budget = tiny();
+            engine
+                .runtime_mut()
+                .advance_reading(&mut Vec::new(), &mut budget);
+            assert!(
+                budget.used().queries <= 1
+                    && budget.used().objects <= 1
+                    && budget.used().bytes <= 6
+            );
+            if !engine.runtime().reading().pending() {
+                completed = true;
+                break;
+            }
+        }
+        assert!(completed, "finite wide mathematical search");
+        paint(&mut engine);
+        fn revealed(engine: &StreamEngine) -> bool {
+            let s = engine.screen();
+            (0..s.rows() - 1).any(|row| {
+                (0..s.cols()).any(|column| {
+                    let cell = s.front_cell(row, column).unwrap();
+                    cell.style().contains(StyleRole::SEARCH)
+                        && cell.text().collect_text().contains('α')
+                })
+            })
+        }
+        assert!(
+            revealed(&engine),
+            "mathematical match must be drawn in the body, not only its footer"
+        );
+        let at = source.find(r"\alpha").unwrap();
+        assert_eq!(
+            engine.runtime().reading().current_match().unwrap().source,
+            Span::new(at, at + 6)
+        );
+        assert_eq!(
+            engine.runtime().top_source(),
+            Some(at),
+            "source focus before resize: {source:?}"
+        );
+        engine.runtime_mut().resize(6, 12).unwrap();
+        paint(&mut engine);
+        assert!(
+            engine.runtime().reading().current_match().is_none(),
+            "width invalidates the rendered display offset"
+        );
+        assert!(
+            (0..5).any(|r| (0..12).any(|c| engine
+                .screen()
+                .front_cell(r, c)
+                .unwrap()
+                .text()
+                .collect_text()
+                .contains('α'))),
+            "resize focus failed: source={source:?} top={:?} body={:?}",
+            engine.runtime().top_source(),
+            (0..5)
+                .map(|r| (0..12)
+                    .map(|c| engine
+                        .screen()
+                        .front_cell(r, c)
+                        .unwrap()
+                        .text()
+                        .collect_text())
+                    .collect::<String>())
+                .collect::<Vec<_>>()
+        );
+        key(&mut app, &mut engine, KeyCode::Char('n'));
+        // This added wide case emits over 20k glyph descriptors. Keep the
+        // original small-task helper's 200k assertion unchanged.
+        let mut completed = false;
+        for _ in 0..source.len() * 64 + 20_000 {
+            let mut budget = tiny();
+            engine
+                .runtime_mut()
+                .advance_reading(&mut Vec::new(), &mut budget);
+            assert!(
+                budget.used().queries <= 1
+                    && budget.used().objects <= 1
+                    && budget.used().bytes <= 6
+            );
+            if !engine.runtime().reading().pending() {
+                completed = true;
+                break;
+            }
+        }
+        assert!(completed, "finite wide mathematical search");
+        paint(&mut engine);
+        assert!(
+            revealed(&engine),
+            "fresh search failed: source={source:?} top={:?} match={:?} body={:?}",
+            engine.runtime().top_source(),
+            engine.runtime().reading().current_match(),
+            (0..5)
+                .map(|r| (0..12)
+                    .map(|c| engine
+                        .screen()
+                        .front_cell(r, c)
+                        .unwrap()
+                        .text()
+                        .collect_text())
+                    .collect::<String>())
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn native_display_search_keeps_its_width_independent_match() {
+    let mut engine = engine("before alpha after\n", 20, 6);
+    let mut app = AppState::default();
+    query(&mut app, &mut engine, "alpha");
+    finish_task(&mut engine);
+    paint(&mut engine);
+    let original = engine.runtime().reading().current_match().unwrap().source;
+    engine.runtime_mut().resize(6, 12).unwrap();
+    paint(&mut engine);
+    assert_eq!(
+        engine.runtime().reading().current_match().unwrap().source,
+        original
+    );
+}
+
+#[test]
+fn one_column_operator_search_and_visible_copy_keep_the_full_source_atom() {
+    let mut engine = engine("\\(\\sin\\)\n", 1, 4);
+    let mut app = AppState::default();
+    query(&mut app, &mut engine, "n");
+    finish_task(&mut engine);
+    paint(&mut engine);
+    assert_eq!(
+        engine
+            .screen()
+            .front_cell(0, 0)
+            .unwrap()
+            .text()
+            .collect_text(),
+        "n"
+    );
+    assert_eq!(
+        engine.runtime().reading().current_match().unwrap().source,
+        Span::new(2, 6)
+    );
+    key(&mut app, &mut engine, KeyCode::Char('v'));
+    key(&mut app, &mut engine, KeyCode::Char('y'));
+    assert_eq!(clipboard(&finish_task(&mut engine)), b"sin");
+    key(&mut app, &mut engine, KeyCode::Char('Y'));
+    assert_eq!(clipboard(&finish_task(&mut engine)), br"\sin");
+}
+
+#[test]
+fn mathematical_search_reveals_a_folded_owner_and_retains_other_folds() {
+    use mdtui3::{FoldId, HeadingId};
+    let source = "# A\n\\[\n\\frac{\\alpha}{b}\n\\]\n\n# B\nHIDDEN\n";
+    let mut engine = engine(source, 20, 8);
+    {
+        let (doc, view) = engine.runtime_mut().document_and_viewport_mut();
+        for i in 0..2 {
+            view.folds_mut()
+                .set_collapsed(doc, FoldId::Heading(HeadingId(i)), true)
+                .unwrap();
+        }
+        view.fold_changed(doc);
+    }
+    paint(&mut engine);
+    let mut app = AppState::default();
+    query(&mut app, &mut engine, "α");
+    finish_task(&mut engine);
+    paint(&mut engine);
+    let at = source.find("\\alpha").unwrap();
+    assert_eq!(
+        engine.runtime().reading().current_match().unwrap().source,
+        Span::new(at, at + 6)
+    );
+    assert!(
+        !engine
+            .runtime()
+            .viewport()
+            .folds()
+            .is_collapsed(FoldId::Heading(HeadingId(0)))
+    );
+    assert!(
+        engine
+            .runtime()
+            .viewport()
+            .folds()
+            .is_collapsed(FoldId::Heading(HeadingId(1)))
+    );
+    assert!((0..7).any(|r| (0..20).any(|c| {
+        engine
+            .screen()
+            .front_cell(r, c)
+            .unwrap()
+            .text()
+            .collect_text()
+            .contains('α')
+    })));
+}
+
+#[test]
+fn math_query_created_after_resize_before_the_next_frame_uses_the_new_width() {
+    let mut engine = engine("\\(\\alpha\\)\n", 80, 24);
+    let mut app = AppState::default();
+    engine.runtime_mut().resize(3, 20).unwrap();
+    query(&mut app, &mut engine, "α");
+    finish_task(&mut engine);
+    assert_eq!(
+        engine.runtime().reading().current_match().unwrap().source,
+        Span::new(2, 8)
+    );
+}
+
+#[test]
+fn frame_scheduler_searches_a_wide_math_table_after_follow_end_and_resize() {
+    let source = format!(
+        "| a | b |\n| - | - |\n| \\({}\\xi\\) | z |\n\nMATH_END\n",
+        "x".repeat(20_000)
+    );
+    let mut engine = engine(&source, 80, 24);
+    let mut app = AppState::default();
+    key(&mut app, &mut engine, KeyCode::End);
+    paint(&mut engine);
+    engine.runtime_mut().resize(3, 20).unwrap();
+    paint(&mut engine);
+    query(&mut app, &mut engine, "ξ");
+    for i in 0..10000 {
+        engine
+            .runtime_mut()
+            .frame_to(
+                &mut Vec::new(),
+                &mut Budget::new(mdtui_tui::stream::FRAME_WORK),
+            )
+            .unwrap();
+        if !engine.runtime().reading().pending() && !engine.runtime().has_pending_jump() {
+            break;
+        }
+        assert!(
+            i < 9999,
+            "stalled: {}",
+            engine.runtime().reading().message()
+        );
+    }
+    assert!(
+        engine.runtime().reading().current_match().is_some(),
+        "message={} query={}",
+        engine.runtime().reading().message(),
+        engine.runtime().reading().query()
+    );
+    paint(&mut engine);
+    assert!(
+        (0..2).any(|r| (0..20).any(|c| engine
+            .screen()
+            .front_cell(r, c)
+            .unwrap()
+            .text()
+            .collect_text()
+            .contains('ξ'))),
+        "top={:?} following={} body={:?}",
+        engine.runtime().top_source(),
+        engine.runtime().viewport().following(),
+        (0..3)
+            .map(|r| (0..20)
+                .map(|c| engine
+                    .screen()
+                    .front_cell(r, c)
+                    .unwrap()
+                    .text()
+                    .collect_text())
+                .collect::<String>())
+            .collect::<Vec<_>>()
+    );
+    let at = source.find(r"\xi").unwrap();
+    assert_eq!(engine.runtime().top_source(), Some(at));
+    engine.runtime_mut().resize(24, 80).unwrap();
+    paint(&mut engine);
+    assert_eq!(engine.runtime().top_source(), Some(at));
+    assert!(
+        (0..23).any(|r| (0..80).any(|c| engine
+            .screen()
+            .front_cell(r, c)
+            .unwrap()
+            .text()
+            .collect_text()
+            .contains('ξ'))),
+        "source anchor must survive wide resize; top={:?}",
+        engine.runtime().top_source()
+    );
+}
+
+#[test]
+fn eof_table_width_calibration_keeps_mathematical_source_focus_after_follow_search_and_resize() {
+    use std::time::Duration;
+    fn settle(engine: &mut StreamEngine, app: &mut AppState) {
+        for _ in 0..20000 {
+            let mut budget = Budget::new(mdtui_tui::stream::FRAME_WORK);
+            if engine.calibration_pending() {
+                engine.advance_calibration(&mut budget).unwrap();
+            }
+            let commit = engine
+                .render_due(&mut Vec::new(), &mut budget, Duration::from_secs(1))
+                .unwrap();
+            if commit.as_ref().is_some_and(|c| c.committed) {
+                app.frame_committed(engine);
+            }
+            if !engine.calibration_pending()
+                && !engine.runtime().reading().pending()
+                && !engine.runtime().has_pending_jump()
+                && !engine.wire_pending()
+                && commit.is_some_and(|c| c.committed)
+            {
+                return;
+            }
+        }
+        panic!("stream did not settle");
+    }
+    let matrix = (0..40)
+        .map(|i| format!("r{i}"))
+        .collect::<Vec<_>>()
+        .join(r"\\");
+    let source = format!(
+        "\\[\n\\frac{{\\alpha}}{{{}}}\n\\]\n\n\\[\n\\begin{{matrix}}{matrix}\\end{{matrix}}\n\\]\n\n| a | b |\n| - | - |\n| \\({}\\xi\\) | z |\n\nMATH_END\n",
+        "x".repeat(100),
+        "x".repeat(20_000)
+    );
+    let mut engine = engine(&source, 80, 24);
+    let mut app = AppState::default();
+    engine.finish_input(Duration::ZERO).unwrap();
+    settle(&mut engine, &mut app);
+    query(&mut app, &mut engine, "r35");
+    settle(&mut engine, &mut app);
+    key(&mut app, &mut engine, KeyCode::End);
+    settle(&mut engine, &mut app);
+    app.resize(&mut engine, 3, 20).unwrap();
+    settle(&mut engine, &mut app);
+    key(&mut app, &mut engine, KeyCode::Char('/'));
+    for _ in 0..3 {
+        key(&mut app, &mut engine, KeyCode::Backspace);
+    }
+    key(&mut app, &mut engine, KeyCode::Char('ξ'));
+    key(&mut app, &mut engine, KeyCode::Enter);
+    settle(&mut engine, &mut app);
+    let at = source.find(r"\xi").unwrap();
+    assert_eq!(engine.runtime().top_source(), Some(at));
+    app.resize(&mut engine, 24, 80).unwrap();
+    settle(&mut engine, &mut app);
+    assert_eq!(
+        engine.runtime().top_source(),
+        Some(at),
+        "EOF calibration retains the whole command source"
+    );
+    assert!((0..23).any(|r| (0..80).any(|c| {
+        engine
+            .screen()
+            .front_cell(r, c)
+            .unwrap()
+            .text()
+            .collect_text()
+            .contains('ξ')
+    })));
+}
+
+#[test]
+fn an_unrelated_math_object_preserves_ordinary_hit_source_and_resize_lifetime() {
+    for prefix in [
+        format!("# {}HIDDEN_HIT\n\n", "x".repeat(80)),
+        format!("```\n{}HIDDEN_HIT\n```\n\n", "x".repeat(80)),
+        "ordinary HIDDEN_HIT text\n\n".to_owned(),
+    ] {
+        for suffix in ["", "\\(x\\)\n"] {
+            let source = format!("{prefix}{suffix}");
+            let mut engine = engine(&source, 20, 6);
+            let mut app = AppState::default();
+            query(&mut app, &mut engine, "HIDDEN_HIT");
+            finish_task(&mut engine);
+            paint(&mut engine);
+            let at = source.find("HIDDEN_HIT").unwrap();
+            let expected = Span::new(at, at + 10);
+            assert_eq!(
+                engine.runtime().reading().current_match().unwrap().source,
+                expected
+            );
+            engine.runtime_mut().resize(6, 12).unwrap();
+            paint(&mut engine);
+            assert_eq!(
+                engine.runtime().reading().current_match().unwrap().source,
+                expected
+            );
+        }
+    }
+}

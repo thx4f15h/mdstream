@@ -22,6 +22,7 @@ enum State {
     Rule(u8),
     Equals(bool),
     Dollars(u8),
+    Backslash,
     Math,
     Atx(u8),
     Blank,
@@ -243,6 +244,7 @@ impl Scanner {
                 b'_' => State::Rule(byte),
                 b'=' => State::Equals(false),
                 b'$' => State::Dollars(1),
+                b'\\' => State::Backslash,
                 b'#' => State::Atx(1),
                 b'[' if !self.prose || self.explicit => State::Label {
                     start: at + 1,
@@ -273,6 +275,7 @@ impl Scanner {
             State::Equals(false) if byte == b'=' => State::Equals(false),
             State::Equals(_) if byte.is_ascii_whitespace() => State::Equals(true),
             State::Dollars(1) if byte == b'$' => State::Dollars(2),
+            State::Backslash if matches!(byte, b'[' | b']') => State::Math,
             State::Dollars(2) | State::Math if matches!(byte, b' ' | b'\t' | b'\r') => State::Math,
             State::Atx(count) if byte == b'#' && count < 6 => State::Atx(count + 1),
             State::Blank if byte.is_ascii_whitespace() => State::Blank,

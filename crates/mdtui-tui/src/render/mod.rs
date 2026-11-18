@@ -12,6 +12,7 @@ pub mod heading;
 pub mod input;
 pub mod link;
 pub mod list;
+pub mod math;
 pub mod output;
 pub mod paragraph;
 pub mod plan;

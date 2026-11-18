@@ -21,6 +21,12 @@ pub(crate) struct Fence {
     pub indent_column: u8,
 }
 
+impl Fence {
+    pub(crate) fn is_math(self) -> bool {
+        matches!(self.byte, b'$' | b'\\')
+    }
+}
+
 pub(crate) enum Line {
     Text,
     Blank,
@@ -156,12 +162,12 @@ pub(crate) fn classify_indented(
     // Their body stays literal; opening indentation is not stripped from it.
     if complete
         && fence_indent <= 3
-        && fence_text.starts_with(b"$$")
+        && (fence_text.starts_with(b"$$") || fence_text.starts_with(b"\\["))
         && fence_text[2..].iter().all(|b| matches!(b, b' ' | b'\t'))
     {
         return Line::FenceOpen {
             fence: Fence {
-                byte: b'$',
+                byte: if fence_text[0] == b'$' { b'$' } else { b'\\' },
                 length: 2,
                 indent: 0,
                 remaining_indent: 0,
@@ -292,7 +298,7 @@ impl FenceProbe {
         mut column: u8,
         work: &mut crate::Work,
     ) -> Option<Self> {
-        if active.is_some_and(|f| f.byte == b'$') {
+        if active.is_some_and(Fence::is_math) {
             return None;
         }
         let mut start = span.start;
@@ -406,6 +412,13 @@ pub(crate) fn classify_fenced(
         start += 1;
     }
     let text = &body[start..];
+    if fence.byte == b'\\' {
+        return if text.starts_with(b"\\]") && text[2..].iter().all(|b| matches!(b, b' ' | b'\t')) {
+            Line::FenceClose
+        } else {
+            Line::Code
+        };
+    }
     let run = text.iter().take_while(|&&b| b == fence.byte).count();
     if (if fence.byte == b'$' {
         run == 2

@@ -122,6 +122,7 @@ fn legacy_work(work: mdstream::Work, observers: bool) -> String {
                 && !field.starts_with("link_label_steps:")
                 && !field.starts_with("link_index_steps:")
                 && !field.starts_with("link_gate_steps:")
+                && !field.starts_with("math_object_steps:")
         })
         .collect::<Vec<_>>()
         .join(", ")

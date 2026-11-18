@@ -123,6 +123,7 @@ pub struct SourceRefiner {
     source: usize,
     lookup_source: usize,
     block: Option<BlockId>,
+    block_source: mdtui3::Span,
     config: RefineConfig,
     status: RefineStatus,
     first: FirstFrame,
@@ -294,6 +295,20 @@ impl SourceRefiner {
             checkpoints,
         )?;
 
+        if document.math_object_stats().active > 0 {
+            // An intrinsic source locator can query the target row directly;
+            // refinement never needs a full tall-object bitmap.
+            first.set_table_view(crate::render::table_window::TableView {
+                anchor: Anchor {
+                    tile: target_tile,
+                    offset: 0,
+                },
+                source: Some(lookup_source),
+                rows: 1,
+                tail: None,
+            });
+        }
+
         if let RefineStatus::ReplayFrom { from, target } = status {
             let bytes = document
                 .tile(target)
@@ -317,6 +332,7 @@ impl SourceRefiner {
             source,
             lookup_source,
             block,
+            block_source,
             config,
             status,
             first,
@@ -416,6 +432,7 @@ impl SourceRefiner {
         let sink = self.first.sink().ok_or(RefineError::Inconsistent(
             "source refinement sink is missing",
         ))?;
+        let composite_math = self.first.scanner().intersects_math(self.block_source);
         let lines = self.first.lines();
         while let Some(line) = lines.get(self.finish_line) {
             if !self.finish_started {
@@ -452,7 +469,7 @@ impl SourceRefiner {
                                 .get_or_insert((self.finish_line, source));
                         }
                         if mapped.start <= self.lookup_source && self.lookup_source < mapped.end {
-                            if cell.text.is_indexed() {
+                            if cell.text.is_indexed() || composite_math {
                                 self.normalized_source = Some(mapped.start);
                             }
                             self.finish_candidate = Some((self.finish_line, source));
@@ -509,7 +526,13 @@ impl SourceRefiner {
         }
         let target = RefinedTarget {
             source: self.normalized_source.unwrap_or(self.source),
-            line_start: line_source.source.start,
+            // A math row can project nonmonotone sources and be horizontally
+            // clipped. Retain the whole source atom as its presentation anchor.
+            line_start: if composite_math {
+                self.normalized_source.unwrap_or(self.lookup_source)
+            } else {
+                line_source.source.start
+            },
             row,
             anchor,
             status: self.status,
@@ -542,9 +565,9 @@ fn row_for_line(
     let start = plan
         .segments
         .partition_point(|segment| segment.tile < render_start);
-    let mut remaining = line_index;
+    let mut remaining = sink.line_offset(line_index)?;
     for segment in plan.segments.get(start..)? {
-        let rows = usize::try_from(sink.tile_rows(segment.tile)?).ok()?;
+        let rows = sink.tile_rows(segment.tile)?;
         if remaining < rows {
             return heights
                 .prefix_rows(segment.tile.0)?

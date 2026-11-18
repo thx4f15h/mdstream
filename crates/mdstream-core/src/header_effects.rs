@@ -94,6 +94,10 @@ pub(crate) fn commit(p: &mut crate::inline::Publishing<'_>, work: &mut Work) {
     }
     for id in line.maths..p.maths.len() {
         p.math_states[id] = SyntaxState::Sealed;
+        if let Some(mut meta) = p.math_objects.get(crate::MathObjectId::Inline(MathId(id))) {
+            meta.state = SyntaxState::Sealed;
+            p.math_objects.publish(meta, p.update, work);
+        }
         p.update
             .display_shape
             .emit(crate::DisplayShapeEffectKind::Math {
@@ -141,6 +145,8 @@ pub(crate) fn rollback(p: &mut crate::inline::Publishing<'_>, work: &mut Work) {
         );
         line.math_reuse.insert(math_key(p.maths[id]), MathId(id));
         p.math_active[id] = false;
+        p.math_objects
+            .withdraw(crate::MathObjectId::Inline(MathId(id)), p.update, work);
         p.update
             .display_shape
             .emit(crate::DisplayShapeEffectKind::Math {

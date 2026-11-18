@@ -485,3 +485,38 @@ fn p31_partial_table_uses_measured_width_snapshot() {
     assert!(text.contains('B'));
     assert!(first.sink_stats().unwrap().table_rows_prepared < 50);
 }
+
+#[test]
+fn mathematical_precision_preserves_a_suspended_context_across_unrelated_appends() {
+    let mut document = Document::new();
+    document
+        .append("| a | b |\n| - | - |\n| \\(\\frac{x}{y}\\) | z |\n\n")
+        .unwrap();
+    let mut cache = TableWidthCache::new(&document);
+    for step in 0..20000 {
+        if step > 0 && step % 8 == 0 {
+            let update = document.append("unrelated\n\n").unwrap();
+            cache.apply_update(&document, &update).unwrap();
+        }
+        let mut budget = Budget::new(WorkLimit {
+            queries: 1,
+            objects: 1,
+            bytes: 6,
+            ..Default::default()
+        });
+        let result = cache
+            .advance(&document, TableId(0), 80, &mut budget)
+            .unwrap();
+        assert!(
+            budget.used().queries <= 1 && budget.used().objects <= 1 && budget.used().bytes <= 6
+        );
+        if result.stable_for_width {
+            assert_eq!(
+                cache.snapshot(&document, TableId(0)).unwrap().widths,
+                [3, 1]
+            );
+            return;
+        }
+    }
+    panic!("continued mathematical precision stalled");
+}

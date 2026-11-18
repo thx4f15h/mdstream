@@ -63,6 +63,7 @@ mod link_index;
 mod link_semantics;
 mod link_title;
 mod math;
+mod math_object;
 mod model;
 mod navigation;
 mod paragraph_folds;
@@ -118,6 +119,9 @@ pub use folding::{
     ContainerFoldFilter, FoldCandidate, FoldCandidates, FoldChange, FoldDefaults, FoldId,
     FoldLookup, FoldPlaceholder, FoldPreviewProgress, FoldView, FoldViewCompaction, TableRowRange,
 };
+pub use footnote_body::{
+    BodyMathPayloadCursor, BodyMathPayloadStep, BodyMathWindow, BodyMathWindowStep,
+};
 pub use footnotes::{
     Footnote, FootnoteChunk, FootnoteContent, FootnoteDefinition, FootnoteId, FootnoteReference,
     FootnoteReferenceId, FootnoteReferences, FootnoteResolution, FootnoteTarget,
@@ -137,6 +141,10 @@ pub use link_index::{LinkObjects, LinkStep, LinkWindow, LinkWindowWork};
 pub use link_semantics::{LinkActivity, LinkDisposition, LinkResolutionWork, LinkResolver};
 pub use link_title::{LinkTitle, LinkTitleChunk};
 pub use math::{Math, MathChunk, MathContent, MathId, MathKind, MathObjects};
+pub use math_object::{
+    MathChange, MathChangeKind, MathDelimiter, MathObjectId, MathObjectMeta, MathObjectStats,
+    MathPayloadCursor, MathPayloadStep, MathWindow, MathWindowStep,
+};
 pub use model::*;
 pub use navigation::{NavAction, Navigator, ScrollTarget};
 pub use paragraph_folds::{
@@ -279,6 +287,7 @@ struct StreamingFence {
 struct StreamingPrefix {
     prefix: Span,
     scanner: structural_prefix::Scanner,
+    math_exit: bool,
 }
 
 #[derive(Default)]
@@ -304,6 +313,7 @@ pub struct Document {
     math_active: Vec<bool>,
     math_states: Vec<SyntaxState>,
     math_index: std::collections::BTreeMap<usize, MathId>,
+    math_objects: math_object::MathIndex,
     header_effects: header_effects::LineEffects,
     math_gaps: Vec<Span>,
     headings: HeadingIndex,
@@ -337,6 +347,7 @@ pub struct Document {
     fence: Option<Fence>,
     streaming_fence: Option<StreamingFence>,
     structural_prefix: Option<StreamingPrefix>,
+    math_prefix_line: Option<containers::ContainerLine>,
     line_start: usize,
     streaming: Option<StreamingLine>,
     finished: bool,
@@ -681,7 +692,11 @@ impl Document {
         {
             text = self.next_layout_anchor(pending.source.end);
         }
-        text.into_iter().chain(object).chain(conditional).min()
+        text.into_iter()
+            .chain(object)
+            .chain(conditional)
+            .chain(self.math_objects.next_anchor(offset))
+            .min()
     }
 
     /// Find tiles intersecting a source range in O(log tiles), with no scan.
@@ -841,10 +856,13 @@ impl Document {
                     let at = cursor;
                     cursor += 1;
                     self.work.input_bytes += 1;
-                    held &=
-                        candidate
-                            .scanner
-                            .feed(&self.source, Span::new(at, cursor), &mut self.work);
+                    if !candidate.math_exit {
+                        held &= candidate.scanner.feed(
+                            &self.source,
+                            Span::new(at, cursor),
+                            &mut self.work,
+                        );
+                    }
                     if candidate.scanner.take_definition_rejection() {
                         self.flush_definition_candidate(update);
                     }
@@ -855,6 +873,13 @@ impl Document {
                     }
                 }
                 let complete = self.source.as_bytes()[cursor - 1] == b'\n';
+                if !complete
+                    && !held
+                    && self.math_prefix_outside_scope(Span::new(self.line_start, cursor))
+                {
+                    candidate.math_exit = true;
+                    held = true;
+                }
                 if complete || !held {
                     self.work.structural_prefix_steps += 1;
                     if !complete && self.probe_long_delimiter(Span::new(self.line_start, cursor)) {
@@ -972,7 +997,12 @@ impl Document {
                 self.work.input_bytes += 1;
                 let limit = cursor - self.line_start >= BLOCK_LOOKAHEAD
                     && self.source.is_char_boundary(cursor);
-                if newline || limit {
+                // The new bracket dialect admits a committed body prefix as
+                // soon as it is distinguishable from a closing marker. Keep
+                // the existing dollar dialect's physical classification gate.
+                let math_prefix = self.fence.is_some_and(|f| f.byte == b'\\')
+                    && self.source.is_char_boundary(cursor);
+                if newline || limit || math_prefix {
                     let span = Span::new(self.line_start, cursor);
                     if !newline && self.probe_long_delimiter(span) {
                         continue;
@@ -1065,6 +1095,8 @@ impl Document {
         body_updates.clear();
         let mut dirty = std::mem::take(&mut update.dirty);
         let mut footnotes_changed = std::mem::take(&mut update.footnotes_changed);
+        let mut math_changes = std::mem::take(&mut update.math_changes);
+        math_changes.clear();
         let mut references_changed = std::mem::take(&mut update.references_changed);
         let mut tables_changed = std::mem::take(&mut update.tables_changed);
         let mut rows_changed = std::mem::take(&mut update.rows_changed);
@@ -1101,6 +1133,7 @@ impl Document {
             new_footnote_references: self.footnotes.references.len()
                 ..self.footnotes.references.len(),
             footnotes_changed,
+            math_changes,
             new_containers: self.containers.len()..self.containers.len(),
             closed_containers,
             loosened_lists,
@@ -1167,6 +1200,7 @@ impl Document {
             &self.source,
             &mut self.work,
             Publishing {
+                document: self.id,
                 annotations: &mut self.annotations,
                 styles: &mut self.inline_styles,
                 display: &mut self.display,
@@ -1180,6 +1214,7 @@ impl Document {
                 math_active: &mut self.math_active,
                 math_states: &mut self.math_states,
                 math_index: &mut self.math_index,
+                math_objects: &mut self.math_objects,
                 line: &mut self.header_effects,
                 math_gaps: &mut self.math_gaps,
                 footnotes: &mut self.footnotes,
@@ -1490,6 +1525,7 @@ impl Document {
                     .seal(symbol, id, self.source.len(), update, &mut self.work);
             }
             self.blocks[id.0].state = SyntaxState::Sealed;
+            self.refresh_math_block(id, update);
         }
     }
 
@@ -1594,6 +1630,18 @@ impl Document {
         true
     }
 
+    fn math_prefix_outside_scope(&mut self, span: Span) -> bool {
+        self.math_prefix_line = None;
+        let scope = self.current.and_then(|id| self.blocks[id.0].container);
+        if !self.fence.is_some_and(Fence::is_math) || scope.is_none() {
+            return false;
+        }
+        self.math_prefix_line =
+            self.containers
+                .math_prefix(&self.source, span, scope, &mut self.work);
+        self.math_prefix_line.is_none()
+    }
+
     fn probe_structural_prefix(&mut self, span: Span, update: &mut Update) -> bool {
         use structural_prefix::Continuation;
         let continuation = self
@@ -1628,6 +1676,8 @@ impl Document {
             &mut self.work,
         );
         let held = scanner.feed(&self.source, span, &mut self.work);
+        let math_exit = !held && self.math_prefix_outside_scope(span);
+        let held = held || math_exit;
         if scanner.take_definition_rejection() {
             self.flush_definition_candidate(update);
         }
@@ -1635,6 +1685,7 @@ impl Document {
             self.structural_prefix = Some(StreamingPrefix {
                 prefix: span,
                 scanner,
+                math_exit,
             });
             true
         } else {
@@ -2362,16 +2413,18 @@ impl Document {
             let new_start = self.containers.len();
             let closed_start = update.closed_containers.len();
             let loosened_start = update.loosened_lists.len();
-            let fence_line = self.fence.and_then(|_| {
-                fence_scope.and_then(|_| {
-                    self.containers.partial_prefix(
-                        &self.source,
-                        span,
-                        None,
-                        false,
-                        false,
-                        &mut self.work,
-                    )
+            let fence_line = self.math_prefix_line.take().or_else(|| {
+                self.fence.and_then(|_| {
+                    fence_scope.and_then(|_| {
+                        self.containers.partial_prefix(
+                            &self.source,
+                            span,
+                            None,
+                            false,
+                            false,
+                            &mut self.work,
+                        )
+                    })
                 })
             });
             let partial_line = if self.fence.is_none() && self.containers.inner().is_some() {
@@ -2408,7 +2461,7 @@ impl Document {
                         lazy_paragraph: self.container_inline,
                         table_header: header.as_ref().map(|h| (h.container.unwrap(), h.columns)),
                         fence: fence_scope,
-                        code_fence: self.fence.is_some_and(|fence| fence.byte != b'$'),
+                        code_fence: self.fence.is_some_and(|fence| !fence.is_math()),
                     },
                     &mut self.work,
                     update,
@@ -2449,7 +2502,7 @@ impl Document {
                         .take(4)
                         .take_while(|&&b| matches!(b, b' ' | b'\t'))
                         .any(|&b| b == b'\t');
-                    if self.fence.is_some_and(|fence| fence.byte != b'$') || tab_indent {
+                    if self.fence.is_some_and(|fence| !fence.is_math()) || tab_indent {
                         // Only this bounded physical prefix, never old text or
                         // ancestor nodes. Reuse the result for body de-indent.
                         fence_column = block::prefix_column(
@@ -2971,7 +3024,7 @@ impl Document {
             Line::FenceOpen { fence, info } => {
                 inline = false;
                 hidden = true;
-                let kind = if fence.byte == b'$' {
+                let kind = if fence.is_math() {
                     BlockKind::Math {
                         content: Span::new(span.end, span.end),
                         closed: false,
@@ -2980,6 +3033,28 @@ impl Document {
                     BlockKind::Code { info }
                 };
                 let id = self.new_block(span, kind, update);
+                if fence.is_math() {
+                    self.math_objects.publish(
+                        MathObjectMeta {
+                            document: self.id,
+                            id: MathObjectId::Block(id),
+                            source: span,
+                            content: Span::new(span.end, span.end),
+                            kind: MathKind::Display,
+                            delimiter: if fence.byte == b'$' {
+                                MathDelimiter::DoubleDollar
+                            } else {
+                                MathDelimiter::Bracket
+                            },
+                            state: SyntaxState::Growing,
+                            closed: false,
+                            epoch: 0,
+                            version: 0,
+                        },
+                        update,
+                        &mut self.work,
+                    );
+                }
                 self.fence = Some(fence);
                 id
             }
@@ -3015,6 +3090,7 @@ impl Document {
                         self.math_gaps.push(Span::new(span.start, payload.start));
                     }
                     self.mark(self.blocks[id.0].source, Style::default(), update);
+                    self.refresh_math_block(id, update);
                 }
                 id
             }
@@ -3219,6 +3295,7 @@ impl Document {
         if let BlockKind::Math { content, .. } = &mut self.blocks[line.block.0].kind {
             content.end = span.end;
             self.mark(self.blocks[line.block.0].source, Style::default(), update);
+            self.refresh_math_block(line.block, update);
         }
         if let BlockKind::FootnoteDefinition { symbol } = self.blocks[line.block.0].kind {
             self.footnotes.extend(

@@ -448,7 +448,7 @@ pub(crate) fn table_row_window(table: &mdtui3::Table, source: Span) -> Range<usi
     start.min(end)..end
 }
 
-fn horizontal_border(
+pub(crate) fn horizontal_border(
     left: char,
     junction: char,
     right: char,

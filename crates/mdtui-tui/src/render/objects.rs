@@ -32,6 +32,7 @@ pub struct ObjectStats {
 pub struct SharedLinks(Rc<RefCell<LinkState>>);
 
 pub struct LinkState {
+    math: super::math::SharedMath,
     shape: Option<super::shape::SharedShape>,
     seed: Option<super::shape::ShapeSeed>,
     pub resolver: LinkResolver,
@@ -57,6 +58,7 @@ fn charge(budget: &mut Budget) -> bool {
 impl SharedLinks {
     pub fn new(document: &Document) -> Self {
         Self(Rc::new(RefCell::new(LinkState {
+            math: super::math::SharedMath::new(document),
             resolver: document.link_resolver(),
             shape: None,
             seed: None,
@@ -70,6 +72,10 @@ impl SharedLinks {
             steps: 0,
             retired: 0,
         })))
+    }
+
+    pub fn math(&self) -> super::math::SharedMath {
+        self.0.borrow().math.clone()
     }
 
     pub fn set_shape(&self, shape: super::shape::SharedShape) -> Result<(), LayoutError> {
@@ -146,6 +152,7 @@ impl SharedLinks {
         document: &Document,
         update: &mdtui3::Update,
     ) -> Result<(), LayoutError> {
+        self.math().apply(document, update)?;
         let mut state = self.0.borrow_mut();
         if state.document != document.id() || state.resolver.document_id() != document.id() {
             return Err(LayoutError::WrongDocument);
@@ -337,6 +344,9 @@ pub struct ObjectWindow {
     links: SharedLinks,
     pub placeholders: Vec<ImagePlaceholder>,
     complete: bool,
+    revision: u64,
+    preserved: Option<u64>,
+    restart: bool,
 }
 
 impl ObjectWindow {
@@ -353,7 +363,22 @@ impl ObjectWindow {
             links,
             placeholders: Vec::new(),
             complete: false,
+            revision: document.revision(),
+            preserved: None,
+            restart: false,
         })
+    }
+
+    /// The caller proved this source and its enclosing object semantics stable.
+    /// Current-slug updates can invalidate native continuations even when this
+    /// table cell is unchanged. Retire that paused guard before restarting it.
+    pub(crate) fn rebind_stable(&mut self, document: &Document) {
+        if self.complete {
+            self.preserved = Some(document.revision());
+        } else if !self.links.can_rebind(document, self.revision) {
+            self.restart = true;
+        }
+        self.revision = document.revision();
     }
 
     pub fn advance(
@@ -363,6 +388,28 @@ impl ObjectWindow {
     ) -> Result<bool, LayoutError> {
         if !self.links.prepare(document, budget)? {
             return Ok(false);
+        }
+        if self.complete && self.preserved == Some(document.revision()) {
+            return Ok(true);
+        }
+        if self.restart {
+            if let Some(activity) = self.pending.as_mut().and_then(|p| p.activity.as_mut())
+                && activity.retire_continuation(budget) != Completion::Covered
+            {
+                return Ok(false);
+            }
+            if !charge(budget) {
+                return Ok(false);
+            }
+            self.pending = None;
+            self.outer_images.clear();
+            self.literal_image_ranges.clear();
+            self.composite_images.clear();
+            self.empty_fallbacks.clear();
+            self.placeholders.clear();
+            self.fallback_cursor = 0;
+            self.window = document.link_window(self.source);
+            self.restart = false;
         }
         self.links
             .with_resolver(|r| self.window.rebind_with(document, r))?;

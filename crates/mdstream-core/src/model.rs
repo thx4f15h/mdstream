@@ -349,6 +349,8 @@ pub struct Work {
     /// Maximal dollar runs resolved once, including mismatches and literal runs.
     /// Also counts each isolated inherited closure's one-time commit or discard.
     pub math_steps: u64,
+    /// Current math metadata/source-index publications, growth, seal and withdrawals.
+    pub math_object_steps: u64,
     /// Symbol operations and individual definition growth/close events.
     pub footnote_steps: u64,
     /// Bounded label bytes interned; no historical reference/body reads.
@@ -392,6 +394,8 @@ pub struct Update {
     pub new_links: Range<usize>,
     /// Confirmed math objects only; their source/content never grow or retract.
     pub new_maths: Range<usize>,
+    /// Ordered current-object deltas; prefix-preserving appends retain epoch.
+    pub math_changes: Vec<crate::MathChange>,
     pub new_footnotes: Range<usize>,
     pub new_footnote_references: Range<usize>,
     /// Number assignment and definition start/growth/seal; duplicates permitted.
@@ -570,6 +574,7 @@ impl Update {
         self.new_tiles.end = next.new_tiles.end;
         self.new_links.end = next.new_links.end;
         self.new_maths.end = next.new_maths.end;
+        self.math_changes.append(&mut next.math_changes);
         self.new_footnotes.end = next.new_footnotes.end;
         self.new_footnote_references.end = next.new_footnote_references.end;
         self.footnotes_changed.append(&mut next.footnotes_changed);

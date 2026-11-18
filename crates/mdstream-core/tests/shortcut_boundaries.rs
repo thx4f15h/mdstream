@@ -665,5 +665,138 @@ fn random_labels_supplement_the_explicit_base_visible_witnesses() {
     }
     // Primary-code failure now releases the label-closing bracket and normal
     // grammar. The 60,000-source predecessor audit adds 8489 witnesses.
-    assert_eq!(accepted, 35_041);
+    // Retain the actual predecessor smoke aggregate. Root reviewed the same
+    // unchanged 60,000-source generator against fixed be74: 841 losses and six
+    // gains follow the accepted paren opacity, a net dialect delta of 835.
+    // The concrete controls and all six reverse witnesses are asserted below.
+    let predecessor = 35_041;
+    let paren_dialect_delta = 835;
+    assert_eq!(accepted, predecessor - paren_dialect_delta);
+}
+
+#[test]
+fn paren_math_has_independent_shortcut_opacity_and_opaque_controls() {
+    let d = parse(r"[\(]");
+    assert!(d.maths().is_empty() && d.links().is_empty());
+    assert_eq!(shown(&d), r"[\(]");
+    let d = parse(r"[\(x\)]");
+    assert_eq!(d.links(), [LinkTarget::Reference(SymbolId(0))]);
+    assert_eq!(d.link_info(LinkId(0)).unwrap().source, Span::new(0, 7));
+    assert_eq!(d.link_info(LinkId(0)).unwrap().label, Span::new(1, 6));
+    assert_eq!(d.math(MathId(0)).unwrap().source, Span::new(1, 6));
+    assert_eq!(d.math(MathId(0)).unwrap().content, Span::new(3, 4));
+    assert_eq!(d.math_delimiter(MathId(0)), Some(MathDelimiter::Paren));
+    assert_eq!(shown(&d), "[x]");
+    let d = parse(r"[\\(x\\)]");
+    assert!(d.maths().is_empty());
+    assert_eq!(d.links(), [LinkTarget::Reference(SymbolId(0))]);
+    assert_eq!(shown(&d), r"[\(x\)]");
+    let d = parse(r"`\(x\)`");
+    assert!(d.maths().is_empty() && d.links().is_empty());
+    assert_eq!(shown(&d), r"\(x\)");
+    let d = parse(r"[x](/\(opaque\))");
+    assert!(d.maths().is_empty());
+    assert_eq!(d.link_destination(LinkId(0)), Some(r"/\(opaque\)"));
+    assert_eq!(shown(&d), "x");
+    let d = parse("[x][\\(key\\)]\n\n[\\(key\\)]: /u\n");
+    assert!(d.maths().is_empty());
+    assert_eq!(d.link_destination(LinkId(0)), Some("/u"));
+}
+
+#[test]
+fn six_reviewed_reverse_witnesses_have_exact_paren_objects_and_genuine_shortcuts() {
+    // Independent raw byte ledgers. These are all six 0->1 witnesses from the
+    // retained predecessor audit; no parser-derived expected ranges or hashes.
+    for (case, source, math_source, content, link_end) in [
+        (
+            20368,
+            "[\r~(\\(!*$& \\)\r`\t(a!_]",
+            Span::new(4, 13),
+            Span::new(6, 11),
+            21,
+        ),
+        (
+            20519,
+            "[* (*!*\t_\\(_)$`\\)] *]]",
+            Span::new(9, 17),
+            Span::new(11, 15),
+            18,
+        ),
+        (
+            30990,
+            "[\t\t\r(\\())$&(\\)~)\n]",
+            Span::new(5, 14),
+            Span::new(7, 12),
+            18,
+        ),
+        (
+            52136,
+            "[ &\\(*$)\\)~ !]",
+            Span::new(3, 10),
+            Span::new(5, 8),
+            14,
+        ),
+        (
+            52548,
+            "[`a \\($~\r&$_ ))\n$a\\) _*_*]",
+            Span::new(4, 20),
+            Span::new(6, 18),
+            26,
+        ),
+        (
+            54049,
+            "[`\n\\\t~(*!\\(\n\r(a$\\)\\\t*~\\_~(]",
+            Span::new(9, 18),
+            Span::new(11, 16),
+            27,
+        ),
+    ] {
+        let d = parse(source);
+        assert_eq!(d.maths().len(), 1, "{case}");
+        let m = d.math_object(MathObjectId::Inline(MathId(0))).unwrap();
+        assert_eq!(
+            (m.delimiter, m.kind, m.source, m.content, m.closed, m.state),
+            (
+                MathDelimiter::Paren,
+                MathKind::Inline,
+                math_source,
+                content,
+                true,
+                SyntaxState::Sealed
+            ),
+            "{case}"
+        );
+        assert_eq!(
+            d.text(Span::new(math_source.start, content.start)),
+            Some(r"\(")
+        );
+        assert_eq!(d.text(Span::new(content.end, math_source.end)), Some(r"\)"));
+        assert_eq!(d.links(), [LinkTarget::Reference(SymbolId(0))], "{case}");
+        let link = d.link_info(LinkId(0)).unwrap();
+        assert_eq!(
+            (link.kind, link.source, link.label, link.state),
+            (
+                LinkKind::Link,
+                Span::new(0, link_end),
+                Span::new(1, link_end - 1),
+                SyntaxState::Sealed
+            ),
+            "{case}"
+        );
+        assert_eq!(d.link_destination(LinkId(0)), None);
+        assert!(
+            !d.runs_in(Span::new(0, 1))
+                .unwrap()
+                .next()
+                .unwrap()
+                .style
+                .contains(Style::HIDDEN)
+        );
+        assert!(
+            d.runs_in(content)
+                .unwrap()
+                .all(|r| r.style.contains(Style::MATH)),
+            "{case}"
+        );
+    }
 }

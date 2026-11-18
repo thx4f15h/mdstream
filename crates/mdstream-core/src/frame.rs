@@ -25,6 +25,9 @@ pub trait LayoutSink {
         let _ = disposition;
         self.object(id, object);
     }
+    /// Native active math owner, once at its source start. Expensive TeX work
+    /// belongs in a continued host task; this callback receives metadata only.
+    fn math_object(&mut self, _object: crate::MathObjectMeta) {}
     fn end_tile(&mut self, tile: TileId) -> u64;
 }
 
@@ -57,6 +60,9 @@ pub struct LayoutPass {
     tile: usize,
     cursor: usize,
     object: usize,
+    math_window: Option<crate::MathWindow>,
+    math_next: Option<crate::MathObjectMeta>,
+    math_ready: bool,
     objects_ready: bool,
     object_window: Option<crate::LinkWindow>,
     last_object: Option<(usize, usize)>,
@@ -136,6 +142,9 @@ impl LayoutPass {
             tile: start.0,
             cursor,
             object: 0,
+            math_window: None,
+            math_next: None,
+            math_ready: document.math_object_stats().active == 0,
             objects_ready: false,
             object_window: None,
             last_object: None,
@@ -313,6 +322,11 @@ impl LayoutPass {
                     .cursor
                     .saturating_add(budget.remaining().bytes)
                     .min(pending.source.end);
+                if let Some(meta) = self.math_next
+                    && meta.source.start > self.cursor
+                {
+                    end = end.min(meta.source.start);
+                }
                 while !document.source().is_char_boundary(end) {
                     end -= 1;
                 }
@@ -419,6 +433,9 @@ impl LayoutPass {
                         .skipped(folds.unwrap(), candidate, self.cursor);
                     self.objects_ready = false;
                     self.object_window = None;
+                    self.math_window = None;
+                    self.math_next = None;
+                    self.math_ready = document.math_object_stats().active == 0;
                     continue;
                 }
                 // Both text and objects participate. Whole hidden interiors are
@@ -475,6 +492,47 @@ impl LayoutPass {
                     .skipped(folds.unwrap(), candidate, self.cursor);
                 self.objects_ready = false;
                 self.object_window = None;
+                self.math_window = None;
+                self.math_next = None;
+                self.math_ready = document.math_object_stats().active == 0;
+                continue;
+            }
+            if !self.math_ready {
+                if self.math_window.is_none() {
+                    self.math_window = Some(
+                        document.math_window(Span::new(self.cursor, document.source().len()))?,
+                    );
+                }
+                match self
+                    .math_window
+                    .as_mut()
+                    .unwrap()
+                    .advance(document, budget)?
+                {
+                    crate::MathWindowStep::Object(meta) => self.math_next = Some(meta),
+                    crate::MathWindowStep::Complete => self.math_next = None,
+                    crate::MathWindowStep::BudgetExhausted => {
+                        return Ok(Completion::BudgetExhausted);
+                    }
+                }
+                self.math_ready = true;
+            }
+            if let Some(meta) = self.math_next
+                && meta.source.start <= self.cursor
+                && meta.source.start < span.end
+            {
+                if !budget.charge(WorkLimit {
+                    objects: 1,
+                    recovery,
+                    ..Default::default()
+                }) {
+                    return Ok(Completion::BudgetExhausted);
+                }
+                if meta.source.start >= span.start {
+                    sink.math_object(meta);
+                }
+                self.math_next = None;
+                self.math_ready = document.math_object_stats().active == 0;
                 continue;
             }
             if !self.objects_ready {

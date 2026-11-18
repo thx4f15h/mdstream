@@ -234,31 +234,51 @@ pub fn overlaps(a: Span, b: Span) -> bool {
 }
 
 struct SearchTask {
+    rendered: Option<Box<crate::reading_search::RenderedSearch>>,
     search: DisplaySearch,
     _lease: LinkLease,
     before: Option<usize>,
     after: Option<usize>,
-    candidate: Option<DisplayMatch>,
+    candidate: Option<(DisplayMatch, Option<crate::render::math::MathFocus>)>,
+    pending_target: Option<(DisplayMatch, Option<crate::render::math::MathFocus>)>,
 }
 
 #[derive(Default)]
 pub struct ReadingTools {
+    width: u16,
+    rendered_query: bool,
     pub selection: SourceSelection,
     input: Option<String>,
     query: String,
     search: Option<SearchTask>,
     current: Option<DisplayMatch>,
+    current_focus: Option<crate::render::math::MathFocus>,
     match_visible: bool,
     searching: bool,
     stale: bool,
     revision: Option<u64>,
-    copy: Option<CopyTask>,
+    copy: Option<Box<CopyTask>>,
     message: &'static str,
     clipboard_bytes: usize,
     clipboard_close_at: Option<usize>,
 }
 
 impl ReadingTools {
+    pub(crate) fn set_width(&mut self, width: u16) {
+        if self.width != 0
+            && self.width != width
+            && self.rendered_query
+            && self.current_focus.is_some()
+        {
+            self.search = None;
+            self.current = None;
+            self.current_focus = None;
+            self.searching = false;
+            self.match_visible = false;
+            self.message = "width changed; n/N: search";
+        }
+        self.width = width;
+    }
     pub fn clipboard_bytes(&self) -> usize {
         self.clipboard_bytes
     }
@@ -270,6 +290,9 @@ impl ReadingTools {
     }
     pub fn current_match(&self) -> Option<&DisplayMatch> {
         self.current.as_ref()
+    }
+    pub(crate) fn current_math_focus(&self) -> Option<crate::render::math::MathFocus> {
+        self.current_focus
     }
     pub(crate) fn set_match_visible(&mut self, visible: bool) {
         self.match_visible = visible;
@@ -398,6 +421,13 @@ impl ReadingTools {
         before: Option<usize>,
     ) -> Option<SearchTask> {
         Some(SearchTask {
+            rendered: (document.math_object_stats().active > 0).then(|| {
+                Box::new(crate::reading_search::RenderedSearch::new(
+                    document,
+                    &self.query,
+                    if self.width == 0 { 80 } else { self.width },
+                ))
+            }),
             search: DisplaySearch::new(document, &self.query).ok()?,
             _lease: links.hold(),
             before,
@@ -407,14 +437,20 @@ impl ReadingTools {
                 None
             },
             candidate: None,
+            pending_target: None,
         })
     }
     fn submit(&mut self, document: &Document, links: &SharedLinks) {
         self.search = None;
         self.current = None;
+        self.current_focus = None;
         self.stale = false;
         self.revision = Some(document.revision());
         self.search = self.task(document, links, None);
+        self.rendered_query = self
+            .search
+            .as_ref()
+            .is_some_and(|task| task.rendered.is_some());
         self.searching = self.search.is_some();
         self.message = if self.query.is_empty() {
             "empty query"
@@ -454,6 +490,7 @@ impl ReadingTools {
         self.search = None;
         self.searching = false;
         self.current = None;
+        self.current_focus = None;
         self.cancel_copy();
         self.selection.clear();
         self.query.clear();
@@ -475,6 +512,7 @@ impl ReadingTools {
         if self.revision.is_some_and(|old| old != revision) {
             self.search = None;
             self.current = None;
+            self.current_focus = None;
             self.searching = false;
             self.stale = !self.query.is_empty();
         }
@@ -536,7 +574,7 @@ impl ReadingTools {
             }
             let mut task = CopyTask::new(document, selection.source, kind, width);
             task.direct = Some(payload);
-            self.copy = Some(task);
+            self.copy = Some(Box::new(task));
             self.message = "copy preparing; Esc cancels";
             return;
         }
@@ -552,7 +590,12 @@ impl ReadingTools {
             self.message = "copy too large (64 KiB limit)";
             return;
         }
-        self.copy = Some(CopyTask::new(document, selection.source, kind, width));
+        self.copy = Some(Box::new(CopyTask::new(
+            document,
+            selection.source,
+            kind,
+            width,
+        )));
         self.message = "copy preparing; Esc cancels";
     }
     pub(crate) fn bind_copy_view(&mut self, version: u64, folded: bool) {
@@ -594,52 +637,71 @@ impl ReadingTools {
             && let Some(task) = self.search.as_mut()
         {
             loop {
-                let result = links.with_resolver(|resolver| {
-                    task.search.next_with_resolver(document, resolver, budget)
-                });
+                if let Some((hit, focus)) = task.pending_target.as_ref() {
+                    if let Some(focus) = focus {
+                        match links.math().set_focus(document, *focus, budget) {
+                            Ok(false) => break,
+                            Err(_) => {
+                                self.searching = false;
+                                self.stale = true;
+                                break;
+                            }
+                            Ok(true) => {}
+                        }
+                    }
+                    target = Some(hit.source.start);
+                    self.current = Some(hit.clone());
+                    self.current_focus = *focus;
+                    task.pending_target = None;
+                    self.searching = false;
+                    self.message = if task.before.is_some() {
+                        "previous match"
+                    } else {
+                        "match"
+                    };
+                    break;
+                }
+                let result = if let Some(rendered) = &mut task.rendered {
+                    rendered.next(document, links, budget)
+                } else {
+                    links.with_resolver(|resolver| {
+                        task.search.next_with_resolver(document, resolver, budget)
+                    })
+                };
                 match result {
                     Ok((completion, hit)) => {
                         if let Some(hit) = hit {
                             if task.after.is_some_and(|after| hit.display.start <= after) {
                                 continue;
                             }
+                            let focus = task.rendered.as_ref().and_then(|r| r.hit_focus());
                             if let Some(before) = task.before {
                                 if hit.display.start < before {
-                                    task.candidate = Some(hit);
+                                    task.candidate = Some((hit, focus));
                                     continue;
                                 }
                                 if let Some(candidate) = task.candidate.take() {
-                                    target = Some(candidate.source.start);
-                                    self.current = Some(candidate);
+                                    task.pending_target = Some(candidate);
+                                    continue;
                                 }
                                 self.searching = false;
-                                self.message = if target.is_some() {
-                                    "previous match"
-                                } else {
-                                    "first match"
-                                };
+                                self.message = "first match";
                                 break;
                             }
-                            target = Some(hit.source.start);
-                            self.current = Some(hit);
-                            self.searching = false;
-                            self.message = "match";
-                            break;
+                            task.pending_target = Some((hit, focus));
+                            continue;
                         }
                         if completion == Completion::EndOfDocument {
                             if let Some(candidate) = task.candidate.take() {
-                                target = Some(candidate.source.start);
-                                self.current = Some(candidate);
+                                task.pending_target = Some(candidate);
+                                continue;
                             }
                             self.searching = false;
-                            self.message = if target.is_some() {
-                                "previous match"
-                            } else if self.current.is_some() {
+                            self.message = if self.current.is_some() {
                                 "end of matches"
                             } else {
                                 "no match"
                             };
-                            break;
                         }
                         break;
                     }
@@ -707,7 +769,96 @@ impl ReadingTools {
     }
 }
 
+struct MathAtomCopy {
+    cursor: crate::render::math::MathTextCursor,
+    reader: Option<crate::render::payload::PayloadReader>,
+    pending: [u8; 8],
+    at: usize,
+    end: usize,
+    row: Option<usize>,
+    column: usize,
+    newlines: usize,
+    spaces: usize,
+}
+impl MathAtomCopy {
+    fn advance(
+        &mut self,
+        document: &Document,
+        selected: Span,
+        budget: &mut Budget,
+        bytes: &mut Vec<u8>,
+    ) -> Result<bool, &'static str> {
+        loop {
+            if self.newlines > 0 || self.spaces > 0 || self.at < self.end {
+                if bytes.len() == MAX_CLIPBOARD_BYTES {
+                    return Err("copy too large (64 KiB limit)");
+                }
+                if !budget.charge(WorkLimit {
+                    bytes: 1,
+                    ..Default::default()
+                }) {
+                    return Ok(false);
+                }
+                let byte = if self.newlines > 0 {
+                    self.newlines -= 1;
+                    b'\n'
+                } else if self.spaces > 0 {
+                    self.spaces -= 1;
+                    b' '
+                } else {
+                    let byte = self.pending[self.at];
+                    self.at += 1;
+                    byte
+                };
+                bytes.push(byte);
+                continue;
+            }
+            if let Some(reader) = &mut self.reader {
+                match reader.next(budget).map_err(|_| "copy changed")? {
+                    crate::render::payload::PayloadStep::BudgetExhausted => return Ok(false),
+                    crate::render::payload::PayloadStep::Bytes { utf8, len } => {
+                        self.pending = utf8;
+                        self.at = 0;
+                        self.end = len as usize;
+                    }
+                    crate::render::payload::PayloadStep::Complete => self.reader = None,
+                }
+                continue;
+            }
+            match self
+                .cursor
+                .advance(document, budget)
+                .map_err(|_| "copy changed")?
+            {
+                crate::render::math::MathTextStep::BudgetExhausted => return Ok(false),
+                crate::render::math::MathTextStep::Complete => return Ok(true),
+                crate::render::math::MathTextStep::Cell { cell, .. }
+                    if overlaps(cell.source, selected) =>
+                {
+                    self.newlines = self.row.map_or(0, |row| cell.y.saturating_sub(row));
+                    self.spaces = if self.row == Some(cell.y) {
+                        cell.x.saturating_sub(self.column)
+                    } else {
+                        0
+                    };
+                    self.row = Some(cell.y);
+                    self.column = cell.x + usize::from(cell.width);
+                    self.reader = Some(cell.text.reader());
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 struct CopyTask {
+    math_probe: Option<mdtui3::MathWindow>,
+    math_meta: Option<mdtui3::MathObjectMeta>,
+    math_checked: bool,
+    math: Option<Box<MathAtomCopy>>,
+    windowed: bool,
+    window_offset: u64,
+    math_newlines: usize,
     copied_placeholders: std::collections::BTreeSet<usize>,
     fold_version: Option<u64>,
     projection_start: Option<usize>,
@@ -735,6 +886,7 @@ struct CopyTask {
     column: usize,
     emitted_row: Option<usize>,
     emitted_block: Option<mdtui3::BlockId>,
+    emitted_math: bool,
     bytes: Vec<u8>,
     encoded: Vec<u8>,
     encoding: usize,
@@ -751,6 +903,13 @@ struct CopyTask {
 impl CopyTask {
     fn new(document: &Document, source: Span, kind: CopyKind, width: u16) -> Self {
         Self {
+            math_probe: None,
+            math_meta: None,
+            math_checked: false,
+            math: None,
+            windowed: false,
+            window_offset: 0,
+            math_newlines: 0,
             copied_placeholders: Default::default(),
             fold_version: None,
             projection_start: None,
@@ -778,6 +937,7 @@ impl CopyTask {
             column: 0,
             emitted_row: None,
             emitted_block: None,
+            emitted_math: false,
             bytes: Vec::new(),
             encoded: Vec::new(),
             encoding: 0,
@@ -819,7 +979,83 @@ impl CopyTask {
         {
             return Err("copy cancelled: view changed");
         }
-        if self.kind == CopyKind::Source {
+        if self.kind == CopyKind::Visible && self.direct.is_none() && !self.math_checked {
+            if document.math_object_stats().active == 0 {
+                self.math_checked = true;
+            } else {
+                if self.math_meta.is_none() {
+                    if self.math_probe.is_none() {
+                        self.math_probe = Some(
+                            document
+                                .math_window(self.source)
+                                .map_err(|_| "copy changed")?,
+                        );
+                    }
+                    match self
+                        .math_probe
+                        .as_mut()
+                        .unwrap()
+                        .advance(document, budget)
+                        .map_err(|_| "copy changed")?
+                    {
+                        mdtui3::MathWindowStep::BudgetExhausted => return Ok(false),
+                        mdtui3::MathWindowStep::Object(meta) => self.math_meta = Some(meta),
+                        mdtui3::MathWindowStep::Complete => self.math_checked = true,
+                    }
+                }
+                if let Some(meta) = self.math_meta {
+                    let visible = if let Some(owner) =
+                        owner.as_ref().filter(|owner| owner.view().has_collapsed())
+                    {
+                        match owner
+                            .view()
+                            .visible_fragment(document, meta.source.start, budget)
+                        {
+                            Ok(Some(fragment)) => {
+                                fragment.start <= meta.source.start
+                                    && meta.source.end <= fragment.end
+                            }
+                            Ok(None) => return Ok(false),
+                            Err(mdtui3::LayoutError::InvalidRange) => false,
+                            Err(_) => return Err("copy changed"),
+                        }
+                    } else {
+                        true
+                    };
+                    if visible
+                        && meta.source.start <= self.source.start
+                        && self.source.end <= meta.source.end
+                    {
+                        self.math = Some(Box::new(MathAtomCopy {
+                            cursor: crate::render::math::MathTextCursor::new(
+                                document,
+                                links.math(),
+                                meta,
+                            )
+                            .map_err(|_| "copy changed")?,
+                            reader: None,
+                            pending: [0; 8],
+                            at: 0,
+                            end: 0,
+                            row: None,
+                            column: 0,
+                            newlines: 0,
+                            spaces: 0,
+                        }));
+                    }
+                    self.math_checked = true;
+                }
+                if self.math_checked {
+                    self.math_probe = None;
+                    self.math_meta = None;
+                }
+            }
+        }
+        if let Some(math) = &mut self.math {
+            if !math.advance(document, self.source, budget, &mut self.bytes)? {
+                return Ok(false);
+            }
+        } else if self.kind == CopyKind::Source {
             while self.position < self.source.end {
                 // Charge before even looking at the next UTF-8 scalar.
                 if !budget.charge(WorkLimit {
@@ -914,6 +1150,10 @@ impl CopyTask {
                     FirstFrame::new(document, config)
                 }
                 .map_err(|_| "copy layout failed")?;
+                if document.math_object_stats().active > 0 {
+                    first.set_math_copy_window(0, 16);
+                    self.windowed = true;
+                }
                 first.set_projection_range(Span::new(projection_start, self.source.end));
                 first.prepare_only();
                 first.set_links(links.clone());
@@ -981,6 +1221,9 @@ impl CopyTask {
                 ) {
                     return Ok(false);
                 }
+                if self.window_offset == 0 {
+                    self.windowed &= !layout.scanner().math_views().is_empty();
+                }
                 self.layout_ready = true;
             }
             loop {
@@ -1021,14 +1264,67 @@ impl CopyTask {
                         }
                     }
                 }
-                let published = layout.lines().get(self.row);
-                if published.is_none() && self.extra_pending.is_none() {
+                let mut published = layout.lines().get(self.row);
+                if self.windowed {
+                    if let Some(offset) = layout.sink().and_then(|sink| sink.line_offset(self.row))
+                    {
+                        if offset < self.window_offset {
+                            if !budget.charge(WorkLimit {
+                                queries: 1,
+                                objects: 1,
+                                ..Default::default()
+                            }) {
+                                return Ok(false);
+                            }
+                            self.row += 1;
+                            continue;
+                        }
+                        if offset >= self.window_offset + 16 {
+                            published = None;
+                        }
+                    }
+                    if let Some((block, row, _)) = self.extra_pending {
+                        let offset = layout.prepared_copy_row_offset(block, row).unwrap_or(0);
+                        if offset < self.window_offset {
+                            self.extra_row += 1;
+                            self.extra_pending = None;
+                            self.extra_ready = false;
+                            continue;
+                        }
+                    }
+                }
+                let extra_in_window = self.extra_pending.is_some_and(|(block, row, _)| {
+                    !self.windowed
+                        || layout.prepared_copy_row_offset(block, row).unwrap_or(0)
+                            < self.window_offset + 16
+                });
+                if published.is_none() && !extra_in_window {
+                    if self.windowed && self.window_offset + 16 < layout.copy_logical_rows() {
+                        if !budget.charge(WorkLimit {
+                            queries: 1,
+                            objects: 1,
+                            ..Default::default()
+                        }) {
+                            return Ok(false);
+                        }
+                        self.window_offset += 16;
+                        layout.set_math_copy_window(self.window_offset, 16);
+                        self.layout_ready = false;
+                        self.row = 0;
+                        self.cell = 0;
+                        self.extra_block = 0;
+                        self.extra_row = 0;
+                        self.extra_ready = false;
+                        self.extra_pending = None;
+                        return Ok(false);
+                    }
                     break;
                 }
-                let extra = self.extra_pending.is_some_and(|(_, _, start)| {
-                    published
-                        .is_none_or(|line| line.source.is_some_and(|s| start <= s.source.start))
-                });
+                let extra = extra_in_window
+                    && self.extra_pending.is_some_and(|(_, _, start)| {
+                        published
+                            .is_none_or(|line| line.source.is_some_and(|s| start <= s.source.start))
+                    });
                 // One object/query and up to six bytes makes progress even for
                 // a cell containing many combining scalars. Output is chunked.
                 if self.cell_reader.is_none()
@@ -1040,6 +1336,19 @@ impl CopyTask {
                     })
                 {
                     return Ok(false);
+                }
+                if self.windowed && self.cell == 0 {
+                    self.line_serial = if extra {
+                        let (block, row, _) = self.extra_pending.unwrap();
+                        layout
+                            .prepared_copy_row_offset(block, row)
+                            .unwrap_or(self.line_serial as u64) as usize
+                    } else {
+                        layout
+                            .sink()
+                            .and_then(|sink| sink.line_offset(self.row))
+                            .unwrap_or(self.line_serial as u64) as usize
+                    };
                 }
                 let line = if extra {
                     let (block, row, _) = self.extra_pending.unwrap();
@@ -1120,7 +1429,9 @@ impl CopyTask {
                     if self.position == self.source.start {
                         if self.emitted_row.is_some_and(|old| old != self.line_serial) {
                             let block = line.source.and_then(|line| line.block);
-                            let separate = block != self.emitted_block
+                            let separate = self.emitted_math
+                                || cell.style.contains(StyleRole::MATH)
+                                || block != self.emitted_block
                                 || block
                                     .and_then(|id| document.block(id))
                                     .is_some_and(|block| {
@@ -1128,10 +1439,36 @@ impl CopyTask {
                                             block.kind,
                                             mdtui3::BlockKind::Code { .. }
                                                 | mdtui3::BlockKind::Table { .. }
+                                                | mdtui3::BlockKind::Math { .. }
                                         )
                                     });
                             if separate {
-                                self.bytes.push(b'\n');
+                                let math = self.emitted_math
+                                    || cell.style.contains(StyleRole::MATH)
+                                    || block.and_then(|id| document.block(id)).is_some_and(|b| {
+                                        matches!(b.kind, mdtui3::BlockKind::Math { .. })
+                                    });
+                                let count = if math {
+                                    self.line_serial
+                                        .saturating_sub(self.emitted_row.unwrap())
+                                        .max(1)
+                                } else {
+                                    1
+                                };
+                                while self.math_newlines < count {
+                                    if self.bytes.len() >= MAX_CLIPBOARD_BYTES {
+                                        return Err("copy too large (64 KiB limit)");
+                                    }
+                                    if !budget.charge(WorkLimit {
+                                        bytes: 1,
+                                        ..Default::default()
+                                    }) {
+                                        return Ok(false);
+                                    }
+                                    self.bytes.push(b'\n');
+                                    self.math_newlines += 1;
+                                }
+                                self.math_newlines = 0;
                             } else if self.fold_version.is_none()
                                 && block
                                     .and_then(|id| document.block(id))
@@ -1197,6 +1534,7 @@ impl CopyTask {
                     }
                     self.emitted_row = Some(self.line_serial);
                     self.emitted_block = line.source.and_then(|line| line.block);
+                    self.emitted_math = cell.style.contains(StyleRole::MATH);
                     if self.bytes.len() + cell.text.len() - (self.position - self.source.start)
                         > MAX_CLIPBOARD_BYTES
                     {
@@ -1902,5 +2240,77 @@ mod style_confirmation_tests {
         assert_eq!(paid, before.memo_entries + before.presentation_entries);
         assert_eq!(links.stats().memo_entries, 0);
         println!("reading conditional cancellation: retired={paid}");
+    }
+    #[test]
+    fn hidden_mathematical_atom_copies_the_visible_placeholder_before_any_tex_preparation() {
+        let doc = parsed("\\(\\frac{SECRET}{b}\\)\n");
+        let links = SharedLinks::new(&doc);
+        let mut tables = TableWidthCache::new(&doc);
+        tables.set_links(links.clone());
+        let mut owner = crate::render::checkpoint::RenderCheckpointStore::new(&doc);
+        let source = Span::new(0, doc.source().len() - 1);
+        let view = owner.view_mut().unwrap();
+        let mut registration =
+            mdtui3::SourceFoldRegistration::overlapping(&doc, view, source).unwrap();
+        let id = registration
+            .advance(&doc, view, &mut Budget::new(WorkLimit::unlimited()))
+            .unwrap()
+            .id
+            .unwrap();
+        view.set_collapsed(&doc, id, true).unwrap();
+        let mut copy = CopyTask::new(&doc, source, CopyKind::Visible, 80);
+        copy.fold_version = Some(view.version());
+        let mut packet = Vec::new();
+        let mut complete = false;
+        for _ in 0..10000 {
+            let mut budget = Budget::new(micro());
+            if copy
+                .advance_with_view(
+                    &doc,
+                    &links,
+                    &mut budget,
+                    &mut packet,
+                    &mut tables,
+                    Some(&mut owner),
+                )
+                .unwrap()
+            {
+                complete = true;
+                break;
+            }
+            assert!(
+                budget.used().queries <= 1
+                    && budget.used().objects <= 1
+                    && budget.used().bytes <= 6
+            );
+        }
+        assert!(complete);
+        let text = String::from_utf8(super::tests::decode(&packet)).unwrap();
+        assert!(text.contains("[+ source"), "{text}");
+        assert!(!text.contains("SECRET") && !text.contains("frac"), "{text}");
+        assert_eq!(links.math().retained_owners(), 0);
+    }
+
+    #[test]
+    fn math_copy_pages_keep_every_structural_row_and_exact_raw_source() {
+        let labels = (0..40).map(|i| format!("r{i}")).collect::<Vec<_>>();
+        let source = format!(
+            "\\[\n\\begin{{matrix}}{}\\end{{matrix}}\n\\]\n",
+            labels.join("\\\\")
+        );
+        let doc = parsed(&source);
+        let selected = Span::new(0, source.len());
+        let (visible, _, _) = copy_range(&doc, selected, CopyKind::Visible);
+        assert_eq!(visible, labels.join("\n\n").as_bytes());
+        assert_eq!(
+            copy_range(&doc, selected, CopyKind::Source).0,
+            source.as_bytes()
+        );
+        let source = "A \\(\\frac{a}{b}\\) Z\n";
+        let doc = parsed(source);
+        assert_eq!(
+            copy_range(&doc, Span::new(0, source.len()), CopyKind::Visible).0,
+            "a\nA ─── Z\nb".as_bytes()
+        );
     }
 }

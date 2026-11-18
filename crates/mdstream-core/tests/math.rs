@@ -45,11 +45,23 @@ fn exact_runs_raw_content_and_explicit_dialect() {
         ),
     ] {
         let doc = parse(source);
-        assert_eq!(contents(&doc), expected, "{source:?}");
+        if source == r"\(x\) \[x\]" {
+            // Preserve the historical input/expectation above. The formal new
+            // paren dialect changes this exact source; bracket blocks still
+            // require standalone marker lines.
+            assert!(expected.is_empty());
+            assert_eq!(contents(&doc), [(MathKind::Inline, "x")]);
+        } else {
+            assert_eq!(contents(&doc), expected, "{source:?}");
+        }
         let mut previous = 0;
-        for math in doc.maths() {
+        for (id, math) in doc.maths().iter().enumerate() {
             assert!(math.source.start >= previous);
-            let width = if math.kind == MathKind::Inline { 1 } else { 2 };
+            let width = if doc.math_delimiter(MathId(id)) == Some(MathDelimiter::Dollar) {
+                1
+            } else {
+                2
+            };
             assert_eq!(
                 math.content,
                 Span::new(math.source.start + width, math.source.end - width)

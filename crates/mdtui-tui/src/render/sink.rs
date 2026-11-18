@@ -76,6 +76,7 @@ pub struct LayoutSinkStats {
     pub begin_tile_callbacks: u64,
     pub raw_text_callbacks: u64,
     pub object_callbacks: u64,
+    pub math_object_callbacks: u64,
     pub document_queries_in_callbacks: u64,
     pub table_rows_prepared: usize,
     pub container_nodes_read: usize,
@@ -89,6 +90,7 @@ pub struct LayoutSinkStats {
 
 #[derive(Debug, Clone)]
 struct OwnedGlyph {
+    math: Option<std::rc::Rc<super::math::MathView>>,
     text: super::payload::TextPayload,
     width: u8,
     kind: GraphemeKind,
@@ -99,7 +101,17 @@ struct OwnedGlyph {
 }
 
 #[derive(Debug, Clone)]
+struct MathPlacement {
+    id: mdtui3::MathObjectId,
+    source: Span,
+    top: u64,
+    height: u64,
+    viewport_width: usize,
+}
+
+#[derive(Debug, Clone)]
 struct PreparedBlock {
+    copy_offsets: Vec<u64>,
     checkpoint: RenderCheckpoint,
     content: PreparedContent,
 }
@@ -111,6 +123,11 @@ enum PreparedContent {
         glyphs: Vec<OwnedGlyph>,
     },
     Rows(Vec<PreparedRow>),
+    MathRows {
+        rows: Vec<PreparedRow>,
+        gaps: Vec<u64>,
+        placements: Vec<MathPlacement>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +145,8 @@ enum WorkKind {
     PendingRow(usize),
     Row(BlockId, usize),
     SkippedRows(u64),
+    MathOrigins(BlockId),
+    MathObject(mdtui3::MathObjectMeta),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -138,6 +157,7 @@ struct WorkItem {
     kind: WorkKind,
 }
 
+#[derive(Clone)]
 struct PrepareContext<'a> {
     document: &'a Document,
     width: u16,
@@ -182,6 +202,7 @@ pub struct TileLayoutSink {
     lines: Vec<SinkLine>,
     line_offsets: Vec<u64>,
     logical_rows: u64,
+    math_placements: std::collections::BTreeMap<mdtui3::MathObjectId, MathPlacement>,
     table_windows: Vec<super::table::TableWindowStatus>,
     rendered_tiles: Vec<bool>,
     current: Option<TileId>,
@@ -370,6 +391,7 @@ impl TileLayoutSink {
                 block,
                 segments_by_block.remove(&planned.id).unwrap_or_default(),
                 planned.id,
+                scanner.math_views(),
             );
             if matches!(block.kind, BlockKind::Table { .. }) {
                 for glyph in &mut glyphs {
@@ -432,6 +454,7 @@ impl TileLayoutSink {
                 edge_placeholders += 1;
                 glyphs.clear();
                 glyphs.push(OwnedGlyph {
+                    math: None,
                     text: "…".into(),
                     width: 1,
                     kind: GraphemeKind::Narrow,
@@ -460,7 +483,8 @@ impl TileLayoutSink {
                 ));
             }
             if !matches!(block.kind, BlockKind::Table { .. })
-                && let PreparedContent::Rows(rows) = &mut content
+                && let PreparedContent::Rows(rows) | PreparedContent::MathRows { rows, .. } =
+                    &mut content
             {
                 for row in rows {
                     if let Some(owner) = fold_row_owner(&row.line, &fold_owners) {
@@ -469,7 +493,8 @@ impl TileLayoutSink {
                 }
             }
             if matches!(block.kind, BlockKind::Table { .. })
-                && let PreparedContent::Rows(rows) = &content
+                && let PreparedContent::Rows(rows) | PreparedContent::MathRows { rows, .. } =
+                    &content
             {
                 table_rows_prepared = table_rows_prepared.saturating_add(rows.len());
             }
@@ -505,12 +530,36 @@ impl TileLayoutSink {
                         order += 1;
                     }
                 }
-                PreparedContent::Rows(rows) => {
+                PreparedContent::Rows(rows) | PreparedContent::MathRows { rows, .. } => {
+                    if matches!(content, PreparedContent::MathRows { .. }) {
+                        let owner = rows.first().map_or(plan.tile_start, |row| row.owner_tile);
+                        let origin = rows
+                            .first()
+                            .map_or(block.source.start, |row| row.source_start);
+                        if let Some(index) = tile_index(plan, projected_owner(plan, owner)) {
+                            work[index].push(WorkItem {
+                                source_start: origin,
+                                rank: 2,
+                                order,
+                                kind: WorkKind::MathOrigins(planned.id),
+                            });
+                            order += 1;
+                        }
+                    }
                     for (row_index, row) in rows.iter().enumerate() {
                         let Some(index) = tile_index(plan, projected_owner(plan, row.owner_tile))
                         else {
                             continue;
                         };
+                        if let PreparedContent::MathRows { gaps, .. } = &content {
+                            work[index].push(WorkItem {
+                                source_start: row.source_start,
+                                rank: 2,
+                                order,
+                                kind: WorkKind::SkippedRows(gaps[row_index]),
+                            });
+                            order += 1;
+                        }
                         work[index].push(WorkItem {
                             source_start: row.source_start,
                             rank: 2,
@@ -519,11 +568,41 @@ impl TileLayoutSink {
                         });
                         order += 1;
                     }
+                    if let PreparedContent::MathRows { gaps, .. } = &content {
+                        let owner = rows.last().map_or(plan.tile_start, |row| row.owner_tile);
+                        let origin = rows
+                            .last()
+                            .map_or(block.source.start, |row| row.source_start);
+                        if let Some(index) = tile_index(plan, projected_owner(plan, owner)) {
+                            work[index].push(WorkItem {
+                                source_start: origin,
+                                rank: 2,
+                                order,
+                                kind: WorkKind::SkippedRows(*gaps.last().unwrap()),
+                            });
+                            order += 1;
+                        }
+                    }
                 }
             }
+            let copy_offsets = if let PreparedContent::MathRows { rows, gaps, .. } = &content {
+                let mut at = 0;
+                rows.iter()
+                    .enumerate()
+                    .map(|(i, _)| {
+                        at += gaps[i];
+                        let offset = at;
+                        at += 1;
+                        offset
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
             blocks.insert(
                 planned.id,
                 PreparedBlock {
+                    copy_offsets,
                     checkpoint,
                     content,
                 },
@@ -542,7 +621,7 @@ impl TileLayoutSink {
             }
         }
 
-        let pending_glyphs = segments_glyphs(pending_segments, None);
+        let pending_glyphs = math_segments_glyphs(pending_segments, None, scanner.math_views());
         let mut pending_rows = Vec::new();
         let pending = if plan.projected && !pending_glyphs.is_empty() {
             pending_rows = source_owned_rows(
@@ -587,6 +666,22 @@ impl TileLayoutSink {
             Some(pending_glyphs)
         };
 
+        for view in scanner.math_views().values() {
+            if let Some(tile) = document.tile_at(view.meta.source.start)
+                && plan
+                    .segment(tile)
+                    .is_some_and(|s| s.kind == super::plan::TileSegmentKind::TuiOwned)
+                && let Some(index) = tile_index(plan, tile)
+            {
+                work[index].push(WorkItem {
+                    source_start: view.meta.source.start,
+                    rank: 1,
+                    order,
+                    kind: WorkKind::MathObject(view.meta),
+                });
+                order += 1;
+            }
+        }
         let events = plan.events.clone();
         for (index, event) in events.iter().enumerate() {
             let Some(tile) = document.tile_at(event.source.start) else {
@@ -611,7 +706,7 @@ impl TileLayoutSink {
             items.sort_by_key(|item| (item.source_start, item.rank, item.order));
         }
 
-        let tile_rows = calculate_tile_rows(
+        let (tile_rows, math_placements) = calculate_tile_rows(
             &events,
             &work,
             &blocks,
@@ -633,6 +728,7 @@ impl TileLayoutSink {
             lines: Vec::new(),
             line_offsets: Vec::new(),
             logical_rows: 0,
+            math_placements,
             table_windows: table_windows.into_inner(),
             rendered_tiles: vec![false; plan.segments.len()],
             current: None,
@@ -658,6 +754,75 @@ impl TileLayoutSink {
         &self.lines
     }
 
+    pub(crate) fn math_rectangle_after(
+        &self,
+        after: Option<mdtui3::MathObjectId>,
+        view: super::table_window::TableView,
+        width: usize,
+    ) -> Option<(mdtui3::MathObjectId, super::math::Rect, Option<usize>)> {
+        use std::ops::Bound::{Excluded, Unbounded};
+        let (_, p) = self
+            .math_placements
+            .range((after.map_or(Unbounded, Excluded), Unbounded))
+            .next()?;
+        let prefix = self
+            .tile_rows
+            .iter()
+            .take(view.anchor.tile.0.saturating_sub(self.tile_start.0))
+            .sum::<u64>();
+        let top = if view.tail.is_some() {
+            self.tile_rows
+                .iter()
+                .sum::<u64>()
+                .saturating_sub(view.rows as u64)
+        } else {
+            prefix + view.anchor.offset
+        };
+        let start = top.saturating_sub(p.top).min(p.height);
+        let end = top
+            .saturating_add(view.rows as u64)
+            .saturating_sub(p.top)
+            .min(p.height);
+        let source = view
+            .source
+            .filter(|&at| p.source.start <= at && at < p.source.end);
+        Some((
+            p.id,
+            super::math::Rect {
+                x: 0,
+                y: start as usize,
+                width: width.min(p.viewport_width),
+                height: if source.is_some() {
+                    view.rows
+                } else {
+                    end.saturating_sub(start) as usize
+                },
+            },
+            source,
+        ))
+    }
+
+    pub(crate) fn math_row(&self, id: mdtui3::MathObjectId, row: usize) -> Option<u64> {
+        let placement = self.math_placements.get(&id)?;
+        ((row as u64) < placement.height).then(|| placement.top + row as u64)
+    }
+
+    pub(crate) fn prepared_copy_row_offset(&self, block: BlockId, index: usize) -> Option<u64> {
+        let prepared = self.blocks.get(&block)?;
+        if let PreparedContent::MathRows { .. } = &prepared.content {
+            prepared.copy_offsets.get(index).copied()
+        } else {
+            Some(index as u64)
+        }
+    }
+    pub(crate) fn copy_logical_rows(&self) -> u64 {
+        self.math_placements
+            .values()
+            .map(|p| p.top + p.height)
+            .max()
+            .unwrap_or(0)
+            .max(self.logical_rows)
+    }
     /// Already prepared rows can belong to a physical tile outside the copy
     /// window. Reading them preserves table ownership without expanding the
     /// window across an arbitrarily large row envelope.
@@ -666,8 +831,9 @@ impl TileLayoutSink {
         block: BlockId,
         index: usize,
     ) -> Option<(&SinkLine, bool)> {
-        let PreparedContent::Rows(rows) = &self.blocks.get(&block)?.content else {
-            return None;
+        let rows = match &self.blocks.get(&block)?.content {
+            PreparedContent::Rows(rows) | PreparedContent::MathRows { rows, .. } => rows,
+            _ => return None,
         };
         let row = rows.get(index)?;
         Some((
@@ -714,7 +880,7 @@ impl TileLayoutSink {
                 TileId(view.anchor.tile.0 + 1),
             )
             .ok()?;
-            let offset = view.anchor.offset.saturating_sub(counts[0]);
+            let offset = view.anchor.offset.saturating_sub(counts.0[0]);
             let at = super::table_window::row_from_offset(table, span.start, offset);
             return Some((status.table_id, at, table.rows()[at].source.start));
         }
@@ -754,7 +920,10 @@ impl TileLayoutSink {
     }
 
     pub fn render_tui_owned_tile(&mut self, tile: TileId) -> u64 {
-        self.render_tile(tile)
+        self.current = Some(tile);
+        let rows = self.render_tile(tile);
+        self.current = None;
+        rows
     }
 
     #[must_use]
@@ -777,8 +946,8 @@ impl TileLayoutSink {
 
     pub fn write_to_screen(&self, screen: &mut Screen, start_row: u16) -> Result<u16, SinkError> {
         let content = screen.content_area();
-        for (offset, line) in self.lines.iter().enumerate() {
-            let offset = u16::try_from(offset).map_err(|_| SinkError::RowOverflow)?;
+        for (offset, line) in self.line_offsets.iter().zip(&self.lines) {
+            let offset = u16::try_from(*offset).map_err(|_| SinkError::RowOverflow)?;
             let row = start_row
                 .checked_add(offset)
                 .ok_or(SinkError::RowOverflow)?;
@@ -803,7 +972,7 @@ impl TileLayoutSink {
                 screen.set_line_source(row, source)?;
             }
         }
-        u16::try_from(self.lines.len()).map_err(|_| SinkError::RowOverflow)
+        u16::try_from(self.logical_rows).map_err(|_| SinkError::RowOverflow)
     }
 
     fn render_tile(&mut self, tile: TileId) -> u64 {
@@ -825,6 +994,8 @@ impl TileLayoutSink {
                 WorkKind::PendingRow(row) => self.lines.push(self.pending_rows[row].line.clone()),
                 WorkKind::Row(block, row) => self.render_row(block, row),
                 WorkKind::SkippedRows(count) => self.logical_rows += count,
+                WorkKind::MathOrigins(_) => {}
+                WorkKind::MathObject(meta) => mdtui3::LayoutSink::math_object(self, meta),
             }
             for _ in line_start..self.lines.len() {
                 self.line_offsets.push(self.logical_rows);
@@ -886,7 +1057,7 @@ impl TileLayoutSink {
             PreparedContent::Streamed { quote, glyphs } => {
                 self.lines.extend(stream_lines(&glyphs, quote, self.width));
             }
-            PreparedContent::Rows(_) => {}
+            PreparedContent::Rows(_) | PreparedContent::MathRows { .. } => {}
         }
     }
 
@@ -901,8 +1072,9 @@ impl TileLayoutSink {
         let Some(prepared) = self.blocks.get(&block) else {
             return;
         };
-        let PreparedContent::Rows(rows) = &prepared.content else {
-            return;
+        let rows = match &prepared.content {
+            PreparedContent::Rows(rows) | PreparedContent::MathRows { rows, .. } => rows,
+            _ => return,
         };
         if let Some(row) = rows.get(index) {
             self.lines.push(row.line.clone());
@@ -925,6 +1097,12 @@ impl mdtui3::LayoutSink for TileLayoutSink {
     fn object(&mut self, _id: LinkId, _object: &mdtui3::LinkInfo) {
         if self.current.is_some() {
             self.stats.object_callbacks = self.stats.object_callbacks.saturating_add(1);
+        }
+    }
+
+    fn math_object(&mut self, _object: mdtui3::MathObjectMeta) {
+        if self.current.is_some() {
+            self.stats.math_object_callbacks += 1;
         }
     }
 
@@ -966,8 +1144,16 @@ fn calculate_tile_rows(
     width: u16,
     _tile_start: TileId,
     _tile_end: TileId,
-) -> Result<Vec<u64>, SinkError> {
+) -> Result<
+    (
+        Vec<u64>,
+        std::collections::BTreeMap<mdtui3::MathObjectId, MathPlacement>,
+    ),
+    SinkError,
+> {
     let mut rows = vec![0_u64; work.len()];
+    let mut placements = std::collections::BTreeMap::new();
+    let mut total = 0u64;
     for (index, items) in work.iter().enumerate() {
         for item in items {
             let added = match item.kind {
@@ -984,6 +1170,20 @@ fn calculate_tile_rows(
                 },
                 WorkKind::Row(_, _) | WorkKind::PendingRow(_) => 1,
                 WorkKind::SkippedRows(count) => count,
+                WorkKind::MathObject(_) => 0,
+                WorkKind::MathOrigins(id) => {
+                    if let PreparedContent::MathRows {
+                        placements: local, ..
+                    } = &blocks[&id].content
+                    {
+                        for p in local {
+                            let mut p = p.clone();
+                            p.top = p.top.checked_add(total).ok_or(SinkError::RowOverflow)?;
+                            placements.insert(p.id, p);
+                        }
+                    }
+                    0
+                }
                 WorkKind::FinishStream(block) => {
                     let prepared = blocks.get(&block).ok_or_else(|| {
                         SinkError::Render("tile references a missing block".to_owned())
@@ -1004,10 +1204,11 @@ fn calculate_tile_rows(
                         .map_err(|_| SinkError::RowOverflow)?
                 }
             };
+            total = total.checked_add(added).ok_or(SinkError::RowOverflow)?;
             rows[index] = rows[index].saturating_add(added);
         }
     }
-    Ok(rows)
+    Ok((rows, placements))
 }
 
 fn source_owned_rows(
@@ -1054,9 +1255,10 @@ fn block_glyphs(
     block: &mdtui3::Block,
     segments: Vec<&DisplaySegment>,
     id: BlockId,
+    math: &std::collections::BTreeMap<usize, std::rc::Rc<super::math::MathView>>,
 ) -> Vec<OwnedGlyph> {
     let BlockKind::Table { id: table_id } = block.kind else {
-        return segments_glyphs(segments, Some(id));
+        return math_segments_glyphs(segments, Some(id), math);
     };
     let Some(table) = document.table(table_id) else {
         return Vec::new();
@@ -1072,13 +1274,45 @@ fn block_glyphs(
         });
         let key = (row, cell);
         if !group.is_empty() && previous != Some(key) {
-            output.extend(segments_glyphs(std::mem::take(&mut group), Some(id)));
+            output.extend(math_segments_glyphs(
+                std::mem::take(&mut group),
+                Some(id),
+                math,
+            ));
         }
         group.push(segment);
         previous = Some(key);
     }
-    output.extend(segments_glyphs(group, Some(id)));
+    output.extend(math_segments_glyphs(group, Some(id), math));
     output
+}
+
+fn math_segments_glyphs(
+    segments: Vec<&DisplaySegment>,
+    block: Option<BlockId>,
+    math: &std::collections::BTreeMap<usize, std::rc::Rc<super::math::MathView>>,
+) -> Vec<OwnedGlyph> {
+    let mut result = Vec::new();
+    let mut group = Vec::new();
+    for segment in segments {
+        if let Some(view) = math.get(&segment.source.start) {
+            result.extend(segments_glyphs(std::mem::take(&mut group), block));
+            result.push(OwnedGlyph {
+                math: Some(view.clone()),
+                text: Default::default(),
+                width: 0,
+                kind: GraphemeKind::ZeroWidth,
+                style: segment.style,
+                link: segment.link,
+                source: segment.source,
+                block,
+            });
+        } else {
+            group.push(segment)
+        }
+    }
+    result.extend(segments_glyphs(group, block));
+    result
 }
 
 fn segments_glyphs(segments: Vec<&DisplaySegment>, block: Option<BlockId>) -> Vec<OwnedGlyph> {
@@ -1093,6 +1327,7 @@ fn segments_glyphs(segments: Vec<&DisplaySegment>, block: Option<BlockId>) -> Ve
     }))
     .into_iter()
     .map(|glyph| OwnedGlyph {
+        math: None,
         text: glyph.text,
         source: glyph.source,
         block: glyph.block,
@@ -1125,8 +1360,8 @@ fn prepare_block(
     if crate::render::visibility::is_hidden_block(block) || block.kind == BlockKind::Blank {
         return Ok(None);
     }
-    if matches!(block.kind, BlockKind::Math { .. }) {
-        return Ok(None);
+    if glyphs.iter().any(|g| g.math.is_some()) && !matches!(block.kind, BlockKind::Table { .. }) {
+        return Ok(Some(math_flow(context, block_id, block, &glyphs)?));
     }
     if has_rule {
         return Ok(None);
@@ -1267,6 +1502,9 @@ fn prepare_block(
                 })
                 .collect();
             Ok(Some(PreparedContent::Rows(rows)))
+        }
+        BlockKind::Table { .. } if glyphs.iter().any(|g| g.math.is_some()) => {
+            Ok(Some(math_table(context, block_id, block, &glyphs)?))
         }
         BlockKind::Table { .. } => {
             let BlockKind::Table { id } = block.kind else {
@@ -1418,6 +1656,558 @@ fn prepare_block(
         }
         _ => Ok(None),
     }
+}
+
+fn math_table(
+    context: &PrepareContext<'_>,
+    block_id: BlockId,
+    block: &mdtui3::Block,
+    glyphs: &[OwnedGlyph],
+) -> Result<PreparedContent, SinkError> {
+    use std::collections::BTreeMap;
+    let BlockKind::Table { id } = block.kind else {
+        unreachable!()
+    };
+    let table = context
+        .document
+        .table(id)
+        .ok_or_else(|| SinkError::Render("missing table".into()))?;
+    let range = context
+        .table_rows
+        .clone()
+        .unwrap_or_else(|| table_row_window(table, context.plan_source));
+    let mut widths = context.table_widths.get(&id).cloned().unwrap_or_else(|| {
+        TableWidthCache::hint_snapshot_prefix(id, table, usize::from(context.width))
+    });
+    let cell_glyphs = |source: Span| {
+        let start = glyphs.partition_point(|g| g.source.start < source.start);
+        let end = glyphs.partition_point(|g| g.source.start < source.end);
+        &glyphs[start..end]
+    };
+    for (col, w) in widths.widths.iter_mut().enumerate() {
+        let column = widths.first_column + col;
+        let measured = table.rows()[range.clone()]
+            .iter()
+            .filter_map(|row| row.cells.get(column))
+            .map(|cell| {
+                cell_glyphs(cell.source)
+                    .iter()
+                    .map(|g| {
+                        g.math
+                            .as_ref()
+                            .map_or(usize::from(g.width), |v| v.metrics.width)
+                    })
+                    .sum()
+            })
+            .max()
+            .unwrap_or(0);
+        *w = widths.policy.apply(measured);
+    }
+    let input = DisplayInput::from_tokens(Vec::new());
+    let geometry = table_geometry_window(
+        context.document,
+        block_id,
+        block,
+        usize::from(context.width),
+        &widths.widths,
+        range.clone(),
+        widths.provisional,
+        None,
+        Some(&input),
+        widths.first_column,
+    )
+    .map_err(|e| SinkError::Render(e.to_string()))?;
+    context
+        .table_windows
+        .borrow_mut()
+        .push(super::table::TableWindowStatus {
+            table_id: id,
+            first: geometry.first_column,
+            visible: geometry.visible_columns,
+            total: geometry.total_columns,
+            provisional: geometry.widths_provisional,
+        });
+    let mut output: BTreeMap<usize, (SinkLine, Span)> = BTreeMap::new();
+    let border = |left, junction, right, fill| -> Result<SinkLine, SinkError> {
+        Ok(SinkLine {
+            cells: super::table::horizontal_border(left, junction, right, fill, &geometry.columns)
+                .map_err(|e| SinkError::Render(e.to_string()))?
+                .into_iter()
+                .map(|c| SinkCell {
+                    text: c.text().clone(),
+                    width: c.width(),
+                    style: c.style(),
+                    link: c.link_id(),
+                    source: c.source(),
+                })
+                .collect(),
+            source: None,
+        })
+    };
+    let mut y = 0usize;
+    let mut placements = Vec::new();
+    for (ri, row) in geometry.rows.iter().enumerate() {
+        if range.start == 0 && ri == 0 {
+            output.insert(y, (border('┌', '┬', '┐', '─')?, row.source));
+            y += 1;
+        }
+        let mut cells = Vec::new();
+        let mut ascent = 0usize;
+        let mut descent = 0usize;
+        for (ci, column) in geometry.columns.iter().enumerate() {
+            let source = table.rows()[range.start + ri]
+                .cells
+                .get(widths.first_column + ci)
+                .map_or(Span::new(row.source.end, row.source.end), |c| c.source);
+            let group = cell_glyphs(source);
+            let mut local = context.clone();
+            local.width =
+                u16::try_from(column.content_width.max(1)).map_err(|_| SinkError::RowOverflow)?;
+            let plain = mdtui3::Block {
+                kind: BlockKind::Paragraph,
+                ..block.clone()
+            };
+            let PreparedContent::MathRows {
+                rows,
+                gaps,
+                placements: local_placements,
+            } = math_flow(&local, block_id, &plain, group)?
+            else {
+                unreachable!()
+            };
+            let mut at = 0usize;
+            let mut indexed = BTreeMap::new();
+            for (i, r) in rows.into_iter().enumerate() {
+                at += gaps[i] as usize;
+                indexed.insert(at, r.line);
+                at += 1;
+            }
+            at += *gaps.last().unwrap() as usize;
+            let base = group
+                .iter()
+                .find_map(|g| g.math.as_ref().map(|v| v.metrics.baseline))
+                .unwrap_or(0);
+            ascent = ascent.max(base);
+            descent = descent.max(at.max(1).saturating_sub(base + 1));
+            cells.push((base, indexed, local_placements));
+        }
+        let height = ascent + descent + 1;
+        let mut offsets = std::collections::BTreeSet::new();
+        for (base, rows, local) in &cells {
+            for p in local {
+                let mut p = p.clone();
+                p.top += (y + ascent - base) as u64;
+                placements.push(p);
+            }
+            for at in rows.keys() {
+                offsets.insert(ascent - base + at);
+            }
+        }
+        if offsets.is_empty() {
+            offsets.insert(0);
+        }
+        for offset in offsets {
+            let mut out = vec![SinkCell {
+                text: "│".into(),
+                width: 1,
+                style: StyleRole::TABLE_BORDER,
+                ..Default::default()
+            }];
+            for ((base, rows, _), column) in cells.iter().zip(&geometry.columns) {
+                let line = offset
+                    .checked_sub(ascent - base)
+                    .and_then(|at| rows.get(&at));
+                let used = line.map_or(0, |l| {
+                    l.cells.iter().map(|c| usize::from(c.width)).sum::<usize>()
+                });
+                let slack = column.content_width.saturating_sub(used);
+                let leading = match column.alignment {
+                    mdtui3::Alignment::Right => slack,
+                    mdtui3::Alignment::Center => slack / 2,
+                    _ => 0,
+                };
+                for _ in 0..leading + 1 {
+                    out.push(SinkCell {
+                        text: " ".into(),
+                        width: 1,
+                        ..Default::default()
+                    });
+                }
+                if let Some(line) = line {
+                    out.extend(line.cells.iter().cloned());
+                }
+                for _ in 0..slack - leading + 1 {
+                    out.push(SinkCell {
+                        text: " ".into(),
+                        width: 1,
+                        ..Default::default()
+                    });
+                }
+                out.push(SinkCell {
+                    text: "│".into(),
+                    width: 1,
+                    style: StyleRole::TABLE_BORDER,
+                    ..Default::default()
+                });
+            }
+            output.insert(
+                y + offset,
+                (
+                    SinkLine {
+                        cells: out,
+                        source: Some(LineSource::new(row.source, block_id)),
+                    },
+                    row.source,
+                ),
+            );
+        }
+        y = y.checked_add(height).ok_or(SinkError::RowOverflow)?;
+        if range.start == 0 && ri == 0 {
+            output.insert(y, (border('╞', '╪', '╡', '═')?, row.source));
+            y += 1;
+        }
+    }
+    if range.end == table.rows().len() && table.rows().len() > 1 {
+        let source = geometry.rows.last().map_or(block.source, |r| r.source);
+        output.insert(y, (border('└', '┴', '┘', '─')?, source));
+        y += 1;
+    }
+    let mut rows = Vec::new();
+    let mut gaps = Vec::new();
+    let mut at = 0;
+    for (offset, (mut line, source)) in output {
+        // The native table policy permits an oversized first column and clips
+        // its complete cells at the viewport edge, including border/padding.
+        let mut used = 0usize;
+        let keep = line
+            .cells
+            .iter()
+            .take_while(|cell| {
+                let end = used + usize::from(cell.width);
+                if end > usize::from(context.width) {
+                    return false;
+                }
+                used = end;
+                true
+            })
+            .count();
+        line.cells.truncate(keep);
+        gaps.push((offset - at) as u64);
+        at = offset + 1;
+        line.source.get_or_insert(LineSource::new(source, block_id));
+        rows.push(PreparedRow {
+            line,
+            owner_tile: table
+                .row_at(source.start)
+                .and_then(|at| table.row(at))
+                .and_then(|row| {
+                    context
+                        .document
+                        .tile_at(super::table_window::row_owner(row))
+                })
+                .unwrap_or(context.fallback_tile),
+            source_start: source.start,
+        });
+    }
+    gaps.push(y.saturating_sub(at) as u64);
+    Ok(PreparedContent::MathRows {
+        rows,
+        gaps,
+        placements,
+    })
+}
+
+/// Baseline-aligned atomic boxes. Only requested math rows are materialized;
+/// gaps retain their intrinsic height in the same tile-height work stream.
+fn math_flow(
+    context: &PrepareContext<'_>,
+    block_id: BlockId,
+    block: &mdtui3::Block,
+    glyphs: &[OwnedGlyph],
+) -> Result<PreparedContent, SinkError> {
+    use std::collections::BTreeMap;
+    let quote = matches!(block.kind, BlockKind::Quote { .. })
+        || block
+            .container
+            .and_then(|id| context.document.container(id))
+            .is_some_and(|c| matches!(c.kind, mdtui3::ContainerKind::Quote));
+    let list = if matches!(block.kind, BlockKind::ListItem { .. }) {
+        Some(prepared_list_visual(
+            context.document,
+            block,
+            context.containers,
+        )?)
+    } else {
+        None
+    };
+    let inherited = if matches!(block.kind, BlockKind::Math { .. }) {
+        block
+            .container
+            .and_then(|id| context.containers.get(&id))
+            .map_or(0, |c| c.body_indent())
+    } else {
+        0
+    };
+    let quote_cells = if quote {
+        quote_prefix(usize::from(context.width))
+    } else {
+        Vec::new()
+    };
+    let first_prefix = list
+        .as_ref()
+        .map_or(quote_cells.len() + inherited, |v| v.body_indent)
+        .min(usize::from(context.width));
+    let continued_prefix = list
+        .as_ref()
+        .map_or(first_prefix, |v| v.continuation_indent)
+        .min(usize::from(context.width));
+    let mut prefix_width = first_prefix;
+    let mut width = usize::from(context.width).saturating_sub(prefix_width);
+    let mut first_baseline = None;
+    let mut first_height = None;
+    let mut placed: BTreeMap<usize, Vec<(usize, SinkCell)>> = BTreeMap::new();
+    let mut placements = Vec::new();
+    let mut line: Vec<(&OwnedGlyph, usize)> = Vec::new();
+    let mut x = 0;
+    let mut y = 0usize;
+    let mut ascent = 0usize;
+    let mut descent = 0usize;
+    let flush = |line: &mut Vec<(&OwnedGlyph, usize)>,
+                 y: usize,
+                 ascent: usize,
+                 placed: &mut BTreeMap<usize, Vec<(usize, SinkCell)>>,
+                 placements: &mut Vec<MathPlacement>,
+                 prefix_width: usize,
+                 width: usize| {
+        for (g, x) in line.drain(..) {
+            if let Some(view) = &g.math {
+                let top = y + ascent - view.metrics.baseline;
+                placements.push(MathPlacement {
+                    id: view.meta.id,
+                    source: view.meta.source,
+                    top: top as u64,
+                    height: view.metrics.height as u64,
+                    viewport_width: width.saturating_sub(x),
+                });
+                let visible_end = view
+                    .rect
+                    .y
+                    .saturating_add(view.rect.height)
+                    .min(view.metrics.height);
+                for row in view.rect.y..visible_end {
+                    placed.entry(top + row).or_default();
+                }
+                for c in view.cells.iter() {
+                    let cx = c.x.saturating_sub(view.rect.x);
+                    if x + cx + usize::from(c.width) <= width && x + cx < width {
+                        placed.entry(top + c.y).or_default().push((
+                            prefix_width + x + cx,
+                            SinkCell {
+                                text: c.text.clone(),
+                                style: if let BlockKind::Heading { level } = block.kind {
+                                    StyleRole::heading(level).with(StyleRole::MATH)
+                                } else {
+                                    g.style.with(
+                                        list.as_ref().map_or(StyleRole::DEFAULT, |v| v.body_style),
+                                    )
+                                },
+                                width: c.width,
+                                link: g.link,
+                                source: Some(c.source),
+                            },
+                        ));
+                    }
+                }
+            } else {
+                placed.entry(y + ascent).or_default().push((
+                    prefix_width + x,
+                    SinkCell {
+                        text: g.text.clone(),
+                        style: if let BlockKind::Heading { level } = block.kind {
+                            StyleRole::heading(level)
+                        } else {
+                            g.style
+                                .with(list.as_ref().map_or(StyleRole::DEFAULT, |v| v.body_style))
+                        },
+                        width: g.width,
+                        link: g.link,
+                        source: Some(g.source),
+                    },
+                ));
+            }
+        }
+    };
+    let visible: Vec<_> = glyphs
+        .iter()
+        .filter(|g| g.math.is_some() || g.kind != GraphemeKind::Control)
+        .collect();
+    let first = visible
+        .iter()
+        .position(|g| !trim_glyph(g))
+        .unwrap_or(visible.len());
+    let last = visible
+        .iter()
+        .rposition(|g| !trim_glyph(g))
+        .map_or(first, |i| i + 1);
+    for g in &visible[first..last] {
+        let (mut gw, ga, gd) = g.math.as_ref().map_or((usize::from(g.width), 0, 0), |v| {
+            (
+                v.metrics.width.min(width),
+                v.metrics.baseline,
+                v.metrics.height.saturating_sub(v.metrics.baseline + 1),
+            )
+        });
+        if matches!(block.kind, BlockKind::Heading { .. }) && x + gw > width {
+            if g.math.is_none() || x >= width {
+                break;
+            }
+            gw = width - x;
+        }
+        if !matches!(block.kind, BlockKind::Heading { .. }) && !line.is_empty() && x + gw > width {
+            first_baseline.get_or_insert(y + ascent);
+            first_height.get_or_insert(y + ascent + descent + 1);
+            flush(
+                &mut line,
+                y,
+                ascent,
+                &mut placed,
+                &mut placements,
+                prefix_width,
+                width,
+            );
+            y = y
+                .checked_add(ascent + descent + 1)
+                .ok_or(SinkError::RowOverflow)?;
+            prefix_width = continued_prefix;
+            width = usize::from(context.width).saturating_sub(prefix_width);
+            x = 0;
+            ascent = 0;
+            descent = 0;
+            gw = g
+                .math
+                .as_ref()
+                .map_or(usize::from(g.width), |v| v.metrics.width.min(width));
+        }
+        if g.math.is_none() && gw > width {
+            continue;
+        }
+        line.push((g, x));
+        x += gw;
+        ascent = ascent.max(ga);
+        descent = descent.max(gd);
+    }
+    if !line.is_empty() {
+        first_baseline.get_or_insert(y + ascent);
+        first_height.get_or_insert(y + ascent + descent + 1);
+        flush(
+            &mut line,
+            y,
+            ascent,
+            &mut placed,
+            &mut placements,
+            prefix_width,
+            width,
+        );
+        y = y
+            .checked_add(ascent + descent + 1)
+            .ok_or(SinkError::RowOverflow)?;
+    }
+    let owner = context
+        .document
+        .tile_at(block.source.start)
+        .filter(|t| {
+            context.plan_source.start <= block.source.start
+                && context.plan_source.end > block.source.start
+                && context.document.tile(*t).is_some()
+        })
+        .unwrap_or(context.fallback_tile);
+    let mut rows = Vec::new();
+    let mut gaps = Vec::new();
+    let mut next = 0usize;
+    for (offset, mut cells) in placed {
+        gaps.push(u64::try_from(offset - next).map_err(|_| SinkError::RowOverflow)?);
+        next = offset + 1;
+        cells.sort_by_key(|(x, _)| *x);
+        let row_prefix = if offset < first_height.unwrap_or(0) {
+            first_prefix
+        } else {
+            continued_prefix
+        };
+        let mut out = quote_cells.clone();
+        let mut prefix_columns = out.iter().map(|c| usize::from(c.width)).sum::<usize>();
+        while prefix_columns < row_prefix {
+            prefix_columns += 1;
+            out.push(SinkCell {
+                text: " ".into(),
+                width: 1,
+                ..Default::default()
+            });
+        }
+        if let Some(visual) = &list
+            && Some(offset) == first_baseline
+        {
+            out.clear();
+            for _ in 0..visual.indent.min(row_prefix) {
+                out.push(SinkCell {
+                    text: " ".into(),
+                    width: 1,
+                    ..Default::default()
+                });
+            }
+            let mut used = visual.indent;
+            for g in graphemes(&visual.marker) {
+                if used + usize::from(g.width) > row_prefix {
+                    break;
+                }
+                out.push(SinkCell {
+                    text: g.text.into(),
+                    width: g.width,
+                    style: visual.marker_style,
+                    ..Default::default()
+                });
+                used += usize::from(g.width);
+            }
+            while used < row_prefix {
+                out.push(SinkCell {
+                    text: " ".into(),
+                    width: 1,
+                    ..Default::default()
+                });
+                used += 1;
+            }
+        }
+        let mut col = row_prefix;
+        let source = cells
+            .iter()
+            .find_map(|(_, c)| c.source)
+            .unwrap_or(block.source);
+        for (x, c) in cells {
+            while col < x {
+                out.push(SinkCell {
+                    text: " ".into(),
+                    width: 1,
+                    ..Default::default()
+                });
+                col += 1;
+            }
+            col = col.max(x + usize::from(c.width));
+            out.push(c);
+        }
+        rows.push(PreparedRow {
+            line: SinkLine {
+                cells: out,
+                source: Some(LineSource::new(source, block_id)),
+            },
+            owner_tile: owner,
+            source_start: block.source.start,
+        });
+    }
+    gaps.push(u64::try_from(y.saturating_sub(next)).map_err(|_| SinkError::RowOverflow)?);
+    Ok(PreparedContent::MathRows {
+        rows,
+        gaps,
+        placements,
+    })
 }
 
 fn prepared_input(
@@ -1660,6 +2450,9 @@ fn quote_prefix(width: usize) -> Vec<SinkCell> {
 }
 
 fn trim_glyph(glyph: &OwnedGlyph) -> bool {
+    if glyph.math.is_some() {
+        return false;
+    }
     glyph.text.is_ascii_whitespace()
 }
 

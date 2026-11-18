@@ -8,6 +8,7 @@ pub mod fragment;
 pub mod history;
 pub mod links;
 pub mod reading;
+mod reading_search;
 pub mod render;
 pub mod screen;
 pub mod sidebar;

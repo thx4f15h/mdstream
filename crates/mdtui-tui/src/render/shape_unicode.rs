@@ -86,7 +86,7 @@ impl WidthStream {
             self.pending.push(properties);
         }
     }
-    fn pending_width(&self) -> usize {
+    pub(crate) fn pending_width(&self) -> usize {
         if self.pending_scalars == 0 {
             return 0;
         }
@@ -105,6 +105,17 @@ impl WidthStream {
             }
         }
         self.pending.width().min(2)
+    }
+    pub(crate) fn pending_kind(&self) -> super::text::GraphemeKind {
+        use super::text::GraphemeKind;
+        if self.pending.width() > 2 {
+            return GraphemeKind::Oversize;
+        }
+        match self.pending_width() {
+            0 => GraphemeKind::ZeroWidth,
+            1 => GraphemeKind::Narrow,
+            _ => GraphemeKind::Wide,
+        }
     }
     pub fn width(&self) -> usize {
         self.completed + self.pending_width()

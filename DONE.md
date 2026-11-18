@@ -3186,3 +3186,21 @@ Viewport、FirstFrame、Reading、End 和局部 refiner 借用同一个 FoldView
 根独立验收（2026-11-18）：冻结 724 个输入（571 个 Rust 文件）逐文件哈希一致；当前 nextest 清单与实际唯一 PASS 一一对应，debug **2822/2822**、release **2818/2818**，各保留原 6 项 ignored。84 个 doctest、workspace all-targets check、fmt、严格 all-targets Clippy/rustdoc、显示形状生成器校验均通过。根用同一冻结源码的固定 release 二进制实际操作 80×24 与 20×3 的菜单、展开/收起、翻页、Esc、resize 和菜单内 q，退出 0；最终 PTY 检查保留 termios/stdout flags 恢复、UTF-8 wire 及 held-FIFO 深层操作证据。
 
 64MiB 测量实际源码 67,108,869 字节，折叠阶段一帧、一个规划 tile，约 1.22ms，wire 1952B，已有 shape 的源码解码、标量分类与输入节点访问增量均为 0；包括解析和准备的整例约 20.62s，进程 VmHWM 10,619,952KiB，不能把局部折叠时间或保守 capacity 口径当作整次耗时/进程总内存。原 F1/F2 的失败/中断记录保留为诊断，不冒充最终全套通过；原 ignored 大段落小选区复制失败保留为独立 035 待办。完整日志、输入清单、源码快照、根复核及终端证据归档至 `/home/ajen/.local/state/codex/mdtui3/2026-11-17-resumed/026-accepted-evidence.tar.gz`。
+
+## 2026-11-18 额外数学方言与有限 TeX 终端排版
+
+正式加入行内 \(...\) 和独占逻辑行的 \[...\]，保留精确美元方言、容器/tab/CRLF/逃逸优先级和一般迟表头撤销。当前源码索引与拥有型 payload/window API 绑定原生对象代际，追加/封口/撤销以及脚注正文命名空间都有预算化读取。
+
+TUI 消费 typed math_payload，使用固定页解析/布局/查询/回收有限 TeX：分数、脚本、根号、Greek/符号、常见运算符、伸缩括号和矩形矩阵/对齐。未知命令字面可见，结构不合法显式 [invalid]，不执行宏或宣称完整 LaTeX。post-TeX 字素复用正式 Unicode policy。
+
+原生回调、基线/换行、表格单元格高度、同一 FoldView/HeightIndex 零高 continuation、源定位/End/resize、排版数学搜索及可见/原文复制接入实际 TUI 和 wire。普通搜索保持原生逻辑文本语义；数学命令、实体和完整字素保留 root-source 原子。原反例的跨引擎身份碰撞、EOF 表宽校准丢源焦点、普通链接栈溢出与混合文档搜索退化均有实际复现和修正证据。
+
+核心零运行时依赖和 forbid(unsafe_code)、原始输入/HTML/生成器/SHA/黄金数组保持。共享 Budget 逐项计输入/AST/布局/窗口/UTF8 输出及退役；CPU/RSS/页容量另报，不把 BTree/分配器或 OS 延迟说成硬保证。百万、万层、万行矩阵及真实 PTY 验收见本任务冻结结果。
+
+数学子项完成不勾完原 TODO94；脚注区/上标/跳转等独立 UI 范围继续保留。
+
+根独立验收（2026-11-18）：746 个冻结输入（591 个 Rust 文件）逐文件匹配；debug 证据由完整输入未变的 2099 项 core、最终版实跑的 794 项 TUI，以及源码与实际调用路径未受影响、在此前完整 795 项 TUI 运行中已通过的 4 项规模用例组成，共覆盖当前 2897 项。完整 workspace release **2893/2893** 实跑通过，6 项原 ignored 保留。84 个 doctest、debug/release all-targets check、fmt、严格 all-targets Clippy/rustdoc、原始跨引擎 owner 反例及 38 份可执行标准报告均通过。各次失败、中断和继承范围独立保留，未将旧冻结结果改称最终源码全量实跑。
+
+根用最终冻结输入的固定二进制实际复跑 80×24 高矩阵搜索、End/FOLLOW、20×3 直接搜索表格数学目标及立即恢复 80×24，目标保持可见，q 退出 0；该反例在修复前及等待稳定后均实失败。真实 PTY 与流引擎还覆盖数学命令原子 y/Y、Greek 长字素、端点/表格/迟撤销、终端恢复和 EOF 校准。源码快照、完整日志、16 组规模计数/容量/CPU/RSS、根复核和终端画面归档至 `/home/ajen/.local/state/codex/mdtui3/2026-11-17-resumed/024-accepted-evidence.tar.gz`。
+
+既有大段落冷读取复制问题由独立 035 修复；已验收基线也存在的批量折叠取消后空白视口另记 036，必须保持当前源锚点并投影到合法可见位置。脚注排版与导航、自动表格行/任务控件、媒体、段落前缀和其余原 TODO 继续保留。

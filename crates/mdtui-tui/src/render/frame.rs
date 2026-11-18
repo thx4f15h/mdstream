@@ -255,6 +255,7 @@ pub struct FrameRuntime {
     viewport: ViewportState,
     navigator: Navigator,
     refiner: Option<SourceRefiner>,
+    refiner_focus: Option<super::math::MathFocus>,
     pending_jump: Option<usize>,
     pending_restore: Option<HistoryPosition>,
     restore_result: Option<(HistoryPosition, HistoryRestoreStatus)>,
@@ -469,6 +470,7 @@ impl FrameRuntime {
             fold_status_rows: false,
             revealed: None,
             refiner: None,
+            refiner_focus: None,
             pending_jump: None,
             pending_restore: None,
             restore_result: None,
@@ -512,6 +514,7 @@ impl FrameRuntime {
     ) -> Result<bool, FrameError> {
         use crate::reading::{CopyKind, CursorMove};
         use crossterm::event::{KeyCode, KeyModifiers};
+        self.reading.set_width(self.geometry.content_width);
         let links = self.viewport.shared_links();
         if matches!(code, KeyCode::Esc | KeyCode::Char('/'))
             && self.pending_search_target.take().is_some()
@@ -664,6 +667,8 @@ impl FrameRuntime {
             return;
         }
         let links = self.viewport.shared_links();
+        let width = self.presenter.screen().content_area().width;
+        self.reading.set_width(width);
         let (owner, tables) = self.viewport.reading_parts_mut();
         if let Some(source) = self.reading.advance_with_view(
             self.document.document(),
@@ -1142,6 +1147,7 @@ impl FrameRuntime {
             cols,
             content_width,
         };
+        self.reading.set_width(content_width);
         self.content_x = sidebar_width;
         self.sidebar_width = sidebar_width;
         self.sidebar_visible = sidebar_visible;
@@ -1241,6 +1247,7 @@ impl FrameRuntime {
             .set_content_width(self.document.document(), width)?;
         let geometry_changed = change.changed || previous_x != content_x;
         self.geometry.content_width = width;
+        self.reading.set_width(width);
         self.content_x = content_x;
         if geometry_changed {
             self.body_dirty = true;
@@ -2402,10 +2409,14 @@ impl FrameRuntime {
             max_replay_bytes: viewport_config.max_replay_bytes,
             row_slack: viewport_config.row_slack,
         };
+        let focus = self
+            .pending_search_target
+            .and_then(|_| self.reading.current_math_focus());
         if self.refiner.as_ref().is_some_and(|refiner| {
             !refiner.matches(document)
                 || refiner.source() != lookup_source
                 || refiner.config() != config
+                || self.refiner_focus != focus
         }) {
             self.refiner = None;
         }
@@ -2441,6 +2452,7 @@ impl FrameRuntime {
                         .map_err(|error| FrameError::Viewport(ViewportError::FirstFrame(error)))?;
                 }
                 self.refiner = Some(refiner);
+                self.refiner_focus = focus;
             }
             let Ok(progress) = self
                 .refiner

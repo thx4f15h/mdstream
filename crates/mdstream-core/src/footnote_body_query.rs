@@ -128,6 +128,119 @@ impl BodyMathPayload<'_> {
         }))
     }
 }
+
+pub struct BodyMathWindow {
+    key: BodyKey,
+    inner: crate::MathWindow,
+}
+pub enum BodyMathWindowStep {
+    Object(
+        BodyId<crate::MathObjectId>,
+        BodyObject<crate::MathObjectMeta>,
+    ),
+    BudgetExhausted,
+    Complete,
+}
+impl BodyMathWindow {
+    pub fn advance(
+        &mut self,
+        view: BodyView<'_>,
+        budget: &mut Budget,
+    ) -> Result<BodyMathWindowStep, LayoutError> {
+        view.check(self.key)?;
+        Ok(match self.inner.advance(&view.body.engine, budget)? {
+            crate::MathWindowStep::Object(meta) => BodyMathWindowStep::Object(
+                BodyId {
+                    body: self.key,
+                    local: meta.id,
+                },
+                BodyObject {
+                    body: self.key,
+                    value: meta,
+                },
+            ),
+            crate::MathWindowStep::BudgetExhausted => BodyMathWindowStep::BudgetExhausted,
+            crate::MathWindowStep::Complete => BodyMathWindowStep::Complete,
+        })
+    }
+}
+
+/// Stable BodyKey and underlying object epoch survive real prefix appends.
+/// Every chunk stays explicitly projected; callers resolve it through BodyView.
+pub struct BodyMathPayloadCursor {
+    key: BodyKey,
+    inner: crate::MathPayloadCursor,
+}
+pub enum BodyMathPayloadStep<'a> {
+    Chunk(BodyTextChunk<'a>),
+    Pending,
+    BudgetExhausted,
+    Complete,
+}
+impl BodyMathPayloadCursor {
+    pub fn source_position(&self) -> BodySpan {
+        BodySpan {
+            body: self.key,
+            span: Span::new(self.inner.source_position(), self.inner.source_position()),
+        }
+    }
+    pub fn advance<'a>(
+        &mut self,
+        view: BodyView<'a>,
+        budget: &mut Budget,
+    ) -> Result<BodyMathPayloadStep<'a>, LayoutError> {
+        view.check(self.key)?;
+        Ok(match self.inner.advance(&view.body.engine, budget)? {
+            crate::MathPayloadStep::Chunk(chunk) => BodyMathPayloadStep::Chunk(BodyTextChunk {
+                source: BodyAddress::Projected(BodySpan {
+                    body: self.key,
+                    span: chunk.source,
+                }),
+                text: chunk.text,
+            }),
+            crate::MathPayloadStep::Pending => BodyMathPayloadStep::Pending,
+            crate::MathPayloadStep::BudgetExhausted => BodyMathPayloadStep::BudgetExhausted,
+            crate::MathPayloadStep::Complete => BodyMathPayloadStep::Complete,
+        })
+    }
+}
+
+impl BodyView<'_> {
+    pub fn math_object(
+        self,
+        id: BodyId<crate::MathObjectId>,
+    ) -> Result<Option<BodyObject<crate::MathObjectMeta>>, LayoutError> {
+        self.check(id.body)?;
+        Ok(self
+            .body
+            .engine
+            .math_object(id.local)
+            .map(|value| BodyObject {
+                body: self.key(),
+                value,
+            }))
+    }
+    pub fn math_window(self, source: BodySpan) -> Result<BodyMathWindow, LayoutError> {
+        Ok(BodyMathWindow {
+            key: self.key(),
+            inner: self.body.engine.math_window(self.span(source)?)?,
+        })
+    }
+    pub fn math_payload_cursor(
+        self,
+        id: BodyId<crate::MathObjectId>,
+    ) -> Result<Option<BodyMathPayloadCursor>, LayoutError> {
+        self.check(id.body)?;
+        Ok(self
+            .body
+            .engine
+            .math_payload_cursor(id.local)
+            .map(|inner| BodyMathPayloadCursor {
+                key: self.key(),
+                inner,
+            }))
+    }
+}
 impl<'a> BodyView<'a> {
     /// Read already stored projected source under the shared byte budget.
     pub fn source_cursor(self, span: BodySpan) -> Result<BodyTextCursor<'a>, LayoutError> {

@@ -1433,6 +1433,9 @@ fn add_engine_work(total: &mut crate::Work, before: crate::Work, after: crate::W
     total.list_steps += after.list_steps.saturating_sub(before.list_steps);
     total.heading_steps += after.heading_steps.saturating_sub(before.heading_steps);
     total.math_steps += after.math_steps.saturating_sub(before.math_steps);
+    total.math_object_steps += after
+        .math_object_steps
+        .saturating_sub(before.math_object_steps);
     total.footnote_steps += after.footnote_steps.saturating_sub(before.footnote_steps);
     total.footnote_label_bytes += after
         .footnote_label_bytes

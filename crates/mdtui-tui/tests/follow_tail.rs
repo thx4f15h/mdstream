@@ -672,3 +672,19 @@ fn empty_controls_headings_and_code_labels_keep_existing_cell_semantics() {
         }
     }
 }
+#[test]
+fn frozen_end_preserves_a_math_payload_prefix_while_the_real_object_grows() {
+    let mut engine = engine("\\[\nx", 20, 5);
+    let mut app = AppState::default();
+    frame(&mut engine);
+    end(&mut app, &mut engine);
+    app.handle_key(&mut engine, KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    append(&mut engine, "_1\n\\]\n\nNEW_AFTER_MATH\n");
+    frame(&mut engine);
+    assert!(text(&engine).contains('x'));
+    assert!(!text(&engine).contains('1'));
+    assert!(!text(&engine).contains("NEW_AFTER_MATH"));
+    end(&mut app, &mut engine);
+    assert!(text(&engine).contains("NEW_AFTER_MATH"));
+}
