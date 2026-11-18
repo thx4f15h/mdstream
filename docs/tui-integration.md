@@ -28,6 +28,8 @@ TUI 内部 `mdtui3` 名称是 `mdstream-core` 的依赖别名。版本统一在�
 
 高度依旧按片段行尾/块事件归属；同 tile 的源码目标通过 SourceRefiner 区分。运行时保存预算耗尽的 refiner，后续帧继续；普通滚动取消待定跳转，并将实际首行源码交给 `Navigator::reconcile_source`。标题/fragment 跳转保留原始目标，调用 `Navigator::reconcile`；不再用旧块起点覆盖普通滚动的实际映射。
 
+有限窗口的标题细化复用 heading `content` 索引选择准入 tile，避免恢复前缀占满 `max_tiles` 后只纳入隐藏 marker、漏掉下一 tile 的标题文字；请求的 source 与标题身份保持。恢复行通过已有 `row_limit_anchor` 与目标行限额分开，视口扩展块范围前保证结束边界包含目标 tile。零/微预算仍暂停后续算，实际无渲染行的 Definition 保留 `NotFound`。未测前缀的全局行号仍可近似；全量参考布局的准备成本与局部细化分开计量，不为细化回扫任意文档前缀。
+
 ## 已验收组件与边界
 
 | 组件 | 当前行为与主要证据 |

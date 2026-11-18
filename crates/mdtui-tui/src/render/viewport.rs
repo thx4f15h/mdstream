@@ -2777,7 +2777,9 @@ fn render_tile_range(
     }
     start = block_start_tile(document, start).min(start);
 
-    let mut end = visible_end.min(document.tile_count());
+    let mut end = visible_end
+        .max(anchor.tile.0.saturating_add(1))
+        .min(document.tile_count());
     // Backward overscan/recovery must leave room for the requested tile in
     // the bounded plan, including when projection counts visible tiles.
     let earliest = anchor

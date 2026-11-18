@@ -3312,3 +3312,20 @@ resize后显式目录跳转再折叠的独立037缺陷已新增未勾待办，�
 最终源码上的 11 项短测试在 debug/release 均通过，严格 all-targets check/Clippy、fmt、rustdoc 与 84 个文档测试通过。调度机制冻结 e025333 的 debug 115+88、release 115 项实际通过；后续只改空目标反馈的 status/key 消息分支及新增测试，其余 764 个文件逐字节不变，非空 036/037/028、End/FOLLOW 等路径的复用证明逐项保留。这些记录不是最终版新执行整库的声明。原 14 个真实场景、最终 7 个 FIFO 场景、原失败、ENOSPC 中断及恢复、CPU 空等与预算/输入/输出分账均保留；缺少退出结果的旧门禁没有计为通过。
 
 612 个 Rust 输入与验收冻结逐字节相同；原官方数据、HTML、goldens、核心源码与零运行时依赖、hook、rustfmt 及既有断言保持。菜单原有 h1/h2 默认动作窄屏文字相同的问题已另登记未勾待办，本项不宣称解决。完整证据归档至 `/home/ajen/.local/state/codex/mdtui3/2026-11-17-resumed/039-accepted-evidence.tar.gz`。
+
+
+## 2026-11-19 有限窗口源码细化的标题内容准入
+
+固定正式 base `69aa28f` 上原封不动复跑 32780B、129 tiles 反例，原 `SourceRefiner` 在初始布局及 40→20 宽度失效后返回 `NotFound`，退出101。手写源码 oracle 确认 `# Tail` 从32767开始，marker 位于 tile127 最后一个字节，标题内容从32769进入 tile128；恢复前缀使8tile计划为 `[120,128)`，遗漏实际标题。冷 owner 无此前缀时成功，不能把差异归为没有渲染行。
+
+细化复用 heading `content` 索引选择准入 tile，保留原 source、heading/block 身份与单 FoldView/height/checkpoint owner；恢复行沿用036的 `row_limit_anchor`。同时修正同一目标准入约束的另一边界：合法 max_tiles=1 的内容源码查询在原 base 可成功，随后视口的 visible_end 却早于 anchor，块扩展发生反向切片 panic；扩展前现在保证 end 包含 anchor。未提高 max_tiles，未隐式 End、清空全局高度、回扫任意文档前缀或另建 renderer。
+
+新增6项测试覆盖原 marker/空格/content、8/1/默认64tile、40/20宽度、前置长段落/多短段/表格/Quote/零高 Definition、跨 raw tile 的 PH owner 与同一视图恢复。实际无渲染行的 Definition 仍为 NotFound。全量参考布局单独准备后，独立行 oracle 为 `2×2978+2=5958`；局部查询不把这份参考准备冒充8tile成本。六字节查询1745次，包含1745次零预算暂停与实际 recovery75，局部计划/处理2tiles，查询/对象/字节分别1745/1737/9812，前缀高度保留。原有限窗口 probe 的局部细化处理8tiles；各阶段准备、查询、输出、检查点容量、CPU tick 与墙钟独立记录。
+
+冻结 Rust 上相关 debug202项全部通过，包含036完成/真正pending取消、037九项导航生命周期、028前缀/resize、refine/viewport/目录/Reading/history/End/FOLLOW；64MiB FOLLOW 慢测试实际通过。6项新增专项 release 通过。workspace all-targets check、严格 Clippy、fmt、严格 rustdoc 与84个文档测试通过，未将本轮称为完整整库 fresh pass。heavy 使用共享锁、2threads/build jobs 与026 memory group；核心、官方输入/HTML、goldens、既有断言、锁文件、rustfmt/hook 保持，DONE此前内容逐字节保留。
+
+私有 tmux 中用生产 FrameRuntime/AppState 和精确8tile参数作同输入终端对照：base 的 s/Tab/Down/Enter 后仍停 Start；修复到 Tail/READY、top source32767，z/Enter/Esc 折叠后仍保留 Tail，未调用 End。另用固定 release `019b498a…` 的原生 CLI 默认配置验证60×16→40×10、目录跳转、折叠/关闭菜单、恢复60×16及q退出0；这是默认配置兼容验证，暖 checkpoint 的 stock CLI 流程不是原8tile baseline red。CPU tick 具有系统时钟粒度，容量指标只指指定检查点/scratch，不冒充总堆峰值。
+
+原 baseline red、配置1边界 red、修正中的测试/工具失败、原始终端输出、退出/清理、命令与冻结清单保留于 `/tmp/mdtui3-codex-todo/038-prototypes`，结果交 `/tmp/mdtui3-codex-todo/038-result.json`。仅 own branch WIP；正式 root 独立验收与唯一 main feature 提交仍由 root 驱动，未 push。040窄屏相邻动作文字问题及020/029/030范围未混修。
+
+根独立验收：已审查两个生产文件的目标准入与边界修复、6 项手写源码/行数/预算/负例和冻结输入，相关门禁日志实际为 debug202/202、release6/6。根重跑原封不动32780B/8tile probe退出0；固定019b498a… release在根私有tmux中实际完成60×16→40×10、目录跳转、折叠/展开、恢复60×16及q退出0，未调用End。默认CLI旧暖流程原本可通过，已单独保留兼容对照，未冒称其为原8tile red。613个Rust输入在文档收尾前后逐字节相同。完整源/旧失败/命令/真实终端/成本与审查证据归档至 `/home/ajen/.local/state/codex/mdtui3/2026-11-17-resumed/038-accepted-evidence.tar.gz`。

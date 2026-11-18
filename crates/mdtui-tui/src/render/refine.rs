@@ -1,7 +1,7 @@
 use std::fmt;
 
 use mdtui3::{
-    Anchor, BlockId, Budget, Document, DocumentId, HeightIndex, LayoutError, Navigator,
+    Anchor, BlockId, Budget, Document, DocumentId, Heading, HeightIndex, LayoutError, Navigator,
     ScrollTarget, TILE_BYTES, TileId,
 };
 
@@ -185,14 +185,27 @@ impl SourceRefiner {
             return Err(RefineError::EmptyDocument);
         }
         let lookup_source = source.min(document.source().len() - 1);
-        let target_tile = document
-            .tile_at(lookup_source)
-            .ok_or(RefineError::InvalidSource)?;
         let heading = heading_source_for(document, lookup_source);
+        // Heading markers can end one tile before the title starts. Reserve
+        // the bounded window for content, so recovery overscan cannot spend
+        // every tile on the hidden prefix. Keep `source` as the navigation key.
+        let target_source = heading.map_or(lookup_source, |heading| {
+            lookup_source.clamp(
+                heading.content.start,
+                heading
+                    .content
+                    .end
+                    .saturating_sub(1)
+                    .max(heading.content.start),
+            )
+        });
+        let target_tile = document
+            .tile_at(target_source.min(document.source().len() - 1))
+            .ok_or(RefineError::InvalidSource)?;
         let pending = document.pending();
         let in_pending = pending.start <= lookup_source && lookup_source < pending.end;
         let block = heading
-            .map(|(block, _)| block)
+            .map(|heading| heading.block)
             .or_else(|| document.block_at(lookup_source))
             .or_else(|| {
                 (!in_pending)
@@ -206,7 +219,7 @@ impl SourceRefiner {
         let paragraph = document.paragraph_at(lookup_source);
         let block = paragraph.map(|p| p.block).or(block);
         let block_source = heading
-            .map(|(_, source)| source)
+            .map(|heading| heading.source)
             .or_else(|| paragraph.map(|p| p.source))
             .or_else(|| block.and_then(|id| document.block(id)).map(|b| b.source))
             .or_else(|| in_pending.then_some(pending))
@@ -272,8 +285,8 @@ impl SourceRefiner {
         };
         let mut end = target_tile.0.saturating_add(1).min(document.tile_count());
         expand_block_end(document, start, &mut end, limit);
-        if let Some((_, heading_source)) = heading
-            && let Some(tile) = document.tile_at(heading_source.end.saturating_sub(1))
+        if let Some(heading) = heading
+            && let Some(tile) = document.tile_at(heading.source.end.saturating_sub(1))
         {
             end = end.max(tile.0.saturating_add(1).min(limit));
         }
@@ -297,6 +310,7 @@ impl SourceRefiner {
             },
             checkpoints,
         )?;
+        first.set_row_limit_anchor(target_tile);
 
         if document.math_object_stats().active > 0 {
             // An intrinsic source locator can query the target row directly;
@@ -548,13 +562,13 @@ impl SourceRefiner {
     }
 }
 
-fn heading_source_for(document: &Document, source: usize) -> Option<(BlockId, mdtui3::Span)> {
+fn heading_source_for(document: &Document, source: usize) -> Option<Heading> {
     let entries = document.headings().entries();
     let index = entries
         .partition_point(|heading| heading.source.start <= source)
         .checked_sub(1)?;
-    let heading = entries.get(index)?;
-    (source < heading.source.end).then_some((heading.block, heading.source))
+    let heading = *entries.get(index)?;
+    (source < heading.source.end).then_some(heading)
 }
 
 fn row_for_line(
