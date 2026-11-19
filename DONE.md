@@ -3376,3 +3376,16 @@ resize后显式目录跳转再折叠的独立037缺陷已新增未勾待办，�
 最大 dense/containers 的局部 arena 容量下降 21.43%/35.71%，但增长请求由 17 增至 32/31；全 tag 场景当前容量增加 7.14%，undo 单元 128→136B，同步观测 arena+undo 峰值增加 6.67%，语义查询多一次槽读取、回滚多一份语义恢复。由此完成原型和取舍决定，未设置内存/提速目标，未将局部容量、CPU、RSS 或不同时间峰值混成总堆收益。同步原型不新增 Budget 接口，不宣称 allocator/析构硬时间上界。
 
 项目 devShell 的 core 类型检查、两项私有模型、两轮最终 release 测量、既有 storage 的 9 项测试及 core 范围严格 Clippy 通过；构建/测试经共享 heavy-gate、最多 2 jobs/threads，只运行本任务相关检查。Clippy 的报告参数修正后按新冻结重跑第 6/7 轮，2,280 个非时间字段与第 4/5 轮全部一致，候选/oracle 逻辑未变；公开复跑命令不依赖临时 gate。源码冻结、准确命令/exit、原始 CSV、早期未触发事务的输入及计数修正、Clippy 首次失败等均保存在 `/tmp/mdtui3-codex-todo/041-prototypes/`，交接结果为 `/tmp/mdtui3-codex-todo/041-result.json`。未验证总堆/OOM、其它 ABI、并发写入或真实终端性能；未来若另提生产迁移，须另交具体设计与工作负载证据。本记录不删除其它未完成规划。
+
+
+## 2026-11-19 重载书签宿主映射设计与原型
+
+完成原 TODO `b22e77d:184/199` 明确保留的“重载后的书签持久化映射另行设计”。[具体设计与复跑方法](docs/bookmark-reload.md) 决定采用现有 API 的宿主组合，不新增核心 API：持久记录只保存可信资源/内容版本、精确 source 与 viewport_offset；宿主按需映射一个旧点，在新 Document 中创建新 Bookmark，再复用 FoldNavigation。旧 Bookmark 的 WrongDocument 和 NavigationHistory 的单 Document 约束保持；不以恢复手工折叠替代书签设计，不把文档内 ID 当作跨会话身份。
+
+`examples/bookmark_reload.rs` 及只由 example/测试编译的 support 实现这个窄原型。区分映射未完成、改变、删除、缺失、歧义与核心错误；构造不扫描全文、脚本或历史。固定步骤宿主脚本先付费再推进，与新 Bookmark 创建和真实导航共用同一 Budget；无不可暂停外部 mapper 回调，也不把提前准备映射证据的成本隐藏进核心预算。错误 owner/未同步视图在消费任何映射或预算前被拒绝；同 Document 的具体 view 在导航开始时绑定。root 源码审阅收紧该原型 preflight，初版源码与通过日志已另冻存，不宣称发现了生产核心 bug。
+
+9 项新回归用原始 Markdown 与手写字节 oracle 检验插入/删除、同 source 不同内容、相同内容的新 Document、同名标题、四种无法映射结果、未完成及稍后补全、越界/UTF-8、零/微预算、取消、错误 owner/view、append/finish/reset、EOF/空输入及偏移缩放。一个 Working、一个 Exact 和一层遮蔽的 release 示例实际用 7 帧恢复新 source=26，前 3 帧各付 1q/1o/1r，后 4 帧只付 1q/1o；成功前宿主槽位保持，原型不迁移整个核心历史。实际 source_row 是排版层的独立结果，viewport_offset 只在取得该行后按视口大小重用；示例的手给局部行数不冒称终端实测。
+
+最终源码的类型检查、新回归 debug 9 项、包含既有 history/fold_navigation/source_fold_overlays 的 release 50 项、release 示例、针对新增 example/test 的严格 Clippy 及格式检查通过。没有修改生产源码、Cargo manifests、已有 hooks/rustfmt 配置；核心保持零 runtime 依赖，无新增 unsafe。检查经共享 heavy-gate，最多 2 jobs/threads，没有运行无关全 workspace 门禁。最初直接执行不可执行 gate 的 PermissionError、显式 bash 修正、完整重现 traceback、审阅前源码和全部命令/exit 均保留在 `/tmp/mdtui3-codex-todo/042-prototypes/`；机器结果为 `/tmp/mdtui3-codex-todo/042-result.json`。
+
+这是窄设计及可执行宿主原型的交付，不表示磁盘格式、真实外部 mapper、自动 reload、新 UI 或实际终端行定位已部署；宿主身份/版本和 Exact 唯一性依赖明确的可信证据。原 TODO 两处成熟度已改为链接已交付设计，旧历史记录保留。本任务不替其它活动或最终组合审计宣称完成；MAIN 验收与单独提交由 root 负责。

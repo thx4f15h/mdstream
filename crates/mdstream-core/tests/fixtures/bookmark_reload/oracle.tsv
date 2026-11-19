@@ -1,0 +1,6 @@
+# Handwritten byte positions, not produced by a diff, title search, or the prototype.
+# case old_byte new_byte new_heading new_text
+inserted	20	36	2	中
+deleted	20	7	0	中
+changed	20	20	1	中
+identical	20	20	1	中
