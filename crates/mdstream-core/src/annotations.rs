@@ -4,6 +4,10 @@ use crate::references::Lookup;
 use crate::{LinkId, LinkTarget, Span, Style};
 use std::num::NonZeroUsize;
 
+#[cfg(test)]
+#[path = "../tests/support/annotation_split.rs"]
+mod split_experiment;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Mark {
     pub style: Style,
@@ -119,6 +123,8 @@ impl Node {
 /// Dynamic binary segment tree over source bytes. Tags stay on their covering
 /// node; updating a huge interval never visits its interior. No recursive AST.
 pub(crate) struct Annotations {
+    #[cfg(test)]
+    experiment: split_experiment::Probe,
     pub(crate) shape: crate::DisplayShapeEffects,
     nodes: Vec<Node>,
     root: usize,
@@ -134,6 +140,8 @@ pub(crate) struct Annotations {
 impl Default for Annotations {
     fn default() -> Self {
         Self {
+            #[cfg(test)]
+            experiment: split_experiment::Probe::default(),
             shape: crate::DisplayShapeEffects::default(),
             nodes: vec![Node::default()],
             root: 0,
@@ -158,6 +166,8 @@ impl Annotations {
     }
 
     pub(crate) fn begin_line(&mut self) {
+        #[cfg(test)]
+        self.experiment.record(split_experiment::Op::Begin);
         self.shape.emit(crate::DisplayShapeEffectKind::Begin(
             crate::DisplayShapeDomain::Annotations,
         ));
@@ -172,6 +182,8 @@ impl Annotations {
         ));
     }
     pub(crate) fn commit_line(&mut self) -> u64 {
+        #[cfg(test)]
+        self.experiment.record(split_experiment::Op::Commit);
         self.checkpoint.take().map_or(0, |(_, _, _, _, undo)| {
             self.shape.emit(crate::DisplayShapeEffectKind::Commit(
                 crate::DisplayShapeDomain::Annotations,
@@ -181,6 +193,8 @@ impl Annotations {
         })
     }
     pub(crate) fn rollback_line(&mut self) -> u64 {
+        #[cfg(test)]
+        self.experiment.record(split_experiment::Op::Rollback);
         let (len, root, capacity, serial, mut undo) = self.checkpoint.take().unwrap();
         self.shape.emit(crate::DisplayShapeEffectKind::Rollback(
             crate::DisplayShapeDomain::Annotations,
@@ -286,6 +300,9 @@ impl Annotations {
         }
         self.serial += 1;
         mark.serial = if mark.link.is_some() { self.serial } else { 0 };
+        #[cfg(test)]
+        self.experiment
+            .record(split_experiment::Op::Apply(span, mark));
         self.shape.emit(crate::DisplayShapeEffectKind::Mark {
             source: span,
             mark: crate::DisplayShapeMark {
@@ -310,11 +327,21 @@ impl Annotations {
             && id < *len
             && self.nodes[id].saved_epoch != self.line_epoch
         {
+            #[cfg(test)]
+            let old_bytes = undo.stats().bytes;
             undo.push((id, self.nodes[id]));
+            #[cfg(test)]
+            {
+                self.experiment.undo_requests += u64::from(undo.stats().bytes > old_bytes);
+            }
             self.nodes[id].saved_epoch = self.line_epoch;
         }
         self.nodes[id].newest = self.nodes[id].newest.max(mark.revision);
         if span.start <= lo && hi <= span.end {
+            #[cfg(test)]
+            {
+                self.experiment.tag_writes += 1;
+            }
             self.nodes[id].tag = self.nodes[id].tag.merge(mark);
             self.nodes[id].hidden |= mark.style.contains(Style::HIDDEN);
             return;
@@ -473,6 +500,8 @@ impl Annotations {
         let mut mark = Mark::default();
         loop {
             let node = &self.nodes[id];
+            #[cfg(test)]
+            self.experiment.lookup.set(self.experiment.lookup.get() + 1);
             mark = mark.merge(node.tag);
             let mid = lo + (hi - lo) / 2;
             let side = usize::from(offset >= mid);
@@ -507,6 +536,10 @@ impl Annotations {
             return 0;
         }
         let node = &self.nodes[id];
+        #[cfg(test)]
+        self.experiment
+            .revision
+            .set(self.experiment.revision.get() + 1);
         if span.start <= lo && hi <= span.end {
             return node.newest;
         }

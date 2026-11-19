@@ -128,3 +128,89 @@ nix develop .#index32 -c cargo nextest run --workspace --target i686-unknown-lin
 零/非对称预算、预先消费共享预算、未完成 finish 返回任务及 Covered 重放验证原子暂停。4,096 个稀疏非 Clone 状态验证库内零用户析构、独立返回值所有权、旧 arena 最终释放；分别在两个阶段丢弃任务验证每个剩余状态恰好析构一次。极值索引包括 `isize::MAX - 1`，每步树访问和任务 scratch 有字长界，宽整数区间模型避免依赖被测算术；x86_64 与实际 i686 的 debug/release 完整回归继续验证既有布局、语义、流式和预算契约。README 另有完整调用样例及所有权编译失败测试。
 
 此接口是显式、独占写入的维护任务，不能在暂停时 apply/insert，也不支持撤销已经开始的压缩而立即取回可写缓存。保留任务可恢复；需要缓存写入时先完成任务，或由宿主明确丢弃并重建。并发可写协议、硬内存上限、渐进释放旧 Vec 分配、总堆/OOM、序号耗尽和其它 ABI 仍未交付；没有改动核心语法或扩展终端 UI。
+
+## 2026-11-19 语义/修订存储拆分原型与决定
+
+**原型及取舍决定已完成：拒绝将本候选迁入生产，继续使用合并 Node。** 以下是基于正式 `39760f94bbc22c6ccd348b7bdc9f3a404086ff00` 的新测量；上文的 72B 节点及旧 CSV 是历史快照，保留原文。当前本机实测 `Mark` 恰为 72B，当前 `Node` 已为 112B，两者不可混淆。本节不宣称生产 split 已部署，也不由 padding 推算速度或总堆收益。
+
+### 实验边界与复跑
+
+私有实验在 [annotation_split.rs](../crates/mdstream-core/tests/support/annotation_split.rs)，由 `annotations.rs` 的 `cfg(test)` 子模块编译。只有显式开启 trace 才记录输入；新增字段、计数及 hook 均不进入生产库。没有增加公开 API、依赖、unsafe 或第二解析器。原 storage 的 `source`/FNV 函数原样移到 [storage_input.rs](../crates/mdstream-core/tests/support/storage_input.rs)，原测量与本原型共用。
+
+真实解析器捕获规范化后的 `apply_mark(span, Mark)`、begin/commit/rollback 及 append 边界。当前 `Annotations` 与候选重放同一日志，树形、范围覆盖、写入顺序和事务边界完全一致。候选是 **拓扑/修订 Vec + 稀疏 Semantic Vec**：前者存子索引、saved epoch、tag revision、子树 max revision、hidden 摘要及可选语义槽索引；后者保留 Mark 的语义字段。`serial` 必须留在语义记录中，单纯 max revision 无法表示同 revision 多次链接重写。候选复用当前 Mark 合并函数，但正确性期望来自独立逐字节数组：直接解释字段的 OR、深度加法、链接优先级、serial 与 revision，独立保存事务旧值、直接扫描数组求范围 max，不调用被测 merge 或从 baseline 生成答案。
+
+主矩阵复用 plain/dense/containers，生成参数 4,096 / 16,384 / 65,536、4 KiB append；补充三类输入与真实表头事务的 1/7/31/4,096 字节追加。碎片测试逐 append 检查全部前缀；大矩阵最终逐字节检查所有 Mark 字段，并检查 64 个范围 revision。另有 40 轮确定性事务测试，逐操作检查随机重叠写入、同 revision 的同 ID/不同 ID 重写、条件隐藏、根扩展及回滚前后的槽与值。私有节点号保持同样的 append 顺序，已有语义槽重写不搬迁；rollback 恢复旧目录及语义，截断未提交尾槽，容量保留复用。公开 LinkId 原值直接保存，不重编号；不设计跨 Document 或跨会话身份。
+
+另补两类压力输入，不冒充共享工作负载的代表性：`table_rollback` 使用继承的行内状态、2,048 字节正文和迟到管线，断言真实解析器确实发出 begin/rollback；`tag_saturated` 在解析普通文本后对每个二分区间直接写 tag，再执行 8 轮事务、每字节同 revision 两次链接重写，4 轮回滚、4 轮提交。后者是存储压力测试，不是 Markdown 解析输出。
+
+```bash
+# 在本 worktree 的 devShell 内；所有构建与测试最多 2 jobs/threads。
+export CARGO_BUILD_JOBS=2 RUST_TEST_THREADS=2
+nix develop -c cargo metadata --no-deps --format-version 1
+nix develop -c cargo nextest run -p mdstream-core --lib --release -j 2 \
+  -E 'test(storage_split_)'
+# 输出文件必须不存在；分别启动两次独立测试进程。
+for run in 1 2; do
+  nix develop -c env MDSTREAM_SPLIT_OUT="/tmp/storage-split-${run}.csv" \
+    cargo nextest run -p mdstream-core --lib --release -j 2 \
+    --run-ignored ignored-only \
+    -E 'test(=annotations::split_experiment::storage_split_measurement)'
+done
+```
+
+这些命令可在干净 clone 中执行。本次共享机器的实际构建/测试额外经编排方的 `heavy-gate.sh` 互斥；该临时锁脚本不是复跑依赖。
+
+本次 ark / Linux x86_64 / Rust 1.99.1，2026-11-19 UTC，使用项目 devShell；Cargo metadata 的权威 target 为 `/home/ajen/.cargo/target/workspaces/5671ef3198b1d399af1d3ace6ca55405f0b22779d27ca8f8c42b243cb58a7019`。原始日志、冻结源码/hash、命令/exit、逐字段核对保存在外部 `/tmp/mdtui3-codex-todo/041-prototypes/`；最终数据为 `run-6.csv`/`run-7.csv`，每轮 27 个场景、2,469 条指标，**2,280 个非时间字段逐项相同，且与报告参数整理前的第 4/5 轮全部一致**。[确定性汇总 CSV](storage-split-summary.csv) 保留全部场景的容量、余量、目录、请求和访问计数。`measurement-freeze-final.json` 固定测量输入；`comparison.json` 保留两轮原始时间值。
+
+### 实际布局、容量及请求
+
+以下类型实测 alignment 均为 8B；数值不作为其它 ABI 的结论。
+
+| 对象 | sizeof |
+| --- | ---: |
+| 当前 Mark / 当前合并 Node | 72 / 112B |
+| 候选 Semantic / RevisionNode | 64 / 56B |
+| baseline / split 的 UndoLog 实际 Vec 单元（含 id、旧值、retained 计数字段） | 128 / 136B |
+
+65,536 生成参数的最终 arena 如下。请求数是 Vec 初次分配/扩容请求，来自实际 push 前容量检查；不是全局 allocator 调用。候选每节点的 8B 可选槽目录已包含在 revision arena 内，不能再次相加。两个子索引各 8B 也已包含在各自节点内；Vec 描述符另为 baseline 24B、split 共 48B，不是 arena 堆容量。
+
+| 输入（实际字节） | 节点 / 语义槽 | baseline 容量 | split 修订 + 语义容量 | arena 容量变化 | baseline → split 请求 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| plain（65,536） | 11 / 0 | 1,792B | 896 + 0B | −50%（绝对 896B） | 4 → 4 + 0 |
+| dense（68,067） | 110,933 / 50,419 | 14,680,064B | 7,340,032 + 4,194,304B | −21.43% | 17 → 17 + 15 |
+| containers（65,550） | 72,895 / 25,875 | 14,680,064B | 7,340,032 + 2,097,152B | −35.71% | 17 → 17 + 14 |
+
+dense 的 baseline 未用容量 2,255,568B；split 修订/语义余量分别为 1,127,784 / 967,488B。containers 对应 6,515,824B 与 3,257,912 / 441,152B。两者候选目录各占已预留容量中的 1,048,576B。三主场景没有活动 undo，当前 arena 与本口径观测峰值相同；不以相同容量台阶混淆活跃节点数。
+
+`tag_saturated` 的 8,191 个节点全部带语义槽：baseline arena 917,504B，split 修订/语义为 458,752 / 524,288B，合计 983,040B，**增加 7.14%**；分别仅余 112B 与 56 + 64B。请求由 13 变为 13 + 12。两者每轮保存 8,191 个旧节点，undo capacity 分别 1,048,576 / 1,114,112B，余量 128 / 136B；8 轮各有 96 次 undo 分配/扩容请求，单元容量增加 6.25%。逐操作后同时观察的 arena + 活动 undo 最高为 **1,966,080 → 2,097,152B（+6.67%）**；结束后 undo 归零，但两份 arena 容量保留。这里求的是每个观测时刻的和再取最大值，没有相加不同时间的独立峰值。
+
+### 访问、重写与回滚成本
+
+计数单位是源码中的逻辑记录访问，不是硬件 load/store 或 cache miss。`update_visits` 是进入一个更新节点的次数；两者每次都会写该节点的 newest，另有覆盖节点 tag 写入。候选还要按槽访问语义记录，不能把相同树访问数称为相同总访问成本。
+
+| 场景 | 双方更新节点访问 / 覆盖 tag 写入 | split 语义写入 / 其中读取旧槽合并 | 64 次语义查询：baseline 节点 → split 目录 + 语义 | 64 次范围 revision：双方节点访问 |
+| --- | ---: | ---: | ---: | ---: |
+| plain，65,536 | 1 / 1 | 0 / 0 | 0 → 0 + 0 | 0 |
+| dense，65,536 | 996,247 / 110,014 | 57,982 / 7,563 | 1,136 → 1,136 + 56 | 1,992 |
+| containers，65,536 | 377,405 / 43,771 | 25,875 / 0 | 1,128 → 1,128 + 64 | 1,912 |
+| 全节点有 tag，4,096 | 947,202 / 73,728 | 73,727 / 65,536 | 832 → 832 + 832 | 1,568 |
+
+plain 的中部窗口在 annotation 树覆盖外，直接返回默认值，不能据此宣称零成本普遍成立。范围 revision 完全不读候选语义 arena；语义查询仍需路径上的 tag revision 与目录，附加依赖读取不能省略。新增槽的目录写次数可由“语义写入 − 读取旧槽合并”核对，包含后来被回滚的临时槽。
+
+真实 `table_rollback` 的 4,150 字节输入有 2 次回滚：双方恢复 21 条旧节点记录，候选恢复的旧语义槽为 0（本例旧目录无语义，新增槽通过截断撤销）。最终容量 baseline 14,336B、split 7,168 + 2,048B；undo 峰值 4,096 / 4,352B，各 5 次请求；同步容量观测峰值为 18,432 / 12,544B。全 tag 压力测试则双方各恢复 32,764 条旧节点，候选还恢复 32,764 个语义槽；各提交丢弃 32,764 条旧记录。已有槽在同 revision 重写时保持原索引，不创建逐 revision 历史副本。rollback 还需恢复 root、extent、serial 并截断两个未提交尾部，成本随日志条数增长。
+
+这些更新、查询、commit/rollback 均为同步私有操作，没有声称可暂停的操作，也没有引入 Budget 或零预算/微步接口。分块 append 的核验不等于单个 append 有硬时间上界；Vec 扩容、分配器及日志释放/析构不承诺硬时间上界。
+
+### 时间、观测局限及决定依据
+
+时间仅为观察。最终两轮 dense 存储重放分别为 baseline 12.96 / 13.00ms、split 9.55 / 9.41ms；但相同 64 次语义查询为 baseline 5.99 / 6.63µs、split 12.17 / 12.60µs。重放含计数和逐操作容量观察，不含输入捕获、数组模型及编译；查询含测试计数及 `black_box`，baseline 总在 split 前运行，没有随机顺序、绑核或统计置信区间；不能推广为生产解析/渲染的提速或减速结论。
+
+外部 runner 分别记录最终两轮命令树累计用户 CPU 21.409 / 0.941s、系统 CPU 0.955 / 0.212s；Linux `RUSAGE_CHILDREN.ru_maxrss` 为 638,252 / 68,084KiB（最大子进程的 RSS 高水位，并非并发进程 RSS 之和）。第 6 轮含 12.23s release 编译，第 7 轮复用构建产物；前者的编译器资源不能当作布局内存。即使后者也含 Cargo/nextest、捕获解析器、日志、数组模型及两种存储，不能分摊成任一布局的 RSS。这些命令级资源观测与上段存储操作计时明确分开。
+
+当前/峰值容量只含明确列出的 annotation arena 与活动 UndoLog；不含 realloc 内部瞬态旧分配、allocator 元数据、源码、其它解析 arena、输入日志、模型及测试框架，因此**不是总堆峰值**。捕获日志本身在最大 plain/dense/containers 场景分别预留 2,816 / 5,767,168 / 2,883,584B，原 Document 仍各保留一份 annotation arena；数组数据另占 4,718,592 / 4,900,824 / 4,719,600B，模型事务 BTreeMap 等未逐项测量。这些测量辅助数据在原始 CSV 单列，不混入候选容量，也不与其它时刻峰值相加。
+
+保留的误差/失败：第一次 gate 直接执行因 EACCES 未启动 Cargo，改为 `bash` 后成功；初轮三个共享场景的回滚数为零；早期补充的前导管线表格也未触发事务，最终改为继承行内状态并断言事件存在；初版遗漏 commit 计数返回、将未计量的日志/模型请求写为 0，均已修正并重测。严格 Clippy 首次因两个报告函数参数过多退出 101，改为坐标元组后通过，不抑制警告；候选与 oracle 逻辑原样保留。`run-1.csv` 至 `run-5.csv`、Clippy 失败及对应冻结均保留，第 6/7 轮绑定最终源码。
+
+**拒绝当前候选的生产迁移**：稀疏 tag 的局部容量收益已实证，但收益来自 tag 稀疏率，并非必然消掉 padding。候选增加分配请求与语义间接读取，undo 单元更大；全 tag 情况当前容量、观测峰值及回滚写入均变差。稳定身份虽可保持，仍需维护两个 arena 及双份旧值。当前证据足以结束“仍需原型”的规划，选择保留生产合并布局；不设置额外内存或提速目标，也不由此否定未来有具体工作负载需求的其它设计。若以后重新提生产迁移，应先向维护者提交其具体收益和事务/目录设计。本次未实施迁移，未验证总堆/OOM、其它 ABI、并发写入或真实终端性能。
+
+必要验证：项目 devShell 的 `cargo check -p mdstream-core --lib --tests -j 2`、生产 `--lib` 检查及 `cargo clippy -p mdstream-core --lib --tests -j 2 -- -D warnings` 通过；两项私有模型测试、两次绑定最终源码的独立 release 测量及既有 `--test storage` 的 9 项测试通过。只运行本任务相关检查，没有执行全 workspace 门禁或启动 TUI。

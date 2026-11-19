@@ -3366,3 +3366,13 @@ resize后显式目录跳转再折叠的独立037缺陷已新增未勾待办，�
 对应冻结源码的 debug 覆盖3079项（2847个精确绑定的既有PASS与232项新跑，并集无重复），全新 all-target/all-feature release3075项、85项文档测试、严格Clippy、无警告rustdoc、fmt与生成器检查均通过；四个原有debug专用故障注入测试保留在debug，六项原手工测试仍默认忽略。五组固定release真实PTY验证脚注、流式输入、数学、表格意图恢复及分段UTF-8；held FIFO下q实际退出约0.125秒。
 
 根独立核对791文件/637Rust与原始数据，固定release SHA256 `9f313ea74f52d33987d0b3c7d71e1e51f59bbc094163d92fb3f272d70d8010c4`，实跑Markdown正文、原始/显示OSC52复制、20×3 End与来源返回，以及A→B→A同表格范围ID、窄屏身份与同ID空尾部重定向；两组q均正常退出。旧失败、计数oracle更正、已取消基线和共享锁等待均保留，未将其计为PASS；证据与冻结记录见 `/tmp/mdtui3-codex-todo/029-prototypes` 及持久目录 `/home/ajen/.local/state/codex/mdtui3/2026-11-17-resumed/`。验收只更新本节及TODO说明，其余已验证运行代码、测试和数据未变；未push。
+
+## 2026-11-19 语义/修订存储拆分原型与决定
+
+完成原 TODO `b22e77d:28` 明确保留的原型评估，**拒绝当前稀疏 split 候选的生产迁移，保留合并 Node**。正式输入固定为 `39760f94bbc22c6ccd348b7bdc9f3a404086ff00`，不依赖后续 UI 接口；没有声称生产 split 已部署。实验设计、实际布局、全部场景容量/余量、访问及请求口径见 [存储实验新章节](docs/storage.md#2026-11-19-语义修订存储拆分原型与决定) 和 [汇总 CSV](docs/storage-split-summary.csv)，历史 72B 节点及旧测量原样保留。
+
+仅测试编译的私有 hook 捕获真实解析器写入与行事务，同日志重放当前存储和“拓扑/修订 arena + 稀疏语义 arena”，独立字节数组直接解释字段与范围 max。实测当前 Mark/Node 为 72/112B，候选语义/修订节点为 64/56B；serial 保留语义重写优先级。共享 plain/dense/containers 的三个几何规模、4KiB 追加，以及碎片追加、真实表头回滚和全节点 tag 压力场景共 27 组。最终两轮独立进程每轮 2,469 条指标，其中 2,280 个非时间字段逐项一致；稳定槽、同 revision 多次重写、根扩展、rollback 截断与旧值恢复通过独立模型。
+
+最大 dense/containers 的局部 arena 容量下降 21.43%/35.71%，但增长请求由 17 增至 32/31；全 tag 场景当前容量增加 7.14%，undo 单元 128→136B，同步观测 arena+undo 峰值增加 6.67%，语义查询多一次槽读取、回滚多一份语义恢复。由此完成原型和取舍决定，未设置内存/提速目标，未将局部容量、CPU、RSS 或不同时间峰值混成总堆收益。同步原型不新增 Budget 接口，不宣称 allocator/析构硬时间上界。
+
+项目 devShell 的 core 类型检查、两项私有模型、两轮最终 release 测量、既有 storage 的 9 项测试及 core 范围严格 Clippy 通过；构建/测试经共享 heavy-gate、最多 2 jobs/threads，只运行本任务相关检查。Clippy 的报告参数修正后按新冻结重跑第 6/7 轮，2,280 个非时间字段与第 4/5 轮全部一致，候选/oracle 逻辑未变；公开复跑命令不依赖临时 gate。源码冻结、准确命令/exit、原始 CSV、早期未触发事务的输入及计数修正、Clippy 首次失败等均保存在 `/tmp/mdtui3-codex-todo/041-prototypes/`，交接结果为 `/tmp/mdtui3-codex-todo/041-result.json`。未验证总堆/OOM、其它 ABI、并发写入或真实终端性能；未来若另提生产迁移，须另交具体设计与工作负载证据。本记录不删除其它未完成规划。
