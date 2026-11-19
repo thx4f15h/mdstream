@@ -1355,7 +1355,8 @@ impl CopyTask {
                         }) {
                             return Ok(false);
                         }
-                        self.window_offset += 16;
+                        let next = self.window_offset + 16;
+                        self.window_offset = layout.skip_image_band(next).unwrap_or(next);
                         layout.set_math_copy_window(self.window_offset, 16);
                         self.layout_ready = false;
                         self.row = 0;
@@ -1404,6 +1405,20 @@ impl CopyTask {
                 } else {
                     published.unwrap()
                 };
+                if self.cell == 0 && !line.images.is_empty() {
+                    if extra {
+                        self.extra_row += 1;
+                        self.extra_ready = false;
+                        self.extra_pending = None;
+                    } else {
+                        self.row += 1;
+                    }
+                    self.line_serial += 1;
+                    self.column = 0;
+                    self.separator = false;
+                    self.word_space = false;
+                    continue;
+                }
                 let Some(cell) = line.cells.get(self.cell) else {
                     // An empty code row owns its physical LF even though its
                     // indentation cells have no source. Serialize that row

@@ -3389,3 +3389,11 @@ resize后显式目录跳转再折叠的独立037缺陷已新增未勾待办，�
 最终源码的类型检查、新回归 debug 9 项、包含既有 history/fold_navigation/source_fold_overlays 的 release 50 项、release 示例、针对新增 example/test 的严格 Clippy 及格式检查通过。没有修改生产源码、Cargo manifests、已有 hooks/rustfmt 配置；核心保持零 runtime 依赖，无新增 unsafe。检查经共享 heavy-gate，最多 2 jobs/threads，没有运行无关全 workspace 门禁。最初直接执行不可执行 gate 的 PermissionError、显式 bash 修正、完整重现 traceback、审阅前源码和全部命令/exit 均保留在 `/tmp/mdtui3-codex-todo/042-prototypes/`；机器结果为 `/tmp/mdtui3-codex-todo/042-result.json`。
 
 这是窄设计及可执行宿主原型的交付，不表示磁盘格式、真实外部 mapper、自动 reload、新 UI 或实际终端行定位已部署；宿主身份/版本和 Exact 唯一性依赖明确的可信证据。原 TODO 两处成熟度已改为链接已交付设计，旧历史记录保留。本任务不替其它活动或最终组合审计宣称完成；MAIN 验收与单独提交由 root 负责。
+
+## 2026-11-19 URI 与图片基础阶段收束
+
+按用户“完成当前阶段任务以后就收尾提交吧，不要继续推进了”的最新范围，030 在正式 `f7920d0`（含041/042）上只收束已开始的 URI、worker/cache/input/protocol、Session/Scene 与原生布局基础。具体 API、资源合同、证据边界和未接通范围见 [阶段说明](docs/image-foundation.md)。本节不勾选原通用当前 URI 输出或完整图片协议/缓存 UI 大项；不等待未来020、不继续自动 current producer/完整 CLI 图片激活。默认 `--images=off` 保持可点击 alt；显式 auto/kitty 当前只查询 ACK/几何，不加载正文图片。
+
+核心 `UriEncoder` 使用固定 Cow 输入并逐字节先付费；不改变 raw metadata/parser/官方输入。PNG/JPEG worker、独立编码/像素/网络成本、有界 current/pinned/retiring cache、取消/paid reap、Kitty 真上传/ACK/重用/删除及单输入/021 writer arbiter 已有独立组件实现。实际 Root/BodyKey Note 行带复用同一高度/CP/FoldView、click/source/Reading 与 End；Scene 仍需宿主传入当前资源和帧，自动发现/审批/状态 UI 未接通。
+
+原始不可变 provider、cache generation 与 retirement 第13次取消 native red 保持；对应生产修正和 root 独立 green 不被覆盖。真实终端组件证据使用实际 Kitty 和独立 framebuffer pixel oracle，不将 fallback 当作绘图；原 observer/test/lint/ENOSPC 失败保留。阶段冻结、命令/exit、复用证据的 byte 绑定及通过/失败/未测清单写入 `/tmp/mdtui3-codex-todo/030-prototypes/wrapup/` 和 `/tmp/mdtui3-codex-todo/030-wrapup-result.json`，仅供 root 独立审查后统一整理一个阶段提交；本线程不自行 commit/push。

@@ -38,9 +38,12 @@ mdtui-tui [OPTIONS] <FILE>
 | `--table-min-width N` / `--table-max-width N` | TUI 的单元格内容宽度上下限，不含 padding/边框。min 为 `0..=1000`（默认 0），max 为 `1..=1000`（默认不设上限），须 min ≤ max；`--once` 禁用。 |
 | `--open-links` | 允许在 Link 焦点按 Enter 时用平台 opener 打开显式外链。只影响已激活外链，不改变渲染字节或默认聚焦行为。 |
 | `--no-links` | 完全关闭 OSC 8。链接样式、Link 焦点和内部 `#fragment` 跳转仍保留。不能与 `--open-links` 同用。 |
+| `--images off\|auto\|kitty` | 实验性能力探测，默认 `off`；`auto` 与 `kitty` 均须实际 Kitty ACK 和 cell 像素几何，不按 TERM 推断。当前阶段不会自动加载或显示正文图片，仍显示可点击 alt；`--once` 禁用此选项。 |
 | `-h`, `--help` | 输出帮助。 |
 
 链接模式：
+
+图片 worker、缓存、Kitty 上传/删除、Session/Scene 与 Root/Note 图片行带已提供独立基础 API 和组件验证；当前 CLI 仅可显式探测协议能力，尚未连接当前对象发现、资源审批及自动场景提交。详见 [030 阶段合同与剩余范围](../../docs/image-foundation.md)。本阶段的 `UriEncoder` 也尚未替换既有 OSC 8/Open 的目标消费。
 
 - 默认：写出 OSC 8 元数据；Enter 只返回外链状态，不启动进程。
 - `--open-links`：只有明确激活外链时才打开；Linux 使用 `xdg-open` 加单个 argv 参数，不经过 shell。非 Linux 返回 Unsupported。

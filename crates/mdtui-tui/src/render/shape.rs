@@ -3073,6 +3073,12 @@ pub struct ShapeSelect {
     result: Option<DisplayPosition>,
 }
 impl ShapeSelect {
+    /// Source mapping of the selected display atom, already read and charged
+    /// by advance. The end boundary has no atom and therefore returns None.
+    pub fn selected_source(&self) -> Option<Span> {
+        self.result.and_then(|_| self.pending.map(|a| a.source))
+    }
+
     pub fn new(shape: &SharedShape, source: Span, rank: usize) -> Self {
         Self {
             owner: shape.clone(),

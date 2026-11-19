@@ -87,6 +87,8 @@ mod structural_prefix;
 mod symbol_context;
 mod table;
 mod table_preview;
+mod uri;
+pub use uri::{UriChunk, UriEncoder, UriWork};
 mod utf8;
 
 pub use anchors::{

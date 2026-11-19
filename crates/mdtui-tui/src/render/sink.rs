@@ -61,6 +61,7 @@ pub struct SinkCell {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SinkLine {
+    pub images: Vec<crate::image::layout::BandLine>,
     pub cells: Vec<SinkCell>,
     pub source: Option<LineSource>,
 }
@@ -72,6 +73,8 @@ pub struct LayoutSinkStats {
     pub segments_consumed: usize,
     pub events_consumed: usize,
     pub rows: u64,
+    pub image_rows_adopted: u64,
+    pub image_normal_rows_moved: u64,
     pub tiles_rendered: usize,
     pub begin_tile_callbacks: u64,
     pub raw_text_callbacks: u64,
@@ -193,7 +196,16 @@ impl PrepareContext<'_> {
     }
 }
 
+#[path = "image_bands.rs"]
+mod image_bands;
+
 pub struct TileLayoutSink {
+    image_layout: image_bands::Preparation,
+    image_insertions: std::collections::VecDeque<image_bands::Insertion>,
+    image_inserted_rows: usize,
+    image_adoption: Option<image_bands::Adoption>,
+    retiring_image_line: usize,
+    retiring_image_active: bool,
     width: u16,
     events: Vec<PlanEvent>,
     work: Vec<Vec<WorkItem>>,
@@ -254,6 +266,7 @@ impl TileLayoutSink {
         containers: &HashMap<mdtui3::ContainerId, ContainerContext>,
         container_nodes_read: usize,
     ) -> Result<Self, SinkError> {
+        let has_image_bands = scanner.image_bands().is_some();
         if width == 0 {
             return Err(SinkError::InvalidWidth);
         }
@@ -496,7 +509,7 @@ impl TileLayoutSink {
                 continue;
             };
             if let PreparedContent::Streamed { quote, glyphs } = &content
-                && (plan.projected || glyphs.iter().any(|g| g.text.is_indexed()))
+                && (plan.projected || has_image_bands || glyphs.iter().any(|g| g.text.is_indexed()))
             {
                 content = PreparedContent::Rows(source_owned_rows(
                     document,
@@ -646,7 +659,7 @@ impl TileLayoutSink {
 
         let pending_glyphs = math_segments_glyphs(pending_segments, None, scanner.math_views());
         let mut pending_rows = Vec::new();
-        let pending = if plan.projected && !pending_glyphs.is_empty() {
+        let pending = if (plan.projected || has_image_bands) && !pending_glyphs.is_empty() {
             pending_rows = source_owned_rows(
                 document,
                 stream_lines(&pending_glyphs, false, width),
@@ -740,6 +753,12 @@ impl TileLayoutSink {
         )?;
         let boundary_checkpoints = boundary_checkpoints(plan, &events, &blocks);
         Ok(Self {
+            image_layout: image_bands::Preparation::new(scanner.image_bands()),
+            image_insertions: std::collections::VecDeque::new(),
+            image_inserted_rows: 0,
+            image_adoption: None,
+            retiring_image_line: 0,
+            retiring_image_active: false,
             width,
             events,
             work,
@@ -772,6 +791,109 @@ impl TileLayoutSink {
         })
     }
 
+    pub(crate) fn retire_images(&mut self, b: &mut mdtui3::Budget) -> bool {
+        if let Some(adoption) = self.image_adoption.as_mut() {
+            if !adoption.retire(b) {
+                return false;
+            }
+            if !b.charge(mdtui3::WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            }) {
+                return false;
+            }
+            self.image_adoption = None;
+        }
+        while !self.image_insertions.is_empty() {
+            if !b.charge(mdtui3::WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            }) {
+                return false;
+            }
+            self.image_insertions.pop_front();
+        }
+        if !self.image_layout.retire(b) {
+            return false;
+        }
+        while self.retiring_image_line < self.lines.len() {
+            let line = &mut self.lines[self.retiring_image_line];
+            if !self.retiring_image_active {
+                if !b.charge(mdtui3::WorkLimit {
+                    queries: 1,
+                    objects: 1,
+                    ..Default::default()
+                }) {
+                    return false;
+                }
+                if line.images.is_empty() {
+                    self.retiring_image_line += 1;
+                    continue;
+                }
+                self.retiring_image_active = true;
+            }
+            if !image_bands::Preparation::retire_line(line, b) {
+                return false;
+            }
+            self.retiring_image_active = false;
+            self.retiring_image_line += 1;
+        }
+        true
+    }
+    pub(crate) fn adopt_image_rows(&mut self, b: &mut mdtui3::Budget) -> bool {
+        if self.image_adoption.is_none() {
+            if self.image_insertions.is_empty() {
+                return true;
+            }
+            if !b.charge(mdtui3::WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            }) {
+                return false;
+            }
+            let capacity = self.lines.len() + self.image_inserted_rows;
+            let lines = std::mem::replace(&mut self.lines, Vec::with_capacity(capacity));
+            let offsets = std::mem::replace(&mut self.line_offsets, Vec::with_capacity(capacity));
+            self.image_adoption = Some(image_bands::Adoption::new(
+                lines,
+                offsets,
+                std::mem::take(&mut self.image_insertions),
+            ));
+            self.image_inserted_rows = 0;
+        }
+        if !self.image_adoption.as_mut().unwrap().advance(
+            &mut self.image_layout,
+            &mut self.lines,
+            &mut self.line_offsets,
+            &mut self.stats,
+            b,
+        ) {
+            return false;
+        }
+        self.image_adoption = None;
+        true
+    }
+    pub(crate) fn skip_image_band(&self, row: u64) -> Option<u64> {
+        self.image_layout.skip_band(row)
+    }
+    pub(crate) fn image_row(&self, focus: crate::image::layout::ImageFocus) -> Option<u64> {
+        self.image_layout.image_row(focus)
+    }
+    pub(crate) fn prepare_image_rows(
+        &mut self,
+        view: Option<super::table_window::TableView>,
+        rows: u64,
+        focus: Option<crate::image::layout::ImageFocus>,
+        b: &mut mdtui3::Budget,
+    ) -> Result<bool, SinkError> {
+        let mut images = std::mem::take(&mut self.image_layout);
+        let ready = images.advance(self, view, rows, focus, b);
+        self.image_layout = images;
+        ready
+    }
     #[must_use]
     pub fn lines(&self) -> &[SinkLine] {
         &self.lines
@@ -1023,6 +1145,24 @@ impl TileLayoutSink {
             for _ in line_start..self.lines.len() {
                 self.line_offsets.push(self.logical_rows);
                 self.logical_rows += 1;
+            }
+            let row_key = match item.kind {
+                WorkKind::Row(block, row) => Some(image_bands::Row::Block(block, row)),
+                WorkKind::PendingRow(row) => Some(image_bands::Row::Pending(row)),
+                _ => None,
+            };
+            if let Some(group) = row_key.and_then(|key| self.image_layout.group_for(key)) {
+                let group_index = group;
+                let group = &mut self.image_layout.groups[group];
+                self.logical_rows += u64::from(group.start);
+                self.image_inserted_rows += group.prepared.len();
+                self.image_insertions.push_back(image_bands::Insertion {
+                    at: self.lines.len(),
+                    group: group_index,
+                    offset: self.logical_rows,
+                });
+                self.logical_rows += u64::from(group.end - group.start);
+                self.logical_rows += u64::from(group.height - group.end);
             }
         }
         let rows = self.logical_rows.saturating_sub(before);
@@ -1718,6 +1858,7 @@ fn math_table(
     let mut output: BTreeMap<usize, (SinkLine, Span)> = BTreeMap::new();
     let border = |left, junction, right, fill| -> Result<SinkLine, SinkError> {
         Ok(SinkLine {
+            images: Vec::new(),
             cells: super::table::horizontal_border(left, junction, right, fill, &geometry.columns)
                 .map_err(|e| SinkError::Render(e.to_string()))?
                 .into_iter()
@@ -1842,6 +1983,7 @@ fn math_table(
                 y + offset,
                 (
                     SinkLine {
+                        images: Vec::new(),
                         cells: out,
                         source: Some(LineSource::new(row.source, block_id)),
                     },
@@ -2223,6 +2365,7 @@ fn math_flow(
         }
         rows.push(PreparedRow {
             line: SinkLine {
+                images: Vec::new(),
                 cells: out,
                 source: Some(LineSource::new(source, block_id)),
             },
@@ -2455,6 +2598,7 @@ fn extract_rows(
             });
         }
         rows.push(SinkLine {
+            images: Vec::new(),
             cells,
             source: screen.line_source(row),
         });
@@ -2493,6 +2637,7 @@ fn stream_lines(glyphs: &[OwnedGlyph], quote: bool, width: u16) -> Vec<SinkLine>
                 .find(|glyph| glyph.width > 0)
                 .map(glyph_line_source);
             return vec![SinkLine {
+                images: Vec::new(),
                 cells: prefix,
                 source,
             }];
@@ -2548,7 +2693,11 @@ fn glyph_line_source(glyph: &OwnedGlyph) -> LineSource {
 fn assemble_line(prefix: &[SinkCell], body: Vec<SinkCell>, source: Option<LineSource>) -> SinkLine {
     let mut cells = prefix.to_vec();
     cells.extend(body);
-    SinkLine { cells, source }
+    SinkLine {
+        images: Vec::new(),
+        cells,
+        source,
+    }
 }
 
 fn quote_prefix(width: usize) -> Vec<SinkCell> {
@@ -2606,6 +2755,7 @@ fn text_line(
         used += grapheme_width;
     }
     SinkLine {
+        images: Vec::new(),
         cells,
         source: Some(block.map_or_else(
             || LineSource::pending(source),
@@ -2616,6 +2766,7 @@ fn text_line(
 
 fn rule_line(source: Span, block: Option<BlockId>, width: u16) -> SinkLine {
     SinkLine {
+        images: Vec::new(),
         cells: (0..width)
             .map(|_| SinkCell {
                 text: "─".into(),

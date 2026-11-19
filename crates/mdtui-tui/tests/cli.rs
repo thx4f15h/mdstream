@@ -103,6 +103,11 @@ fn assert_lifecycle(output: &[u8]) {
 }
 
 fn assert_single_first_frame_clear(output: &[u8]) {
+    assert_eq!(
+        count(output, b"\x1b_G"),
+        0,
+        "default CLI retains alt fallback without a graphics capability probe"
+    );
     let enter = position(output, ENTER_ALTERNATE_SCREEN);
     let hide = position(output, HIDE_CURSOR);
     let clear = position(output, FIRST_FRAME_CLEAR);

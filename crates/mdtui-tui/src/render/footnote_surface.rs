@@ -229,6 +229,7 @@ impl NoteViewport {
             )?;
             let shape = super::super::shape::SharedShape::from_current(native);
             let links = viewport.shared_links();
+            links.image_bands().bind_note(key)?;
             links.set_shape(shape.clone())?;
             links.set_seed(super::super::shape::ShapeSeed::indexed(native));
             links.enable_footnote_numbers();
@@ -612,6 +613,11 @@ impl FootnoteUi {
             }
         })
     }
+    pub(super) fn clipboard_pending(&self) -> bool {
+        self.active
+            .as_ref()
+            .is_some_and(|a| a.raw_copy.copy_pending() || a.reading.copy_pending())
+    }
     pub(super) fn pending(&self) -> bool {
         self.active.as_ref().is_some_and(|a| {
             a.raw_copy.copy_pending()
@@ -960,12 +966,76 @@ fn ui_line(text: &str, width: u16) -> super::super::sink::SinkLine {
         });
     }
     super::super::sink::SinkLine {
+        images: Vec::new(),
         cells,
         source: None,
     }
 }
 
 impl FrameRuntime {
+    pub(super) fn withdraw_note_image_band(
+        &mut self,
+        key: BodyKey,
+        band: crate::image::layout::Band,
+        b: &mut Budget,
+    ) -> Result<bool, FrameError> {
+        let active = self
+            .notes
+            .active
+            .as_mut()
+            .filter(|a| a.key == key)
+            .ok_or(LayoutError::InvalidRange)?;
+        let body = self
+            .document
+            .document()
+            .footnote_body(key.symbol())
+            .ok_or(LayoutError::InvalidRange)?;
+        body.with_renderer(key, body.host_revision(), |native| {
+            let shared = active.viewport.shared_links().image_bands();
+            let version = shared.version();
+            if !shared.withdraw(band, b) {
+                return Ok(false);
+            }
+            if version != shared.version() {
+                active.viewport.image_band_removed(native, band)?;
+                active.paint = None;
+            }
+            Ok::<_, FrameError>(true)
+        })?
+    }
+    pub(super) fn publish_note_image_band(
+        &mut self,
+        key: BodyKey,
+        band: crate::image::layout::Band,
+        b: &mut Budget,
+    ) -> Result<bool, FrameError> {
+        let active = self
+            .notes
+            .active
+            .as_mut()
+            .filter(|a| a.key == key)
+            .ok_or(LayoutError::InvalidRange)?;
+        let body = self
+            .document
+            .document()
+            .footnote_body(key.symbol())
+            .ok_or(LayoutError::InvalidRange)?;
+        body.with_renderer(key, body.host_revision(), |native| {
+            let shared = active.viewport.shared_links().image_bands();
+            let version = shared.version();
+            if !shared.publish(native, band, b)? {
+                return Ok(false);
+            }
+            if shared.version() != version {
+                active
+                    .viewport
+                    .image_geometry_changed(native, band.anchor)?;
+                active.paint = None;
+            }
+            Ok::<_, FrameError>(true)
+        })?
+    }
+
     /// Diagnostic snapshot; capacity inspection is explicit, outside drawing.
     pub fn footnote_stats(&self) -> Result<FootnoteSurfaceStats, FrameError> {
         let mut stats = self.notes.work;
@@ -2488,6 +2558,11 @@ impl FrameRuntime {
                     if let Some(old) = active.focus {
                         active.focus = active.hits.iter().find(|h| h.key() == old.key()).copied();
                     }
+                }
+                if commit.bytes > 0
+                    && let Some(graphics) = self.graphics.as_mut()
+                {
+                    graphics.repainted()
                 }
                 let clipboard_bytes = active.reading.clipboard_bytes()
                     + active.raw_copy.clipboard_bytes()

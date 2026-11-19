@@ -254,6 +254,7 @@ impl From<TableWidthError> for ViewportError {
 }
 
 pub struct ViewportState {
+    image_focus: Option<crate::image::layout::ImageFocus>,
     summary: Option<super::fold_summary::FoldSummary>,
     pub(crate) shown_folds: Vec<mdtui3::FoldPlaceholder>,
     fold_anchor: Option<usize>,
@@ -407,6 +408,7 @@ impl ViewportState {
             TopPosition::Empty
         };
         Ok(Self {
+            image_focus: None,
             summary: None,
             shown_folds: Vec::new(),
             fold_anchor: None,
@@ -457,6 +459,7 @@ impl ViewportState {
             None => TopPosition::Empty,
         };
         Ok(Self {
+            image_focus: None,
             summary: None,
             shown_folds: Vec::new(),
             fold_anchor: None,
@@ -482,6 +485,36 @@ impl ViewportState {
         })
     }
 
+    /// Geometry changes expire the owner tile and dependent suffix in the
+    /// existing height/checkpoint trees. Source/fold anchors remain native.
+    pub fn image_geometry_changed(
+        &mut self,
+        document: &Document,
+        anchor: usize,
+    ) -> Result<(), ViewportError> {
+        self.check_document(document)?;
+        let tile = document.tile_at(anchor).ok_or(ViewportError::InvalidTop)?.0;
+        let end = document.tile_count();
+        self.checkpoints.heights_mut(document)?.expire(tile..end)?;
+        self.checkpoints.invalidate(document, tile..end)?;
+        self.render = None;
+        self.restart_end(document);
+        Ok(())
+    }
+    pub fn image_band_removed(
+        &mut self,
+        document: &Document,
+        band: crate::image::layout::Band,
+    ) -> Result<(), ViewportError> {
+        self.check_document(document)?;
+        if self.image_focus.is_some_and(|focus| focus.key == band.key) {
+            self.image_focus = None;
+            self.fold_anchor = Some(band.source.start);
+            self.fold_reanchor = true;
+            self.anchor_refiner = None;
+        }
+        self.image_geometry_changed(document, band.anchor)
+    }
     pub fn folds(&self) -> &mdtui3::FoldView<super::checkpoint::RenderCheckpoint> {
         self.checkpoints.view()
     }
@@ -1880,6 +1913,7 @@ impl ViewportState {
     }
 
     fn clear_fold_anchor(&mut self) {
+        self.image_focus = None;
         self.fold_anchor = None;
         self.fold_reanchor = false;
         self.anchor_refiner = None;
@@ -2045,6 +2079,7 @@ impl ViewportState {
                 &self.table_widths.column_positions(),
                 self.summary.as_ref(),
                 self.links.clone(),
+                self.image_focus,
             )?);
         }
 
@@ -2084,6 +2119,14 @@ impl ViewportState {
                 stats: render.stats(),
             });
         }
+        self.image_focus = frame
+            .lines
+            .first()
+            .and_then(|line| line.images.first())
+            .map(|image| crate::image::layout::ImageFocus {
+                key: image.band.key,
+                row: image.row,
+            });
         frame.stats.layout_budget = budget.used();
         let render = self.render.take().ok_or(ViewportError::InvalidTop)?;
         self.shown_tables = render.first.sink().map_or_else(Vec::new, |sink| {
@@ -2347,6 +2390,7 @@ fn approximate_source(document: &Document, anchor: Anchor) -> Option<usize> {
 }
 
 struct ViewportRender {
+    image_focus: Option<crate::image::layout::ImageFocus>,
     zero_progress: super::first_frame::ZeroRangeProgress,
     document: DocumentId,
     revision: u64,
@@ -2376,6 +2420,7 @@ impl ViewportRender {
         positions: &[(TableId, usize)],
         summary: Option<&super::fold_summary::FoldSummary>,
         links: crate::render::objects::SharedLinks,
+        image_focus: Option<crate::image::layout::ImageFocus>,
     ) -> Result<Self, ViewportError> {
         let start_row = heights.row_of(anchor).ok_or(ViewportError::InvalidTop)?;
         let end_row = start_row.saturating_add(u128::from(config.rows));
@@ -2445,6 +2490,7 @@ impl ViewportRender {
                 .saturating_add(4),
         });
         first.set_links(links);
+        first.set_image_focus(image_focus);
         if heights.height_state(anchor.tile) == Some(mdtui3::HeightState::Local)
             && let Some(source) = checkpoints
                 .exact(anchor.tile)
@@ -2498,6 +2544,7 @@ impl ViewportRender {
             _ => 0,
         };
         Ok(Self {
+            image_focus,
             zero_progress: Default::default(),
             document: document.id(),
             revision: document.revision(),
@@ -2590,6 +2637,9 @@ impl ViewportRender {
             }
         }
         let mut offset = self.anchor.offset.min(target_rows - 1);
+        if let Some(row) = self.image_focus.and_then(|focus| sink.image_row(focus)) {
+            offset = row.saturating_sub(skip).min(target_rows - 1);
+        }
         if self.preserve_refined_source
             && let Some(source) = math_focus_source(self.top)
             && let Some(view) = self.first.scanner().math_at_source(source)

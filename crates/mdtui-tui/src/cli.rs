@@ -26,6 +26,8 @@ Options:
       --once             Print the complete reference ANSI rendering for FILE
       --width <N>        Fixed width for --once, 1..=1000, default 120
       --height <N>       Fixed height for --once, 1..=1000, default 40
+      --images <MODE>    Experimental capability probe: off (default), auto, or kitty
+                        Does not yet load or display document images
       --open-links       Open activated http/https/mailto links with the platform opener
       --no-links         Disable OSC 8 only; keep link styling, internal anchors, and in-app link focus
   -h, --help             Print this help
@@ -78,6 +80,7 @@ pub struct Options {
     pub width: Option<u16>,
     pub height: Option<u16>,
     pub link_mode: LinkMode,
+    pub images: crate::image::protocol::Mode,
     pub table_policy: TableWidthPolicy,
     pub file: PathBuf,
 }
@@ -120,6 +123,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Outcome, ParseE
     let mut height = None;
     let mut table_min = None;
     let mut table_max = None;
+    let mut images = None;
     let mut open_links = false;
     let mut no_links = false;
     let mut files = Vec::new();
@@ -175,6 +179,24 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Outcome, ParseE
                     *slot = Some(number);
                     continue;
                 }
+                Some("--images") => {
+                    if images.is_some() {
+                        return Err(ParseError::new(
+                            "option '--images' may only be specified once",
+                        ));
+                    }
+                    let value = take_value(&args, &mut index, "--images")?;
+                    images = Some(image_mode(value.to_str())?);
+                    continue;
+                }
+                Some(value) if value.starts_with("--images=") => {
+                    if images.is_some() {
+                        return Err(ParseError::new(
+                            "option '--images' may only be specified once",
+                        ));
+                    }
+                    images = Some(image_mode(value.strip_prefix("--images="))?);
+                }
                 Some("--open-links") => open_links = true,
                 Some("--no-links") => no_links = true,
                 Some(value) if value.starts_with('-') && value != "-" => {
@@ -196,6 +218,11 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Outcome, ParseE
     if !once && (width.is_some() || height.is_some()) {
         return Err(ParseError::new(
             "options '--width' and '--height' are only valid with '--once'",
+        ));
+    }
+    if once && images.is_some() {
+        return Err(ParseError::new(
+            "option '--images' is only valid in TUI mode",
         ));
     }
     if once && (table_min.is_some() || table_max.is_some()) {
@@ -226,9 +253,20 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Outcome, ParseE
         width,
         height,
         link_mode,
+        images: images.unwrap_or_default(),
         table_policy,
         file,
     }))
+}
+
+fn image_mode(value: Option<&str>) -> Result<crate::image::protocol::Mode, ParseError> {
+    use crate::image::protocol::Mode;
+    match value {
+        Some("auto") => Ok(Mode::Auto),
+        Some("off") => Ok(Mode::Off),
+        Some("kitty") => Ok(Mode::Kitty),
+        _ => Err(ParseError::new("--images must be auto, off, or kitty")),
+    }
 }
 
 fn help_requested(args: &[OsString]) -> bool {

@@ -154,6 +154,10 @@ pub(crate) fn measure_zero_ranges(
 }
 
 pub struct FirstFrame {
+    image_focus: Option<crate::image::layout::ImageFocus>,
+    image_query: Option<crate::image::layout::BandQuery>,
+    images_ready: bool,
+    image_version: u64,
     reference_layout: bool,
     spacing: super::spacing::WindowSpacing,
     spacing_ready: bool,
@@ -235,6 +239,16 @@ struct ReplayRequest {
 
 impl FirstFrame {
     pub(crate) fn retire(&mut self, budget: &mut Budget) -> bool {
+        if let Some(query) = self.image_query.as_mut()
+            && !query.retire(budget)
+        {
+            return false;
+        }
+        if let Some(sink) = self.sink.as_mut()
+            && !sink.retire_images(budget)
+        {
+            return false;
+        }
         self.scanner.retire(budget)
             && self.width_cache.retire(budget)
             && self.contexts.retire(budget)
@@ -327,6 +341,10 @@ impl FirstFrame {
         });
         let suppressed_heading_tiles = Vec::new();
         Ok(Self {
+            image_focus: None,
+            image_query: None,
+            images_ready: false,
+            image_version: 0,
             reference_layout: false,
             spacing: Default::default(),
             spacing_ready: false,
@@ -430,6 +448,10 @@ impl FirstFrame {
         let source = Span::new(start, document.source().len());
         let empty = Span::new(start, start);
         Ok(Self {
+            image_focus: None,
+            image_query: None,
+            images_ready: false,
+            image_version: 0,
             reference_layout: false,
             spacing: Default::default(),
             spacing_ready: false,
@@ -860,10 +882,16 @@ impl FirstFrame {
         self.scanner.shared_links().prepare_shape(document, budget)
     }
 
+    pub(crate) fn set_image_focus(&mut self, focus: Option<crate::image::layout::ImageFocus>) {
+        self.image_focus = focus;
+    }
     pub fn shared_links(&self) -> crate::render::objects::SharedLinks {
         self.scanner.shared_links()
     }
     pub fn set_links(&mut self, links: crate::render::objects::SharedLinks) {
+        self.image_version = links.image_bands().version();
+        self.image_query = None;
+        self.images_ready = false;
         self.width_cache.set_links(links.clone());
         self.scanner.set_links(links);
     }
@@ -895,7 +923,9 @@ impl FirstFrame {
         Ok(())
     }
     pub fn matches(&self, document: &Document) -> bool {
-        self.document == document.id() && self.revision == document.revision()
+        self.document == document.id()
+            && self.revision == document.revision()
+            && self.image_version == self.scanner.shared_links().image_bands().version()
     }
 
     #[must_use]
@@ -1087,6 +1117,9 @@ impl FirstFrame {
     ) -> Option<u64> {
         self.sink.as_ref()?.prepared_copy_row_offset(block, index)
     }
+    pub(crate) fn skip_image_band(&self, row: u64) -> Option<u64> {
+        self.sink.as_ref()?.skip_image_band(row)
+    }
     pub(crate) fn copy_logical_rows(&self) -> u64 {
         self.sink
             .as_ref()
@@ -1156,6 +1189,14 @@ impl FirstFrame {
             return Ok(self.step(status));
         }
         loop {
+            if !self
+                .sink
+                .as_mut()
+                .ok_or(FirstFrameError::MissingSink)?
+                .adopt_image_rows(budget)
+            {
+                return Ok(self.step(FirstFrameStatus::BudgetExhausted));
+            }
             if self.rows.saturating_sub(self.leading_rows) >= self.config.row_limit {
                 return self.finish_measurements(document, budget, FirstFrameStatus::Covered);
             }
@@ -1592,6 +1633,31 @@ impl FirstFrame {
             }
             self.spacing_ready = true;
         }
+        if !self.images_ready {
+            let bands = self.scanner.shared_links().image_bands();
+            // Reading shares this geometry snapshot and skips decorative
+            // band rows at serialization, preserving native source heights.
+            if bands.is_empty() {
+                self.images_ready = true;
+            } else {
+                let query = self.image_query.get_or_insert_with(|| {
+                    bands.query(
+                        self.scanner.requested(),
+                        self.scanner.source_cut().unwrap_or(document.source().len()),
+                    )
+                });
+                if !query.advance(
+                    document,
+                    self.projected.then(|| self.checkpoints.view()),
+                    budget,
+                )? {
+                    return Ok(Some(FirstFrameStatus::BudgetExhausted));
+                }
+                self.scanner.set_image_bands(query.take().unwrap());
+                self.image_query = None;
+                self.images_ready = true;
+            }
+        }
         if self.sink.is_none() {
             // Dynamic selection is now prepared. Classify from that window,
             // rather than evaluating unbudgeted next_drawable predicates.
@@ -1688,6 +1754,14 @@ impl FirstFrame {
                 self.selection_ready = false;
                 return Ok(Some(FirstFrameStatus::PendingScan));
             }
+        }
+        if !self.sink.as_mut().unwrap().prepare_image_rows(
+            self.table_view,
+            self.config.row_limit,
+            self.image_focus,
+            budget,
+        )? {
+            return Ok(Some(FirstFrameStatus::BudgetExhausted));
         }
         if !self.math_view_checked {
             if let Some(view) = self.math_copy_view.or(self.table_view) {

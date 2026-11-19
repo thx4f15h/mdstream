@@ -7,9 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crossterm::cursor::{Hide, MoveTo, Show};
-use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, MouseButton, MouseEventKind,
-};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture, MouseButton, MouseEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
     Clear, ClearType, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
@@ -19,6 +17,7 @@ use mdtui3::Budget;
 
 use crate::app::AppState;
 use crate::cli::LinkMode;
+use crate::image::input::{Input, Source as TerminalInput};
 use crate::render::frame::{FrameError, FrameGeometry, FrameRuntime};
 use crate::stream::{
     ANCHOR_WORK, FRAME_WORK, IDLE_POLL_INTERVAL, LoadEvent, Reader, StreamEngine, StreamError,
@@ -50,6 +49,20 @@ pub fn run_with_table_policy(
     input: File,
     policy: crate::render::table_widths::TableWidthPolicy,
 ) -> io::Result<()> {
+    run_with_images(
+        link_mode,
+        input,
+        policy,
+        crate::image::protocol::Mode::default(),
+    )
+}
+
+pub fn run_with_images(
+    link_mode: LinkMode,
+    input: File,
+    policy: crate::render::table_widths::TableWidthPolicy,
+    images: crate::image::protocol::Mode,
+) -> io::Result<()> {
     let restore = RestoreState::new(link_mode != LinkMode::NoOsc8);
     install_panic_hook(restore.clone());
     enable_raw_mode()?;
@@ -66,15 +79,16 @@ pub fn run_with_table_policy(
 
     maybe_panic_for_test();
 
+    let mut terminal_input = TerminalInput::open()?;
     let (cols, rows) = terminal_size()?;
     if cols < MIN_TERMINAL_COLS || rows < MIN_TERMINAL_ROWS {
-        run_too_small()?;
+        run_too_small(&mut terminal_input)?;
         drop(session);
         return Ok(());
     }
 
     let mut reader = Reader::spawn(input_reader(input))?;
-    let runtime = FrameRuntime::new(
+    let mut runtime = FrameRuntime::new(
         FrameGeometry {
             rows,
             cols,
@@ -83,9 +97,10 @@ pub fn run_with_table_policy(
         link_mode,
     )
     .map_err(frame_error)?;
+    runtime.configure_images(images);
     let mut engine = StreamEngine::new(runtime);
     engine.set_table_policy(policy).map_err(stream_error)?;
-    let result = run_engine_loop(&mut engine, &mut reader, &mut output);
+    let result = run_engine_loop(&mut engine, &mut reader, &mut output, &mut terminal_input);
     abort_output(&mut engine, &mut output);
     drop(session);
     let closed = reader.close().map_err(stream_error);
@@ -106,10 +121,12 @@ fn run_engine_loop(
     engine: &mut StreamEngine,
     reader: &mut Reader,
     output: &mut File,
+    terminal_input: &mut TerminalInput,
 ) -> io::Result<()> {
     let mut app = AppState::default();
     let start = Instant::now();
     let mut first_frame_checked = false;
+    let mut image_deadline = Instant::now();
 
     loop {
         let now = start.elapsed();
@@ -175,23 +192,41 @@ fn run_engine_loop(
                 .map_err(stream_error)?;
         }
 
+        if Instant::now() >= image_deadline {
+            image_deadline = Instant::now() + std::time::Duration::from_millis(16);
+            engine.runtime_mut().graphics_tick(Instant::now());
+            engine
+                .runtime_mut()
+                .advance_graphics(output, &mut Budget::new(FRAME_WORK))?;
+        }
         // The level-triggered tty source preserves a key that arrives with
-        // SIGWINCH. Give it a nonzero deadline even while a frame is due;
-        // its zero-timeout path deliberately performs no fd poll.
-        let timeout = engine
+        // SIGWINCH. Give it a nonzero deadline even while a frame is due.
+        let mut timeout = engine
             .poll_timeout(start.elapsed())
             .min(IDLE_POLL_INTERVAL)
             .max(std::time::Duration::from_millis(1));
-        if event::poll(timeout)? {
-            match event::read()? {
-                Event::Resize(cols, rows) => {
-                    app.resize(engine, rows, cols).map_err(stream_error)?;
-                }
-                Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
+        timeout = timeout
+            .min(image_deadline.saturating_duration_since(Instant::now()))
+            .max(std::time::Duration::from_millis(1));
+        if engine
+            .runtime()
+            .graphics()
+            .is_some_and(|g| g.wire.packet_started())
+        {
+            timeout = timeout.max(std::time::Duration::from_millis(16));
+        }
+        if let Some((cols, rows)) = terminal_input.resize()? {
+            engine.runtime_mut().graphics_resize();
+            app.resize(engine, rows, cols).map_err(stream_error)?;
+        }
+        if let Some(input) = terminal_input.poll(timeout)? {
+            engine.runtime_mut().graphics_input(input);
+            match input {
+                Input::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
                     app.click_link(engine, mouse.row, mouse.column)
                         .map_err(stream_error)?;
                 }
-                Event::Key(key) if key.is_press() || key.is_repeat() => {
+                Input::Key(key) if key.is_press() || key.is_repeat() => {
                     let outcome = app
                         .handle_key(engine, key.code, key.modifiers)
                         .map_err(stream_error)?;
@@ -225,15 +260,17 @@ fn abort_output(engine: &mut StreamEngine, output: &mut File) {
     }
 }
 
-fn run_too_small() -> io::Result<()> {
+fn run_too_small(input: &mut TerminalInput) -> io::Result<()> {
     write_small_terminal_message()?;
     loop {
-        let timeout = event::poll(IDLE_POLL_INTERVAL)?;
-        if !timeout {
-            continue;
+        if input.resize()?.is_some() {
+            write_small_terminal_message()?;
         }
-        match event::read()? {
-            Event::Key(key)
+        let Some(event) = input.poll(IDLE_POLL_INTERVAL)? else {
+            continue;
+        };
+        match event {
+            Input::Key(key)
                 if (key.is_press() || key.is_repeat())
                     && (key.code == crossterm::event::KeyCode::Char('q')
                         || (key.code == crossterm::event::KeyCode::Char('c')
@@ -243,7 +280,6 @@ fn run_too_small() -> io::Result<()> {
             {
                 return Ok(());
             }
-            Event::Resize(_, _) => write_small_terminal_message()?,
             _ => {}
         }
     }

@@ -16,3 +16,5 @@ pub mod static_render;
 pub mod stream;
 pub mod terminal;
 pub mod theme;
+
+pub mod image;

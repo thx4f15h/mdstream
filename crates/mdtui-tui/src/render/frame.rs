@@ -247,6 +247,9 @@ pub struct FoldHit {
 }
 
 pub struct FrameRuntime {
+    // Keep the fixed graphics tables out of every FrameRuntime move/stack
+    // temporary, including native reading clients with graphics disabled.
+    graphics: Option<Box<crate::image::session::Session>>,
     notes: footnote_surface::FootnoteUi,
     fold_hits: Vec<FoldHit>,
     objects: Vec<VisibleObject>,
@@ -498,6 +501,7 @@ impl FrameRuntime {
         viewport.shared_links().enable_footnote_numbers();
         let slugs = document.heading_slug_session();
         Ok(Self {
+            graphics: None,
             notes: Default::default(),
             shape,
             document,
@@ -543,6 +547,108 @@ impl FrameRuntime {
         })
     }
 
+    /// Install codec geometry on its actual native surface. Selected-target
+    /// validation remains the current semantic producer's responsibility; this
+    /// method verifies native object coordinates and expires only layout state.
+    pub fn publish_image_band(
+        &mut self,
+        band: crate::image::layout::Band,
+        b: &mut Budget,
+    ) -> Result<bool, FrameError> {
+        use crate::image::layout::Surface;
+        match band.key.surface {
+            Surface::Root(id) if id == self.document.document().id() => {
+                let shared = self.viewport.shared_links().image_bands();
+                let version = shared.version();
+                if !shared.publish(self.document.document(), band, b)? {
+                    return Ok(false);
+                }
+                if shared.version() != version {
+                    self.viewport
+                        .image_geometry_changed(self.document.document(), band.anchor)?;
+                    self.cached_body = None;
+                    self.body_dirty = true;
+                }
+                Ok(true)
+            }
+            Surface::Note(key) => self.publish_note_image_band(key, band, b),
+            _ => Err(LayoutError::WrongDocument.into()),
+        }
+    }
+    pub fn withdraw_image_band(
+        &mut self,
+        band: crate::image::layout::Band,
+        b: &mut Budget,
+    ) -> Result<bool, FrameError> {
+        use crate::image::layout::Surface;
+        match band.key.surface {
+            Surface::Root(id) if id == self.document.document().id() => {
+                let shared = self.viewport.shared_links().image_bands();
+                let version = shared.version();
+                if !shared.withdraw(band, b) {
+                    return Ok(false);
+                }
+                if version != shared.version() {
+                    self.viewport
+                        .image_band_removed(self.document.document(), band)?;
+                    self.cached_body = None;
+                    self.body_dirty = true;
+                }
+                Ok(true)
+            }
+            Surface::Note(key) => self.withdraw_note_image_band(key, band, b),
+            _ => Err(LayoutError::WrongDocument.into()),
+        }
+    }
+    pub fn configure_images(&mut self, mode: crate::image::protocol::Mode) {
+        self.graphics = Some(Box::new(crate::image::session::Session::new(mode)));
+    }
+    pub fn graphics(&self) -> Option<&crate::image::session::Session> {
+        self.graphics.as_deref()
+    }
+    pub fn graphics_mut(&mut self) -> Option<&mut crate::image::session::Session> {
+        self.graphics.as_deref_mut()
+    }
+    pub fn graphics_input(&mut self, input: crate::image::input::Input) {
+        if let Some(g) = self.graphics.as_mut() {
+            g.input(input)
+        }
+    }
+    pub fn graphics_tick(&mut self, now: Instant) {
+        if let Some(g) = self.graphics.as_mut() {
+            g.tick(now)
+        }
+    }
+    pub fn graphics_resize(&mut self) {
+        if let Some(g) = self.graphics.as_mut() {
+            g.resize()
+        }
+    }
+    fn graphics_owns_wire(&self) -> bool {
+        self.graphics
+            .as_ref()
+            .is_some_and(|g| g.wire.packet_started())
+    }
+    /// The only graphics writer. OpenCut still owns a text transaction even
+    /// when Transaction::pending is false. All root/note clipboard owners are
+    /// checked before entering a fresh graphics packet.
+    pub fn advance_graphics<W: Write + ?Sized>(
+        &mut self,
+        w: &mut W,
+        b: &mut Budget,
+    ) -> io::Result<()> {
+        if !self.graphics_owns_wire()
+            && (self.presenter.wire.is_some()
+                || self.reading.copy_pending()
+                || self.notes.clipboard_pending())
+        {
+            return Ok(());
+        }
+        if let Some(g) = self.graphics.as_mut() {
+            g.advance(w, b)?
+        }
+        Ok(())
+    }
     pub fn reading(&self) -> &crate::reading::ReadingTools {
         &self.reading
     }
@@ -702,7 +808,8 @@ impl FrameRuntime {
     }
 
     pub fn advance_reading<W: Write + ?Sized>(&mut self, writer: &mut W, budget: &mut Budget) {
-        if self.reading.copy_pending() && self.presenter.wire.is_some() {
+        if self.graphics_owns_wire() || self.reading.copy_pending() && self.presenter.wire.is_some()
+        {
             // Clipboard controls wait for a real EGC boundary. The normal
             // frame path continues/ACKs the retained wire transaction; a copy
             // request must never cancel an otherwise unchanged open glyph.
@@ -1311,6 +1418,10 @@ impl FrameRuntime {
         writer: &mut W,
         budget: &mut Budget,
     ) -> Result<FrameCommit, FrameError> {
+        if self.graphics_owns_wire() {
+            self.advance_graphics(writer, budget)?;
+            return Ok(FrameCommit::default());
+        }
         if !self.initialize(budget)? {
             return Ok(FrameCommit::default());
         }
@@ -1617,7 +1728,7 @@ impl FrameRuntime {
     }
 
     pub fn wire_pending(&self) -> bool {
-        self.presenter.wire_pending()
+        self.presenter.wire_pending() || self.graphics_owns_wire()
     }
     pub fn abort_output<W: Write + ?Sized>(
         &mut self,
@@ -1625,7 +1736,12 @@ impl FrameRuntime {
         budget: &mut Budget,
     ) -> Result<bool, FrameError> {
         let Some(tx) = self.presenter.wire.as_mut() else {
-            return Ok(self.viewport.shared_links().retire_initialization(budget));
+            let done = if let Some(g) = self.graphics.as_mut() {
+                g.abort(writer, budget)?
+            } else {
+                true
+            };
+            return Ok(done && self.viewport.shared_links().retire_initialization(budget));
         };
         tx.cancel();
         let done = tx.advance(writer, budget)? == Progress::Complete;
@@ -1634,7 +1750,10 @@ impl FrameRuntime {
             self.presenter.sent = None;
             self.presenter.full_repaint = true;
         }
-        Ok(done && self.viewport.shared_links().retire_initialization(budget))
+        // The next call drains graphics only after the text cancellation ACK.
+        Ok(done
+            && self.graphics.is_none()
+            && self.viewport.shared_links().retire_initialization(budget))
     }
     pub fn commit_frame_budgeted<W: Write + ?Sized>(
         &mut self,
@@ -1642,6 +1761,10 @@ impl FrameRuntime {
         frame: &ViewportFrame,
         budget: &mut Budget,
     ) -> Result<FrameCommit, FrameError> {
+        if self.graphics_owns_wire() {
+            self.advance_graphics(writer, budget)?;
+            return Ok(FrameCommit::default());
+        }
         self.commit_frame_started(writer, frame, Instant::now(), budget)
     }
     pub fn commit_empty_frame_budgeted<W: Write + ?Sized>(
@@ -1804,6 +1927,11 @@ impl FrameRuntime {
                 ContentArea::new(self.content_x, self.geometry.content_width),
             );
             self.reading_edge_scroll = self.reading.selection.pending_motion().is_some();
+        }
+        if commit.bytes > 0
+            && let Some(graphics) = self.graphics.as_mut()
+        {
+            graphics.repainted()
         }
         if commit.committed {
             self.note_root_committed();

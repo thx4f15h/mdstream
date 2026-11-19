@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::Path;
@@ -14,6 +16,12 @@ use mdtui_tui::terminal;
 use mdtui3::{Document, Utf8Document};
 
 fn main() -> ExitCode {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--image-worker")) {
+        return match mdtui_tui::image::worker::run() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(_) => ExitCode::from(EXIT_IO),
+        };
+    }
     match mdtui_tui::cli::parse(std::env::args_os().skip(1)) {
         Ok(Outcome::Help) => match write_help() {
             Ok(()) => ExitCode::from(EXIT_SUCCESS),
@@ -50,6 +58,7 @@ fn run(options: Options) -> Result<(), AppError> {
         width,
         height,
         link_mode,
+        images,
         table_policy,
         file,
     } = options;
@@ -70,7 +79,7 @@ fn run(options: Options) -> Result<(), AppError> {
     debug_assert!(width.is_none() && height.is_none());
     let file = open_input_file(&file)?;
     reject_non_tty()?;
-    terminal::run_with_table_policy(link_mode, file, table_policy)
+    terminal::run_with_images(link_mode, file, table_policy, images)
         .map_err(|error| AppError::io(format!("terminal error: {error}")))
 }
 

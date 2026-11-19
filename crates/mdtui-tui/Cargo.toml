@@ -7,9 +7,15 @@ description = "Terminal Markdown reader for mdstream-core"
 [dependencies]
 crossterm = { workspace = true, default-features = false, features = ["events", "use-dev-tty"] }
 mdtui3.workspace = true
-rustix = { workspace = true, features = ["fs"] }
+rustix = { workspace = true, features = ["fs", "process", "event", "termios", "time"] }
 unicode-segmentation.workspace = true
 unicode-width = { workspace = true, default-features = false }
+
+image = { workspace = true, default-features = false, features = ["png", "jpeg"] }
+ureq = { workspace = true, default-features = false, features = ["rustls"] }
+url.workspace = true
+base64 = { workspace = true, default-features = false, features = ["alloc"] }
+termion = { workspace = true, default-features = false }
 
 [dev-dependencies]
 insta = { workspace = true, default-features = false }

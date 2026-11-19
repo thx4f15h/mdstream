@@ -21,6 +21,8 @@ nix develop -c cargo r -r -p mdtui-tui -- --once crates/mdtui-tui/tests/fixtures
 
 输入支持普通文件和 Unix FIFO；首屏不等待 EOF，写端暂停时仍可 `q` 退出。交互模式支持方向键、翻页、Home/End、`s` 目录侧栏、Tab 焦点、Enter 跳转，以及 `v` 源码选区、`y` 显示文本复制、`Y` 精确源码复制、`/` 提交式显示搜索和 `n`/`N` 命中导航；正文 End 持续跟随当前输入流的末尾，Ctrl+End 只跳到当前末尾；上滚或显式导航退出跟随。图片显示可点击 alt，空 alt 显示 `[image]`。表格可用 `--table-min-width` / `--table-max-width` 限定内容列宽，Left/Right 横移一列、Ctrl-Left/Right 横移八列；最上方可见表格为目标，状态显示列范围和左右省略数，百万字 cell 按帧精测。侧栏焦点的 Left/Right 收展目录树，0…6 限定标题级别上限，`/` 编辑区分大小写的显示名称查询，Esc 取消；路径与查询状态在侧栏头部显示。详细键位、尺寸和限制见 [阅读器使用说明](crates/mdtui-tui/README.md)，来源、预算及验收见 [终端集成说明](docs/tui-integration.md)。
 
+030 当前仅交付通用 URI 序列化、图片 worker/cache/协议及原生布局基础；CLI 仍显示可点击 alt，尚未自动加载正文图片。`--images=auto|kitty` 仅作显式终端能力探测，默认 `off`。具体已接通与未接通范围见 [阶段说明](docs/image-foundation.md)；完整图片 UI 和当前所选目标 URI 消费仍未完成。
+
 ## 接入
 
 ```rust

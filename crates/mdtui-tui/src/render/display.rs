@@ -154,6 +154,7 @@ struct MathScan {
 }
 
 pub struct DisplayScanner {
+    image_bands: Option<std::sync::Arc<Vec<crate::image::layout::Band>>>,
     empty_alt_at: Option<(Span, usize)>,
     following_source: Option<usize>,
     force_indexed: bool,
@@ -220,6 +221,28 @@ pub struct DisplayScanner {
 
 impl DisplayScanner {
     pub(crate) fn retire(&mut self, budget: &mut Budget) -> bool {
+        if let Some(snapshot) = self.image_bands.as_mut() {
+            if let Some(bands) = std::sync::Arc::get_mut(snapshot) {
+                while !bands.is_empty() {
+                    if !budget.charge(mdtui3::WorkLimit {
+                        queries: 1,
+                        objects: 1,
+                        ..Default::default()
+                    }) {
+                        return false;
+                    }
+                    bands.pop();
+                }
+            }
+            if !budget.charge(mdtui3::WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            }) {
+                return false;
+            }
+            self.image_bands = None;
+        }
         if let Some(scan) = &mut self.note_scan
             && let Some(child) = &mut scan.child
             && !child.retire(budget)
@@ -295,6 +318,7 @@ impl DisplayScanner {
             context_end = requested.end;
         }
         Some(Self {
+            image_bands: None,
             empty_alt_at: None,
             following_source: None,
             force_indexed: false,
@@ -1013,6 +1037,12 @@ impl DisplayScanner {
         self.links.prepare_shape(document, budget)
     }
 
+    pub(crate) fn image_bands(&self) -> Option<std::sync::Arc<Vec<crate::image::layout::Band>>> {
+        self.image_bands.clone()
+    }
+    pub(crate) fn set_image_bands(&mut self, bands: Vec<crate::image::layout::Band>) {
+        self.image_bands = (!bands.is_empty()).then(|| std::sync::Arc::new(bands));
+    }
     pub fn shared_links(&self) -> crate::render::objects::SharedLinks {
         self.links.clone()
     }

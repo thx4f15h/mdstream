@@ -32,6 +32,7 @@ pub struct ObjectStats {
 pub struct SharedLinks(Rc<RefCell<LinkState>>);
 
 pub struct LinkState {
+    bands: crate::image::layout::SharedBands,
     footnote_numbers: bool,
     math: super::math::SharedMath,
     shape: Option<super::shape::SharedShape>,
@@ -65,6 +66,7 @@ impl SharedLinks {
     }
     pub fn new(document: &Document) -> Self {
         Self(Rc::new(RefCell::new(LinkState {
+            bands: crate::image::layout::SharedBands::new(document),
             footnote_numbers: false,
             math: super::math::SharedMath::new(document),
             resolver: document.link_resolver(),
@@ -86,6 +88,9 @@ impl SharedLinks {
         Rc::ptr_eq(&self.0, &other.0)
     }
 
+    pub fn image_bands(&self) -> crate::image::layout::SharedBands {
+        self.0.borrow().bands.clone()
+    }
     pub fn math(&self) -> super::math::SharedMath {
         self.0.borrow().math.clone()
     }
