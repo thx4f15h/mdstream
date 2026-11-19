@@ -30,6 +30,7 @@ mod destination;
 mod display;
 mod display_search;
 mod display_shape;
+mod display_shape_range;
 mod display_source;
 #[doc(hidden)]
 pub mod display_source_html;
@@ -120,6 +121,7 @@ pub use display_shape::{
     DisplayShapeSeed, DisplayShapeSeedItem, DisplayShapeSeedWork, DisplayShapeStats,
     DisplayShapeStyleEvent,
 };
+pub use display_shape_range::DisplayShapeRangeSeed;
 pub use excerpt::{DisplayExcerpt, ExcerptEnd, ExcerptLimits, ExcerptStep};
 pub use fold_batch::{FoldBatch, FoldBatchAction, FoldBatchProgress};
 pub use fold_navigation::{

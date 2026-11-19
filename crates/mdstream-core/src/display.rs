@@ -69,6 +69,10 @@ impl DisplayIndex {
             )
         })
     }
+    pub(crate) fn shape_seed_start(&self, source: usize) -> usize {
+        self.entries
+            .partition_point(|entry| entry.source.end <= source)
+    }
     pub(crate) fn entries_len(&self) -> usize {
         self.entries.len()
     }

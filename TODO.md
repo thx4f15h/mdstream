@@ -580,3 +580,5 @@ HTML 不在当前需求范围。
 - [x] **脚注 Markdown 正文核心**：获胜定义在输入阶段复用真实 Markdown parser；追加去前缀投影、双向原文映射、宿主全局引用/稳定编号及 BodyKey 命名空间，正文显示/对象/搜索/依赖/真实布局共享 Budget，普通追加与合并 Update 保留既有高度及检查点。手写 oracle、全切点/逐前缀、百万追加和两万历史规模验收见 [交付记录](DONE.md#2026-11-13-脚注-markdown-正文核心交付)。父项数学/脚注后续与实际 TUI 脚注区、上标及导航仍未完成。
 
 - [x] **缩进代码内部空行与来源账本核心**：确切作用域跨空白续接、首尾裁剪、pending owner/完整来源、稳定 Code 身份、延迟列表分隔、付费暂存隐藏、012/018 事实及普通代码绘制/复制已交付，见[记录](DONE.md#2026-11-13-缩进代码内部空行与来源账本交付)。113/223 段落中断方言、原生 fenced 检查点重放的最终组合验收、父项实际间距及其余完整兼容需求保留。
+
+- [ ] **冷 Viewport V01 的窗口级采用与进展**：正式 `f7920d0` 原800014B/100000列、40×12、min3/max8、pan99998、1q/1o/6B/1tile/1recovery/1dependency、200000帧例仍 Pending，原输入/预算/断言保留。当前只交付[只读范围 metadata 与测试专用 SharedShape 原型](docs/cold-viewport-range-prototype.md)，不提供 renderer rollback 基线；未闭环的冷 owner/epoch 接入已归档撤回。未知范围 summary、同 owner 追加/rollback/finish、resize/CP/列 pan 与精确原例仍未完成，不能以 FrameRuntime 输入 owner 成功或新的初始化免责声明替代。最终034组合审计未完成。

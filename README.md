@@ -4388,3 +4388,9 @@ assert_eq!(text, "a\n\nb\n");
 正文 `z` 菜单可选择 0 行、1/3 个逻辑行或当前宽度的显示行前缀；新默认选项沿用已分类长度 4096B 准入。逻辑行消费规范显示 LF，显示行与真实段落/列表 sink 共用放置状态，包含引用/列表前缀、宽字、完整 EGC 与原生数学尺寸。跨截止线的替换 atom 或活动原生对象整体后退隐藏；段间空行及占位不占正文限额。现有显式源码切口合同保持独立。
 
 同一 FoldView/Source ID 消费追加、resize、预览、复制、Reveal、历史和 End；媒体/代码的显式详情只读有限已有字段，图片尺寸/协议未知会明确暂缺。`y` 不把详情当成隐藏正文已可见，`Y` 保持原始源码。输入仍累计 O(n log n)/空间 O(n)，查询、实际准备和完整可见 payload 输出分别报告，不将索引覆盖字节冒充实际扫描，也不承诺固定 CPU 时延。合同、操作与界限见 [TUI 使用说明](crates/mdtui-tui/README.md)，验收见[交付](DONE.md#2026-11-18-段落正文行前缀与有限媒体详情)。
+
+### 冷 Viewport 调查与只读范围原型（阶段交付）
+
+新增绑定文档/revision、共用 Budget 的 `display_shape_range_seed`，复用当前 annotation、replacement、对象与 source-order 索引读取指定范围元数据；HTML 复用输入分类并检查原始 opener 上下文。SharedShape 范围采用只保留为 `cfg(test)` 实验，没有启用冷 owner/epoch 更新路径。
+
+[范围合同、原始负例、验证与限制](docs/cold-viewport-range-prototype.md) 明确保留原冷入口 P0：800014B/100000 列的正式 base 原例仍在原200000帧 ceiling 内 Pending。本阶段没有解决该缺口，没有删除原要求或为旧 source 重采用增加豁免；最终组合审计仍未完成。

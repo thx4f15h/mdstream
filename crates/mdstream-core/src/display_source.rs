@@ -347,6 +347,25 @@ impl DisplaySource {
     pub fn html_state(&self) -> HtmlShape {
         self.0.read().unwrap().html_scan.clone()
     }
+    /// First input-classified HTML span intersecting a source range, including
+    /// an opener before the range. Two ordered metadata seeks, no source read.
+    pub fn first_html_in(&self, source: Span) -> Option<Span> {
+        if source.start >= source.end {
+            return None;
+        }
+        let s = self.0.read().unwrap();
+        s.html
+            .range(..=source.start)
+            .next_back()
+            .map(|(_, &span)| span)
+            .filter(|span| span.end > source.start)
+            .or_else(|| {
+                s.html
+                    .range(source.start..source.end)
+                    .next()
+                    .map(|(_, &span)| span)
+            })
+    }
     pub fn next_html(&self, after: Option<usize>) -> Option<Span> {
         use std::ops::Bound::{Excluded, Unbounded};
         let s = self.0.read().unwrap();

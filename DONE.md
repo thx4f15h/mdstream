@@ -3397,3 +3397,13 @@ resize后显式目录跳转再折叠的独立037缺陷已新增未勾待办，�
 核心 `UriEncoder` 使用固定 Cow 输入并逐字节先付费；不改变 raw metadata/parser/官方输入。PNG/JPEG worker、独立编码/像素/网络成本、有界 current/pinned/retiring cache、取消/paid reap、Kitty 真上传/ACK/重用/删除及单输入/021 writer arbiter 已有独立组件实现。实际 Root/BodyKey Note 行带复用同一高度/CP/FoldView、click/source/Reading 与 End；Scene 仍需宿主传入当前资源和帧，自动发现/审批/状态 UI 未接通。
 
 原始不可变 provider、cache generation 与 retirement 第13次取消 native red 保持；对应生产修正和 root 独立 green 不被覆盖。真实终端组件证据使用实际 Kitty 和独立 framebuffer pixel oracle，不将 fallback 当作绘图；原 observer/test/lint/ENOSPC 失败保留。阶段冻结、命令/exit、复用证据的 byte 绑定及通过/失败/未测清单写入 `/tmp/mdtui3-codex-todo/030-prototypes/wrapup/` 和 `/tmp/mdtui3-codex-todo/030-wrapup-result.json`，仅供 root 独立审查后统一整理一个阶段提交；本线程不自行 commit/push。
+
+## 2026-11-19 冷 Viewport 只读范围原型阶段
+
+完成原 V01 的正式 base 负例调查与当前只读范围原型整理；**原冷入口 P0 仍未解决，未勾完成**。新增 `display_shape_range_seed` 复用已有原生范围索引，严格绑定文档/revision，共用 Budget；HTML 读取已有分类并检查原始 opener 元数据。实际 SharedShape 的范围采用仅由 `cfg(test)` 编译，不提供增量 rollback 基线，也不启用冷 owner/epoch/Reader 更新机制。范围内起读的对象、样式、代码、HTML、脚注与字素/来源对照及接口限制见[阶段说明](docs/cold-viewport-range-prototype.md)。
+
+正式 `f7920d0` 注册开/关原例均在原200000帧 ceiling 内 Pending，实际旧 source 再解码800014B、CP0，负例与输入 SHA 保留。indexed-only 候选虽解码0，仍访问199972个全局 annotation 节点而 Pending；未闭环冷接入的44帧 Ready 结果仍有原装饰行计数字面断言失败，完整补丁/源码已归档撤回，不作为本阶段生产修复。033真实输入 owner 的成功仍独立有效；原例、原 TODO 窗口约束和最终034审计均保留。
+
+按用户“完成当前阶段以后收尾”指令，本阶段只做必要定向回归、编译、格式及本范围严格检查，不继续机制扩展、不等待未来功能、不运行重复全仓门禁。原始失败、fixture 更正、通过/未测清单、精确命令与最终冻结交 root 统一审查和单个阶段提交，详见 `/tmp/mdtui3-codex-todo/043-prototypes/` 与 `/tmp/mdtui3-codex-todo/043-wrapup-result.json`；本线程未自行 commit/push。核心零 runtime 依赖与 unsafe 禁令、已有 hooks/rustfmt 保持。
+
+本阶段最终定向 debug/release 各16项通过（新增11项、既有5项）；核心类型检查、core/TUI 范围 strict Clippy、无警告 rustdoc、fmt 通过。首次 strict 的可折叠 if、初版测试的两处编译错误、错误无-Mark/Setext rollback fixture 假设及更正均原样保留；独立 LinkWindow 计数回归证明 step 口径是成功原子扣费次数。没有重跑全 workspace 或实际 CLI/UI，也没有将历史验收当作新组合通过。

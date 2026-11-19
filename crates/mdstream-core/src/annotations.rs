@@ -913,10 +913,112 @@ impl ShapeSeed {
     }
 }
 
+/// Current marks intersecting one query range. No historical checkpoint copy.
+pub(crate) struct ShapeRange {
+    stack: Vec<(usize, Span)>,
+    started: bool,
+    pub(crate) work: crate::DisplayShapeSeedWork,
+}
+impl ShapeRange {
+    pub(crate) fn new() -> Self {
+        Self {
+            stack: Vec::new(),
+            started: false,
+            work: Default::default(),
+        }
+    }
+    pub(crate) fn next(
+        &mut self,
+        annotations: &Annotations,
+        range: Span,
+        budget: &mut crate::Budget,
+    ) -> Result<Option<crate::DisplayShapeSeedItem>, crate::Completion> {
+        loop {
+            if self.started && self.stack.is_empty() {
+                return Ok(None);
+            }
+            if !budget.charge(crate::WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            }) {
+                return Err(crate::Completion::BudgetExhausted);
+            }
+            self.work.steps += 1;
+            if !self.started {
+                self.started = true;
+                self.stack
+                    .push((annotations.root, Span::new(0, annotations.capacity)));
+            }
+            let (id, source) = self.stack.pop().unwrap();
+            self.work.annotation_nodes += 1;
+            if source.end <= range.start || range.end <= source.start {
+                continue;
+            }
+            let node = annotations.nodes[id];
+            let mid = source.start + source.len() / 2;
+            for side in (0..2).rev() {
+                let child_source = if side == 0 {
+                    Span::new(source.start, mid)
+                } else {
+                    Span::new(mid, source.end)
+                };
+                if child_source.start < range.end
+                    && range.start < child_source.end
+                    && let Some(child) = node.child(side)
+                {
+                    self.stack.push((child, child_source));
+                }
+            }
+            let mark = node.tag;
+            if mark != Mark::default() {
+                return Ok(Some(crate::DisplayShapeSeedItem::Mark {
+                    source: Span::new(source.start.max(range.start), source.end.min(range.end)),
+                    baseline: false,
+                    mark: crate::DisplayShapeMark {
+                        style: mark.style,
+                        base_hidden: mark.base_hidden,
+                        delimiter_hidden: mark.delimiter_hidden,
+                        emphasis_depth: mark.emphasis_depth,
+                        strong_depth: mark.strong_depth,
+                        link: mark.link,
+                        hide_owner: mark.hide_owner(),
+                        hide_alternative: mark.alternative_owner(),
+                        object_syntax: mark.link_syntax,
+                        order: mark.serial,
+                    },
+                }));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn shape_range_outside_annotation_capacity_skips_the_prefix_root() {
+        let mut annotations = Annotations::default();
+        annotations.apply(Span::new(0, 2), Style::HIDDEN, None, 1);
+        let mut cursor = ShapeRange::new();
+        let source = Span::new(64, 68);
+        let mut zero = crate::Budget::new(crate::WorkLimit::default());
+        assert!(matches!(
+            cursor.next(&annotations, source, &mut zero),
+            Err(crate::Completion::BudgetExhausted)
+        ));
+        assert_eq!(cursor.work.annotation_nodes, 0);
+        let mut budget = crate::Budget::new(crate::WorkLimit::unlimited());
+        assert!(
+            cursor
+                .next(&annotations, source, &mut budget)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(cursor.work.annotation_nodes, 1);
+        assert_eq!(budget.used().queries, 1);
+    }
     #[test]
     fn shortcut_visibility_grammar_witness_and_logarithmic_query_work() {
         // A nonempty normalized label leaves a base-visible scalar: escapes

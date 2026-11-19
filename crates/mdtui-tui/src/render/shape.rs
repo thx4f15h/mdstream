@@ -4444,3 +4444,7 @@ mod streamed_style_and_adoption_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "shape_range_prototype.rs"]
+mod range_adoption_prototype;
