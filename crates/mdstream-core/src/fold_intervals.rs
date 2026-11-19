@@ -238,6 +238,28 @@ pub(crate) struct Intervals {
 }
 
 impl Intervals {
+    /// Destroy the pointer tree as a paid vine walk, without recursive Drop.
+    pub(crate) fn retire(&mut self, budget: &mut crate::Budget) -> crate::Completion {
+        while self.root.is_some() {
+            if !budget.charge(crate::WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            }) {
+                return crate::Completion::BudgetExhausted;
+            }
+            let mut node = self.root.take().unwrap();
+            if let Some(mut left) = node.children[0].take() {
+                node.children[0] = left.children[1].take();
+                left.children[1] = Some(node);
+                self.root = Some(left);
+            } else {
+                self.root = node.children[1].take();
+                self.len -= 1;
+            }
+        }
+        crate::Completion::Covered
+    }
     pub fn visits(&self) -> u64 {
         self.visits.load(Ordering::Relaxed)
     }

@@ -28,6 +28,10 @@ use crate::screen::{Cell, ContentArea, Screen, ScreenError, StyleRole};
 use crate::sidebar::SidebarStats;
 use crate::sidebar::directory::{Directory, DirectoryEvent, HEADER_ROWS};
 
+#[path = "footnote_surface.rs"]
+mod footnote_surface;
+pub use footnote_surface::{FootnoteReading, FootnoteSurfaceStats, NoteFoldState, SurfaceMove};
+
 pub const FIRST_FRAME_CLEAR: &[u8] = b"\x1b[2J\x1b[H";
 pub const BEGIN_SYNCHRONIZED_UPDATE: &[u8] = b"\x1b[?2026h";
 pub const END_SYNCHRONIZED_UPDATE: &[u8] = b"\x1b[?2026l";
@@ -224,6 +228,7 @@ struct PendingFragment {
 enum VisibleObject {
     Link(LinkId),
     Fold(mdtui3::FoldId, mdtui3::Span),
+    Footnote(mdtui3::FootnoteReferenceId, mdtui3::Span),
 }
 
 /// A committed placeholder run, in terminal coordinates. Its registered range
@@ -242,6 +247,7 @@ pub struct FoldHit {
 }
 
 pub struct FrameRuntime {
+    notes: footnote_surface::FootnoteUi,
     fold_hits: Vec<FoldHit>,
     objects: Vec<VisibleObject>,
     object_focus: Option<VisibleObject>,
@@ -317,8 +323,14 @@ enum RefineTarget {
 }
 
 impl FrameRuntime {
+    /// No input byte or EOF may be consumed until native source adoption ends.
+    pub fn input_ready(&self) -> bool {
+        self.viewport.shared_links().shape_ready() && !self.notes.initializing()
+    }
     pub fn fold_busy(&self) -> bool {
         self.fold_ui.active()
+            || !self.input_ready()
+            || self.notes.input_busy()
             || self.fold_jump.is_some()
             || self.pending_jump.is_some()
             || self.pending_restore.is_some()
@@ -338,7 +350,7 @@ impl FrameRuntime {
         self.fold_ui.prefix_query_starts()
     }
     pub fn fold_pending(&self) -> bool {
-        self.fold_ui.pending() || self.fold_jump.is_some()
+        self.fold_ui.pending() || self.fold_jump.is_some() || self.notes.pending()
     }
     pub fn open_fold_menu(&mut self, sidebar: bool) {
         self.cancel_fragment();
@@ -394,17 +406,29 @@ impl FrameRuntime {
         link_mode: LinkMode,
     ) -> Result<Self, FrameError> {
         let mut document = Utf8Document::new();
+        document.enable_footnote_continuation()?;
         document.enable_display_shape_effects()?;
         let shape = super::shape::SharedShape::new(document.document())?;
+        let mut input_update = Update::default();
         if !source.is_empty() {
             let update = document
                 .append(source.as_bytes())
                 .map_err(|_| FrameError::InputFinished)?;
             shape.apply(document.document(), &update)?;
+            input_update = update;
         }
         let update = document.finish();
         shape.apply(document.document(), &update)?;
-        Self::from_indexed_document(document, Some(shape), geometry, link_mode)
+        if input_update.document.is_some() {
+            input_update.merge(update)?;
+        } else {
+            input_update = update;
+        }
+        let mut runtime = Self::from_indexed_document(document, Some(shape), geometry, link_mode)?;
+        runtime
+            .notes
+            .apply(runtime.document.document(), &input_update)?;
+        Ok(runtime)
     }
 
     pub fn from_utf8_document(
@@ -413,6 +437,7 @@ impl FrameRuntime {
         link_mode: LinkMode,
     ) -> Result<Self, FrameError> {
         if document.document().source().is_empty() && !document.document().is_finished() {
+            document.enable_footnote_continuation()?;
             document.enable_display_shape_effects()?;
             let shape = super::shape::SharedShape::new(document.document())?;
             return Self::from_indexed_document(document, Some(shape), geometry, link_mode);
@@ -420,18 +445,28 @@ impl FrameRuntime {
         document.subscribe_display_shape_effects();
         let shape = super::shape::SharedShape::from_current(document.document());
         let seed = super::shape::ShapeSeed::indexed(document.document());
-        let runtime = Self::from_indexed_document(document, Some(shape), geometry, link_mode)?;
+        let mut runtime = Self::from_indexed_document(document, Some(shape), geometry, link_mode)?;
         runtime.viewport.shared_links().set_seed(seed);
+        runtime.notes.adopt();
         Ok(runtime)
     }
 
     /// Adopt an already parsed document without re-lexing Markdown. The caller
-    /// must finish this budgeted seed before supplying another input batch.
+    /// must finish this budgeted seed before supplying another input batch. Opening
+    /// a native note can require another seed; input_ready is false until it ends.
     pub fn initialize(&mut self, budget: &mut Budget) -> Result<bool, FrameError> {
-        Ok(self
+        if !self.notes.bootstrap(&mut self.document, budget)? {
+            return Ok(false);
+        }
+        if !self
             .viewport
             .shared_links()
-            .prepare_shape(self.document.document(), budget)?)
+            .prepare_shape(self.document.document(), budget)?
+        {
+            return Ok(false);
+        }
+        self.notes
+            .initialize_native(self.document.document(), budget)
     }
 
     fn from_indexed_document(
@@ -460,8 +495,10 @@ impl FrameRuntime {
                 allow_osc8: true,
             },
         )?;
+        viewport.shared_links().enable_footnote_numbers();
         let slugs = document.heading_slug_session();
         Ok(Self {
+            notes: Default::default(),
             shape,
             document,
             viewport,
@@ -508,6 +545,9 @@ impl FrameRuntime {
 
     pub fn reading(&self) -> &crate::reading::ReadingTools {
         &self.reading
+    }
+    pub fn reading_pending(&self) -> bool {
+        self.notes.reading().unwrap_or(&self.reading).pending() || self.notes.pending()
     }
 
     /// Handle reading modes before the application's ordinary key bindings.
@@ -1038,7 +1078,7 @@ impl FrameRuntime {
     }
 
     pub fn append_bytes(&mut self, bytes: &[u8]) -> Result<Option<Arc<Update>>, FrameError> {
-        if !self.viewport.shared_links().shape_ready() {
+        if !self.input_ready() {
             return Err(FrameError::InitializationPending);
         }
         let update = self
@@ -1058,6 +1098,7 @@ impl FrameRuntime {
     }
 
     pub fn apply_update(&mut self, update: &Update) -> Result<(), FrameError> {
+        self.notes.apply(self.document.document(), update)?;
         if self.pending_search_target.take().is_some() {
             self.pending_jump = None;
             self.refiner = None;
@@ -1083,7 +1124,7 @@ impl FrameRuntime {
     }
 
     pub fn finish_input(&mut self) -> Result<Option<Arc<Update>>, FrameError> {
-        if !self.viewport.shared_links().shape_ready() {
+        if !self.input_ready() {
             return Err(FrameError::InitializationPending);
         }
         let update = self.document.finish();
@@ -1270,6 +1311,28 @@ impl FrameRuntime {
         writer: &mut W,
         budget: &mut Budget,
     ) -> Result<FrameCommit, FrameError> {
+        if !self.initialize(budget)? {
+            return Ok(FrameCommit::default());
+        }
+        if !self.notes.drain_cancelled(
+            self.document.document(),
+            &self.viewport.shared_links(),
+            self.viewport.table_widths_mut(),
+            writer,
+            budget,
+            self.presenter.wire_pending(),
+        )? {
+            return Ok(FrameCommit::default());
+        }
+        if !self.progress_surface_restore(budget)? {
+            return Ok(FrameCommit::default());
+        }
+        if self.notes.open && self.pending_sidebar_activate {
+            self.activate_sidebar_selection(budget)?;
+        }
+        if self.notes.open {
+            return self.frame_footnotes(writer, budget);
+        }
         let started = Instant::now();
         if self.viewport.checkpoints().maintenance_in_progress() {
             let progress = self
@@ -1652,6 +1715,7 @@ impl FrameRuntime {
         });
         self.reading.set_match_visible(match_visible);
         let reading_status = self.reading.status();
+        let footnote_status = self.footnote_focus_status();
         let fold_status = self
             .fold_ui
             .status(self.geometry.content_width)
@@ -1685,6 +1749,7 @@ impl FrameRuntime {
                 notice: fold_status
                     .as_deref()
                     .or(reading_status.as_deref())
+                    .or(footnote_status.as_deref())
                     .or(self.notice)
                     .or(table_notice.as_deref()),
                 // The fold status already allocates this row's full width.
@@ -1700,7 +1765,9 @@ impl FrameRuntime {
                     .then(|| self.reading.selection.cursor())
                     .flatten()
                     .or(match self.object_focus {
-                        Some(VisibleObject::Fold(_, source)) => Some(source),
+                        Some(
+                            VisibleObject::Fold(_, source) | VisibleObject::Footnote(_, source),
+                        ) => Some(source),
                         _ => None,
                     }),
                 search: self.reading.current_match().map(|hit| hit.source),
@@ -1737,6 +1804,9 @@ impl FrameRuntime {
                 ContentArea::new(self.content_x, self.geometry.content_width),
             );
             self.reading_edge_scroll = self.reading.selection.pending_motion().is_some();
+        }
+        if commit.committed {
+            self.note_root_committed();
         }
         Ok(commit)
     }
@@ -1871,10 +1941,21 @@ impl FrameRuntime {
         };
         // Source refinement performs paid Reveal first. Directory collapse
         // wishes remain independent of body fold choices.
-        Ok(matches!(
-            self.refine_source_to_top(heading.source.start, budget)?,
-            RefineJump::Ready(true)
-        ))
+        let result = self.refine_source_to_top(heading.source.start, budget)?;
+        if self.notes.open {
+            match result {
+                RefineJump::Pending => {
+                    self.pending_sidebar_activate = true;
+                    return Ok(false);
+                }
+                RefineJump::Ready(_) => {
+                    self.note_directory_ready(heading.source.start)?;
+                    return Ok(true);
+                }
+                _ => {}
+            }
+        }
+        Ok(matches!(result, RefineJump::Ready(true)))
     }
 
     pub fn fold_hits(&self) -> &[FoldHit] {
@@ -1882,9 +1963,15 @@ impl FrameRuntime {
     }
 
     pub fn has_visible_objects(&self) -> bool {
+        if let Some(objects) = self.notes.has_objects() {
+            return objects;
+        }
         !self.objects.is_empty()
     }
     pub fn enter_object_focus(&mut self, forward: bool) -> bool {
+        if let Some(changed) = self.note_focus(forward, false) {
+            return changed;
+        }
         let object = if forward {
             self.objects.first()
         } else {
@@ -1902,6 +1989,9 @@ impl FrameRuntime {
         false
     }
     pub fn cycle_object_focus(&mut self, forward: bool) -> bool {
+        if let Some(changed) = self.note_focus(forward, true) {
+            return changed;
+        }
         if self.objects.is_empty() {
             return false;
         }
@@ -1968,6 +2058,9 @@ impl FrameRuntime {
     }
 
     pub fn focus_link_at(&mut self, row: u16, col: u16) -> bool {
+        if self.notes.open {
+            return false;
+        }
         let Some(id) = self
             .presenter
             .screen()
@@ -1984,6 +2077,9 @@ impl FrameRuntime {
         true
     }
     pub fn focus_fold_at(&mut self, row: u16, col: u16) -> bool {
+        if self.notes.open {
+            return false;
+        }
         if self.viewport.checkpoints().maintenance_in_progress() {
             return false;
         }
@@ -2088,6 +2184,9 @@ impl FrameRuntime {
         &mut self,
         budget: &mut Budget,
     ) -> Result<FragmentActivation, FrameError> {
+        if self.notes.open {
+            return Ok(FragmentActivation::status(FragmentActivationStatus::NoLink));
+        }
         let Some(id) = self.link_focus else {
             return Ok(FragmentActivation::status(FragmentActivationStatus::NoLink));
         };
@@ -2510,7 +2609,14 @@ impl FrameRuntime {
         for row in 0..screen.rows() {
             for col in self.content_x..self.content_x + self.geometry.content_width {
                 if let Some(cell) = screen.reading_cell(row, col) {
-                    let object = if let Some(id) = cell.link_id() {
+                    let object = if let Some((id, source)) = cell.source().and_then(|source| {
+                        self.document
+                            .document()
+                            .footnote_reference_at(source)
+                            .map(|id| (id, source))
+                    }) {
+                        Some(VisibleObject::Footnote(id, source))
+                    } else if let Some(id) = cell.link_id() {
                         Some(VisibleObject::Link(id))
                     } else {
                         cell.source().and_then(|source| {
@@ -2631,8 +2737,15 @@ impl FramePresenter {
     fn wire_pending(&self) -> bool {
         self.wire.as_ref().is_some_and(Transaction::pending)
     }
+    fn close_open_cut(&mut self) {
+        if let Some(tx) = self.wire.as_mut()
+            && tx.open.is_some()
+        {
+            tx.close();
+        }
+    }
     fn open_cell(&self, document: &Document) -> Option<OpenCell> {
-        if document.is_finished() {
+        if document.is_input_sealed() {
             return None;
         }
         for row in 0..self.screen.rows() {
@@ -2665,6 +2778,18 @@ impl FramePresenter {
         started: Instant,
         budget: &mut Budget,
     ) -> Result<FrameCommit, FrameError> {
+        self.commit_body(writer, (document, None), frame, layout, started, budget)
+    }
+    fn commit_body<W: Write + ?Sized>(
+        &mut self,
+        writer: &mut W,
+        source: (&Document, Option<mdtui3::BodyView<'_>>),
+        frame: &ViewportFrame,
+        layout: FramePaintLayout<'_>,
+        started: Instant,
+        budget: &mut Budget,
+    ) -> Result<FrameCommit, FrameError> {
+        let (document, body) = source;
         if self.wire.is_none()
             && !budget.charge(WorkLimit {
                 queries: 1,
@@ -2779,14 +2904,26 @@ impl FramePresenter {
                             && open.column < run.end_col()
                     })
                 });
-                self.wire = Some(Transaction::prepare(
-                    document,
-                    &self.screen,
-                    &diff,
-                    self.options,
-                    !self.first_clear_sent,
-                    open,
-                )?);
+                self.wire = Some(if body.is_some() {
+                    Transaction::prepare_body(
+                        document,
+                        body,
+                        &self.screen,
+                        &diff,
+                        self.options,
+                        !self.first_clear_sent,
+                        open,
+                    )?
+                } else {
+                    Transaction::prepare(
+                        document,
+                        &self.screen,
+                        &diff,
+                        self.options,
+                        !self.first_clear_sent,
+                        open,
+                    )?
+                });
                 self.sent = Some(self.screen.snapshot_back());
                 self.sent_revision = frame.revision;
             }

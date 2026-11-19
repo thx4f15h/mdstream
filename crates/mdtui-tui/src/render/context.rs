@@ -36,6 +36,19 @@ pub(crate) struct WindowContexts {
 }
 
 impl WindowContexts {
+    pub(crate) fn retire(&mut self, budget: &mut Budget) -> bool {
+        while !self.seen_targets.is_empty() {
+            if !budget.charge(WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            }) {
+                return false;
+            }
+            self.seen_targets.pop_first();
+        }
+        true
+    }
     pub fn fragments(document: &Document, sources: &[Span]) -> Self {
         let mut result = Self::new(document, Span::new(0, 0));
         result.sources = sources.to_vec();

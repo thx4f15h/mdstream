@@ -78,6 +78,8 @@ type ReferenceCheckpoint = (
 );
 #[derive(Default)]
 pub(crate) struct Footnotes {
+    extended_continuation: bool,
+    continuation: Continuation,
     pub(crate) shape: crate::DisplayShapeEffects,
     pub(crate) journal: Option<Vec<Event>>,
     pub(crate) body_indices: Vec<Option<usize>>,
@@ -102,6 +104,78 @@ pub(crate) struct Footnotes {
     trailing_blank: bool,
     numbered: usize,
     pub revision: u64,
+}
+
+/// Input-only qualification of the current definition. Winning and losing
+/// definitions share this summary; it neither parses inline syntax nor interns
+/// symbols. Each NEW physical line is classified once, when LF/EOF seals it,
+/// with the existing leaf/table classifiers. No old body is replayed.
+#[derive(Default)]
+struct Continuation {
+    paragraph: bool,
+    nested: bool,
+    fence: Option<block::Fence>,
+    header_columns: Option<usize>,
+    table: bool,
+    line: Option<(usize, u8)>,
+}
+impl Continuation {
+    fn finish_line(&mut self, source: &str, end: usize, work: &mut Work) {
+        let Some((start, spaces)) = self.line.take() else {
+            return;
+        };
+        let span = Span::new(start, end);
+        work.classified_bytes += span.len() as u64;
+        let kind =
+            block::classify_indented(source, span, true, self.fence, false, spaces, spaces % 4);
+        self.paragraph = false;
+        if self.fence.is_some() {
+            if matches!(kind, block::Line::FenceClose) {
+                self.fence = None;
+            }
+            self.header_columns = None;
+            return;
+        }
+        let mut header = crate::table::HeaderSummary::default();
+        header.feed(&source[span.range()], work);
+        let columns = header.columns();
+        let delimiter = self.header_columns.is_some_and(|count| {
+            work.classified_bytes += span.len() as u64;
+            crate::table::delimiter(source, span, count).is_some()
+        });
+        self.header_columns = None;
+        match kind {
+            block::Line::Blank => {
+                self.nested = false;
+                self.table = false;
+            }
+            block::Line::FenceOpen { fence, .. } => {
+                self.fence = Some(fence);
+                self.table = false;
+            }
+            block::Line::Text if delimiter || (self.table && columns.is_some()) => {
+                self.table = true;
+            }
+            block::Line::Text => {
+                self.table = false;
+                if !self.nested {
+                    self.paragraph = crate::containers::Containers::footnote_text(
+                        source, span, true, spaces, work,
+                    );
+                    self.nested = !self.paragraph;
+                    self.header_columns = columns;
+                }
+            }
+            // In a body this exact marker is literal, as in the real parser.
+            block::Line::FootnoteDefinition { .. } => {
+                self.paragraph = !self.nested;
+                self.table = false;
+            }
+            _ => {
+                self.table = false;
+            }
+        }
+    }
 }
 
 struct FootnoteGap {
@@ -130,6 +204,7 @@ impl Footnotes {
     }
     fn publish(&self, id: FootnoteId) {
         let entry = &self.entries[id.0];
+        self.slots[id.0].publish_number(entry.number);
         self.slots[id.0].publish(entry.definition.is_some(), entry.revision);
     }
 
@@ -422,6 +497,55 @@ impl Footnotes {
 }
 
 impl Document {
+    /// Canonical display number for an active occurrence in this arena. A
+    /// hosted body reads its fixed shared symbol fact; no global table copy or
+    /// old-occurrence visit is involved. Definition addresses still require
+    /// BodyView::resolve_footnote, never an unqualified native body ID.
+    pub fn footnote_display_number(
+        &self,
+        id: FootnoteReferenceId,
+        budget: &mut Budget,
+    ) -> Result<Option<usize>, Completion> {
+        if !budget.charge(WorkLimit {
+            queries: 1,
+            objects: 1,
+            dependencies: 1,
+            ..Default::default()
+        }) {
+            return Err(Completion::BudgetExhausted);
+        }
+        if self.footnote_reference_state(id).is_none() {
+            return Ok(None);
+        }
+        let symbol = self.footnotes.references[id.0].symbol;
+        Ok(self.footnotes.bindings[symbol.0]
+            .as_ref()
+            .map_or(self.footnotes.entries[symbol.0].number, |s| s.number()))
+    }
+    /// Opt into the finite paragraph-lazy footnote continuation dialect before
+    /// input. The default retains the original strict-four-column core API.
+    pub fn enable_footnote_continuation(&mut self) -> Result<(), crate::LayoutError> {
+        if !self.source.is_empty() || self.finished {
+            return Err(crate::LayoutError::InvalidRange);
+        }
+        self.footnotes.extended_continuation = true;
+        Ok(())
+    }
+    pub(crate) fn begin_footnote_continuation(&mut self, start: usize) {
+        if self.footnotes.extended_continuation {
+            self.footnotes.continuation = Continuation {
+                line: Some((start, 0)),
+                ..Default::default()
+            };
+        }
+    }
+    pub(crate) fn finish_footnote_line(&mut self, end: usize) {
+        if self.footnotes.extended_continuation {
+            self.footnotes
+                .continuation
+                .finish_line(&self.source, end, &mut self.work);
+        }
+    }
     /// Match the existing explicit path before ordinary block classification.
     /// A failed probe seals the definition; its bounded prefix is then classified
     /// normally, without replaying any previously committed body.
@@ -444,7 +568,7 @@ impl Document {
             &mut self.work,
         );
         let mut blank = false;
-        let payload = prefix.and_then(|(prefix, indented)| {
+        let mut payload = prefix.and_then(|(prefix, indented)| {
             let body = &self.source.as_bytes()[prefix..block::body_end(&self.source, span)];
             blank = complete && body.iter().all(|b| matches!(b, b' ' | b'\t'));
             if let Some(payload) = indented {
@@ -455,6 +579,30 @@ impl Document {
                 None
             }
         });
+        if payload.is_none()
+            && self.footnotes.extended_continuation
+            && self.footnotes.continuation.paragraph
+        {
+            payload = self.containers.footnote_lazy_prefix(
+                &self.source,
+                span,
+                self.blocks[id.0].container,
+                complete,
+                &mut self.work,
+            );
+            if let (Some((start, _)), Some(columns)) =
+                (payload, self.footnotes.continuation.header_columns)
+            {
+                // A possible new table delimiter belongs to the host, even if
+                // its last cell has not reached LF yet. Reuse the real streaming
+                // delimiter grammar; do not append and later retract body bytes.
+                let body = Span::new(start, block::body_end(&self.source, span));
+                let mut delimiter = crate::table::DelimiterCandidate::new(body, columns);
+                if delimiter.feed(&self.source[body.range()], &mut self.work) {
+                    payload = None;
+                }
+            }
+        }
         let Some((payload, spaces)) = payload else {
             if self.footnotes.trailing_blank {
                 // Internal blank paragraphs do not loosen a surrounding list.
@@ -466,6 +614,9 @@ impl Document {
             return false;
         };
         self.footnotes.trailing_blank = blank;
+        if self.footnotes.extended_continuation {
+            self.footnotes.continuation.line = Some((payload, spaces));
+        }
         self.prefix_body(symbol, id, span.start, payload, spaces, update);
         if payload > span.start && self.footnotes.entries[symbol.0].definition.unwrap().block == id
         {
@@ -482,6 +633,9 @@ impl Document {
             table: false,
         };
         self.extend_line(line, span, update);
+        if complete {
+            self.finish_footnote_line(span.end);
+        }
         if !complete {
             self.streaming = Some(line);
         }
@@ -503,6 +657,12 @@ impl Document {
         &self.footnotes.references
     }
 
+    /// Number of currently active occurrences, excluding withdrawn arena slots.
+    /// Constant-time metadata; no reference or source traversal.
+    pub fn active_footnote_reference_count(&self) -> usize {
+        self.footnotes.order.len()
+    }
+
     pub fn footnote_reference_state(&self, id: FootnoteReferenceId) -> Option<SyntaxState> {
         self.footnotes
             .active
@@ -510,6 +670,12 @@ impl Document {
             .copied()
             .filter(|active| *active)?;
         self.footnotes.states.get(id.0).copied()
+    }
+    /// Exact marker lookup, O(log R), with no source read or occurrence scan.
+    /// Like block_at, the caller accounts for this metadata operation.
+    pub fn footnote_reference_at(&self, source: Span) -> Option<FootnoteReferenceId> {
+        let id = *self.footnotes.order.get(&source.start)?;
+        (self.footnotes.references[id.0].source == source).then_some(id)
     }
 
     /// Active source-order successor in O(1), independent of allocation order.

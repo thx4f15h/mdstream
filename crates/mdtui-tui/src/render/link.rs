@@ -48,6 +48,43 @@ pub fn osc8_destination(
     };
     (Some(target), stats)
 }
+pub(crate) fn osc8_body_destination(
+    body: mdtui3::BodyView<'_>,
+    id: mdtui3::BodyId<LinkId>,
+) -> (Option<String>, DestinationStats) {
+    let Ok(Some(raw)) = body.raw_link_destination(id) else {
+        return (None, DestinationStats::default());
+    };
+    let www = body
+        .with_renderer(id.body(), body.host_revision(), |native| {
+            matches!(native.links().get(id.local().0), Some(LinkTarget::Www(_)))
+        })
+        .unwrap_or(false);
+    if raw.text.len().saturating_add(if www { 7 } else { 0 }) > MAX_OSC8_DESTINATION_BYTES {
+        return (
+            None,
+            DestinationStats {
+                source_bytes: 0,
+                too_long: 1,
+            },
+        );
+    }
+    let stats = DestinationStats {
+        source_bytes: raw.text.len(),
+        too_long: 0,
+    };
+    if raw.text.is_empty() || raw.text.chars().any(char::is_control) {
+        return (None, stats);
+    }
+    (
+        Some(if www {
+            format!("http://{}", raw.text)
+        } else {
+            raw.text.to_owned()
+        }),
+        stats,
+    )
+}
 
 /// Encode one visible link label as an independently closed, single-line ANSI segment.
 ///

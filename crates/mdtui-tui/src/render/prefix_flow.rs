@@ -45,6 +45,15 @@ pub(crate) struct PrefixFlow {
     pub skipped_spaces: usize,
 }
 impl PrefixFlow {
+    pub(crate) fn retire(&mut self, budget: &mut Budget) -> bool {
+        if let Some(scanner) = &mut self.scanner
+            && !scanner.retire(budget)
+        {
+            return false;
+        }
+        self.scanner = None;
+        self.contexts.retire(budget)
+    }
     pub fn new(doc: &Document, source: Span, width: u16, rows: usize) -> Self {
         Self {
             contexts: super::context::WindowContexts::fragments(

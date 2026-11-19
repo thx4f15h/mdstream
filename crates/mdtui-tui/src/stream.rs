@@ -149,7 +149,7 @@ pub enum IngestResult {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct StreamMetrics {
-    /// Bytes delivered to `ingest_data`, counted exactly once, including bytes
+    /// Bytes accepted by `ingest_data`, counted exactly once, including bytes
     /// buffered by first-frame pre-reading and drained after the first frame.
     pub read_bytes: usize,
     /// Non-empty `Update`s actually applied to the viewport.
@@ -887,6 +887,9 @@ impl StreamEngine {
         if self.input_finished {
             return Err(StreamError::InputFinished);
         }
+        if !self.runtime.input_ready() {
+            return Err(FrameError::InitializationPending.into());
+        }
         self.metrics.read_bytes = self.metrics.read_bytes.saturating_add(bytes.len());
         if !self.first_frame_done {
             self.pre_read.push(bytes, now);
@@ -963,6 +966,9 @@ impl StreamEngine {
     pub fn finish_input(&mut self, _now: Duration) -> Result<bool, StreamError> {
         if self.input_finished {
             return Ok(false);
+        }
+        if !self.runtime.input_ready() {
+            return Err(FrameError::InitializationPending.into());
         }
         if !self.pre_read.done {
             let remainder = self.pre_read.drain_all();
@@ -1073,6 +1079,13 @@ impl StreamEngine {
         budget: &mut Budget,
         now: Duration,
     ) -> Result<Option<FrameCommit>, StreamError> {
+        // EOF calibrates the retained root owner. Publishing that root frame
+        // must not replace a note/chooser the user is currently reading.
+        if self.runtime.footnote_ui_open() && self.calibrated_frame.is_some() {
+            self.calibrated_frame = None;
+            self.calibration_pending = false;
+            self.force_render = true;
+        }
         if let Some(frame) = self.calibrated_frame.take() {
             let commit = self.runtime.commit_frame_budgeted(writer, &frame, budget)?;
             if commit.published || commit.committed {
@@ -1099,7 +1112,9 @@ impl StreamEngine {
             if (!self.first_frame_pending && !self.force_render) || self.calibration_pending {
                 return Ok(None);
             }
-            let commit = if self.scratch_frame_requested {
+            let commit = if self.runtime.footnote_ui_open() {
+                self.runtime.frame_to(writer, budget)?
+            } else if self.scratch_frame_requested {
                 match scratch_first_frame(&mut self.runtime, &mut self.scratch, budget)? {
                     ScratchProgress::Ready(frame) => {
                         self.runtime.commit_frame_budgeted(writer, &frame, budget)?
@@ -1155,7 +1170,9 @@ impl StreamEngine {
         {
             return Ok(None);
         }
-        let commit = if self.scratch_frame_requested {
+        let commit = if self.runtime.footnote_ui_open() {
+            self.runtime.frame_to(writer, budget)?
+        } else if self.scratch_frame_requested {
             match scratch_first_frame(&mut self.runtime, &mut self.scratch, budget)? {
                 ScratchProgress::Ready(frame) => {
                     self.runtime.commit_frame_budgeted(writer, &frame, budget)?
@@ -1193,8 +1210,14 @@ impl StreamEngine {
 
     fn record_commit(&mut self, commit: &FrameCommit) {
         self.metrics.record_frame(commit.metrics);
+        if let Some(target) = self.runtime.take_footnote_external_target() {
+            let outcome = self.external_opener.open(&target.value);
+            self.last_external_open = Some(outcome);
+            self.runtime.set_footnote_notice(outcome.status.message());
+            self.force_render = true;
+        }
         if self.runtime.sidebar_pending()
-            || self.runtime.reading().pending()
+            || self.runtime.reading_pending()
             || self.runtime.has_pending_jump()
             || self.runtime.fold_pending()
         {

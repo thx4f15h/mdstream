@@ -88,6 +88,7 @@ pub struct HeadingAnchors {
     nodes: Vec<Node>,
     building: Option<Building>,
     resolver: crate::LinkResolver,
+    retiring: bool,
 }
 
 impl HeadingAnchors {
@@ -100,6 +101,7 @@ impl HeadingAnchors {
             nodes: vec![Node::default()],
             building: None,
             resolver: document.link_resolver(),
+            retiring: false,
         }
     }
 
@@ -119,6 +121,39 @@ impl HeadingAnchors {
     pub fn retire_link_resolver(&mut self, budget: &mut Budget) -> Completion {
         self.resolver.retire(budget)
     }
+    /// Pay each retained trie edge/node and title record before destruction.
+    /// This is also used by the one active hosted heading index on switch.
+    pub fn retire(&mut self, budget: &mut Budget) -> Completion {
+        if self.resolver.retire(budget) != Completion::Covered {
+            return Completion::BudgetExhausted;
+        }
+        self.retiring = true;
+        if let Some(building) = &mut self.building {
+            if building.cursor.retire(budget) != Completion::Covered {
+                return Completion::BudgetExhausted;
+            }
+            if !step(budget) {
+                return Completion::BudgetExhausted;
+            }
+            self.building = None;
+        }
+        while !self.entries.is_empty() {
+            if !step(budget) {
+                return Completion::BudgetExhausted;
+            }
+            self.entries.pop();
+        }
+        while let Some(node) = self.nodes.last_mut() {
+            if !step(budget) {
+                return Completion::BudgetExhausted;
+            }
+            if node.children.pop_first().is_none() {
+                self.nodes.pop();
+            }
+        }
+        Completion::Covered
+    }
+
     pub fn revision(&self) -> u64 {
         self.revision
     }
@@ -135,7 +170,7 @@ impl HeadingAnchors {
         if document.id() != self.document {
             return Err(LayoutError::WrongDocument);
         }
-        if document.revision() != self.revision {
+        if self.retiring || document.revision() != self.revision {
             return Err(LayoutError::StaleContinuation);
         }
         Ok(())
@@ -307,13 +342,15 @@ impl HeadingAnchors {
         Ok(FragmentLookup {
             index: self,
             fragment: fragment.as_bytes(),
-            position: 1,
-            node: Some(0),
-            utf8: [0; 4],
-            utf8_len: 0,
-            utf8_need: 0,
-            result: None,
-            invalid: false,
+            state: FragmentState {
+                position: 1,
+                node: Some(0),
+                utf8: [0; 4],
+                utf8_len: 0,
+                utf8_need: 0,
+                result: None,
+                invalid: false,
+            },
         })
     }
 }
@@ -376,9 +413,8 @@ pub enum FragmentStep {
 /// walking the trie. '+' stays literal; matching is case-sensitive with no slug
 /// normalization. Malformed escapes/UTF-8 return InvalidRange, even after a
 /// missing trie edge. '#' resolves to source zero, not an empty heading.
-pub struct FragmentLookup<'a> {
-    index: &'a HeadingAnchors,
-    fragment: &'a [u8],
+#[derive(Clone, Copy)]
+struct FragmentState {
     position: usize,
     node: Option<usize>,
     utf8: [u8; 4],
@@ -386,6 +422,57 @@ pub struct FragmentLookup<'a> {
     utf8_need: usize,
     result: Option<FragmentStep>,
     invalid: bool,
+}
+pub struct FragmentLookup<'a> {
+    index: &'a HeadingAnchors,
+    fragment: &'a [u8],
+    state: FragmentState,
+}
+/// An owned continuation of the same fragment decoder. The index remains in
+/// its single renderer owner; this task retains no borrowed index or title.
+pub struct FragmentContinuation {
+    document: DocumentId,
+    revision: u64,
+    raw: std::sync::Arc<String>,
+    state: FragmentState,
+}
+impl HeadingAnchors {
+    pub fn fragment_owned(
+        &self,
+        raw: std::sync::Arc<String>,
+    ) -> Result<FragmentContinuation, LayoutError> {
+        let state = self.fragment(&raw)?.state;
+        Ok(FragmentContinuation {
+            document: self.document,
+            revision: self.revision,
+            raw,
+            state,
+        })
+    }
+}
+impl FragmentContinuation {
+    pub fn advance(
+        &mut self,
+        index: &HeadingAnchors,
+        document: &Document,
+        budget: &mut Budget,
+    ) -> Result<FragmentStep, LayoutError> {
+        index.validate(document)?;
+        if self.document != document.id() {
+            return Err(LayoutError::WrongDocument);
+        }
+        if self.revision != document.revision() {
+            return Err(LayoutError::StaleContinuation);
+        }
+        let mut lookup = FragmentLookup {
+            index,
+            fragment: self.raw.as_bytes(),
+            state: self.state,
+        };
+        let result = lookup.advance(document, budget);
+        self.state = lookup.state;
+        result
+    }
 }
 
 impl FragmentLookup<'_> {
@@ -398,18 +485,18 @@ impl FragmentLookup<'_> {
         budget: &mut Budget,
     ) -> Result<FragmentStep, LayoutError> {
         self.index.validate(document)?;
-        if self.invalid {
+        if self.state.invalid {
             return Err(LayoutError::InvalidRange);
         }
-        if let Some(result) = self.result {
+        if let Some(result) = self.state.result {
             return Ok(result);
         }
         if !self.index.is_complete() {
             return Ok(FragmentStep::IndexIncomplete);
         }
-        while self.position < self.fragment.len() {
-            let encoded = self.fragment[self.position] == b'%';
-            let len = if encoded { 3 } else { 1 }.min(self.fragment.len() - self.position);
+        while self.state.position < self.fragment.len() {
+            let encoded = self.fragment[self.state.position] == b'%';
+            let len = if encoded { 3 } else { 1 }.min(self.fragment.len() - self.state.position);
             if !budget.charge(WorkLimit {
                 bytes: len,
                 objects: 1,
@@ -418,29 +505,30 @@ impl FragmentLookup<'_> {
                 return Ok(FragmentStep::BudgetExhausted);
             }
             let byte = if encoded {
-                let pair = &self.fragment[self.position + 1..self.position + len];
+                let pair = &self.fragment[self.state.position + 1..self.state.position + len];
                 if let [hi, lo] = pair
                     && let (Some(hi), Some(lo)) = (hex(*hi), hex(*lo))
                 {
                     (hi << 4) | lo
                 } else {
-                    self.invalid = true;
+                    self.state.invalid = true;
                     return Err(LayoutError::InvalidRange);
                 }
             } else {
-                self.fragment[self.position]
+                self.fragment[self.state.position]
             };
-            self.position += len;
+            self.state.position += len;
             if !self.valid_byte(byte) {
-                self.invalid = true;
+                self.state.invalid = true;
                 return Err(LayoutError::InvalidRange);
             }
-            self.node = self
+            self.state.node = self
+                .state
                 .node
                 .and_then(|node| self.index.nodes[node].children.get(&byte).copied());
         }
-        if self.utf8_len != 0 {
-            self.invalid = true;
+        if self.state.utf8_len != 0 {
+            self.state.invalid = true;
             return Err(LayoutError::InvalidRange);
         }
         if !step(budget) {
@@ -452,20 +540,24 @@ impl FragmentLookup<'_> {
                 source: 0,
                 provisional: false,
             })
-        } else if let Some(id) = self.node.and_then(|node| self.index.nodes[node].heading) {
+        } else if let Some(id) = self
+            .state
+            .node
+            .and_then(|node| self.index.nodes[node].heading)
+        {
             FragmentStep::Resolved(target(document, id))
         } else if document.is_finished() {
             FragmentStep::NotFound
         } else {
             FragmentStep::Unresolved
         };
-        self.result = Some(result);
+        self.state.result = Some(result);
         Ok(result)
     }
 
     fn valid_byte(&mut self, byte: u8) -> bool {
-        if self.utf8_len == 0 {
-            self.utf8_need = match byte {
+        if self.state.utf8_len == 0 {
+            self.state.utf8_need = match byte {
                 0..=0x7f => return true,
                 0xc2..=0xdf => 2,
                 0xe0..=0xef => 3,
@@ -473,11 +565,11 @@ impl FragmentLookup<'_> {
                 _ => return false,
             };
         }
-        self.utf8[self.utf8_len] = byte;
-        self.utf8_len += 1;
-        if self.utf8_len == self.utf8_need {
-            let valid = std::str::from_utf8(&self.utf8[..self.utf8_len]).is_ok();
-            self.utf8_len = 0;
+        self.state.utf8[self.state.utf8_len] = byte;
+        self.state.utf8_len += 1;
+        if self.state.utf8_len == self.state.utf8_need {
+            let valid = std::str::from_utf8(&self.state.utf8[..self.state.utf8_len]).is_ok();
+            self.state.utf8_len = 0;
             valid
         } else {
             true

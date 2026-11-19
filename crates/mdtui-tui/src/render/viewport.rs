@@ -350,6 +350,44 @@ struct EofCalibrationState {
 }
 
 impl ViewportState {
+    pub(crate) fn retire(
+        &mut self,
+        document: &Document,
+        budget: &mut Budget,
+    ) -> Result<bool, ViewportError> {
+        if self.document != document.id() {
+            return Err(LayoutError::WrongDocument.into());
+        }
+        if let Some(render) = &mut self.render
+            && !render.first.retire(budget)
+        {
+            return Ok(false);
+        }
+        self.render = None;
+        if let Some(end) = &mut self.end_position
+            && let Some(first) = &mut end.first
+            && !first.retire(budget)
+        {
+            return Ok(false);
+        }
+        self.end_position = None;
+        if !self.table_widths.retire(budget) {
+            return Ok(false);
+        }
+        if self.checkpoints.maintenance_in_progress()
+            && self
+                .checkpoints
+                .advance_maintenance(document, budget)?
+                .completion
+                == mdtui3::Completion::BudgetExhausted
+        {
+            return Ok(false);
+        }
+        if self.checkpoints.view_mut()?.retire_choices(budget) != mdtui3::Completion::Covered {
+            return Ok(false);
+        }
+        Ok(true)
+    }
     pub fn new(document: &Document, config: ViewportConfig) -> Result<Self, ViewportError> {
         validate_config(config)?;
         let checkpoints = RenderCheckpointStore::new(document);
@@ -1417,7 +1455,7 @@ impl ViewportState {
         document: &Document,
         update: &Update,
     ) -> Result<ViewportUpdateResult, ViewportError> {
-        if !document.is_finished() {
+        if !document.is_input_sealed() {
             return Err(ViewportError::NotFinished);
         }
         let result = self.apply_update(document, update)?;
@@ -1438,7 +1476,7 @@ impl ViewportState {
         if self.checkpoints.maintenance_in_progress() {
             return Err(ViewportError::CheckpointMaintenanceInProgress);
         }
-        if !document.is_finished() {
+        if !document.is_input_sealed() {
             let update = document.finish();
             self.begin_eof_calibration(document, &update)?;
         } else if !self.matches(document) {
@@ -1456,7 +1494,7 @@ impl ViewportState {
         if self.checkpoints.maintenance_in_progress() {
             return Err(ViewportError::CheckpointMaintenanceInProgress);
         }
-        if !document.is_finished() {
+        if !document.is_input_sealed() {
             return Err(ViewportError::NotFinished);
         }
         if self.end_position.is_some() {
@@ -2501,7 +2539,7 @@ impl ViewportRender {
                         source: approximate_source(document, self.anchor).unwrap_or(0),
                     };
                 }
-                self.finish_frame(document, step)
+                self.finish_frame(document, step, owner.heights().total_rows() == 0)
             }
         }
     }
@@ -2510,20 +2548,30 @@ impl ViewportRender {
         &self,
         document: &Document,
         step: FirstFrameStep,
+        empty_document: bool,
     ) -> Result<Option<ViewportFrame>, ViewportError> {
         let target = self.anchor.tile;
         let sink = self.first.sink().ok_or(ViewportError::MissingLineSource)?;
         let Some((resolved, target_rows)) =
             resolve_target_tile(&self.first, sink, target, self.preserve_refined_source)
         else {
-            if self.first.rows() == 0 && self.first.plan().tile_end.0 == document.tile_count() {
+            if self.first.rows() == 0 {
                 return Ok(Some(ViewportFrame {
                     document: self.document,
                     revision: self.revision,
                     lines: Vec::new(),
                     top: TopPosition::Empty,
                     rows: 0,
-                    status: ViewportFrameStatus::Ready,
+                    // A bounded window may consist entirely of hidden source.
+                    // Publish its paid zero measurements and let the viewport
+                    // normalize to the next remaining tile before painting.
+                    status: if empty_document
+                        || self.first.plan().tile_end.0 == document.tile_count()
+                    {
+                        ViewportFrameStatus::Ready
+                    } else {
+                        ViewportFrameStatus::BudgetExhausted
+                    },
                     stats: self.stats(),
                 }));
             }

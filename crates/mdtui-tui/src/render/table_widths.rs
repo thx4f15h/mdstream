@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::mem::size_of;
 use std::ops::Range;
@@ -150,7 +150,7 @@ pub struct TableWidthCache {
     links: crate::render::objects::SharedLinks,
     document: DocumentId,
     revision: u64,
-    tables: HashMap<TableId, TableWidthEntry>,
+    tables: BTreeMap<TableId, TableWidthEntry>,
     policy: TableWidthPolicy,
     retired_work: TableWidthWork,
 }
@@ -186,12 +186,60 @@ struct ColumnMeasurement {
 }
 
 impl TableWidthCache {
+    pub(crate) fn retire(&mut self, budget: &mut Budget) -> bool {
+        while let Some((_, entry)) = self.tables.first_key_value() {
+            if entry.columns.is_empty() && entry.resumed.is_empty() {
+                if !budget.charge(WorkLimit {
+                    queries: 1,
+                    objects: 1,
+                    ..Default::default()
+                }) {
+                    return false;
+                }
+                self.tables.pop_first();
+                continue;
+            }
+            let entry = self.tables.first_entry().unwrap().into_mut();
+            if let Some((_, _, _, _, measure)) = entry.resumed.last_mut() {
+                if !measure.retire(budget) {
+                    return false;
+                }
+                if !budget.charge(WorkLimit {
+                    queries: 1,
+                    objects: 1,
+                    ..Default::default()
+                }) {
+                    return false;
+                }
+                entry.resumed.pop();
+                continue;
+            }
+            let column = entry.columns.last_mut().unwrap();
+            if let Some((_, measure)) = &mut column.pending
+                && !measure.retire(budget)
+            {
+                return false;
+            }
+            column.pending = None;
+            if !budget.charge(WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            }) {
+                return false;
+            }
+            if column.observed_rows.pop_first().is_none() {
+                entry.columns.pop();
+            }
+        }
+        true
+    }
     pub fn new(document: &Document) -> Self {
         Self {
             links: crate::render::objects::SharedLinks::new(document),
             document: document.id(),
             revision: document.revision(),
-            tables: HashMap::new(),
+            tables: BTreeMap::new(),
             policy: TableWidthPolicy::default(),
             retired_work: TableWidthWork::default(),
         }
@@ -771,8 +819,10 @@ impl TableWidthCache {
     pub fn memory_stats(&self) -> TableWidthMemoryStats {
         let mut columns = 0_usize;
         let mut observed_rows = 0_usize;
-        let mut tracked_capacity_bytes =
-            self.tables.capacity() * size_of::<Option<(TableId, TableWidthEntry)>>();
+        // Conservative tracked node/slack estimate; allocator RSS is measured
+        // separately. Ordered entries also permit one paid retirement at a time.
+        let mut tracked_capacity_bytes = self.tables.len()
+            * (size_of::<(TableId, TableWidthEntry)>() * 2 + size_of::<usize>() * 32);
         for entry in self.tables.values() {
             columns = columns.saturating_add(entry.columns.len() + entry.resumed.len());
             tracked_capacity_bytes += entry.resumed.capacity()

@@ -11,6 +11,17 @@ use mdtui3::{
 };
 use std::collections::VecDeque;
 pub(crate) struct RenderedSearch {
+    note_checked: bool,
+    note_next: Option<(mdtui3::FootnoteReferenceId, mdtui3::FootnoteReference)>,
+    note_bytes: [u8; 80],
+    note_at: usize,
+    note_end: usize,
+    note_source: Span,
+    note_alias_at: usize,
+    note_alias_end: usize,
+    note_alias_matched: usize,
+    note_alias_display: usize,
+    skip_note_until: usize,
     document: DocumentId,
     revision: u64,
     cursor: DisplayCursor,
@@ -28,6 +39,7 @@ pub(crate) struct RenderedSearch {
     source: Span,
     focus: Option<MathFocus>,
     hit_focus: Option<MathFocus>,
+    hit_alias: Option<usize>,
     pending_hit: Option<DisplayMatch>,
     pending: [u8; TILE_BYTES],
     pending_source: Span,
@@ -50,6 +62,17 @@ impl RenderedSearch {
             prefix[i] = k;
         }
         Self {
+            note_checked: false,
+            note_next: None,
+            note_bytes: [0; 80],
+            note_at: 0,
+            note_end: 0,
+            note_source: Span::new(0, 0),
+            note_alias_at: 0,
+            note_alias_end: 0,
+            note_alias_matched: 0,
+            note_alias_display: 0,
+            skip_note_until: 0,
             document: d.id(),
             revision: d.revision(),
             cursor: d.display_cursor(Span::new(0, d.source().len())).unwrap(),
@@ -67,6 +90,7 @@ impl RenderedSearch {
             source: Span::new(0, 0),
             focus: None,
             hit_focus: None,
+            hit_alias: None,
             pending_hit: None,
             pending: [0; TILE_BYTES],
             pending_source: Span::new(0, 0),
@@ -91,6 +115,7 @@ impl RenderedSearch {
             return None;
         }
         self.matched = self.prefix[self.matched - 1];
+        self.hit_alias = None;
         let start = self.spans.iter().map(|s| s.0.start).min().unwrap();
         let end = self.spans.iter().map(|s| s.0.end).max().unwrap();
         self.hit_focus = self.spans.front().and_then(|s| s.1).filter(|f| {
@@ -102,6 +127,9 @@ impl RenderedSearch {
             source: Span::new(start, end),
             display: self.serial - self.needle.len()..self.serial,
         })
+    }
+    pub(crate) fn hit_alias(&self) -> Option<usize> {
+        self.hit_alias
     }
     pub(crate) fn hit_focus(&self) -> Option<MathFocus> {
         self.hit_focus
@@ -158,6 +186,120 @@ impl RenderedSearch {
                 self.native_math = false;
                 self.math_window = None;
                 continue;
+            }
+            if self.note_at < self.note_end {
+                if !b.charge(WorkLimit {
+                    bytes: 1,
+                    ..Default::default()
+                }) {
+                    return Ok((Completion::BudgetExhausted, None));
+                }
+                self.source = self.note_source;
+                let byte = self.note_bytes[self.note_at];
+                self.note_at += 1;
+                if let Some(hit) = self.byte(byte) {
+                    self.pending_hit = Some(hit)
+                }
+                continue;
+            }
+            // Existing core footnote-label matches remain navigable source
+            // aliases (and can be reported as not drawn). Keep them separate
+            // from the actual numbered display stream, so marker spelling
+            // cannot become a false cross-object displayed match.
+            if self.note_alias_at < self.note_alias_end {
+                if !b.charge(WorkLimit {
+                    bytes: 1,
+                    ..Default::default()
+                }) {
+                    return Ok((Completion::BudgetExhausted, None));
+                }
+                let byte = d.source().as_bytes()[self.note_alias_at];
+                self.note_alias_at += 1;
+                while self.note_alias_matched > 0 && self.needle[self.note_alias_matched] != byte {
+                    self.note_alias_matched = self.prefix[self.note_alias_matched - 1];
+                }
+                if self.needle[self.note_alias_matched] == byte {
+                    self.note_alias_matched += 1;
+                }
+                if self.note_alias_matched == self.needle.len() {
+                    self.note_alias_matched = self.prefix[self.note_alias_matched - 1];
+                    self.hit_focus = None;
+                    self.hit_alias =
+                        Some(self.note_alias_at - self.needle.len() - self.note_source.start + 1);
+                    self.pending_hit = Some(DisplayMatch {
+                        source: Span::new(
+                            self.note_alias_at - self.needle.len(),
+                            self.note_alias_at,
+                        ),
+                        display: self.note_alias_display..self.note_alias_display + self.note_end,
+                    });
+                }
+                continue;
+            }
+            if self.at < self.end && links.footnote_numbers() && !self.atomic_source {
+                if !self.note_checked {
+                    let mut cursor = d
+                        .footnote_references_in(self.pending_source)
+                        .ok_or(LayoutError::InvalidRange)?;
+                    let Ok(first) = cursor.advance(b) else {
+                        return Ok((Completion::BudgetExhausted, None));
+                    };
+                    self.note_next = first;
+                    self.note_checked = true;
+                }
+                let position = self.pending_source.start + self.at;
+                if position < self.skip_note_until {
+                    if !b.charge(WorkLimit {
+                        queries: 1,
+                        objects: 1,
+                        ..Default::default()
+                    }) {
+                        return Ok((Completion::BudgetExhausted, None));
+                    }
+                    self.at += (self.skip_note_until - position).min(self.end - self.at);
+                    continue;
+                }
+                if let Some((id, reference)) = self.note_next
+                    && reference.source.start <= position
+                {
+                    if reference.source.end <= self.skip_note_until {
+                        if !b.charge(WorkLimit {
+                            queries: 1,
+                            objects: 1,
+                            ..Default::default()
+                        }) {
+                            return Ok((Completion::BudgetExhausted, None));
+                        }
+                        self.note_next = d.next_footnote_reference(id).and_then(|next| {
+                            d.footnote_references()
+                                .get(next.0)
+                                .copied()
+                                .map(|r| (next, r))
+                        });
+                        continue;
+                    }
+                    let Ok(number) = d.footnote_display_number(id, b) else {
+                        return Ok((Completion::BudgetExhausted, None));
+                    };
+                    if let Some(number) = number {
+                        let digits = number.to_string();
+                        let mut end = 0;
+                        for digit in digits.bytes() {
+                            let glyph = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹']
+                                [usize::from(digit - b'0')];
+                            end += glyph.encode_utf8(&mut self.note_bytes[end..]).len();
+                        }
+                        self.note_at = 0;
+                        self.note_end = end;
+                        self.note_source = reference.source;
+                        self.note_alias_at = reference.source.start;
+                        self.note_alias_end = reference.source.end;
+                        self.note_alias_matched = 0;
+                        self.note_alias_display = self.serial;
+                    }
+                    self.skip_note_until = reference.source.end;
+                    continue;
+                }
             }
             if self.at < self.end {
                 if !b.charge(WorkLimit {
@@ -253,6 +395,8 @@ impl RenderedSearch {
                     // Block math need not carry the inline MATH style bit.
                     // The current native source index is the object authority.
                     self.native_math = true;
+                    self.note_checked = false;
+                    self.note_next = None;
                 }
             }
         }

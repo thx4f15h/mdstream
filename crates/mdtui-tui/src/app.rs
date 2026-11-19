@@ -133,6 +133,8 @@ pub struct AppState {
     pending_fragment_from: Option<HistoryPosition>,
     fragment_serial: u64,
     pending_history: Option<(bool, HistoryPosition)>,
+    surface_serial: u64,
+    pending_surface_history: Option<(bool, crate::history::SurfacePosition)>,
 }
 
 impl AppState {
@@ -167,6 +169,34 @@ impl AppState {
         code: KeyCode,
         modifiers: KeyModifiers,
     ) -> Result<AppOutcome, StreamError> {
+        self.sync_surface_history(engine);
+        if engine
+            .runtime_mut()
+            .footnote_key(code, modifiers, self.focus != FocusTarget::Sidebar)?
+        {
+            engine.request_render();
+            return Ok(AppOutcome {
+                redraw: true,
+                ..Default::default()
+            });
+        }
+        if code == KeyCode::Char('s')
+            && !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            && engine.runtime().footnote_ui_open()
+            && self.focus != FocusTarget::Sidebar
+        {
+            let changed = self.toggle_sidebar(engine)?;
+            self.focus = if self.sidebar_visible {
+                FocusTarget::Sidebar
+            } else {
+                FocusTarget::Body
+            };
+            engine.request_render();
+            return Ok(AppOutcome {
+                redraw: changed || self.sidebar_visible,
+                ..Default::default()
+            });
+        }
         if engine.runtime_mut().fold_menu_key(code) {
             engine.request_render();
             return Ok(AppOutcome {
@@ -366,9 +396,12 @@ impl AppState {
             KeyAction::ToggleSidebar => outcome.redraw = self.toggle_sidebar(engine)?,
             KeyAction::Activate => {
                 if self.focus == FocusTarget::Sidebar {
-                    let from = engine.navigation_position();
+                    let body_surface = engine.runtime().footnote_ui_open();
+                    let from = (!body_surface)
+                        .then(|| engine.navigation_position())
+                        .flatten();
                     let moved = engine.activate_sidebar_selection()?;
-                    if moved {
+                    if moved && !body_surface {
                         self.record_history_jump(from, engine.navigation_position());
                     } else if engine.runtime().has_pending_jump() {
                         self.pending_jump_from = from;
@@ -409,6 +442,19 @@ impl AppState {
                 }
             }
             KeyAction::HistoryBack => {
+                if let Some(target) = self.history.peek_back_surface()
+                    && (matches!(target, crate::history::SurfacePosition::Body { .. })
+                        || matches!(
+                            self.history.current_surface(),
+                            Some(crate::history::SurfacePosition::Body { .. })
+                        ))
+                {
+                    engine.runtime_mut().restore_surface_position(target)?;
+                    self.pending_surface_history = Some((false, target));
+                    engine.request_render();
+                    outcome.redraw = true;
+                    return Ok(outcome);
+                }
                 if let Some(target) = self.history.peek_back() {
                     let restored = engine.restore_navigation_position(target)?;
                     if restored.is_ready() && restored.moved() {
@@ -422,6 +468,19 @@ impl AppState {
                 }
             }
             KeyAction::HistoryForward => {
+                if let Some(target) = self.history.peek_forward_surface()
+                    && (matches!(target, crate::history::SurfacePosition::Body { .. })
+                        || matches!(
+                            self.history.current_surface(),
+                            Some(crate::history::SurfacePosition::Body { .. })
+                        ))
+                {
+                    engine.runtime_mut().restore_surface_position(target)?;
+                    self.pending_surface_history = Some((true, target));
+                    engine.request_render();
+                    outcome.redraw = true;
+                    return Ok(outcome);
+                }
                 if let Some(target) = self.history.peek_forward() {
                     let restored = engine.restore_navigation_position(target)?;
                     if restored.is_ready() && restored.moved() {
@@ -492,7 +551,8 @@ impl AppState {
         row: u16,
         col: u16,
     ) -> Result<AppOutcome, StreamError> {
-        if !engine.runtime_mut().focus_fold_at(row, col)
+        if !engine.runtime_mut().focus_footnote_at(row, col)
+            && !engine.runtime_mut().focus_fold_at(row, col)
             && !engine.runtime_mut().focus_link_at(row, col)
         {
             return Ok(AppOutcome::default());
@@ -505,6 +565,7 @@ impl AppState {
         )
     }
     pub fn frame_committed(&mut self, engine: &StreamEngine) {
+        self.sync_surface_history(engine);
         self.commit_fragment(engine);
         if !engine.runtime().has_pending_jump()
             && let Some((forward, target)) = self.pending_history.take()
@@ -553,6 +614,49 @@ impl AppState {
             && Some(to) != from
         {
             self.history.record_jump(from, to);
+        }
+    }
+    fn sync_surface_history(&mut self, engine: &StreamEngine) {
+        let document = engine.runtime().document().id();
+        if self.history.bind(document).is_err() {
+            self.history = HistoryState::default();
+            self.history.bind(document).expect("fresh history");
+            self.surface_serial = 0;
+            self.pending_surface_history = None;
+        }
+        let (serial, event) = engine.runtime().footnote_navigation_completion();
+        if serial == self.surface_serial {
+            if matches!(
+                self.history.current_surface(),
+                Some(crate::history::SurfacePosition::Body { .. })
+            ) && let Some(position @ crate::history::SurfacePosition::Body { .. }) =
+                engine.runtime().surface_position()
+            {
+                self.history
+                    .update_surface(position)
+                    .expect("runtime surface owner");
+            }
+            return;
+        }
+        self.surface_serial = serial;
+        let Some(event) = event else { return };
+        if event.history_restore {
+            if let Some((forward, _)) = self.pending_surface_history.take()
+                && event.moved
+            {
+                if forward {
+                    self.history.commit_forward_surface();
+                } else {
+                    self.history.commit_back_surface();
+                }
+                self.history
+                    .update_surface(event.to)
+                    .expect("runtime validated history owner");
+            }
+        } else if event.moved {
+            self.history
+                .record_surface_jump(Some(event.from), event.to)
+                .expect("runtime validated navigation owner");
         }
     }
 

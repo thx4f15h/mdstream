@@ -38,7 +38,7 @@ impl Document {
     /// finish makes all source eligible. O(1), without inspecting body bytes.
     /// This is a fold-topology boundary, not a promise of final inline styles.
     pub fn source_fold_limit(&self) -> usize {
-        if self.is_finished() {
+        if self.is_input_sealed() {
             return self.source().len();
         }
         let mut end = self.line_start;
@@ -97,7 +97,7 @@ impl Document {
         if entry.kind != BlockKind::Paragraph {
             return None;
         }
-        let open = entry.state != SyntaxState::Sealed && !self.is_finished();
+        let open = entry.state != SyntaxState::Sealed && !self.is_input_sealed();
         Some((
             Span::new(
                 entry.source.start,
@@ -250,7 +250,7 @@ impl SourceFoldRegistration {
         start: usize,
     ) -> Result<Self, LayoutError> {
         view.check(document)?;
-        if document.is_finished()
+        if document.is_input_sealed()
             || start >= document.source_fold_limit()
             || !document.source().is_char_boundary(start)
         {
@@ -299,7 +299,7 @@ impl SourceFoldRegistration {
         start: usize,
     ) -> Result<Self, LayoutError> {
         view.check(document)?;
-        if document.is_finished()
+        if document.is_input_sealed()
             || start >= document.source().len()
             || !document.source().is_char_boundary(start)
         {

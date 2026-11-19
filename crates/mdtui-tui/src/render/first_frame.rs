@@ -234,6 +234,11 @@ struct ReplayRequest {
 }
 
 impl FirstFrame {
+    pub(crate) fn retire(&mut self, budget: &mut Budget) -> bool {
+        self.scanner.retire(budget)
+            && self.width_cache.retire(budget)
+            && self.contexts.retire(budget)
+    }
     pub fn new(document: &Document, config: FirstFrameConfig) -> Result<Self, FirstFrameError> {
         Self::new_with_owner(document, config, true)
     }
@@ -1821,8 +1826,14 @@ fn suppress_nonwrapping(
     let mut ranges = Vec::new();
     for block in &plan.blocks {
         let mut sources = Vec::new();
+        let hidden = matches!(
+            block.kind,
+            mdtui3::BlockKind::Definition { .. } | mdtui3::BlockKind::FootnoteDefinition { .. }
+        );
         match block.kind {
-            mdtui3::BlockKind::Heading { .. } => sources.push(block.source),
+            mdtui3::BlockKind::Heading { .. }
+            | mdtui3::BlockKind::Definition { .. }
+            | mdtui3::BlockKind::FootnoteDefinition { .. } => sources.push(block.source),
             mdtui3::BlockKind::Table { id } => {
                 if let Some(table) = document.table(id) {
                     // The delimiter is syntax, never a logical table row. A
@@ -1864,7 +1875,7 @@ fn suppress_nonwrapping(
             _ => {}
         }
         for source in sources {
-            if source.len() <= 4096 {
+            if source.len() <= 4096 && !hidden {
                 continue;
             }
             let first = document

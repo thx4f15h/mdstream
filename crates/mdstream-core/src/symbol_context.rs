@@ -6,8 +6,16 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 pub(crate) struct Symbol {
     resolved: AtomicBool,
     revision: AtomicU64,
+    number: std::sync::atomic::AtomicUsize,
 }
 impl Symbol {
+    pub(crate) fn publish_number(&self, number: Option<usize>) {
+        self.number.store(number.unwrap_or(0), Ordering::Relaxed);
+    }
+    pub(crate) fn number(&self) -> Option<usize> {
+        let n = self.number.load(Ordering::Relaxed);
+        (n != 0).then_some(n)
+    }
     pub(crate) fn publish(&self, resolved: bool, revision: u64) {
         self.resolved.store(resolved, Ordering::Relaxed);
         self.revision.store(revision, Ordering::Relaxed);

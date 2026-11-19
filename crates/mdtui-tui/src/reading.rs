@@ -233,14 +233,20 @@ pub fn overlaps(a: Span, b: Span) -> bool {
     a.start < b.end && b.start < a.end
 }
 
+type SearchOrder = (usize, usize);
+type SearchHit = (
+    DisplayMatch,
+    Option<crate::render::math::MathFocus>,
+    SearchOrder,
+);
 struct SearchTask {
     rendered: Option<Box<crate::reading_search::RenderedSearch>>,
     search: DisplaySearch,
     _lease: LinkLease,
-    before: Option<usize>,
-    after: Option<usize>,
-    candidate: Option<(DisplayMatch, Option<crate::render::math::MathFocus>)>,
-    pending_target: Option<(DisplayMatch, Option<crate::render::math::MathFocus>)>,
+    before: Option<SearchOrder>,
+    after: Option<SearchOrder>,
+    candidate: Option<SearchHit>,
+    pending_target: Option<SearchHit>,
 }
 
 #[derive(Default)]
@@ -252,6 +258,7 @@ pub struct ReadingTools {
     query: String,
     search: Option<SearchTask>,
     current: Option<DisplayMatch>,
+    current_alias: Option<usize>,
     current_focus: Option<crate::render::math::MathFocus>,
     match_visible: bool,
     searching: bool,
@@ -272,6 +279,7 @@ impl ReadingTools {
         {
             self.search = None;
             self.current = None;
+            self.current_alias = None;
             self.current_focus = None;
             self.searching = false;
             self.match_visible = false;
@@ -295,7 +303,7 @@ impl ReadingTools {
         self.current_focus
     }
     pub(crate) fn set_match_visible(&mut self, visible: bool) {
-        self.match_visible = visible;
+        self.match_visible = visible && self.current_alias.is_none();
     }
     pub fn stale(&self) -> bool {
         self.stale
@@ -418,21 +426,25 @@ impl ReadingTools {
         &self,
         document: &Document,
         links: &SharedLinks,
-        before: Option<usize>,
+        before: Option<SearchOrder>,
     ) -> Option<SearchTask> {
         Some(SearchTask {
-            rendered: (document.math_object_stats().active > 0).then(|| {
-                Box::new(crate::reading_search::RenderedSearch::new(
-                    document,
-                    &self.query,
-                    if self.width == 0 { 80 } else { self.width },
-                ))
-            }),
+            rendered: (document.math_object_stats().active > 0
+                || links.footnote_numbers() && document.active_footnote_reference_count() != 0)
+                .then(|| {
+                    Box::new(crate::reading_search::RenderedSearch::new(
+                        document,
+                        &self.query,
+                        if self.width == 0 { 80 } else { self.width },
+                    ))
+                }),
             search: DisplaySearch::new(document, &self.query).ok()?,
             _lease: links.hold(),
             before,
             after: if before.is_none() {
-                self.current.as_ref().map(|hit| hit.display.start)
+                self.current
+                    .as_ref()
+                    .map(|hit| (hit.display.start, self.current_alias.unwrap_or(0)))
             } else {
                 None
             },
@@ -443,6 +455,7 @@ impl ReadingTools {
     fn submit(&mut self, document: &Document, links: &SharedLinks) {
         self.search = None;
         self.current = None;
+        self.current_alias = None;
         self.current_focus = None;
         self.stale = false;
         self.revision = Some(document.revision());
@@ -475,7 +488,11 @@ impl ReadingTools {
             let Some(current) = &self.current else {
                 return;
             };
-            self.search = self.task(document, links, Some(current.display.start));
+            self.search = self.task(
+                document,
+                links,
+                Some((current.display.start, self.current_alias.unwrap_or(0))),
+            );
         } else if self.search.is_none() {
             self.search = self.task(document, links, None);
         }
@@ -490,6 +507,7 @@ impl ReadingTools {
         self.search = None;
         self.searching = false;
         self.current = None;
+        self.current_alias = None;
         self.current_focus = None;
         self.cancel_copy();
         self.selection.clear();
@@ -512,6 +530,7 @@ impl ReadingTools {
         if self.revision.is_some_and(|old| old != revision) {
             self.search = None;
             self.current = None;
+            self.current_alias = None;
             self.current_focus = None;
             self.searching = false;
             self.stale = !self.query.is_empty();
@@ -598,6 +617,26 @@ impl ReadingTools {
         )));
         self.message = "copy preparing; Esc cancels";
     }
+    /// Copy an already mapped original-source address. This deliberately does
+    /// not manufacture a selection in another surface's coordinate system.
+    pub(crate) fn start_source_range(&mut self, document: &Document, source: Span, width: u16) {
+        self.cancel_copy();
+        if source.len() > MAX_CLIPBOARD_BYTES {
+            self.message = "copy too large (64 KiB limit)";
+            return;
+        }
+        if document.text(source).is_none() {
+            self.message = "invalid source selection";
+            return;
+        }
+        self.copy = Some(Box::new(CopyTask::new(
+            document,
+            source,
+            CopyKind::Source,
+            width,
+        )));
+        self.message = "copy preparing; Esc cancels";
+    }
     pub(crate) fn bind_copy_view(&mut self, version: u64, folded: bool) {
         if let Some(copy) = &mut self.copy
             && copy.kind == CopyKind::Visible
@@ -637,7 +676,7 @@ impl ReadingTools {
             && let Some(task) = self.search.as_mut()
         {
             loop {
-                if let Some((hit, focus)) = task.pending_target.as_ref() {
+                if let Some((hit, focus, order)) = task.pending_target.as_ref() {
                     if let Some(focus) = focus {
                         match links.math().set_focus(document, *focus, budget) {
                             Ok(false) => break,
@@ -651,6 +690,7 @@ impl ReadingTools {
                     }
                     target = Some(hit.source.start);
                     self.current = Some(hit.clone());
+                    self.current_alias = (order.1 != 0).then_some(order.1);
                     self.current_focus = *focus;
                     task.pending_target = None;
                     self.searching = false;
@@ -671,13 +711,15 @@ impl ReadingTools {
                 match result {
                     Ok((completion, hit)) => {
                         if let Some(hit) = hit {
-                            if task.after.is_some_and(|after| hit.display.start <= after) {
+                            let alias = task.rendered.as_ref().and_then(|r| r.hit_alias());
+                            let order = (hit.display.start, alias.unwrap_or(0));
+                            if task.after.is_some_and(|after| order <= after) {
                                 continue;
                             }
                             let focus = task.rendered.as_ref().and_then(|r| r.hit_focus());
                             if let Some(before) = task.before {
-                                if hit.display.start < before {
-                                    task.candidate = Some((hit, focus));
+                                if order < before {
+                                    task.candidate = Some((hit, focus, order));
                                     continue;
                                 }
                                 if let Some(candidate) = task.candidate.take() {
@@ -688,7 +730,7 @@ impl ReadingTools {
                                 self.message = "first match";
                                 break;
                             }
-                            task.pending_target = Some((hit, focus));
+                            task.pending_target = Some((hit, focus, order));
                             continue;
                         }
                         if completion == Completion::EndOfDocument {

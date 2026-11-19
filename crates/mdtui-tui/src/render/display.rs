@@ -1,3 +1,4 @@
+mod footnotes;
 use mdtui3::{
     ArenaStats, BlockId, Budget, DisplayCursor, DisplayRun, DisplayStep, Document, DocumentId,
     LayoutError, LinkId, Span, Style, TileId,
@@ -156,6 +157,8 @@ pub struct DisplayScanner {
     empty_alt_at: Option<(Span, usize)>,
     following_source: Option<usize>,
     force_indexed: bool,
+    note_bypass: bool,
+    note_scan: Option<Box<footnotes::NoteScan>>,
     math_refresh: Option<MathRefresh>,
     math_by_id: std::collections::BTreeMap<mdtui3::MathObjectId, usize>,
     math_floor: usize,
@@ -216,6 +219,47 @@ pub struct DisplayScanner {
 }
 
 impl DisplayScanner {
+    pub(crate) fn retire(&mut self, budget: &mut Budget) -> bool {
+        if let Some(scan) = &mut self.note_scan
+            && let Some(child) = &mut scan.child
+            && !child.retire(budget)
+        {
+            return false;
+        }
+        self.note_scan = None;
+        if let Some(scan) = &mut self.math_scan {
+            if let Some(child) = &mut scan.child
+                && !child.retire(budget)
+            {
+                return false;
+            }
+            scan.child = None;
+            if scan.query.is_some() {
+                if !budget.charge(mdtui3::WorkLimit {
+                    queries: 1,
+                    objects: 1,
+                    ..Default::default()
+                }) {
+                    return false;
+                }
+                scan.query = None;
+            }
+        }
+        self.math_refresh = None;
+        while !self.math_by_id.is_empty() || !self.math_views.is_empty() {
+            if !budget.charge(mdtui3::WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            }) {
+                return false;
+            }
+            if self.math_by_id.pop_first().is_none() {
+                self.math_views.pop_first();
+            }
+        }
+        self.cursor.retire(budget) == mdtui3::Completion::Covered
+    }
     pub fn new(document: &Document, requested: Span) -> Option<Self> {
         Self::new_inner(document, requested, None, false)
     }
@@ -254,6 +298,8 @@ impl DisplayScanner {
             empty_alt_at: None,
             following_source: None,
             force_indexed: false,
+            note_bypass: false,
+            note_scan: None,
             math_refresh: None,
             math_by_id: Default::default(),
             math_floor: 0,
@@ -1126,6 +1172,17 @@ impl DisplayScanner {
                     .map_or(self.requested.end, |b| b.source.end),
             )
         };
+        if !self.note_bypass
+            && !self.force_indexed
+            && self.links.footnote_numbers()
+            && document.active_footnote_reference_count() != 0
+            && self
+                .links
+                .shape()
+                .is_some_and(|shape| !shape.requires_shape(shape_context))
+        {
+            return self.advance_notes(document, shape_context, budget);
+        }
         if let Some(shape) = self.links.shape()
             && (self.force_indexed
                 || self.source_cut.is_some_and(|cut| shape_context.end > cut)
@@ -1563,7 +1620,7 @@ impl DisplayScanner {
             fallback,
             |segment| segment.source.start,
         );
-        if self.table_mode {
+        if self.table_mode && !self.links.footnote_numbers() {
             if self.footnote_index.is_none() {
                 let mut references = document
                     .footnote_references_in(self.requested)

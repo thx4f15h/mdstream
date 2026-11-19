@@ -6,10 +6,10 @@ use super::{
     shape_unicode::{GcbState, GcbSummary, Properties, WidthSummary},
 };
 use mdtui3::{
-    Budget, DisplayShapeDomain, DisplayShapeEffectKind as Effect, DisplayShapeMark as Mark,
-    DisplayShapeReplacement as Replacement, Document, DocumentId, LayoutError, LinkActivity,
-    LinkDisposition, ResolvedStyleSpan, Span, Style, StyleMarkerStep, StyleMarkers, Update,
-    WorkLimit,
+    Budget, Completion, DisplayShapeDomain, DisplayShapeEffectKind as Effect,
+    DisplayShapeMark as Mark, DisplayShapeReplacement as Replacement, Document, DocumentId,
+    LayoutError, LinkActivity, LinkDisposition, ResolvedStyleSpan, Span, Style, StyleMarkerStep,
+    StyleMarkers, Update, WorkLimit,
 };
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
@@ -201,10 +201,28 @@ impl Summary {
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Entity {
+    number: Option<usize>,
     chars: [char; 8],
     properties: [Properties; 8],
     scalars: u8,
     source: Span,
+}
+impl Entity {
+    fn character(self, at: usize) -> char {
+        if let Some(number) = self.number {
+            let power = 10usize.pow(u32::from(self.scalars) - at as u32 - 1);
+            ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'][(number / power) % 10]
+        } else {
+            self.chars[at]
+        }
+    }
+    fn property(self, at: usize) -> Properties {
+        if self.number.is_some() {
+            Properties::of(self.character(at))
+        } else {
+            self.properties[at]
+        }
+    }
 }
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 struct Layer {
@@ -270,11 +288,9 @@ impl Node {
         self.literal.is_some() || self.image.is_some() || self.footnote.is_some()
     }
     fn unicode_replacement(&self) -> bool {
-        self.layer.entity.is_some_and(|e| {
-            e.chars[..usize::from(e.scalars)]
-                .iter()
-                .any(|c| !c.is_ascii())
-        })
+        self.layer
+            .entity
+            .is_some_and(|e| (0..usize::from(e.scalars)).any(|at| !e.character(at).is_ascii()))
     }
     fn has_replacement(&self) -> bool {
         self.layer != Layer::default() || self.spaces != 0
@@ -623,6 +639,51 @@ impl SharedShape {
     pub fn apply(&self, document: &Document, update: &Update) -> Result<(), LayoutError> {
         self.0.borrow_mut().apply(document, update)
     }
+    pub(crate) fn invalidate_host_binding(&self) {
+        let mut index = self.0.borrow_mut();
+        index.epoch += 1;
+        index.semantic_clock += 1;
+        index.generation += 1;
+    }
+    /// Retire one actual index/undo record per paid step. The native source
+    /// remains owned by the input parser, so releasing this handle is constant.
+    pub(crate) fn retire_index(&self, budget: &mut Budget) -> Completion {
+        let mut index = self.0.borrow_mut();
+        loop {
+            if !paid(budget) {
+                return Completion::BudgetExhausted;
+            }
+            if let Some((_, undo)) = index.replacements.first_key_value() {
+                if !undo.nodes.is_empty() {
+                    index
+                        .replacements
+                        .first_entry()
+                        .unwrap()
+                        .get_mut()
+                        .nodes
+                        .pop();
+                } else {
+                    index.replacements.pop_first();
+                }
+            } else if let Some(undo) = &mut index.undo {
+                if undo.pop().is_none() {
+                    index.undo = None;
+                }
+            } else if index.nodes.pop().is_some()
+                || index.atoms.pop().is_some()
+                || index.positions.pop().is_some()
+                || index.objects.pop_first().is_some()
+                || index.presentations.pop_first().is_some()
+                || index.footnotes.pop_first().is_some()
+                || index.html.pop_first().is_some()
+                || index.conditional_scopes.pop_first().is_some()
+            {
+            } else {
+                index.native_source = None;
+                return Completion::Covered;
+            }
+        }
+    }
     pub fn work(&self) -> ShapeWork {
         let index = self.0.borrow();
         let mut work = index.work;
@@ -721,6 +782,7 @@ impl ShapeIndex {
             presentations: BTreeMap::new(),
             footnotes: BTreeMap::new(),
             fallback: Entity {
+                number: None,
                 chars: ['[', 'i', 'm', 'a', 'g', 'e', ']', '\0'],
                 properties: std::array::from_fn(|i| {
                     Properties::of("[image]\0".chars().nth(i).unwrap())
@@ -900,6 +962,48 @@ impl ShapeIndex {
             self.work.source_decode_bytes += ch.len_utf8();
             self.work.classified_scalars += 1;
         }
+        self.finish_append(old_count, span.end);
+        if let Some(span) = self.html_scan.open(self.end) {
+            html.push(span);
+        }
+        for source in html {
+            self.append_html(source)?;
+        }
+        Ok(())
+    }
+    fn append_indexed(&mut self, span: Span) -> Result<(), LayoutError> {
+        if span.start != self.end || self.atoms.len() != 0 {
+            return Err(LayoutError::StaleContinuation);
+        }
+        let native = self.native_source.as_ref().unwrap().clone();
+        let count = native.lower_bound(span.end);
+        if count > native.len() || native.position(count) != span.end {
+            return Err(LayoutError::InvalidRange);
+        }
+        let old_count = self.source_scalars;
+        self.source_scalars = count;
+        self.positions[0] = span.end;
+        self.work.source_indexed_bytes += span.len();
+        self.finish_append(old_count, span.end);
+        // The input index has already classified these scalars and HTML spans.
+        // Include the last old span: an open tag can grow across this append.
+        // Merged Updates may expose later native atoms, so clip to this event.
+        let mut after = self
+            .html
+            .last_key_value()
+            .and_then(|(&at, _)| at.checked_sub(1));
+        while let Some(mut source) = native.next_html(after) {
+            if source.start >= self.end {
+                break;
+            }
+            after = Some(source.start);
+            source.end = source.end.min(self.end);
+            self.append_html(source)?;
+        }
+        self.html_scan = native.html_state();
+        Ok(())
+    }
+    fn finish_append(&mut self, old_count: usize, end: usize) {
         while self.atom_count() > self.capacity {
             let old = self.root;
             let root = self.node(0, self.capacity * 2, None);
@@ -913,19 +1017,16 @@ impl ShapeIndex {
         if old_count < self.atom_count() {
             self.append_range(self.root, old_count, self.atom_count(), old_count);
         }
-        self.end = span.end;
-        if let Some(span) = self.html_scan.open(self.end) {
-            html.push(span);
-        }
-        for source in html {
-            let old = self.html.insert(source.start, source);
-            let begin = old.map_or(source.start, |span| span.end);
-            if begin < source.end {
-                self.fact(
-                    Span::new(begin, source.end),
-                    SemanticFact::Html(source.start),
-                )?;
-            }
+        self.end = end;
+    }
+    fn append_html(&mut self, source: Span) -> Result<(), LayoutError> {
+        let old = self.html.insert(source.start, source);
+        let begin = old.map_or(source.start, |span| span.end);
+        if begin < source.end {
+            self.fact(
+                Span::new(begin, source.end),
+                SemanticFact::Html(source.start),
+            )?;
         }
         Ok(())
     }
@@ -1206,6 +1307,7 @@ impl ShapeIndex {
             }
             Replacement::Entity { utf8, len } => {
                 let mut entity = Entity {
+                    number: None,
                     chars: ['\0'; 8],
                     properties: [self.space; 8],
                     scalars: 0,
@@ -1329,7 +1431,13 @@ impl ShapeIndex {
                 _ => false,
             };
             match event.kind {
-                Effect::SourceAppend(span) => self.append(document.source(), span)?,
+                Effect::SourceAppend(span) => {
+                    if self.native_source.is_some() {
+                        self.append_indexed(span)?;
+                    } else {
+                        self.append(document.source(), span)?;
+                    }
+                }
                 Effect::Mark { source, mark } => self.mark(source, mark)?,
                 Effect::Begin(DisplayShapeDomain::Annotations) => {
                     assert!(self.undo.is_none());
@@ -1580,11 +1688,25 @@ impl ShapeIndex {
     fn display_atom(&self, at: usize, id: usize, context: Context) -> Entity {
         let n = &self.nodes[id];
         let atom = self.atom(at);
+        if let Some((number, source)) = context.foot_number {
+            return Entity {
+                number: Some(number),
+                chars: ['\0'; 8],
+                properties: [self.space; 8],
+                scalars: if atom.source.start == source.start {
+                    number.ilog10() as u8 + 1
+                } else {
+                    0
+                },
+                source,
+            };
+        }
         if self
             .pending_code
             .is_some_and(|p| p.start <= atom.source.start && atom.source.start < p.end)
         {
             return Entity {
+                number: None,
                 chars: ['\0'; 8],
                 properties: [self.space; 8],
                 scalars: 0,
@@ -1602,6 +1724,7 @@ impl ShapeIndex {
             return entity;
         }
         let mut result = Entity {
+            number: None,
             chars: ['\0'; 8],
             properties: [self.space; 8],
             scalars: 0,
@@ -1835,6 +1958,7 @@ impl Answer {
 }
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 struct Context {
+    foot_number: Option<(usize, Span)>,
     code: bool,
     trim: bool,
     skip: bool,
@@ -2160,6 +2284,13 @@ impl ShapeQuery {
                         f.stage = Stage::Footnote;
                         continue;
                     }
+                    // A numbered marker is an inherited display replacement,
+                    // including on continuation subtrees with no own guard.
+                    // Their raw summaries still contain the original label.
+                    if f.context.foot_number.is_some() {
+                        f.stage = Stage::Contents;
+                        continue;
+                    }
                     if !pending_overlap
                         && !n.base_changed
                         && !n.descendant_base
@@ -2307,6 +2438,20 @@ impl ShapeQuery {
                     if let Some(id) = f.foot_guard
                         && !f.context.raw_alt
                     {
+                        if links.footnote_numbers() {
+                            let Ok(number) = document.footnote_display_number(id, budget) else {
+                                return Ok(None);
+                            };
+                            let mut index = shape.0.borrow_mut();
+                            let semantic = index.nodes[f.id].semantic;
+                            index.nodes[f.id].foot_state = Some((index.epoch, semantic, false));
+                            f.context.foot_number =
+                                number.map(|n| (n, document.footnote_references()[id.0].source));
+                            f.context.foot_hidden = false;
+                            f.foot_done = true;
+                            f.stage = Stage::Contents;
+                            continue;
+                        }
                         let Ok(Some(resolution)) = document.resolve_footnote(id, budget) else {
                             return Ok(None);
                         };
@@ -2564,8 +2709,8 @@ impl ShapeQuery {
                         }) {
                             continue;
                         }
-                        let ch = display.chars[part];
-                        let properties = display.properties[part];
+                        let ch = display.character(part);
+                        let properties = display.property(part);
                         let source = display.source;
                         let (out, value) = match self.kind {
                             QueryKind::Gcb => {
@@ -2621,12 +2766,12 @@ impl ShapeQuery {
 
 #[derive(Debug, Clone, Copy)]
 pub struct ShapeAtom {
-    pub utf8: [u8; 8],
+    pub utf8: [u8; 80],
     pub len: u8,
     pub source: Span,
     pub atom: usize,
-    chars: [char; 8],
-    properties: [Properties; 8],
+    chars: [char; 20],
+    properties: [Properties; 20],
     scalars: u8,
 }
 #[derive(Clone, Copy)]
@@ -2637,6 +2782,12 @@ struct ReadFrame {
 }
 /// Reads a previously prepared current semantic view. Its stack contains only
 /// logarithmic traversal metadata and one fixed-size replacement, never payload.
+// One fixed stack buffer covers every digit of a native usize number. Boxing
+// Atom would allocate on the ordinary/giant indexed-text hot path per scalar.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "bounded stack atom preserves allocation-free indexed readers"
+)]
 pub enum ShapeReadStep {
     Atom(ShapeAtom),
     BudgetExhausted,
@@ -2757,6 +2908,12 @@ impl ShapeReader {
                         }
                     }
                     f.context.foot_bound = true;
+                    if let Some(decision) = n
+                        .decision
+                        .filter(|d| d.epoch == index.epoch && d.semantic == n.semantic)
+                    {
+                        f.context.foot_number = decision.context.foot_number;
+                    }
                 }
                 let inherited_style = f.context.style_override;
                 let inherited_hint = f.context.hint;
@@ -2857,12 +3014,12 @@ impl ShapeReader {
                 index.work.reader_properties += usize::from(display.scalars);
             }
             let mut result = ShapeAtom {
-                utf8: [0; 8],
+                utf8: [0; 80],
                 len: 0,
                 source: display.source,
                 atom: at,
-                chars: ['\0'; 8],
-                properties: [space; 8],
+                chars: ['\0'; 20],
+                properties: [space; 20],
                 scalars: 0,
             };
             for part in 0..usize::from(display.scalars) {
@@ -2872,11 +3029,11 @@ impl ShapeReader {
                 }) {
                     continue;
                 }
-                let ch = display.chars[part];
+                let ch = display.character(part);
                 let offset = usize::from(result.len);
                 result.len += ch.encode_utf8(&mut result.utf8[offset..]).len() as u8;
                 result.chars[usize::from(result.scalars)] = ch;
-                result.properties[usize::from(result.scalars)] = display.properties[part];
+                result.properties[usize::from(result.scalars)] = display.property(part);
                 result.scalars += 1;
             }
             if result.len != 0 {
@@ -3658,6 +3815,90 @@ mod conditional_presentation_tests {
 mod seed_tests {
     use super::*;
     #[test]
+    fn indexed_adoption_reuses_native_append_atoms_across_merged_updates_and_html_crlf() {
+        for (prefix, suffix, expected) in [
+            ("a", "é", "aé"),
+            (
+                "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+                "é",
+                "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxé",
+            ),
+            ("a\r", "\nb", "a b"),
+            ("x<spa", "n>y</span>z", "xyz"),
+            ("a", "\u{301}", "a\u{301}"),
+            ("", "👩‍💻", "👩‍💻"),
+        ] {
+            for merged in [false, true] {
+                let mut document = Document::new();
+                document.append(prefix).unwrap();
+                document.subscribe_display_shape_effects();
+                let shape = SharedShape::from_current(&document);
+                let mut seed = ShapeSeed::indexed(&document);
+                assert!(
+                    seed.advance(&shape, &document, &mut Budget::new(WorkLimit::unlimited()))
+                        .unwrap()
+                );
+                let mut pending: Option<Update> = None;
+                for ch in suffix.chars() {
+                    let update = document.append(ch.encode_utf8(&mut [0; 4])).unwrap();
+                    if merged {
+                        if let Some(pending) = &mut pending {
+                            pending.merge(update).unwrap();
+                        } else {
+                            pending = Some(update);
+                        }
+                    } else {
+                        shape.apply(&document, &update).unwrap();
+                    }
+                }
+                if let Some(update) = pending {
+                    shape.apply(&document, &update).unwrap();
+                }
+                let update = document.finish();
+                shape.apply(&document, &update).unwrap();
+                assert_eq!(
+                    shape.work().source_decode_bytes,
+                    0,
+                    "{prefix:?} {suffix:?} merged={merged}"
+                );
+                let links = SharedLinks::new(&document);
+                let mut query =
+                    ShapeQuery::graphemes(&shape, Span::new(0, document.source().len()));
+                assert_eq!(
+                    query
+                        .advance(
+                            &shape,
+                            &document,
+                            &links,
+                            &mut Budget::new(WorkLimit::unlimited())
+                        )
+                        .unwrap(),
+                    Some(
+                        unicode_segmentation::UnicodeSegmentation::graphemes(expected, true)
+                            .count()
+                    )
+                );
+                let mut reader =
+                    ShapeReader::new(shape.clone(), Span::new(0, document.source().len()));
+                let mut actual = String::new();
+                loop {
+                    match reader
+                        .next(&mut Budget::new(WorkLimit::unlimited()))
+                        .unwrap()
+                    {
+                        ShapeReadStep::Complete => break,
+                        ShapeReadStep::Atom(atom) => actual.push_str(
+                            std::str::from_utf8(&atom.utf8[..usize::from(atom.len)]).unwrap(),
+                        ),
+                        ShapeReadStep::BudgetExhausted => panic!("unlimited reader"),
+                    }
+                }
+                assert_eq!(actual, expected, "{prefix:?} {suffix:?} merged={merged}");
+                assert_eq!(shape.0.borrow().atoms.len(), 0);
+            }
+        }
+    }
+    #[test]
     fn cancelled_current_seed_retirement_is_retained_in_the_real_shape_counters() {
         let mut document = Document::new();
         document
@@ -3756,6 +3997,29 @@ mod seed_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn every_digit_of_the_largest_native_footnote_number_has_the_shared_unicode_policy() {
+        let number = usize::MAX;
+        let entity = Entity {
+            number: Some(number),
+            chars: ['\0'; 8],
+            properties: [Properties::of(' '); 8],
+            scalars: (number.ilog10() + 1) as u8,
+            source: Span::new(3, 9),
+        };
+        let actual = (0..usize::from(entity.scalars))
+            .map(|at| entity.character(at))
+            .collect::<String>();
+        let expected = if usize::BITS == 64 {
+            "¹⁸⁴⁴⁶⁷⁴⁴⁰⁷³⁷⁰⁹⁵⁵¹⁶¹⁵"
+        } else {
+            "⁴²⁹⁴⁹⁶⁷²⁹⁵"
+        };
+        assert_eq!(actual, expected);
+        for at in 0..usize::from(entity.scalars) {
+            assert_eq!(entity.property(at), Properties::of(entity.character(at)));
+        }
+    }
     use unicode_segmentation::UnicodeSegmentation;
     #[test]
     fn explicit_projection_fragment_boundaries_are_gcb_context_barriers() {

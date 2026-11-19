@@ -17,6 +17,113 @@ pub struct BodyTextCursor<'a> {
     inner: Option<crate::CodeInfo<'a>>,
     target: Option<Target<'a>>,
 }
+
+/// Owned decoder for one explicitly addressed body link target. Reuses the
+/// same detached scalar/entity machine as the root destination task.
+pub struct BodyDestinationTask {
+    id: BodyId<crate::LinkId>,
+    revision: u64,
+    source: Option<BodyAddress>,
+    literal: bool,
+    resolved: bool,
+    inner: Option<crate::code_info::DetachedCodeInfo>,
+}
+impl BodyView<'_> {
+    pub fn link_destination_task(
+        self,
+        id: BodyId<crate::LinkId>,
+    ) -> Result<BodyDestinationTask, LayoutError> {
+        self.check(id.body())?;
+        Ok(BodyDestinationTask {
+            id,
+            revision: self.host.revision(),
+            source: None,
+            literal: false,
+            resolved: false,
+            inner: None,
+        })
+    }
+}
+impl BodyDestinationTask {
+    pub fn source(&self) -> Option<BodyAddress> {
+        self.source
+    }
+    pub fn advance<'a>(
+        &'a mut self,
+        view: BodyView<'_>,
+        budget: &mut Budget,
+    ) -> Result<Result<Option<BodyTextChunk<'a>>, Completion>, LayoutError> {
+        view.check(self.id.body())?;
+        if !self.resolved || self.revision != view.host.revision() {
+            if !budget.charge(WorkLimit {
+                queries: 1,
+                objects: 1,
+                dependencies: 1,
+                ..Default::default()
+            }) {
+                return Ok(Err(Completion::BudgetExhausted));
+            }
+            let source = view.link_destination(self.id)?;
+            let literal = match view.body.engine.links.get(self.id.local().0) {
+                Some(crate::LinkTarget::Email(_) | crate::LinkTarget::Www(_)) => true,
+                Some(crate::LinkTarget::Direct(span)) => view
+                    .body
+                    .engine
+                    .link_info(self.id.local())
+                    .is_some_and(|i| i.label == *span),
+                _ => false,
+            };
+            if self.resolved && (source != self.source || literal != self.literal) {
+                return Err(LayoutError::StaleContinuation);
+            }
+            if !self.resolved {
+                self.source = source;
+                self.literal = literal;
+                self.inner = source.map(|address| {
+                    crate::code_info::DetachedCodeInfo::new(
+                        match address {
+                            BodyAddress::Original { span, .. } => span,
+                            BodyAddress::Projected(span) => span.span,
+                        },
+                        literal,
+                    )
+                });
+                self.resolved = true;
+            }
+            self.revision = view.host.revision();
+        }
+        let Some(inner) = self.inner.as_mut() else {
+            return Ok(Ok(None));
+        };
+        let source = match self.source.unwrap() {
+            BodyAddress::Original { document, .. } => {
+                if document != view.host.id() {
+                    return Err(LayoutError::WrongDocument);
+                }
+                view.host.source()
+            }
+            BodyAddress::Projected(span) => {
+                view.check(span.body)?;
+                view.body.engine.source()
+            }
+        };
+        Ok(inner.advance(source, budget).map(|chunk| {
+            chunk.map(|chunk| BodyTextChunk {
+                source: match self.source.unwrap() {
+                    BodyAddress::Original { document, .. } => BodyAddress::Original {
+                        document,
+                        span: chunk.source,
+                    },
+                    BodyAddress::Projected(span) => BodyAddress::Projected(BodySpan {
+                        body: span.body,
+                        span: chunk.source,
+                    }),
+                },
+                text: chunk.text,
+            })
+        }))
+    }
+}
 impl<'a> BodyTextCursor<'a> {
     pub(super) fn projected(
         key: BodyKey,
@@ -206,6 +313,32 @@ impl BodyMathPayloadCursor {
 }
 
 impl BodyView<'_> {
+    /// Read the actual hosted parser with an explicit owner/revision guard.
+    /// The borrow cannot escape this callback. Native IDs/spans inside remain
+    /// local to this BodyKey, just as in BodyObject; qualify them before crossing
+    /// a renderer boundary. This does not parse, copy source, or fabricate a host.
+    pub fn with_renderer<R>(
+        self,
+        owner: BodyKey,
+        host_revision: u64,
+        read: impl FnOnce(&crate::Document) -> R,
+    ) -> Result<R, LayoutError> {
+        self.check(owner)?;
+        if host_revision != self.host.revision() {
+            return Err(LayoutError::StaleContinuation);
+        }
+        Ok(read(&self.body.engine))
+    }
+    pub fn host_revision(self) -> u64 {
+        self.host.revision()
+    }
+    pub fn parser_revision(self) -> u64 {
+        self.body.engine.revision
+    }
+    pub fn binding_epoch(self) -> usize {
+        self.host.display_shape_stats().binding_epoch
+    }
+
     pub fn math_object(
         self,
         id: BodyId<crate::MathObjectId>,
@@ -241,7 +374,102 @@ impl BodyView<'_> {
             }))
     }
 }
+
+/// An incremental clock for the same existing renderer when its source is a
+/// body. The update protocol is exactly the BodyHeights/BodyCheckpoints plan;
+/// only document/revision coordinates are translated at this checked boundary.
+pub struct BodyRendererClock {
+    owner: BodyKey,
+    revision: u64,
+    applied: super::updates::Applied,
+}
+impl BodyRendererClock {
+    pub fn new(view: BodyView<'_>) -> Self {
+        Self {
+            owner: view.key(),
+            revision: view.host.revision(),
+            applied: super::updates::Applied::new(view),
+        }
+    }
+    pub fn apply(
+        &mut self,
+        view: BodyView<'_>,
+        host: &Update,
+    ) -> Result<Option<BodyObject<Update>>, LayoutError> {
+        view.check(self.owner)?;
+        let Some(plan) =
+            self.applied
+                .plan(view, host, self.revision, crate::LayoutPolicy::default())?
+        else {
+            return Ok(None);
+        };
+        let i = host
+            .body_updates
+            .partition_point(|u| u.body().definition() < self.owner.definition());
+        let mut local = host
+            .body_updates
+            .get(i)
+            .filter(|u| u.body() == self.owner)
+            .map(|u| u.facts().value.clone())
+            .unwrap_or_else(|| Update {
+                appended: Span::new(view.body.engine.source.len(), view.body.engine.source.len()),
+                display_shape: view.body.engine.shape.subscription(),
+                ..Default::default()
+            });
+        local.document = Some(view.body.engine.id());
+        local.base_revision = self.revision;
+        local.revision = host.revision;
+        if let Some(start) = plan.start {
+            // Renderer invalidation is not a new parser/shape event. In
+            // particular never emit through a cloned producer subscription.
+            let source = Span::new(start, view.body.engine.source.len());
+            local.changes.push(crate::Change {
+                source,
+                kind: ChangeKind::Structure,
+            });
+            local.dirty.push(source);
+        }
+        self.revision = plan.revision;
+        self.applied = plan.next;
+        Ok(Some(BodyObject {
+            body: self.owner,
+            value: local,
+        }))
+    }
+    /// Check owner and both input clocks before a consumer changes its caches.
+    pub fn validate(&self, view: BodyView<'_>, host: &Update) -> Result<(), LayoutError> {
+        view.check(self.owner)?;
+        self.applied
+            .plan(view, host, self.revision, crate::LayoutPolicy::default())?;
+        Ok(())
+    }
+}
 impl<'a> BodyView<'a> {
+    /// Borrow fixed target metadata with its actual address. As for root raw
+    /// target getters, consumers charge source bytes before inspecting text.
+    pub fn raw_link_destination(
+        self,
+        id: BodyId<crate::LinkId>,
+    ) -> Result<Option<BodyTextChunk<'a>>, LayoutError> {
+        self.check(id.body())?;
+        let Some(source) = self.link_destination(id)? else {
+            return Ok(None);
+        };
+        let text = match source {
+            BodyAddress::Original { document, span } => {
+                if document != self.host.id() {
+                    return Err(LayoutError::WrongDocument);
+                }
+                self.host.text(span).ok_or(LayoutError::InvalidRange)?
+            }
+            BodyAddress::Projected(span) => self
+                .body
+                .engine
+                .text(self.span(span)?)
+                .ok_or(LayoutError::InvalidRange)?,
+        };
+        Ok(Some(BodyTextChunk { source, text }))
+    }
     /// Read already stored projected source under the shared byte budget.
     pub fn source_cursor(self, span: BodySpan) -> Result<BodyTextCursor<'a>, LayoutError> {
         Ok(BodyTextCursor::projected(

@@ -90,7 +90,8 @@ mod table_preview;
 mod utf8;
 
 pub use anchors::{
-    AnchorSlug, AnchorTarget, FragmentLookup, FragmentStep, HeadingAnchor, HeadingAnchors,
+    AnchorSlug, AnchorTarget, FragmentContinuation, FragmentLookup, FragmentStep, HeadingAnchor,
+    HeadingAnchors,
 };
 pub use annotations::QueryScratch;
 pub use autolink::MAX_AUTOLINK_BYTES;
@@ -130,7 +131,8 @@ pub use folding::table_row_folds::{
 };
 pub use folding::{
     ContainerFoldFilter, FoldCandidate, FoldCandidates, FoldChange, FoldDefaults, FoldId,
-    FoldLookup, FoldPlaceholder, FoldPreviewProgress, FoldView, FoldViewCompaction, TableRowRange,
+    FoldIntentCapture, FoldLookup, FoldPlaceholder, FoldPreviewProgress, FoldView,
+    FoldViewCompaction, FoldViewIntent, TableRowRange,
 };
 pub use footnote_body::{
     BodyMathPayloadCursor, BodyMathPayloadStep, BodyMathWindow, BodyMathWindowStep,
@@ -508,6 +510,11 @@ impl Document {
         self.host_clock.as_ref().map_or(self.finished, |clock| {
             clock.finished.load(std::sync::atomic::Ordering::Relaxed)
         })
+    }
+    /// Whether this arena's input is sealed. Hosted symbol queries separately
+    /// use is_finished(), which follows the host EOF clock.
+    pub fn is_input_sealed(&self) -> bool {
+        self.finished
     }
     pub fn revision(&self) -> u64 {
         self.host_clock.as_ref().map_or(self.revision, |clock| {
@@ -2929,6 +2936,7 @@ impl Document {
                 &mut self.work,
             );
             self.start_body(symbol, id, span, content, update);
+            self.begin_footnote_continuation(content.start);
             self.mark(span, Style::HIDDEN, update);
             let line = StreamingLine {
                 block: id,
@@ -3357,6 +3365,12 @@ impl Document {
     }
 
     fn end_line(&mut self, line: StreamingLine, update: &mut Update) {
+        if matches!(
+            self.blocks[line.block.0].kind,
+            BlockKind::FootnoteDefinition { .. }
+        ) {
+            self.finish_footnote_line(self.blocks[line.block.0].source.end);
+        }
         if let Some(mut atx) = self.atx.take() {
             let old_end = atx.content.end;
             atx.finish();

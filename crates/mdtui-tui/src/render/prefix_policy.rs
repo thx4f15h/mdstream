@@ -41,6 +41,7 @@ pub(crate) struct ParagraphPrefixes {
     active: Option<BlockId>,
     width: u16,
     query_starts: usize,
+    suspend_after: Option<BlockId>,
     pub default: Option<PrefixLines>,
     discovery: Option<(ParagraphFoldCandidates, PrefixLines, bool, Span)>,
     range: Option<Span>,
@@ -55,6 +56,45 @@ fn paid(b: &mut Budget) -> bool {
     })
 }
 impl ParagraphPrefixes {
+    pub(crate) fn suspend(&mut self, budget: &mut Budget) -> bool {
+        loop {
+            let next = self
+                .entries
+                .range((self.suspend_after.map_or(Unbounded, Excluded), Unbounded))
+                .next()
+                .map(|(&id, _)| id);
+            let Some(id) = next else { return true };
+            let policy = self.entries.get_mut(&id).unwrap();
+            if let Some(query) = &mut policy.query {
+                let done = match query {
+                    Query::Logical(q) => q.retire(budget),
+                    Query::Display(q) => q.retire(budget),
+                };
+                if !done {
+                    return false;
+                }
+            }
+            if !paid(budget) {
+                return false;
+            }
+            policy.query = None;
+            policy.registration = None;
+            policy.proof = None;
+            self.suspend_after = Some(id);
+        }
+    }
+    pub(crate) fn resume(&mut self, doc: &Document) {
+        self.suspend_after = None;
+        self.after = None;
+        self.active = None;
+        self.discovery = None;
+        self.range = self.default.map(|_| Span::new(0, doc.source().len()));
+        self.all = !self.entries.is_empty();
+        self.mandatory = self.all;
+    }
+    pub(crate) fn has_policies(&self) -> bool {
+        !self.entries.is_empty() || self.default.is_some()
+    }
     pub fn query_starts(&self) -> usize {
         self.query_starts
     }

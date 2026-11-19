@@ -2,7 +2,9 @@
 //! Payloads remain shared handles; only one scalar can be staged ahead of ACK.
 use super::{
     diff::ScreenDiff,
-    output::{OutputOptions, OutputStats, segment_boundaries, validate_diff},
+    output::{
+        OutputOptions, OutputStats, segment_boundaries, segment_boundaries_body, validate_diff,
+    },
     payload::{PayloadReader, PayloadStep, TextPayload},
 };
 use crate::screen::{Cell, Screen};
@@ -64,6 +66,30 @@ impl Transaction {
         clear: bool,
         open: Option<OpenCell>,
     ) -> io::Result<Self> {
+        Self::prepare_body(document, None, screen, diff, options, clear, open)
+    }
+    pub fn prepare_body(
+        document: &Document,
+        body: Option<mdtui3::BodyView<'_>>,
+        screen: &Screen,
+        diff: &ScreenDiff,
+        options: OutputOptions,
+        clear: bool,
+        open: Option<OpenCell>,
+    ) -> io::Result<Self> {
+        if let Some(body) = body {
+            let valid = body
+                .with_renderer(body.key(), body.host_revision(), |native| {
+                    native.id() == document.id()
+                })
+                .unwrap_or(false);
+            if !valid {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "wrong body wire owner",
+                ));
+            }
+        }
         validate_diff(screen, diff)?;
         let mut tx = Self {
             items: VecDeque::new(),
@@ -112,6 +138,7 @@ impl Transaction {
                 if (held || changed) && !group.is_empty() {
                     tx.group(
                         document,
+                        body,
                         run.row,
                         group_start,
                         &group,
@@ -132,6 +159,7 @@ impl Transaction {
             if !group.is_empty() {
                 tx.group(
                     document,
+                    body,
                     run.row,
                     group_start,
                     &group,
@@ -149,6 +177,7 @@ impl Transaction {
             }
             tx.group(
                 document,
+                body,
                 open.row,
                 open.column,
                 std::slice::from_ref(&open.cell),
@@ -172,6 +201,7 @@ impl Transaction {
     fn group(
         &mut self,
         document: &Document,
+        body: Option<mdtui3::BodyView<'_>>,
         row: u16,
         column: u16,
         cells: &[Cell],
@@ -180,14 +210,26 @@ impl Transaction {
         hold: bool,
     ) {
         let cell = &cells[0];
-        let (prefix, suffix, linked) = segment_boundaries(
-            document,
-            cell.style(),
-            cell.link_id(),
-            options,
-            &mut self.stats,
-            destinations,
-        );
+        let (prefix, suffix, linked) = if body.is_some() {
+            segment_boundaries_body(
+                document,
+                body,
+                cell.style(),
+                cell.link_id(),
+                options,
+                &mut self.stats,
+                destinations,
+            )
+        } else {
+            segment_boundaries(
+                document,
+                cell.style(),
+                cell.link_id(),
+                options,
+                &mut self.stats,
+                destinations,
+            )
+        };
         self.control(
             format!("\x1b[{};{}H", u32::from(row) + 1, u32::from(column) + 1).into_bytes(),
         );

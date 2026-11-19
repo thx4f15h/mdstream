@@ -287,6 +287,30 @@ impl SharedMath {
         }
         s.retired.is_empty()
     }
+    /// Retire the single surface's active engines as well as obsolete queries.
+    pub(crate) fn retire_all(&self, budget: &mut Budget) -> bool {
+        {
+            let mut s = self.0.borrow_mut();
+            while !s.engines.is_empty() {
+                if !budget.charge(WorkLimit {
+                    queries: 1,
+                    objects: 1,
+                    ..Default::default()
+                }) {
+                    return false;
+                }
+                let (_, entry) = s.engines.pop_first().unwrap();
+                entry.engine.invalidate_payloads();
+                let serial = s.serial;
+                s.serial += 1;
+                s.retired.insert(
+                    serial,
+                    Retired::Engine(Box::new(entry.engine.into_retirement())),
+                );
+            }
+        }
+        self.retire(budget)
+    }
     pub fn retained_owners(&self) -> usize {
         self.0.borrow().engines.len()
     }

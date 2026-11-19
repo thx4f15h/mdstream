@@ -36,7 +36,7 @@ pub struct BodySpan {
     pub span: Span,
 }
 /// Stable local object identity, explicitly qualified by its body namespace.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BodyId<I> {
     pub(crate) body: BodyKey,
     pub(crate) local: I,
@@ -320,6 +320,28 @@ impl Body {
     }
 }
 impl Document {
+    /// Input-owner subscription for cold renderer adoption. Constant metadata
+    /// work for one checked body; no source/definition/revision is changed.
+    /// Call once per body under the adopter's metadata budget, before observing
+    /// later input batches. Historical effects are adopted with the usual seed.
+    pub fn subscribe_footnote_body_shape(&mut self, owner: BodyKey) -> Result<(), LayoutError> {
+        if owner.document() != self.id() {
+            return Err(LayoutError::WrongDocument);
+        }
+        let i = self
+            .footnotes
+            .body_indices
+            .get(owner.symbol().0)
+            .copied()
+            .flatten()
+            .ok_or(LayoutError::InvalidRange)?;
+        let body = &mut self.bodies.entries[i];
+        if body.key != owner {
+            return Err(LayoutError::InvalidRange);
+        }
+        body.engine.subscribe_display_shape_effects();
+        Ok(())
+    }
     pub(crate) fn start_body(
         &mut self,
         symbol: FootnoteId,

@@ -749,7 +749,7 @@ assert_eq!(body.advance(&mut budget).unwrap().unwrap().text, "原始 **正文**"
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-晚定义沿用 `LinkId -> SymbolId` 和 `FootnoteReferenceId -> FootnoteId` 间接寻址，只改当前符号及版本，发出 `references_changed` / `footnotes_changed` 和从 first_use 起的保守范围失效；不访问历史引用对象，不给旧链接逐个发 changed 事件。脚注增长/封口及新块使用原有 Update，支持批量合并；DependencyKey、旧布局 ticket 拒绝与独立折叠意愿保持不变。定义的语法隐藏独立于视图折叠，展开祖先也不使定义正文可见；脚注正文另用共享 Budget 的原文游标读取，实际脚注区排版仍待接入。
+晚定义沿用 `LinkId -> SymbolId` 和 `FootnoteReferenceId -> FootnoteId` 间接寻址，只改当前符号及版本，发出 `references_changed` / `footnotes_changed` 和从 first_use 起的保守范围失效；不访问历史引用对象，不给旧链接逐个发 changed 事件。脚注增长/封口及新块使用原有 Update，支持批量合并；DependencyKey、旧布局 ticket 拒绝与独立折叠意愿保持不变。定义的语法隐藏独立于视图折叠，展开祖先也不使定义正文可见；脚注正文另用共享 Budget 的原文游标读取，实际脚注阅读区见 [TUI 脚注阅读](crates/mdtui-tui/README.md#脚注阅读)。
 
 实现复用现有全局符号表和流式行状态机，不复制祖先；多行脚注额外记录去前缀所需的有序间隙，见[脚注核心](#脚注核心)。有界标签寻址 O(log S)，长脚注追加只更新当前块/符号和共享解析末端；容器匹配按实际前缀/开闭节点计费。累计解析 O(n log n)、空间 O(n) 不变，不承诺大 append 或 EOF 批量闭合的单帧硬时延。`crates/mdstream-core/tests/container_definitions.rs` 与分块测试覆盖两万处旧引用晚定义、千层容器百万字增长、250 层列表、4096 个历史符号、400 组首定义/物理范围模型、通知重建/合并和共享预算；隐藏百万字定义的布局正文回调和字节计费均为零。`cargo run -p mdstream-core -r --example container_definitions` 演示全局晚定义、容器折叠及逐帧脚注读取。
 
@@ -2368,7 +2368,7 @@ assert_eq!(content.advance(&mut budget), Err(Completion::BudgetExhausted));
 
 TUI 的 `render::math::MathEngine` 消费上述原生对象，逐字节解码、TeX token、平坦 AST、二维布局、窗口输出、源码定位和回收都可继续，构造和零预算不展开完整对象。有限语言包含分数、脚本、根号、Greek/数学符号、常见运算符、伸缩定界符、矩形 matrix/pmatrix/bmatrix/aligned；未知命令可见且不展开，结构错误显示 `[invalid]`，不声称完整 TeX。post-TeX 字符流复用已验收的共享 GCB/width 状态机，处理生成 Greek、透明分组/空白、组合符、ZWJ/RI 及矩阵单元格边界；没有第二套数学 Unicode 宽度政策。
 
-真实 DisplayScanner 在原生对象索引处切开普通内容，TileLayoutSink 接收数学元数据回调并排入原生 owner 行；行内基线/整体换行、块与表格单元格多行高度、源位置跳转、End/Ctrl+End、可见复制/原文复制及实际终端字节路径共用这些对象。搜索使用排版后的数学行，不匹配被隐藏的 `frac` 命令拼写，命中仍定位完整原始 TeX 原子；可见复制保留结构行并沿用 Reading 的规范分隔政策，原文复制保持选中的原始字节。脚注 UI 仍属独立范围；显示/复制先通过已验收正文折叠 UI 的同一 FoldView 投影，隐藏对象不准备 TeX，搜索可揭示命中路径。数学 continuation 的零高证明使用现有 HeightIndex/FoldView 同树票据，不改变折叠覆盖。
+真实 DisplayScanner 在原生对象索引处切开普通内容，TileLayoutSink 接收数学元数据回调并排入原生 owner 行；行内基线/整体换行、块与表格单元格多行高度、源位置跳转、End/Ctrl+End、可见复制/原文复制及实际终端字节路径共用这些对象。搜索使用排版后的数学行，不匹配被隐藏的 `frac` 命令拼写，命中仍定位完整原始 TeX 原子；可见复制保留结构行并沿用 Reading 的规范分隔政策，原文复制保持选中的原始字节。脚注阅读另见 [TUI 脚注阅读](crates/mdtui-tui/README.md#脚注阅读)；显示/复制先通过已验收正文折叠 UI 的同一 FoldView 投影，隐藏对象不准备 TeX，搜索可揭示命中路径。数学 continuation 的零高证明使用现有 HeightIndex/FoldView 同树票据，不改变折叠覆盖。
 
 对象级输入、AST、二维布局、字素、DFS 和输出记录使用固定页/有序索引，不扩容复制旧记录，也不建立完整对象位图。原生 Publish/Append/Seal/Withdraw 和实际引擎 owner 绑定共同决定继续任务有效性；相同文档/对象/版本的另一引擎不能接管旧 paint/locator/ink/query。窗口查询复用已准备 AST；显示宽度改变的字素尾部会付费重建布局，源 cut 改变也可产生新准备上下文，不能把反复查询成本冒充一次输入的累计界。页容量、索引 payload、实际输出及 RSS 分别报告。具体语言、公开窗口/源码 API、生命周期、预算及成本限定见 [数学引擎合同](crates/mdtui-tui/src/render/math/README.md)。
 
@@ -2502,7 +2502,23 @@ assert_eq!(body.advance(&mut budget).unwrap().unwrap().text, "原始 **正文**"
 
 解析器只保留一个 O(1) 行内候选及当前定义的末尾空行标记；有界 label 使用 BTreeMap 确定性 O(log S) 符号寻址，编号/定义/增长均只更新当前符号。每个成功定义的带前缀续行至多记录一个间隙，重复定义不留间隙，额外存储 O(S + R + G)；全库维持累计 O(n log n)、空间 O(n)，Vec 扩容仍为摊还保证。`Work.footnote_steps` 统计符号操作与定义增长/封口，`footnote_label_bytes` 统计实际 intern 的有界标签，正文与失败候选检查计入已有 input/classified/inline 字节计数。两万次旧引用后首行定义只做两次符号步骤，后续每次增长或封口各一次；千层容器中百万字续行后的逐字追加不回扫正文、祖先或历史引用。读取/存储、400 组范围模型、240 次流式折叠高度模型、UTF-8 分块、预算及缓存验收见 `crates/mdstream-core/tests/footnote_blocks.rs`、`crates/mdstream-core/tests/footnotes.rs`、`crates/mdstream-core/tests/chunking.rs`；`cargo run -p mdstream-core -r --example footnote_blocks` 演示多段映射读取与折叠保持，原 `footnotes` 示例继续演示晚定义。解析不承诺任意大 append/finish 的单次硬时延。
 
-通用主文档显示与 LayoutPass 仍原样显示 `[^label]` 标记，并隐藏顶层及容器内定义。正文索引提供独立的核心布局和对象适配；脚注编号上标、文末脚注区、双向跳转/返回及实际 TUI 对象回调仍待接入，核心不自动展开脚注区。
+通用主文档显示与 LayoutPass 仍原样显示 `[^label]` 标记，并隐藏顶层及容器内定义。实际交互 TUI 在同一 shape/Cell 路径显示完整编号，并以 `f` 打开的独立脚注阅读区绘制 Markdown、选择来源和返回；见 [TUI 脚注阅读](crates/mdtui-tui/README.md#脚注阅读)。核心不自动递归展开脚注区，`--once` 的通用显示合同保持。
+
+### 有限外层脚注续行
+
+在输入前调用 `Document::enable_footnote_continuation()` 或对应的 `Utf8Document` 方法，可启用有限的段落 lazy 方言；TUI 新建输入和 `from_finished_source` 使用该选项。默认核心接口保留上述 strict4 合同，预解析文档的冷接入继承其原有方言，不重新解释旧源码。这一方言参考 [Pandoc 的段落续行](https://pandoc.org/MANUAL.html#footnotes)、[Markdown Extra 的多块定义](https://michelf.ca/projects/php-markdown/extra/#footnotes)及 [Python-Markdown 的缩进定义](https://python-markdown.github.io/extensions/footnotes/)，不宣称完整兼容其中任何一种。
+
+strict4 与显式路径空行的优先级和物理 tab/CRLF 映射保持。仅当当前正文末端是可续的普通顶层段落，且新行是普通 Text 时，才可省略脚注的四列缩进及已有 Item 的部分续行缩进；所有已有 Quote 前缀仍须显式匹配。空白分段、新容器/兄弟条目、标题、Setext/table 分隔行、围栏、分隔线以及新的合法脚注/链接定义均不能走 lazy 路径。代码、表格或嵌套正文不授予该资格；新块须 strict4。省略列表缩进不会打开新 Item，缺失 Quote 会封旧定义并把当前行交回原宿主分类器。
+
+获胜与重复定义共用输入期有限资格摘要，复用现有叶块/表格分类器；重复定义没有子 parser、不发布正文符号。新物理行仅在其提交点分类一次，后续长正文直接追加原有投影机。原文不改写，源映射、scope、晚表头事务和 Sealed 编号保持；不回放旧正文，也不因新全局定义遍历历史正文或引用。验收见 `footnote_continuation.rs`、`footnote_continuation_scaling.rs` 与实际 TUI `footnote_surface*` 测试。
+
+### 宿主正文 renderer 与轻量视图意图
+
+`BodyView::with_renderer(BodyKey, host_revision, callback)` 是只读作用域入口，复用真实子 parser、原生 source index 和同一 renderer。回调内的 native ID/span 仍属于该 BodyKey，跨边界须使用 `BodyId` / `BodySpan` / `BodyAddress`，不得传给宿主 Document。`BodyRendererClock` 复用 `BodyHeights` / `BodyCheckpoints` 的实际 BodyUpdate 计划，翻译输入时钟并保留稳定高度/CP；无 BodyDelta 的宿主绑定变化也失效。`is_input_sealed()` 只描述本 arena 的几何 EOF，脚注 Missing 和宿主符号绑定仍通过原 HostClock 判断。
+
+冷接入按共享 Budget 枚举已有引用/正文元数据并采纳原始映射；输入 owner 的 `subscribe_footnote_body_shape` 只订阅一个已检查的 body，不扫描或重解析源码。正文链接目标/title 的原始与解码接口继续返回明确的 Original/Projected 地址；拥有型目标解码及 fragment 游标沿用原有解码机器。
+
+`FoldIntentCapture` / `FoldViewIntent` 只保存当前折叠选择、默认策略、preview、source/row 注册及任务差异。捕获、恢复和取消释放均逐实际记录扣费；恢复只给新语法节点应用旧默认策略，不保存任何高度、检查点、renderer 或测量票据。恢复目标还绑定新的实际 view owner，旧票据被拒绝。注册所指段落若已变为其它语法，按原折叠语义撤销，不转移到新对象。TUI 对每个访问过且有差异的 BodyKey 保留这种轻量意图，绘制只保留 root 与一个 active note owner；切换时先付费退休旧 owner。
 
 ### 脚注 Markdown 正文索引
 

@@ -32,6 +32,7 @@ pub struct ObjectStats {
 pub struct SharedLinks(Rc<RefCell<LinkState>>);
 
 pub struct LinkState {
+    footnote_numbers: bool,
     math: super::math::SharedMath,
     shape: Option<super::shape::SharedShape>,
     seed: Option<super::shape::ShapeSeed>,
@@ -56,8 +57,15 @@ fn charge(budget: &mut Budget) -> bool {
 }
 
 impl SharedLinks {
+    pub(crate) fn enable_footnote_numbers(&self) {
+        self.0.borrow_mut().footnote_numbers = true;
+    }
+    pub(crate) fn footnote_numbers(&self) -> bool {
+        self.0.borrow().footnote_numbers
+    }
     pub fn new(document: &Document) -> Self {
         Self(Rc::new(RefCell::new(LinkState {
+            footnote_numbers: false,
             math: super::math::SharedMath::new(document),
             resolver: document.link_resolver(),
             shape: None,

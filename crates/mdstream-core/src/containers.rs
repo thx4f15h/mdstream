@@ -641,6 +641,69 @@ impl Containers {
         None
     }
 
+    /// Read-only admission for a new footnote paragraph line. Quotes remain
+    /// mandatory; only Item indentation may be omitted. This never mutates the
+    /// active path or interprets the admitted suffix as a new container.
+    pub(crate) fn footnote_lazy_prefix(
+        &self,
+        source: &str,
+        span: Span,
+        scope: Option<ContainerId>,
+        complete: bool,
+        work: &mut Work,
+    ) -> Option<(usize, u8)> {
+        if scope != self.inner() {
+            return None;
+        }
+        let mut prefix = Prefix::new(source, span, complete);
+        prefix.split_tabs = true;
+        let mut quotes = 0;
+        for frame in &self.active {
+            work.container_steps += 1;
+            match *frame {
+                Active::Quote(_) => {
+                    if !prefix.quote() {
+                        work.container_bytes += prefix.inspected;
+                        return None;
+                    }
+                    quotes += 1;
+                }
+                Active::List { content_indent, .. } if !prefix.consume_indent(content_indent) => {
+                    // All remaining Item indents are omitted together. The
+                    // existing active Quote index skips arbitrarily long List
+                    // segments; every visited Quote still consumes real input.
+                    for _ in &self.quotes[quotes..] {
+                        work.container_steps += 1;
+                        if !prefix.quote() {
+                            work.container_bytes += prefix.inspected;
+                            return None;
+                        }
+                    }
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let accepted = prefix.footnote_text(source, span, work);
+        work.container_bytes += prefix.inspected;
+        accepted.then_some((prefix.pos, prefix.virtual_spaces as u8))
+    }
+
+    pub(crate) fn footnote_text(
+        source: &str,
+        span: Span,
+        complete: bool,
+        spaces: u8,
+        work: &mut Work,
+    ) -> bool {
+        let mut prefix = Prefix::new(source, span, complete);
+        prefix.virtual_spaces = usize::from(spaces);
+        prefix.column = 0;
+        let accepted = prefix.footnote_text(source, span, work);
+        work.container_bytes += prefix.inspected;
+        accepted
+    }
+
     // On a path mismatch, retain the cursor and first missing frame. A split
     // tab can differ from the old spelling and expose a sibling list marker.
     fn delimiter_cursor<'a>(
@@ -1625,6 +1688,53 @@ impl<'a> Prefix<'a> {
             | crate::block::Line::DefinitionLabel { .. } => true,
             _ => false,
         }
+    }
+
+    fn footnote_text(&mut self, source: &str, span: Span, work: &mut Work) -> bool {
+        if self.pos == self.end {
+            return false;
+        }
+        // New blocks/definitions/siblings always return to the host pipeline,
+        // even where ordinary container lazy continuation accepts definitions.
+        let spaces = self.spaces();
+        if spaces <= 3
+            && (self.bytes.get(self.spaces_end) == Some(&b'>') || self.marker().is_some())
+        {
+            return false;
+        }
+        let payload = Span::new(self.pos, span.end);
+        work.classified_bytes += payload.len() as u64;
+        let plain = matches!(
+            crate::block::classify_indented(
+                source,
+                payload,
+                self.complete,
+                None,
+                false,
+                self.virtual_spaces as u8,
+                ((self.column + self.virtual_spaces) % 4) as u8,
+            ),
+            crate::block::Line::Text
+        );
+        if !plain
+            || source.as_bytes()[self.pos..self.end]
+                .iter()
+                .all(u8::is_ascii_whitespace)
+        {
+            return false;
+        }
+        // A Setext underline must not be swallowed as an unindented note line.
+        if self.complete
+            && crate::block::setext_level(&self.bytes[self.spaces_end..self.end]).is_some()
+        {
+            return false;
+        }
+        if spaces <= 3 {
+            self.pos = self.spaces_end;
+            self.column = self.spaces_column;
+            self.virtual_spaces = 0;
+        }
+        true
     }
 
     /// Atomically accept an explicit quote followed by tab-containing code

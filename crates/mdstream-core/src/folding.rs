@@ -8,6 +8,9 @@ use crate::{
     DocumentId, HeadingId, HeightIndex, LayoutError, Measurement, SourceFoldId, Span, SyntaxState,
     TableId, TileId, Update, WorkLimit,
 };
+#[path = "fold_intent.rs"]
+mod intent;
+pub use intent::{FoldIntentCapture, FoldViewIntent};
 
 #[path = "table_row_folds.rs"]
 pub(crate) mod table_row_folds;
@@ -380,12 +383,12 @@ impl Document {
                     source,
                     hidden: source,
                     summary: Some(first.source),
-                    open: !last.complete && !self.is_finished(),
+                    open: !last.complete && !self.is_input_sealed(),
                 })
             }
             FoldId::Container(id) => {
                 let container = self.container(id)?;
-                let open = container.state != SyntaxState::Sealed && !self.is_finished();
+                let open = container.state != SyntaxState::Sealed && !self.is_input_sealed();
                 let source = Span::new(
                     container.source.start,
                     if open {
@@ -409,7 +412,7 @@ impl Document {
                 let heading = headings.get(id)?;
                 let end = headings.section_end(id);
                 let open = end.is_none()
-                    && !self.is_finished()
+                    && !self.is_input_sealed()
                     && heading
                         .container
                         .is_none_or(|id| self.container(id).unwrap().state != SyntaxState::Sealed);
@@ -436,7 +439,7 @@ impl Document {
                     (FoldId::Math(_), BlockKind::Math { .. }) => None,
                     _ => return None,
                 };
-                let open = block.state != SyntaxState::Sealed && !self.is_finished();
+                let open = block.state != SyntaxState::Sealed && !self.is_input_sealed();
                 // Pending physical-line prefixes belong provisionally to an open
                 // code/math block; classification can later retract that tail.
                 let source = Span::new(
@@ -459,7 +462,7 @@ impl Document {
             FoldId::Table(id) => {
                 let table = self.table(id)?;
                 let block = self.block(table.block)?;
-                let open = block.state != SyntaxState::Sealed && !self.is_finished();
+                let open = block.state != SyntaxState::Sealed && !self.is_input_sealed();
                 // As with code blocks, a pending physical line is provisionally
                 // inside the table until its classification seals the block.
                 let source = Span::new(
@@ -572,7 +575,7 @@ impl FoldState {
             c.source.end = document.source().len();
             c.hidden.end = c.source.end;
             c.summary = Some(c.source);
-            c.open = !document.is_finished();
+            c.open = !document.is_input_sealed();
         }
         let syntax = c.parent.and_then(|id| document.fold_candidate(id));
         c.parent = syntax
@@ -595,7 +598,7 @@ impl FoldState {
         if matches!(c.id, FoldId::Source(_))
             && !c.open
             && c.hidden.end == document.source().len()
-            && !document.is_finished()
+            && !document.is_input_sealed()
             && let Some(last) = document.tile_at(c.hidden.end.saturating_sub(1))
         {
             tiles.end = tiles.end.min(last.0).max(tiles.start);
@@ -612,7 +615,7 @@ impl FoldState {
         if matches!(c.id, FoldId::Source(_))
             && !c.open
             && c.hidden.end == document.source().len()
-            && !document.is_finished()
+            && !document.is_input_sealed()
         {
             let group = self
                 .source_boundaries
@@ -848,7 +851,7 @@ impl FoldState {
         ) {
             if !candidate.open
                 && candidate.hidden.end == document.source().len()
-                && !document.is_finished()
+                && !document.is_input_sealed()
             {
                 self.fixed_boundary = Some(candidate.id);
             } else if self.fixed_boundary == Some(candidate.id) {
@@ -939,6 +942,7 @@ pub struct FoldView<S = ()> {
     // The active node is temporarily absent from the effective masks. Keep only
     // its local choice; ancestor/descendant choices remain in the usual index.
     preview: Option<(FoldId, bool)>,
+    known: intent::Counts,
 }
 
 /// Owns the entire view while its checkpoint arena is compacted. Heights,
@@ -1022,6 +1026,56 @@ impl FoldView<()> {
 }
 
 impl<S> FoldView<S> {
+    /// Destruction-only drain of view choices. Geometry arenas contain no
+    /// pointer graphs; renderer checkpoint payloads remain caller-owned.
+    /// After the first paid step this view must only be retired or destroyed.
+    pub fn retire_choices(&mut self, budget: &mut Budget) -> Completion {
+        let s = &mut self.state;
+        if s.table_rows.retire(budget) == Completion::BudgetExhausted {
+            return Completion::BudgetExhausted;
+        }
+        for ranges in [
+            &mut s.source_ranges,
+            &mut s.hidden_ranges,
+            &mut s.strict_source_ranges,
+        ] {
+            if ranges.retire(budget) != Completion::Covered {
+                return Completion::BudgetExhausted;
+            }
+        }
+        loop {
+            if s.collapsed.is_empty()
+                && s.starts.is_empty()
+                && s.row_ranges.is_empty()
+                && s.source_candidates.is_empty()
+                && s.open_source_tails.is_empty()
+                && s.source_boundaries.is_empty()
+                && s.growing.is_empty()
+                && s.open_ranges.is_empty()
+                && self.paragraph_auto_excluded.is_empty()
+                && self.task_overrides.is_empty()
+            {
+                return Completion::Covered;
+            }
+            if !budget.charge(WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            }) {
+                return Completion::BudgetExhausted;
+            }
+            let _ = s.collapsed.pop_first().is_some()
+                || s.starts.pop_first().is_some()
+                || s.row_ranges.pop_first().is_some()
+                || s.source_candidates.pop_first().is_some()
+                || s.open_source_tails.pop_first().is_some()
+                || s.source_boundaries.pop_first().is_some()
+                || s.growing.pop_first().is_some()
+                || s.open_ranges.pop_first().is_some()
+                || self.paragraph_auto_excluded.pop_first().is_some()
+                || self.task_overrides.pop_first().is_some();
+        }
+    }
     pub fn with_state(document: &Document, estimated_rows: u64) -> Result<Self, LayoutError> {
         let mut heights = HeightIndex::new(estimated_rows)?;
         heights.rebuild(document)?;
@@ -1040,6 +1094,7 @@ impl<S> FoldView<S> {
             paragraph_auto_excluded: BTreeSet::new(),
             task_overrides: BTreeMap::new(),
             preview: None,
+            known: intent::Counts::new(document),
         })
     }
 
@@ -1328,7 +1383,7 @@ impl<S> FoldView<S> {
         document: &Document,
         id: SourceFoldId,
     ) -> Option<FoldCandidate> {
-        (self.state.open_source_tails.contains(&id) && !document.is_finished())
+        (self.state.open_source_tails.contains(&id) && !document.is_input_sealed())
             .then(|| self.state.source_candidate(document, id).unwrap())
     }
 
@@ -2231,6 +2286,7 @@ impl<S> FoldView<S> {
             self.expire_from(document, start)?;
         }
         self.revision = update.revision;
+        self.known = intent::Counts::new(document);
         self.version += 1;
         Ok(())
     }

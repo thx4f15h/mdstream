@@ -299,6 +299,7 @@ impl TextPayload {
             None
         };
         PayloadReader {
+            indexed_pending: None,
             payload: self.clone(),
             indexed,
             position: 0,
@@ -519,6 +520,7 @@ struct JoinedReader {
     current: Option<Box<PayloadReader>>,
 }
 pub struct PayloadReader {
+    indexed_pending: Option<(super::shape::ShapeAtom, usize)>,
     origin: Option<Origin>,
     payload: TextPayload,
     indexed: Option<ShapeReader>,
@@ -580,14 +582,41 @@ impl PayloadReader {
             }
         }
         if let Some(reader) = &mut self.indexed {
-            return Ok(match reader.next(budget)? {
-                ShapeReadStep::Atom(atom) => PayloadStep::Bytes {
-                    utf8: atom.utf8,
-                    len: atom.len,
-                },
-                ShapeReadStep::BudgetExhausted => PayloadStep::BudgetExhausted,
-                ShapeReadStep::Complete => PayloadStep::Complete,
-            });
+            if self.indexed_pending.is_none() {
+                match reader.next(budget)? {
+                    ShapeReadStep::Atom(atom) => {
+                        if atom.len <= 8 {
+                            let mut utf8 = [0; 8];
+                            utf8[..usize::from(atom.len)]
+                                .copy_from_slice(&atom.utf8[..usize::from(atom.len)]);
+                            return Ok(PayloadStep::Bytes {
+                                utf8,
+                                len: atom.len,
+                            });
+                        }
+                        self.indexed_pending = Some((atom, 0));
+                    }
+                    ShapeReadStep::BudgetExhausted => return Ok(PayloadStep::BudgetExhausted),
+                    ShapeReadStep::Complete => return Ok(PayloadStep::Complete),
+                }
+            }
+            if !budget.charge(WorkLimit {
+                queries: 1,
+                objects: 1,
+                ..Default::default()
+            }) {
+                return Ok(PayloadStep::BudgetExhausted);
+            }
+            let (atom, offset) = self.indexed_pending.as_mut().unwrap();
+            let text = std::str::from_utf8(&atom.utf8[..usize::from(atom.len)]).unwrap();
+            let ch = text[*offset..].chars().next().unwrap();
+            let mut utf8 = [0; 8];
+            let len = ch.encode_utf8(&mut utf8).len() as u8;
+            *offset += usize::from(len);
+            if *offset == text.len() {
+                self.indexed_pending = None;
+            }
+            return Ok(PayloadStep::Bytes { utf8, len });
         }
         if self.position == self.payload.len {
             return Ok(PayloadStep::Complete);

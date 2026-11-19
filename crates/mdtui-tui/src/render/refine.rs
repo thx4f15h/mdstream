@@ -139,6 +139,9 @@ pub struct SourceRefiner {
 }
 
 impl SourceRefiner {
+    pub(crate) fn retire(&mut self, budget: &mut Budget) -> bool {
+        self.first.retire(budget)
+    }
     pub fn set_links(&mut self, links: crate::render::objects::SharedLinks) {
         self.first.set_links(links);
     }

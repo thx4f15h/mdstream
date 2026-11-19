@@ -48,6 +48,18 @@ impl<T> AppendStore<T> {
         data.push(item);
         self.len += 1;
     }
+    pub fn pop(&mut self) -> Option<T> {
+        let index = self.len.checked_sub(1)?;
+        let (chunk, _) = Self::location(index);
+        let data = self.chunks[chunk].as_mut().unwrap();
+        let item = data.pop();
+        self.len -= 1;
+        if data.is_empty() {
+            self.capacity -= data.capacity();
+            self.chunks[chunk] = None;
+        }
+        item
+    }
     pub fn get(&self, index: usize) -> Option<&T> {
         if index >= self.len {
             return None;

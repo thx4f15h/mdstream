@@ -2121,6 +2121,7 @@ fn cold_native_prefix_then_live_suffix_keeps_entity_source_range_and_copy() {
     let shape = engine.runtime().viewport().shared_links().shape().unwrap();
     assert_eq!(shape.work().source_decode_bytes, 0);
     assert_eq!(shape.work().source_indexed_bytes, prefix.len());
+    let before_append = shape.work();
     let update = engine
         .runtime_mut()
         .append_bytes(suffix.as_bytes())
@@ -2129,6 +2130,7 @@ fn cold_native_prefix_then_live_suffix_keeps_entity_source_range_and_copy() {
     engine.runtime_mut().apply_update(&update).unwrap();
     let update = engine.runtime_mut().finish_input().unwrap().unwrap();
     engine.runtime_mut().apply_update(&update).unwrap();
+    assert!(shape.work().input_node_visits - before_append.input_node_visits < 1024);
     paint(&mut engine);
     let mut app = AppState::default();
     query(&mut app, &mut engine, "&");
@@ -2148,6 +2150,9 @@ fn cold_native_prefix_then_live_suffix_keeps_entity_source_range_and_copy() {
     assert_eq!(clipboard(&finish_task(&mut engine)), b"&");
     key(&mut app, &mut engine, KeyCode::Char('Y'));
     assert_eq!(clipboard(&finish_task(&mut engine)), b"&amp;");
-    assert_eq!(shape.work().source_decode_bytes, suffix.len());
-    assert_eq!(shape.work().source_indexed_bytes, prefix.len());
+    assert_eq!(shape.work().source_decode_bytes, 0);
+    assert_eq!(
+        shape.work().source_indexed_bytes,
+        prefix.len() + suffix.len()
+    );
 }

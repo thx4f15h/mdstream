@@ -57,6 +57,27 @@ struct PendingRun {
 }
 
 impl WidthMeasure {
+    pub(crate) fn retire(&mut self, budget: &mut Budget) -> bool {
+        if let Some(math) = &mut self.math {
+            if let Some(child) = &mut math.child
+                && !child.retire(budget)
+            {
+                return false;
+            }
+            math.child = None;
+            if math.query.is_some() {
+                if !budget.charge(mdtui3::WorkLimit {
+                    queries: 1,
+                    objects: 1,
+                    ..Default::default()
+                }) {
+                    return false;
+                }
+                math.query = None;
+            }
+        }
+        self.cursor.retire(budget) == mdtui3::Completion::Covered
+    }
     pub fn new(document: &Document, source: Span, links: SharedLinks) -> Option<Self> {
         Some(Self {
             cursor: document.display_cursor(source)?,

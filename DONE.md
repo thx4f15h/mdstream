@@ -3351,3 +3351,18 @@ resize后显式目录跳转再折叠的独立037缺陷已新增未勾待办，�
 最终 workspace all-target/all-feature release 3006项及85项文档测试、严格Clippy/fmt通过；6项原有手工benchmark保持默认忽略。新旧core/UI与真实PTY/FIFO覆盖追加/EOF/晚表头、20×3与底层1列、共享1q/1o/6B、所有权/取消、嵌套交叉、完整PH/复制及搜索。实际输入owner下十万列表格局部查询读取14源码字节，总高度5；输入自身维护约4.3秒/4.02GB索引预留单列计账。百万次实际追加恰有百万次组刷新；2000历史范围不放大后续追加工作；2000注册/20000次切换保留分配不增长，丢弃视图回到Document基线。
 
 根独立核对18个变更与其余754个正式基线文件，固定release SHA256 `38160169a7fc5ed3080b321729b132aa94b99e8c0b915052542557ab80a1b4d7`，实跑首N、20×3身份、同ID数字修改、搜索展开及q退出0；前后772文件/618Rust哈希一致。旧低层冷Viewport fallback在原200000帧上限的Pending证据保留，和实际输入owner路径区别明确，由最终通用合同审计继续核对。正式9d50尚无脚注视图；后续029必须把这些注册/新表策略接入实际轻量意图恢复与付费退休，020必须集成正式新FoldId消费者，均未冒称本次已验证。证据归档：`/home/ajen/.local/state/codex/mdtui3/2026-11-17-resumed/033-accepted-evidence.tar.gz`。
+
+
+## 2026-11-19 脚注正文与阅读界面生产接入
+
+脚注现可在实际 TUI 中按完整上标编号选择并打开 Markdown 正文。`f` 打开脚注选择区，Enter 进入正文，`b` 查看来源或返回；原生链接、局部 fragment、数学、折叠、Reading、搜索、复制及 End/FOLLOW 使用同一 renderer。`y` 复制实际显示，`Y` 经原映射保留宿主 CRLF、缩进和容器前缀；跨正文导航保持明确的 BodyKey 地址和实际移动历史。复制 64KiB、查询 256B 及完整 EGC 合同保持。
+
+在正式 `307915407d68027411f73549c3ce285f6eea196e` 上集成原生正文 parser、增量 BodyUpdate、宿主时钟及已交付033表格范围。TUI 启用有限 strict4/lazyParagraph/omittedList 续行，所有 Quote 前缀仍须匹配；默认核心 strict4 保持。真实输入索引供冷接管与后续追加复用，不在 UI 重解析正文或复制全局定义。`BodyView::with_renderer` 与 BodyRendererClock 在借用前核对地址及版本；note seed 未就绪时，输入和 EOF 在消费前返回 InitializationPending，CLI 保留原字节重试且继续响应 q/resize。
+
+只保留 root、一个活动 note renderer 及至多一个付费退休 owner。历史 note 只保存稀疏 FoldViewIntent：默认、新节点策略、preview、source/row 注册与逐 ID 选择；A→B→A 重建当前高度/CP，不保留历史 renderer。033 稳定表格范围 ID、私有新表策略和空封口范围已实际接入；根目录仍属于宿主。032 任务控件、020 完整当前语义及030实际图片协议由各自独立任务继续集成。
+
+深列表省略缩进复用既有 Quote 索引：1024层、1000条 lazy 续行的15059B原输入由1025000次容器访问降为2000次，交错 Quote 仍逐个核验。百万字当前正文追加复用原生索引，新增源码不再由 TUI 重解码；两万隐藏正文及新增/当前/退休容量分别记录。计费步骤与第三方/分配器 CPU 时延分开报告。
+
+对应冻结源码的 debug 覆盖3079项（2847个精确绑定的既有PASS与232项新跑，并集无重复），全新 all-target/all-feature release3075项、85项文档测试、严格Clippy、无警告rustdoc、fmt与生成器检查均通过；四个原有debug专用故障注入测试保留在debug，六项原手工测试仍默认忽略。五组固定release真实PTY验证脚注、流式输入、数学、表格意图恢复及分段UTF-8；held FIFO下q实际退出约0.125秒。
+
+根独立核对791文件/637Rust与原始数据，固定release SHA256 `9f313ea74f52d33987d0b3c7d71e1e51f59bbc094163d92fb3f272d70d8010c4`，实跑Markdown正文、原始/显示OSC52复制、20×3 End与来源返回，以及A→B→A同表格范围ID、窄屏身份与同ID空尾部重定向；两组q均正常退出。旧失败、计数oracle更正、已取消基线和共享锁等待均保留，未将其计为PASS；证据与冻结记录见 `/tmp/mdtui3-codex-todo/029-prototypes` 及持久目录 `/home/ajen/.local/state/codex/mdtui3/2026-11-17-resumed/`。验收只更新本节及TODO说明，其余已验证运行代码、测试和数据未变；未push。

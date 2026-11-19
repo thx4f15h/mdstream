@@ -3,7 +3,8 @@
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Opaque process-unique identity of one view's row registration. Never reused.
+/// Opaque process-unique logical registration. Never reused for a new range;
+/// an explicit view-intent transfer preserves it while rebinding the layout owner.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TableRowFoldId(usize);
 impl TableRowFoldId {
@@ -88,6 +89,12 @@ struct Entry {
     extent: TableRowExtent,
     collapsed: bool,
 }
+/// Pure logical registration; restored IDs acquire the new layout owner.
+#[derive(Clone, Copy)]
+pub(super) struct TableRowWish {
+    entry: Entry,
+    automatic: bool,
+}
 impl Entry {
     fn group(self) -> Option<GroupKey> {
         Some((
@@ -149,6 +156,72 @@ fn cost() -> WorkLimit {
     }
 }
 impl TableRowState {
+    pub(super) fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+    pub(super) fn next_wish(
+        &self,
+        after: Option<TableRowFoldId>,
+    ) -> Option<(TableRowFoldId, TableRowWish)> {
+        self.entries
+            .range((
+                after.map_or(Bound::Unbounded, Bound::Excluded),
+                Bound::Unbounded,
+            ))
+            .next()
+            .map(|(&id, &entry)| {
+                (
+                    id,
+                    TableRowWish {
+                        entry,
+                        automatic: self.automatic.get(&entry.table) == Some(&id),
+                    },
+                )
+            })
+    }
+    pub(super) fn retire(&mut self, budget: &mut Budget) -> Completion {
+        loop {
+            if let Some(mut index) = self.rows.first_entry() {
+                if index.get_mut().retire(budget) == Completion::BudgetExhausted {
+                    return Completion::BudgetExhausted;
+                }
+                if !budget.charge(cost()) {
+                    return Completion::BudgetExhausted;
+                }
+                index.remove_entry();
+            } else if !self.groups.is_empty() {
+                if !budget.charge(cost()) {
+                    return Completion::BudgetExhausted;
+                }
+                if self
+                    .groups
+                    .first_entry()
+                    .unwrap()
+                    .get_mut()
+                    .members
+                    .pop_first()
+                    .is_none()
+                {
+                    self.groups.pop_first();
+                }
+            } else if self.entries.is_empty()
+                && self.tables.is_empty()
+                && self.watches.is_empty()
+                && self.automatic.is_empty()
+            {
+                self.policy = None;
+                return Completion::Covered;
+            } else {
+                if !budget.charge(cost()) {
+                    return Completion::BudgetExhausted;
+                }
+                let _ = self.entries.pop_first().is_some()
+                    || self.tables.pop_first().is_some()
+                    || self.watches.pop_first().is_some()
+                    || self.automatic.pop_first().is_some();
+            }
+        }
+    }
     pub(super) fn has(&self, id: TableRowFoldId) -> bool {
         self.entries.contains_key(&id)
     }
@@ -173,12 +246,13 @@ impl TableRowState {
                 let last = t.row(end - 1)?;
                 (
                     Span::new(first.source.start, last.source.end),
-                    !last.complete && !doc.is_finished(),
+                    !last.complete && !doc.is_input_sealed(),
                     Some(first.source),
                 )
             }
             TableRowExtent::Live { start } => {
-                let open = doc.block(t.block)?.state != SyntaxState::Sealed && !doc.is_finished();
+                let open =
+                    doc.block(t.block)?.state != SyntaxState::Sealed && !doc.is_input_sealed();
                 if let Some(first) = t.row(start) {
                     (
                         Span::new(first.source.start, frontier(t)),
@@ -637,17 +711,9 @@ impl TableRowAutoFold {
                 }
                 let table = TableId(self.next);
                 self.next += 1;
-                if view.state.table_rows.automatic.contains_key(&table) {
+                let Some(c) = view.apply_new_row_policy(doc, table, policy)? else {
                     continue;
-                }
-                let (_, c) = view.publish_table_rows(
-                    doc,
-                    table,
-                    TableRowExtent::Live {
-                        start: policy.visible_body_rows + 1,
-                    },
-                    true,
-                )?;
+                };
                 self.binding.version = view.version;
                 change = Some(match change {
                     None => c,
@@ -670,6 +736,62 @@ impl TableRowAutoFold {
 }
 
 impl<S> FoldView<S> {
+    pub(super) fn restore_row_policy(&mut self, policy: Option<TableRowPolicy>) {
+        if self.state.table_rows.policy != policy {
+            self.state.table_rows.policy = policy;
+            self.version += 1;
+        }
+    }
+    pub(super) fn restore_row_wish(
+        &mut self,
+        doc: &Document,
+        id: TableRowFoldId,
+        wish: TableRowWish,
+    ) -> Result<bool, LayoutError> {
+        if wish.entry.document != doc.id() {
+            return Err(LayoutError::WrongDocument);
+        }
+        let Some(table) = doc.table(wish.entry.table) else {
+            return Ok(false);
+        };
+        if matches!(wish.entry.extent, TableRowExtent::Fixed { end, .. } if end > table.rows().len())
+        {
+            return Ok(false);
+        }
+        let entry = Entry {
+            owner: self.heights.version().0,
+            ..wish.entry
+        };
+        self.state.table_rows.entries.insert(id, entry);
+        self.row_index_insert(id, entry);
+        if wish.automatic {
+            self.state.table_rows.automatic.insert(entry.table, id);
+        }
+        self.row_attach(id, entry);
+        let source = self.state.table_rows.candidate(doc, id).unwrap().hidden;
+        let source = self.row_groups_changed(doc, None, entry.group(), source);
+        self.finish_row_change(doc, source)?;
+        Ok(true)
+    }
+    pub(super) fn apply_new_row_policy(
+        &mut self,
+        doc: &Document,
+        table: TableId,
+        policy: TableRowPolicy,
+    ) -> Result<Option<FoldChange>, LayoutError> {
+        if self.state.table_rows.automatic.contains_key(&table) {
+            return Ok(None);
+        }
+        self.publish_table_rows(
+            doc,
+            table,
+            TableRowExtent::Live {
+                start: policy.visible_body_rows + 1,
+            },
+            true,
+        )
+        .map(|(_, change)| Some(change))
+    }
     fn checked_row_entry(&self, doc: &Document, id: TableRowFoldId) -> Result<Entry, LayoutError> {
         self.check(doc)?;
         let e = *self
@@ -813,7 +935,7 @@ impl<S> FoldView<S> {
             )
         }));
         let watch =
-            candidate.open || candidate.hidden.end == doc.source().len() && !doc.is_finished();
+            candidate.open || candidate.hidden.end == doc.source().len() && !doc.is_input_sealed();
         if watch {
             self.state.table_rows.watches.insert(gk);
         } else {

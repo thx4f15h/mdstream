@@ -48,6 +48,15 @@ pub struct SafePrefixCut {
     previous: Option<super::shape::ShapeCluster>,
 }
 impl SafePrefixCut {
+    fn retire(&mut self, budget: &mut Budget) -> bool {
+        if let Some((_, activity)) = &mut self.activity
+            && activity.retire_continuation(budget) != mdtui3::Completion::Covered
+        {
+            return false;
+        }
+        self.activity = None;
+        true
+    }
     pub fn new(doc: &Document, source: Span, cut: usize) -> Result<Self, LayoutError> {
         if doc.text(source).is_none()
             || cut < source.start
@@ -274,6 +283,14 @@ pub struct LogicalPrefix {
     source_work: usize,
 }
 impl LogicalPrefix {
+    pub(crate) fn retire(&mut self, budget: &mut Budget) -> bool {
+        if let Some(safe) = &mut self.safe
+            && !safe.retire(budget)
+        {
+            return false;
+        }
+        self.cursor.retire(budget) == mdtui3::Completion::Covered
+    }
     pub fn new(doc: &Document, source: Span, lines: usize) -> Result<Self, LayoutError> {
         Ok(Self {
             owner: None,
@@ -396,6 +413,14 @@ pub struct DisplayPrefix {
     probes: usize,
 }
 impl DisplayPrefix {
+    pub(crate) fn retire(&mut self, budget: &mut Budget) -> bool {
+        if let Some(safe) = &mut self.safe
+            && !safe.retire(budget)
+        {
+            return false;
+        }
+        self.stream.retire(budget)
+    }
     pub fn new(doc: &Document, source: Span, rows: usize, width: u16) -> Result<Self, LayoutError> {
         if width == 0 || doc.text(source).is_none() {
             return Err(LayoutError::InvalidRange);

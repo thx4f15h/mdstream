@@ -246,7 +246,21 @@ Quote 内段落之间、loose 列表兄弟/直接内容之间留一行；tight �
 外层 loose 不改变内层 tight。容器内代码、表格、独立数学和 Quote 边界留一行。
 顶层继续使用原间距矩阵：段落类与 List、List 与 List 紧贴，其余独立组留一行。
 文档首尾不补空行。标题自身的折叠占位归属真实 Heading.block，延续标题而不多加段落空行。
-Quote 前缀沿用既有样式，前缀扩展和脚注 UI 仍属独立任务。
+Quote 前缀沿用既有样式；脚注阅读使用下述独立 surface。
+
+## 脚注阅读
+
+正文中的 `[^label]` 使用首次确认引用的完整十进制上标编号，Undefined 也占号，晚定义与重复定义不重排。编号的每一位都保留原标记来源，窄宽按字位折行；Tab/Shift-Tab 或点击实际编号选中引用，状态显示 Unresolved、Missing 或 Defined。Enter 只在已有定义时跳转，等待、缺失及同位置操作不新增历史。
+
+`f` 打开按编号排列的 Footnotes 选择区，无引用的合法定义列在其后而不占号。上下/Home/End 选择，左右逐完整字素滚动标签，窄屏仍可读全编号；Enter 打开一个完整 Markdown 正文阅读区。正文复用段落、列表、标题、表格、数学、图片 alt/占位、折叠、宽度和完整 EGC 路径；alt/详情仍不等于协议图像实际渲染。引用焦点 Enter 直接打开对应 note；普通 `#fragment` 在当前 note 的局部标题命名空间内解析，宿主标题可从 `s` 目录访问。循环引用只响应用户导航，不递归排版。
+
+`b`/Esc 返回实际进入的来源；从选择区打开而没有进入来源时，`b` 列出明确的来源选择（`main @原文位置`、`note 编号 @正文位置`），多引用不自动选择首个。选择来源后定位其所在行。Alt-Left/Right 的历史跨 root/body 保存明确地址，只在实际画面移动并完成 wire 确认后提交；pending、取消、未找到及无移动均不截断前进分支。
+
+正文内 `v`、方向键/Shift、Space、`y`/`Y`、`/`、`n`/`N` 使用该 surface 的 Reading 状态。`y` 复制真实逻辑显示，包括编号和数学呈现；`Y` 将选中正文范围映射为最小连续原始包络，保留其间的 CRLF、容器前缀、缩进和原始语法。选区只属于当前 root 或一个 BodyKey；跨 surface 导航清除当前选择，不把两个来源伪装成一个 RootSpan。64 KiB 复制拒绝和 256 UTF-8 字节查询上限保持。 显示搜索仍保留脚注标记内部的 Source 别名，别名可报告为 match not drawn；上标编号使用实际显示串。n/N 以显示位置及别名的来源偏移区分同一标记内的多个命中，别名不拼接到显示 KMP 串。
+
+Home/End/Ctrl+End、resize、跟随和固定切口在当前正文独立工作；宿主继续输入、晚定义或 EOF 不覆盖正在阅读的 note。`s` 在 note 中打开并聚焦宿主目录，目录的筛选、展开和选择仍属于 root；目录跳转返回 root，正文局部标题不会冒充全局 HeadingId。`z` 使用同一折叠菜单及该 note 的 FoldView。A→root→A 保留 active owner；A→B→A 按预算恢复轻量折叠意图，包含默认策略、preview 与 source/row 注册，重新建立高度/CP。临时选择、搜索命中、已排版摘要和位图缓存不按历史 note 积累。
+
+预解析 `Utf8Document` 可冷接入；初始化按预算采纳已有输入索引，零预算不扫描正文，后续绑定变化无需重新 parse body。只读的 `footnote_source_at`、`FootnoteReading` 与 `footnote_fold_state` 返回限定地址，不能将裸正文 ID/span 用于宿主 source/target/title 查询。`footnote_stats` 是显式诊断快照，分开报告输入事件、映射、bootstrap、退休、owner、shape、对象和容量；计数不作为第三方调用的 CPU 硬界。
 
 间距行属于后一个对象起点的 tile，但没有 LineSource 或 cell source，不能成为搜索/复制的
 精确正文目标。FirstFrame、Viewport、SourceRefiner、HeightIndex 和检查点共用同一事件流；
@@ -264,6 +278,10 @@ Quote 前缀沿用既有样式，前缀扩展和脚注 UI 仍属独立任务。
 实际帧输出 96 字节。输入自身的百万字节处理另报；热 resize 不因恢复间距重读隐藏正文。
 sink 准备包含当前显示片段的分配/排版，并非一个预算 object 就代表固定 CPU 时延。`prepared_display_bytes`、
 `preparation_source_bytes` 及 frame 的实际输出计数应与元数据步骤分别解读。
+
+脚注视图切换保存稳定表格行注册的逻辑 ID、固定/跟随/空封口范围、逐 ID 选择及仅作用于新表的策略；恢复时重建当前原生几何与新 owner 的分组/索引，旧高度和检查点不保留。未确认的物理尾行继续按原文显示，成为真实行后才进入行折叠。
+
+`FrameRuntime` 的直接调用方在 `input_ready()` 为 false 时，应保留整批原字节或 EOF，使用原帧预算调用 `initialize` 后原样重试；拒绝发生在消费前。CLI 沿用读入暂停机制，键盘、取消和 resize 仍会被轮询。
 
 ## 已知限制与差异
 

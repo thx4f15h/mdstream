@@ -156,7 +156,8 @@ fn write_segment<W: Write + ?Sized>(
     stats: &mut OutputStats,
     destinations: &mut HashMap<mdtui3::LinkId, Option<String>>,
 ) -> io::Result<()> {
-    let (encoded, opened_link) = encode_segment(document, segment, options, stats, destinations);
+    let (encoded, opened_link) =
+        encode_segment(document, None, segment, options, stats, destinations);
     writer.write_all(encoded.as_bytes())?;
     stats.segments += 1;
     stats.bytes = stats.bytes.saturating_add(encoded.len());
@@ -166,6 +167,7 @@ fn write_segment<W: Write + ?Sized>(
 
 fn encode_segment(
     document: &Document,
+    body: Option<mdtui3::BodyView<'_>>,
     segment: &TextSegment,
     options: OutputOptions,
     stats: &mut OutputStats,
@@ -177,7 +179,14 @@ fn encode_segment(
 
     if options.allow_osc8 && options.link_mode != LinkMode::NoOsc8 {
         let destination = destinations.entry(link_id).or_insert_with(|| {
-            let source_len = document.link_destination(link_id).map_or(0, str::len);
+            let source_len = if let Some(body) = body {
+                body.raw_link_destination(body.qualify(link_id))
+                    .ok()
+                    .flatten()
+                    .map_or(0, |r| r.text.len())
+            } else {
+                document.link_destination(link_id).map_or(0, str::len)
+            };
             if source_len <= crate::render::link::MAX_OSC8_DESTINATION_BYTES
                 && source_len
                     > MAX_FRAME_DESTINATION_SOURCE_BYTES
@@ -186,7 +195,13 @@ fn encode_segment(
                 stats.deferred_link_segments += 1;
                 return None;
             }
-            let (target, inspected) = osc8_destination(document, link_id);
+            let (target, inspected) = if let Some(body) = body {
+                let (target, stats) =
+                    crate::render::link::osc8_body_destination(body, body.qualify(link_id));
+                (target.map(std::borrow::Cow::Owned), stats)
+            } else {
+                osc8_destination(document, link_id)
+            };
             stats.destination_source_bytes += inspected.source_bytes;
             stats.oversized_destinations += inspected.too_long;
             target.map(|target| target.into_owned())
@@ -222,12 +237,23 @@ pub(crate) fn segment_boundaries(
     stats: &mut OutputStats,
     destinations: &mut HashMap<mdtui3::LinkId, Option<String>>,
 ) -> (String, String, bool) {
+    segment_boundaries_body(document, None, style, link_id, options, stats, destinations)
+}
+pub(crate) fn segment_boundaries_body(
+    document: &Document,
+    body: Option<mdtui3::BodyView<'_>>,
+    style: StyleRole,
+    link_id: Option<mdtui3::LinkId>,
+    options: OutputOptions,
+    stats: &mut OutputStats,
+    destinations: &mut HashMap<mdtui3::LinkId, Option<String>>,
+) -> (String, String, bool) {
     let segment = TextSegment {
         style,
         link_id,
         text: "\0".to_owned(),
     };
-    let (encoded, linked) = encode_segment(document, &segment, options, stats, destinations);
+    let (encoded, linked) = encode_segment(document, body, &segment, options, stats, destinations);
     let (prefix, suffix) = encoded
         .split_once('\0')
         .expect("encoding preserves sentinel");

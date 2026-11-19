@@ -19,8 +19,17 @@ impl Utf8Document {
     pub fn subscribe_display_shape_effects(&mut self) {
         self.document.subscribe_display_shape_effects();
     }
+    pub fn subscribe_footnote_body_shape(
+        &mut self,
+        owner: crate::BodyKey,
+    ) -> Result<(), crate::LayoutError> {
+        self.document.subscribe_footnote_body_shape(owner)
+    }
     pub fn enable_display_shape_effects(&mut self) -> Result<(), crate::LayoutError> {
         self.document.enable_display_shape_effects()
+    }
+    pub fn enable_footnote_continuation(&mut self) -> Result<(), crate::LayoutError> {
+        self.document.enable_footnote_continuation()
     }
     pub fn heading_slug_session(&mut self) -> crate::HeadingSlugSession {
         crate::HeadingSlugSession::new(&mut self.document)

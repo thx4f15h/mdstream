@@ -96,6 +96,35 @@ pub struct FoldUi {
 }
 
 impl FoldUi {
+    pub(crate) fn suspend(&mut self, budget: &mut Budget) -> bool {
+        if !self.prefixes.suspend(budget) {
+            return false;
+        }
+        self.operation = None;
+        self.menu = false;
+        self.range_next = None;
+        self.range_all = None;
+        self.auto = None;
+        self.auto_range = None;
+        self.summary = None;
+        self.table_range_next = None;
+        self.table_range_all = None;
+        self.number_input = None;
+        debug_assert!(self.row_auto.is_empty());
+        self.row_auto = VecDeque::new();
+        self.row_retiring = 0;
+        true
+    }
+    pub(crate) fn resume(&mut self, doc: &Document, paragraph_auto: bool) {
+        self.prefixes.resume(doc);
+        self.changed = false;
+        if paragraph_auto && self.prefixes.default.is_none() {
+            self.auto_range = Some(Span::new(0, doc.source().len()));
+        }
+    }
+    pub(crate) fn has_policies(&self) -> bool {
+        self.prefixes.has_policies()
+    }
     pub fn end_preview(&mut self) {
         self.operation = Some(Operation::Preview(None));
     }
@@ -411,6 +440,43 @@ impl FoldUi {
     pub(crate) fn take_summary(&mut self) -> Option<super::render::fold_summary::FoldSummary> {
         self.summary.take()
     }
+    pub(crate) fn settle_table_rows(
+        &mut self,
+        doc: &Document,
+        view: &mut View,
+        budget: &mut Budget,
+    ) -> bool {
+        if self.row_retiring > 0 {
+            if charge(budget) {
+                self.row_auto.pop_front();
+                self.row_retiring -= 1;
+            }
+            self.message = "cancel table work; paid choices kept".into();
+            return false;
+        }
+        if let Some(task) = self.row_auto.front_mut() {
+            let old = view.version();
+            let result = task
+                .rebind(doc, view)
+                .and_then(|()| task.advance(doc, view, budget));
+            match result {
+                Ok(p) => {
+                    self.message = "new table row policy".into();
+                    if p.completion == Completion::Covered {
+                        self.row_auto.pop_front();
+                    }
+                }
+                Err(e) => {
+                    self.message = e.to_string();
+                    self.failed = true;
+                    self.row_retiring = self.row_auto.len();
+                }
+            }
+            self.changed |= old != view.version();
+            return false;
+        }
+        self.row_auto.is_empty()
+    }
     pub fn advance(
         &mut self,
         doc: &Document,
@@ -420,33 +486,8 @@ impl FoldUi {
         budget: &mut Budget,
     ) {
         let Some(mut operation) = self.operation.take() else {
-            if self.row_retiring > 0 {
-                if charge(budget) {
-                    self.row_auto.pop_front();
-                    self.row_retiring -= 1;
-                }
-                self.message = "cancel table work; paid choices kept".into();
-                return;
-            }
-            if let Some(task) = self.row_auto.front_mut() {
-                let old = view.version();
-                let result = task
-                    .rebind(doc, view)
-                    .and_then(|()| task.advance(doc, view, budget));
-                match result {
-                    Ok(p) => {
-                        self.message = "new table row policy".into();
-                        if p.completion == Completion::Covered {
-                            self.row_auto.pop_front();
-                        }
-                    }
-                    Err(e) => {
-                        self.message = e.to_string();
-                        self.failed = true;
-                        self.row_retiring = self.row_auto.len();
-                    }
-                }
-                self.changed |= old != view.version();
+            if self.row_retiring > 0 || !self.row_auto.is_empty() {
+                self.settle_table_rows(doc, view, budget);
                 return;
             }
             if self.prefixes.pending() {
